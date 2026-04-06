@@ -1,0 +1,111 @@
+{
+  "project_name": "Tally SaaS Report Builder",
+  "theme": "light",
+  "archetype": "Archetype 1 (Organic & Earthy)",
+  "design_philosophy": {
+    "emotion": "Trust, Growth, Calm, Stability",
+    "description": "A finance dashboard that breaks the 'boring blue tech' stereotype. Uses warm, tactile colors and a grounded earthy palette to make dense Tally data feel approachable and reliable. Negative space is highly prioritized to avoid visual fatigue."
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Outfit, sans-serif",
+      "body": "Work Sans, sans-serif",
+      "monospace": "JetBrains Mono, monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-light text-stone-900",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-medium text-stone-900",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium text-stone-800",
+      "body": "text-base leading-relaxed text-stone-600",
+      "small_label": "text-xs tracking-[0.2em] uppercase font-semibold text-stone-500"
+    }
+  },
+  "colors": {
+    "palette": {
+      "background": "#FDFBF7",
+      "surface": "#FFFFFF",
+      "primary": "#064E3B",
+      "primary_hover": "#047857",
+      "secondary": "#E7E5E4",
+      "text_main": "#1C1917",
+      "text_muted": "#57534E",
+      "border": "#E7E5E4",
+      "success": "#166534",
+      "destructive": "#991B1B",
+      "warning": "#B45309"
+    },
+    "tailwind_classes": {
+      "page_bg": "bg-[#FDFBF7]",
+      "card_bg": "bg-white",
+      "primary_text": "text-stone-900",
+      "muted_text": "text-stone-500",
+      "border": "border-stone-200"
+    }
+  },
+  "spacing_and_layout": {
+    "grid_strategy": "MODE B: The 'Control Room' Grid",
+    "grid_classes": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "container_padding": "p-6 md:p-8 lg:p-12",
+    "card_padding": "p-6",
+    "alignment_rules": "Left-align dense tabular data and inputs. Right-align numerical data in tables. Center-align empty state illustrations only.",
+    "border_radius": "rounded-xl"
+  },
+  "components": {
+    "cards": {
+      "style": "Flat background (bg-white), 1px subtle border (border-stone-200), rounded-xl, no heavy shadows.",
+      "hover": "hover:-translate-y-1 hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300"
+    },
+    "buttons": {
+      "primary": "bg-[#064E3B] text-white hover:bg-[#047857] shadow-sm rounded-lg px-6 py-2 transition-colors",
+      "secondary": "bg-white border border-stone-200 text-stone-900 hover:bg-stone-50 shadow-[0_2px_4px_rgba(28,25,23,0.05)] rounded-lg px-6 py-2 transition-all"
+    },
+    "tables": {
+      "header": "Sticky top, bg-stone-50, text-xs uppercase tracking-wider text-stone-500 font-semibold py-4 border-b border-stone-200",
+      "row": "border-b border-stone-100 hover:bg-stone-50/50 transition-colors",
+      "cell": "py-4 text-sm text-stone-700",
+      "numbers": "text-right tabular-nums",
+      "zebra_striping": "Even rows bg-white, odd rows bg-[#FDFBF7]"
+    },
+    "ai_query_builder": {
+      "container": "relative overflow-hidden rounded-2xl border border-stone-200 p-8 shadow-sm",
+      "background_overlay": "absolute inset-0 opacity-10 bg-cover bg-center mix-blend-multiply",
+      "input_area": "relative z-10 bg-white/80 backdrop-blur-md rounded-xl p-2 border border-stone-200/50 shadow-inner flex items-center gap-4"
+    },
+    "navigation_header": {
+      "style": "Sticky top-0 z-50 bg-[#FDFBF7]/80 backdrop-blur-xl border-b border-stone-200 px-6 py-4 flex items-center justify-between"
+    }
+  },
+  "interactive_states": {
+    "focus": "focus:outline-none focus:ring-2 focus:ring-[#064E3B]/20 focus:border-[#064E3B]",
+    "hover_links": "hover:text-[#064E3B] transition-colors"
+  },
+  "media_and_assets": {
+    "icons_library": "lucide-react",
+    "images": {
+      "logo": {
+        "url": "https://images.pexels.com/photos/26576975/pexels-photo-26576975.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Minimalist textured logo to be used as a brand placeholder in the navbar.",
+        "category": "logo"
+      },
+      "user_avatar": {
+        "url": "https://images.pexels.com/photos/36363694/pexels-photo-36363694.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Professional confident business woman portrait for user profile avatars.",
+        "category": "avatar"
+      },
+      "ai_feature_bg": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/1e9e8fc2367de38e12a3264a83ec836765e5585a923a048af222e80cdb30cf72.png",
+        "description": "Abstract 3D topography map in earthy tones to be used as a subtle background for the AI Report Builder section to make it feel premium and intelligent.",
+        "category": "background"
+      },
+      "login_bg": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/a89e0dd27207c002eb0159b05100eb80fffeaeae096c10dc8d6517ba5c602c72.png",
+        "description": "Soft blurred gradient background in warm sand and moss green. Use for login/authentication pages.",
+        "category": "background"
+      }
+    }
+  },
+  "accessibility": {
+    "contrast_ratio": "Ensure all text against the #FDFBF7 or #FFFFFF backgrounds passes at least 4.5:1 ratio (e.g. use #1C1917 or #064E3B).",
+    "test_attributes": "Add data-testid to ALL interactive elements. Example: data-testid='ai-generate-btn'."
+  }
+}
