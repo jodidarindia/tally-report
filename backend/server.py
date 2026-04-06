@@ -142,17 +142,25 @@ async def get_inventory_items(category: Optional[str] = None, min_quantity: Opti
         
         items = tally_client_instance.fetch_inventory(filters)
         
-        # Save to database
-        for item in items:
-            inventory_obj = InventoryItem(**item)
-            doc = inventory_obj.model_dump()
-            doc['last_updated'] = doc['last_updated'].isoformat()
+        # Save to database using bulk operations for better performance
+        if items:
+            from pymongo import UpdateOne
+            operations = []
+            for item in items:
+                inventory_obj = InventoryItem(**item)
+                doc = inventory_obj.model_dump()
+                doc['last_updated'] = doc['last_updated'].isoformat()
+                
+                operations.append(
+                    UpdateOne(
+                        {"item_id": item["item_id"]},
+                        {"$set": doc},
+                        upsert=True
+                    )
+                )
             
-            await db.inventory_items.update_one(
-                {"item_id": item["item_id"]},
-                {"$set": doc},
-                upsert=True
-            )
+            if operations:
+                await db.inventory_items.bulk_write(operations)
         
         return APIResponse(
             success=True,
@@ -215,17 +223,25 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
         if party_name:
             vouchers = [v for v in vouchers if party_name.lower() in v.get("party_name", "").lower()]
         
-        # Save to database
-        for voucher in vouchers:
-            sales_obj = SalesVoucher(**voucher)
-            doc = sales_obj.model_dump()
-            doc['last_updated'] = doc['last_updated'].isoformat()
+        # Save to database using bulk operations for better performance
+        if vouchers:
+            from pymongo import UpdateOne
+            operations = []
+            for voucher in vouchers:
+                sales_obj = SalesVoucher(**voucher)
+                doc = sales_obj.model_dump()
+                doc['last_updated'] = doc['last_updated'].isoformat()
+                
+                operations.append(
+                    UpdateOne(
+                        {"voucher_id": voucher["voucher_id"]},
+                        {"$set": doc},
+                        upsert=True
+                    )
+                )
             
-            await db.sales_vouchers.update_one(
-                {"voucher_id": voucher["voucher_id"]},
-                {"$set": doc},
-                upsert=True
-            )
+            if operations:
+                await db.sales_vouchers.bulk_write(operations)
         
         return APIResponse(
             success=True,
@@ -437,11 +453,16 @@ async def receive_agent_sync(request: dict):
             # Clear existing and insert new inventory data
             await db.inventory_items.delete_many({})
             
-            for item in data:
-                inventory_obj = InventoryItem(**item)
-                doc = inventory_obj.model_dump()
-                doc['last_updated'] = doc['last_updated'].isoformat()
-                await db.inventory_items.insert_one(doc)
+            if data:
+                docs = []
+                for item in data:
+                    inventory_obj = InventoryItem(**item)
+                    doc = inventory_obj.model_dump()
+                    doc['last_updated'] = doc['last_updated'].isoformat()
+                    docs.append(doc)
+                
+                if docs:
+                    await db.inventory_items.insert_many(docs)
             
             logger.info(f"Synced {len(data)} inventory items to database")
         
@@ -449,11 +470,16 @@ async def receive_agent_sync(request: dict):
             # Clear existing and insert new sales data
             await db.sales_vouchers.delete_many({})
             
-            for voucher in data:
-                sales_obj = SalesVoucher(**voucher)
-                doc = sales_obj.model_dump()
-                doc['last_updated'] = doc['last_updated'].isoformat()
-                await db.sales_vouchers.insert_one(doc)
+            if data:
+                docs = []
+                for voucher in data:
+                    sales_obj = SalesVoucher(**voucher)
+                    doc = sales_obj.model_dump()
+                    doc['last_updated'] = doc['last_updated'].isoformat()
+                    docs.append(doc)
+                
+                if docs:
+                    await db.sales_vouchers.insert_many(docs)
             
             logger.info(f"Synced {len(data)} sales vouchers to database")
         
