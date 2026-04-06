@@ -1,39 +1,125 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import axios from 'axios';
+import { BarChart3, Package, TrendingUp, Bot, FileText, Settings, Menu, X } from 'lucide-react';
+import '@/App.css';
+import '@/index.css';
+
+import Dashboard from './pages/Dashboard';
+import Inventory from './pages/Inventory';
+import Sales from './pages/Sales';
+import AIQueryBuilder from './pages/AIQueryBuilder';
+import ReportHistory from './pages/ReportHistory';
+import TallySetup from './pages/TallySetup';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Home = () => {
-  const helloWorldApi = async () => {
+const Navigation = () => {
+  const [isConnected, setIsConnected] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    checkTallyStatus();
+  }, []);
+
+  const checkTallyStatus = async () => {
     try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
+      const response = await axios.get(`${API}/tally/status`);
+      setIsConnected(response.data?.data?.is_connected || false);
+    } catch (error) {
+      console.error('Error checking Tally status:', error);
     }
   };
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+  const navItems = [
+    { path: '/', icon: BarChart3, label: 'Dashboard' },
+    { path: '/inventory', icon: Package, label: 'Inventory' },
+    { path: '/sales', icon: TrendingUp, label: 'Sales' },
+    { path: '/ai-query', icon: Bot, label: 'AI Reports' },
+    { path: '/history', icon: FileText, label: 'History' },
+    { path: '/setup', icon: Settings, label: 'Setup' }
+  ];
 
   return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <nav className="nav-header" data-testid="main-navigation">
+      <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#064E3B] rounded-lg flex items-center justify-center">
+              <BarChart3 className="text-white" size={24} />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>Tally Reports</h1>
+              <p className="text-xs text-stone-500">AI-Powered Analytics</p>
+            </div>
+          </div>
+
+          <button
+            data-testid="mobile-menu-button"
+            className="md:hidden text-stone-700"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+
+          <div className="hidden md:flex items-center gap-6">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-[#064E3B] text-white'
+                      : 'text-stone-600 hover:text-[#064E3B] hover:bg-stone-100'
+                  }`}
+                >
+                  <Icon size={18} />
+                  <span className="text-sm font-medium">{item.label}</span>
+                </Link>
+              );
+            })}
+
+            <div
+              data-testid="connection-status-badge"
+              className={`status-badge ${isConnected ? 'connected' : 'disconnected'}`}
+            >
+              <span className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-600' : 'bg-red-600'}`} />
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </div>
+          </div>
+        </div>
+
+        {mobileMenuOpen && (
+          <div className="md:hidden mt-4 pb-4 space-y-2">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-[#064E3B] text-white'
+                      : 'text-stone-600 hover:bg-stone-100'
+                  }`}
+                >
+                  <Icon size={20} />
+                  <span className="text-sm font-medium">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </nav>
   );
 };
 
@@ -41,11 +127,17 @@ function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
+        <Navigation />
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/sales" element={<Sales />} />
+            <Route path="/ai-query" element={<AIQueryBuilder />} />
+            <Route path="/history" element={<ReportHistory />} />
+            <Route path="/setup" element={<TallySetup />} />
+          </Routes>
+        </div>
       </BrowserRouter>
     </div>
   );
