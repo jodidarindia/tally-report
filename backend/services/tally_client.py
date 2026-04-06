@@ -162,7 +162,8 @@ class TallyClient:
                 "party_name": "Tech Solutions Pvt Ltd",
                 "total_amount": 225000.0,
                 "items": [{"item": "Laptop Dell Inspiron", "quantity": 5, "rate": 45000}],
-                "reference_number": "INV-2026-001"
+                "reference_number": "INV-2026-001",
+                "salesman": "Rajesh Kumar"
             },
             {
                 "voucher_id": "SALE002",
@@ -170,7 +171,8 @@ class TallyClient:
                 "party_name": "Office Mart",
                 "total_amount": 102000.0,
                 "items": [{"item": "Office Chair Executive", "quantity": 12, "rate": 8500}],
-                "reference_number": "INV-2026-002"
+                "reference_number": "INV-2026-002",
+                "salesman": "Priya Sharma"
             },
             {
                 "voucher_id": "SALE003",
@@ -178,7 +180,8 @@ class TallyClient:
                 "party_name": "Smart Enterprises",
                 "total_amount": 66000.0,
                 "items": [{"item": "Printer HP LaserJet", "quantity": 3, "rate": 22000}],
-                "reference_number": "INV-2026-003"
+                "reference_number": "INV-2026-003",
+                "salesman": "Rajesh Kumar"
             },
             {
                 "voucher_id": "SALE004",
@@ -186,7 +189,8 @@ class TallyClient:
                 "party_name": "Corporate Hub Ltd",
                 "total_amount": 180000.0,
                 "items": [{"item": "Laptop Dell Inspiron", "quantity": 4, "rate": 45000}],
-                "reference_number": "INV-2026-004"
+                "reference_number": "INV-2026-004",
+                "salesman": "Amit Patel"
             },
             {
                 "voucher_id": "SALE005",
@@ -194,7 +198,8 @@ class TallyClient:
                 "party_name": "Global Systems Inc",
                 "total_amount": 24000.0,
                 "items": [{"item": "Desk Lamp LED", "quantity": 20, "rate": 1200}],
-                "reference_number": "INV-2026-005"
+                "reference_number": "INV-2026-005",
+                "salesman": "Priya Sharma"
             },
             {
                 "voucher_id": "SALE006",
@@ -202,7 +207,8 @@ class TallyClient:
                 "party_name": "Tech Solutions Pvt Ltd",
                 "total_amount": 85000.0,
                 "items": [{"item": "Office Chair Executive", "quantity": 10, "rate": 8500}],
-                "reference_number": "INV-2026-006"
+                "reference_number": "INV-2026-006",
+                "salesman": "Amit Patel"
             }
         ]
         return mock_data

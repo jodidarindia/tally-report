@@ -1171,7 +1171,7 @@ async def get_inventory_movement():
                 "closing_stock": current_stock,
                 "movement_rate": round(movement_rate, 2),
                 "days_to_sell": round(days_to_sell, 1),
-                "classification": "fast-moving" if movement_rate > 50 else "slow-moving" if movement_rate > 20 else "dead-stock"
+                "classification": "fast-moving" if movement_rate > 30 else "slow-moving" if movement_rate > 10 else "dead-stock"
             })
         
         # Sort by movement rate
