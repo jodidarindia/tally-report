@@ -9,10 +9,26 @@ const Dashboard = () => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   useEffect(() => {
     fetchData();
-  }, []);
+    fetchSyncStatus();
+    
+    // Auto-refresh every 30 seconds when enabled
+    let intervalId;
+    if (autoRefresh) {
+      intervalId = setInterval(() => {
+        fetchData();
+        fetchSyncStatus();
+      }, 30000);
+    }
+    
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [autoRefresh]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -28,6 +44,15 @@ const Dashboard = () => {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSyncStatus = async () => {
+    try {
+      const response = await axios.get(`${API}/sync/status`);
+      setSyncStatus(response.data?.data);
+    } catch (error) {
+      console.error('Error fetching sync status:', error);
     }
   };
 
@@ -59,16 +84,37 @@ const Dashboard = () => {
           <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Dashboard
           </h1>
-          <p className="mt-2 text-base text-stone-600">Overview of your Tally data</p>
+          <div className="flex items-center gap-4 mt-2">
+            <p className="text-base text-stone-600">Overview of your Tally data</p>
+            {syncStatus?.last_sync && (
+              <div className="flex items-center gap-2 text-sm text-stone-500">
+                <Activity size={14} />
+                Last sync: {new Date(syncStatus.last_sync).toLocaleTimeString()}
+              </div>
+            )}
+          </div>
         </div>
-        <button
-          data-testid="sync-data-button"
-          onClick={syncData}
-          className="btn-primary flex items-center gap-2"
-        >
-          <RefreshCw size={16} />
-          Sync Data
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              autoRefresh 
+                ? 'bg-[#E7F5F0] text-[#064E3B] border border-[#064E3B]' 
+                : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
+            }`}
+            data-testid="auto-refresh-toggle"
+          >
+            {autoRefresh ? '✓ Auto-refresh ON' : 'Auto-refresh OFF'}
+          </button>
+          <button
+            data-testid="sync-data-button"
+            onClick={syncData}
+            className="btn-primary flex items-center gap-2"
+          >
+            <RefreshCw size={16} />
+            Sync Now
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

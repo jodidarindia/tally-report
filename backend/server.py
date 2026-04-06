@@ -418,6 +418,86 @@ async def get_report_history():
         logger.error(f"Error fetching report history: {e}")
         return APIResponse(success=False, error=str(e))
 
+# Agent Sync Endpoint (receives data from desktop agent)
+@api_router.post("/agent/sync")
+async def receive_agent_sync(request: dict):
+    """Receive synced data from desktop agent"""
+    try:
+        data_type = request.get('data_type')
+        data = request.get('data', [])
+        sync_time = request.get('sync_time')
+        
+        logger.info(f"Received {data_type} sync from agent: {len(data)} items")
+        
+        if data_type == 'inventory':
+            # Clear existing and insert new inventory data
+            await db.inventory_items.delete_many({})
+            
+            for item in data:
+                inventory_obj = InventoryItem(**item)
+                doc = inventory_obj.model_dump()
+                doc['last_updated'] = doc['last_updated'].isoformat()
+                await db.inventory_items.insert_one(doc)
+            
+            logger.info(f"Synced {len(data)} inventory items to database")
+        
+        elif data_type == 'sales':
+            # Clear existing and insert new sales data
+            await db.sales_vouchers.delete_many({})
+            
+            for voucher in data:
+                sales_obj = SalesVoucher(**voucher)
+                doc = sales_obj.model_dump()
+                doc['last_updated'] = doc['last_updated'].isoformat()
+                await db.sales_vouchers.insert_one(doc)
+            
+            logger.info(f"Synced {len(data)} sales vouchers to database")
+        
+        # Update last sync time
+        await db.sync_status.update_one(
+            {'type': 'agent_sync'},
+            {'$set': {
+                'last_sync': sync_time,
+                'data_type': data_type,
+                'count': len(data)
+            }},
+            upsert=True
+        )
+        
+        return APIResponse(
+            success=True,
+            message=f"Successfully synced {len(data)} {data_type} items"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error receiving agent sync: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/sync/status")
+async def get_sync_status():
+    """Get last sync status from desktop agent"""
+    try:
+        sync_status = await db.sync_status.find_one({'type': 'agent_sync'}, {'_id': 0})
+        
+        if not sync_status:
+            return APIResponse(
+                success=True,
+                data={
+                    'last_sync': None,
+                    'is_syncing': False,
+                    'message': 'No sync data available'
+                }
+            )
+        
+        return APIResponse(
+            success=True,
+            data=sync_status
+        )
+    
+    except Exception as e:
+        logger.error(f"Error getting sync status: {e}")
+        return APIResponse(success=False, error=str(e))
+
 # Include the router in the main app
 app.include_router(api_router)
 

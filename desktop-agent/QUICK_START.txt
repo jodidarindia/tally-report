@@ -1,0 +1,78 @@
+==========================================
+  TALLY DESKTOP SYNC AGENT - QUICK START
+==========================================
+
+This agent syncs your local TallyPrime data to the cloud app every 10 minutes,
+enabling remote access from anywhere!
+
+STEP 1: CONFIGURE TALLYPRIME
+-----------------------------
+1. Open TallyPrime
+2. Press F12 (Configure)
+3. Go to: Advanced Configuration → Connectivity
+4. Enable: "Use Tally as Server" on port 9000
+5. Save and restart Tally
+
+STEP 2: INSTALL PYTHON
+-----------------------
+Download Python 3.11+ from: https://www.python.org/downloads/
+During installation, CHECK "Add Python to PATH"
+
+STEP 3: INSTALL AGENT
+----------------------
+1. Open Command Prompt in this folder
+2. Run: pip install -r requirements.txt
+
+STEP 4: CONFIGURE AGENT
+------------------------
+1. Copy .env.example to .env
+2. Edit .env with your settings:
+   - BACKEND_URL = your cloud app URL
+   - AGENT_API_KEY = generate secure key (see README.md)
+
+STEP 5: RUN AGENT
+------------------
+Double-click: run_agent.bat
+
+You should see:
+  ╔════════════════════════════════════════════╗
+  ║   TALLY DESKTOP SYNC AGENT STARTED        ║
+  ╚════════════════════════════════════════════╝
+  
+  ✓ Connected to TallyPrime successfully
+  ✓ Synced inventory items to backend
+  ✓ Synced sales vouchers to backend
+  
+  Agent running. Syncing every 10 minutes...
+
+STEP 6: VERIFY
+--------------
+Open your web app and check:
+- Connection status shows "Connected" (green)
+- Dashboard displays your Tally data
+- Auto-refresh is enabled
+
+TROUBLESHOOTING
+---------------
+If you see errors:
+
+1. "Cannot connect to TallyPrime"
+   → Ensure Tally is running
+   → Check port 9000 is accessible
+
+2. "Failed to sync to backend"
+   → Verify BACKEND_URL is correct
+   → Check internet connection
+
+3. Still having issues?
+   → Read full guide: TALLY_SETUP_GUIDE.md
+   → Check logs: tally_sync_agent.log
+
+==========================================
+For detailed instructions, see:
+  - README.md (complete documentation)
+  - TALLY_SETUP_GUIDE.md (step-by-step guide)
+==========================================
+
+Support: Include tally_sync_agent.log when requesting help
+==========================================
