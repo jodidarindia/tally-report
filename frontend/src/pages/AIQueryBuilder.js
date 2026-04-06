@@ -50,7 +50,7 @@ const AIQueryBuilder = () => {
         className="ai-query-container"
         data-testid="ai-query-container"
         style={{
-          backgroundImage: 'url(https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/1e9e8fc2367de38e12a3264a83ec836765e5585a923a048af222e80cdb30cf72.png)'
+          backgroundImage: `url(${process.env.REACT_APP_AI_BACKGROUND_IMAGE})`
         }}
       >
         <div className="ai-query-bg" />
