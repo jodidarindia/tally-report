@@ -11,14 +11,19 @@ const InventoryAnalytics = () => {
   const [movementData, setMovementData] = useState([]);
   const [belowCostSales, setBelowCostSales] = useState([]);
   const [pivotData, setPivotData] = useState([]);
+  const [salesFrequency, setSalesFrequency] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pivotGroupBy, setPivotGroupBy] = useState('category');
   const [pivotMetric, setPivotMetric] = useState('value');
   const [expandedGroups, setExpandedGroups] = useState({});
+  const [dateFilter, setDateFilter] = useState({
+    start_date: '',
+    end_date: ''
+  });
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, pivotGroupBy, pivotMetric]);
+  }, [activeTab, pivotGroupBy, pivotMetric, dateFilter]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -32,6 +37,14 @@ const InventoryAnalytics = () => {
       } else if (activeTab === 'pivot') {
         const res = await axios.get(`${API}/inventory/pivot-data?group_by=${pivotGroupBy}&metric=${pivotMetric}`);
         setPivotData(res.data?.data?.pivot_table || []);
+      } else if (activeTab === 'sales-frequency') {
+        const params = new URLSearchParams();
+        if (dateFilter.start_date) params.append('start_date', dateFilter.start_date);
+        if (dateFilter.end_date) params.append('end_date', dateFilter.end_date);
+        
+        const url = params.toString() ? `${API}/inventory/sales-frequency?${params.toString()}` : `${API}/inventory/sales-frequency`;
+        const res = await axios.get(url);
+        setSalesFrequency(res.data?.data?.sales_frequency || []);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -68,6 +81,7 @@ const InventoryAnalytics = () => {
   const tabs = [
     { id: 'movement', label: 'Movement Analysis', icon: TrendingUp },
     { id: 'below-cost', label: 'Below Cost Sales', icon: AlertTriangle },
+    { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 },
     { id: 'pivot', label: 'Pivot Table', icon: BarChart3 }
   ];
 
@@ -252,6 +266,126 @@ const InventoryAnalytics = () => {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+
+          {/* Sales Frequency Report */}
+          {activeTab === 'sales-frequency' && (
+            <div>
+              <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-stone-900">Date Filter</h3>
+                  <button
+                    onClick={() => setDateFilter({ start_date: '', end_date: '' })}
+                    className="btn-secondary text-sm"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-2">Start Date</label>
+                    <input
+                      type="date"
+                      value={dateFilter.start_date}
+                      onChange={(e) => setDateFilter({ ...dateFilter, start_date: e.target.value })}
+                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      data-testid="sales-freq-start-date"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-2">End Date</label>
+                    <input
+                      type="date"
+                      value={dateFilter.end_date}
+                      onChange={(e) => setDateFilter({ ...dateFilter, end_date: e.target.value })}
+                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      data-testid="sales-freq-end-date"
+                    />
+                  </div>
+                </div>
+                {(dateFilter.start_date || dateFilter.end_date) && (
+                  <div className="mt-3 text-sm text-stone-600">
+                    Filtering: {dateFilter.start_date || 'All'} to {dateFilter.end_date || 'All'}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="data-table" data-testid="sales-frequency-table">
+                    <thead>
+                      <tr>
+                        <th>Item Name</th>
+                        <th className="numeric">Transaction Count</th>
+                        <th className="numeric">Total Qty Sold</th>
+                        <th className="numeric">Unique Customers</th>
+                        <th className="numeric">Total Revenue</th>
+                        <th className="numeric">Avg Qty/Transaction</th>
+                        <th>Top Customers</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesFrequency.length > 0 ? (
+                        salesFrequency.map((item, idx) => (
+                          <tr key={idx}>
+                            <td className="font-medium text-stone-900">{item.item_name}</td>
+                            <td className="numeric">
+                              <span className="px-3 py-1 bg-[#E7F5F0] text-[#064E3B] rounded-full font-semibold">
+                                {item.transaction_count}
+                              </span>
+                            </td>
+                            <td className="numeric font-semibold">{item.total_quantity_sold}</td>
+                            <td className="numeric">
+                              <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full font-semibold">
+                                {item.unique_customers}
+                              </span>
+                            </td>
+                            <td className="numeric text-[#064E3B] font-semibold">
+                              ₹{item.total_revenue.toLocaleString('en-IN')}
+                            </td>
+                            <td className="numeric">{item.avg_quantity_per_transaction.toFixed(1)}</td>
+                            <td>
+                              <div className="text-xs text-stone-600">
+                                {item.customer_names.slice(0, 2).join(', ')}
+                                {item.customer_names.length > 2 && ` +${item.customer_names.length - 2} more`}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="7" className="text-center py-8 text-stone-500">
+                            No sales data available for the selected date range
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {salesFrequency.length > 0 && (
+                <div className="mt-4 grid grid-cols-3 gap-4">
+                  <div className="bg-white border border-stone-200 rounded-xl p-4">
+                    <div className="text-sm text-stone-600">Total Items</div>
+                    <div className="text-2xl font-semibold text-stone-900">{salesFrequency.length}</div>
+                  </div>
+                  <div className="bg-white border border-stone-200 rounded-xl p-4">
+                    <div className="text-sm text-stone-600">Total Transactions</div>
+                    <div className="text-2xl font-semibold text-stone-900">
+                      {salesFrequency.reduce((sum, item) => sum + item.transaction_count, 0)}
+                    </div>
+                  </div>
+                  <div className="bg-white border border-stone-200 rounded-xl p-4">
+                    <div className="text-sm text-stone-600">Total Revenue</div>
+                    <div className="text-2xl font-semibold text-[#064E3B]">
+                      ₹{salesFrequency.reduce((sum, item) => sum + item.total_revenue, 0).toLocaleString('en-IN')}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
