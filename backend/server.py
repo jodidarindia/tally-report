@@ -13,10 +13,14 @@ from models import (
     TallyConnection, TallyConnectionCreate,
     InventoryItem, SalesVoucher,
     AIQuery, AIQueryRequest,
-    ExportRequest, APIResponse
+    ExportRequest, APIResponse,
+    CustomerOutstanding, CustomerFollowup, CustomerFollowupCreate,
+    CustomerTarget, SalesmanPerformance,
+    InventoryMovement, BelowCostSale
 )
 from services.tally_client import TallyClient
 from services.ai_service import AIReportService
+from services.enhanced_ai_service import EnhancedAIReportService
 from services.export_service import ExportService
 
 ROOT_DIR = Path(__file__).parent
@@ -510,6 +514,483 @@ app.add_middleware(
 )
 
 @app.on_event("shutdown")
+
+
+# ==================== ENHANCED AI REPORT ENDPOINTS ====================
+
+@api_router.post("/ai/advanced-query")
+async def ai_advanced_query(request: AIQueryRequest):
+    """Enhanced AI report generation with filters"""
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        customer_data = await db.customer_outstanding.find({}, {"_id": 0}).to_list(1000)
+        
+        ai_service = EnhancedAIReportService()
+        result = await ai_service.generate_advanced_report(
+            query=request.query,
+            report_type=request.report_type or 'general',
+            filters=request.filters or {},
+            inventory_data=inventory_items,
+            sales_data=sales_vouchers,
+            customer_data=customer_data
+        )
+        
+        if result.get("success"):
+            # Save query
+            ai_query_obj = AIQuery(
+                query_text=request.query,
+                response=result.get("raw_response"),
+                report_data=result.get("report"),
+                filters=request.filters
+            )
+            doc = ai_query_obj.model_dump()
+            doc['created_at'] = doc['created_at'].isoformat()
+            await db.ai_queries.insert_one(doc)
+        
+        return APIResponse(
+            success=result.get("success", False),
+            data=result.get("report"),
+            error=result.get("error")
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in advanced AI query: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== CUSTOMER & CRM ENDPOINTS ====================
+
+@api_router.get("/customers/outstanding")
+async def get_customer_outstanding(customer: Optional[str] = None):
+    """Get outstanding payments by customer"""
+    try:
+        # Calculate from sales data
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Group by customer
+        customer_map = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            amount = voucher.get("total_amount", 0)
+            
+            if party not in customer_map:
+                customer_map[party] = {
+                    "customer_name": party,
+                    "outstanding_amount": 0,
+                    "total_sales": 0,
+                    "voucher_count": 0,
+                    "last_transaction": voucher.get("voucher_date")
+                }
+            
+            customer_map[party]["total_sales"] += amount
+            customer_map[party]["voucher_count"] += 1
+            customer_map[party]["outstanding_amount"] += amount * 0.3  # Mock 30% outstanding
+        
+        customers = list(customer_map.values())
+        
+        # Filter if customer specified
+        if customer:
+            customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
+        
+        # Calculate aging
+        for cust in customers:
+            outstanding = cust["outstanding_amount"]
+            cust["aging_30_days"] = outstanding * 0.4
+            cust["aging_60_days"] = outstanding * 0.3
+            cust["aging_90_days"] = outstanding * 0.2
+            cust["aging_90_plus"] = outstanding * 0.1
+            cust["overdue_amount"] = outstanding * 0.5
+        
+        return APIResponse(
+            success=True,
+            data={"customers": customers, "total_outstanding": sum(c["outstanding_amount"] for c in customers)}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching customer outstanding: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/customers/followups")
+async def get_followups(status: Optional[str] = None):
+    """Get customer follow-ups"""
+    try:
+        query = {}
+        if status:
+            query["status"] = status
+        
+        followups = await db.customer_followups.find(query, {"_id": 0}).sort("followup_date", -1).to_list(100)
+        
+        return APIResponse(
+            success=True,
+            data={"followups": followups, "count": len(followups)}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching followups: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/customers/followups")
+async def create_followup(followup: CustomerFollowupCreate):
+    """Create a new customer follow-up"""
+    try:
+        followup_obj = CustomerFollowup(
+            customer_name=followup.customer_name,
+            followup_date=datetime.fromisoformat(followup.followup_date),
+            followup_type=followup.followup_type,
+            status="pending",
+            notes=followup.notes
+        )
+        
+        doc = followup_obj.model_dump()
+        doc['followup_date'] = doc['followup_date'].isoformat()
+        doc['created_at'] = doc['created_at'].isoformat()
+        
+        await db.customer_followups.insert_one(doc)
+        
+        return APIResponse(
+            success=True,
+            message="Follow-up created successfully",
+            data={"id": followup_obj.id}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error creating followup: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.patch("/customers/followups/{followup_id}")
+async def update_followup_status(followup_id: str, status: str):
+    """Update follow-up status"""
+    try:
+        result = await db.customer_followups.update_one(
+            {"id": followup_id},
+            {"$set": {"status": status}}
+        )
+        
+        return APIResponse(
+            success=result.modified_count > 0,
+            message="Follow-up updated" if result.modified_count > 0 else "Follow-up not found"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error updating followup: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/customers/targets")
+async def get_customer_targets():
+    """Get customer targets and achievement"""
+    try:
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Calculate achievement by customer
+        customer_sales = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            amount = voucher.get("total_amount", 0)
+            customer_sales[party] = customer_sales.get(party, 0) + amount
+        
+        # Create targets (mock targets, in real scenario from database)
+        targets = []
+        for customer, achieved in customer_sales.items():
+            target_amount = achieved * 1.2  # Target is 120% of current
+            targets.append({
+                "customer_name": customer,
+                "target_amount": target_amount,
+                "achieved_amount": achieved,
+                "achievement_percentage": (achieved / target_amount * 100) if target_amount > 0 else 0,
+                "remaining": target_amount - achieved
+            })
+        
+        targets.sort(key=lambda x: x["achievement_percentage"], reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={"targets": targets}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching customer targets: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/customers/payment-behavior")
+async def get_payment_behavior(customer: Optional[str] = None):
+    """Analyze customer payment behavior"""
+    try:
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Group by customer and analyze behavior
+        behavior_map = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            amount = voucher.get("total_amount", 0)
+            date = voucher.get("voucher_date", "")
+            
+            if party not in behavior_map:
+                behavior_map[party] = {
+                    "customer_name": party,
+                    "total_transactions": 0,
+                    "total_amount": 0,
+                    "average_transaction": 0,
+                    "payment_pattern": "regular",  # regular, irregular, risky
+                    "average_payment_delay": 15,  # mock days
+                    "credit_score": 0
+                }
+            
+            behavior_map[party]["total_transactions"] += 1
+            behavior_map[party]["total_amount"] += amount
+        
+        # Calculate averages and scores
+        for customer_name, data in behavior_map.items():
+            data["average_transaction"] = data["total_amount"] / data["total_transactions"]
+            
+            # Mock credit score based on transaction count and amount
+            data["credit_score"] = min(100, (data["total_transactions"] * 5) + (data["total_amount"] / 10000))
+            
+            # Classify payment pattern
+            if data["average_payment_delay"] < 10:
+                data["payment_pattern"] = "excellent"
+            elif data["average_payment_delay"] < 30:
+                data["payment_pattern"] = "regular"
+            elif data["average_payment_delay"] < 60:
+                data["payment_pattern"] = "irregular"
+            else:
+                data["payment_pattern"] = "risky"
+        
+        customers = list(behavior_map.values())
+        
+        # Filter if specified
+        if customer:
+            customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
+        
+        return APIResponse(
+            success=True,
+            data={"customers": customers}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error analyzing payment behavior: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== SALESMAN PERFORMANCE ENDPOINTS ====================
+
+@api_router.get("/salesman/performance")
+async def get_salesman_performance():
+    """Get salesman-wise performance"""
+    try:
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Group by salesman
+        salesman_map = {}
+        for voucher in sales_vouchers:
+            salesman = voucher.get("salesman", "Direct Sales")
+            amount = voucher.get("total_amount", 0)
+            customer = voucher.get("party_name", "")
+            
+            if salesman not in salesman_map:
+                salesman_map[salesman] = {
+                    "salesman_name": salesman,
+                    "total_sales": 0,
+                    "customers": set(),
+                    "transactions": 0
+                }
+            
+            salesman_map[salesman]["total_sales"] += amount
+            salesman_map[salesman]["customers"].add(customer)
+            salesman_map[salesman]["transactions"] += 1
+        
+        # Create performance list
+        performance = []
+        for salesman, data in salesman_map.items():
+            target_amount = data["total_sales"] * 1.15  # Target 115% of current
+            performance.append({
+                "salesman_name": salesman,
+                "target_amount": target_amount,
+                "achieved_amount": data["total_sales"],
+                "achievement_percentage": (data["total_sales"] / target_amount * 100),
+                "total_customers": len(data["customers"]),
+                "total_transactions": data["transactions"],
+                "average_transaction": data["total_sales"] / data["transactions"] if data["transactions"] > 0 else 0
+            })
+        
+        performance.sort(key=lambda x: x["achievement_percentage"], reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={"salesman": performance}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching salesman performance: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== INVENTORY ANALYTICS ENDPOINTS ====================
+
+@api_router.get("/inventory/movement-analysis")
+async def get_inventory_movement():
+    """Analyze inventory movement patterns"""
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Calculate movement for each item
+        item_sales = {}
+        for voucher in sales_vouchers:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = item.get("quantity", 0)
+                item_sales[item_name] = item_sales.get(item_name, 0) + qty
+        
+        movement_data = []
+        for item in inventory_items:
+            item_name = item["item_name"]
+            current_stock = item["quantity"]
+            sales_qty = item_sales.get(item_name, 0)
+            
+            # Mock opening stock (in real scenario, get from Tally)
+            opening_stock = current_stock + sales_qty
+            
+            # Calculate movement rate
+            avg_stock = (opening_stock + current_stock) / 2
+            movement_rate = (sales_qty / avg_stock * 100) if avg_stock > 0 else 0
+            days_to_sell = (current_stock / (sales_qty / 30)) if sales_qty > 0 else 999
+            
+            movement_data.append({
+                "item_name": item_name,
+                "category": item.get("category", "General"),
+                "opening_stock": opening_stock,
+                "purchases": 0,  # Would come from purchase data
+                "sales": sales_qty,
+                "closing_stock": current_stock,
+                "movement_rate": round(movement_rate, 2),
+                "days_to_sell": round(days_to_sell, 1),
+                "classification": "fast-moving" if movement_rate > 50 else "slow-moving" if movement_rate > 20 else "dead-stock"
+            })
+        
+        # Sort by movement rate
+        movement_data.sort(key=lambda x: x["movement_rate"], reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "movements": movement_data,
+                "summary": {
+                    "fast_moving": len([m for m in movement_data if m["classification"] == "fast-moving"]),
+                    "slow_moving": len([m for m in movement_data if m["classification"] == "slow-moving"]),
+                    "dead_stock": len([m for m in movement_data if m["classification"] == "dead-stock"])
+                }
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error analyzing inventory movement: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/inventory/below-cost-sales")
+async def get_below_cost_sales():
+    """Identify items sold below purchase cost"""
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Create item cost map
+        item_costs = {}
+        for item in inventory_items:
+            item_costs[item["item_name"]] = {
+                "purchase_price": item.get("purchase_price", item.get("price", 0) * 0.7),  # Mock 70% cost
+                "selling_price": item.get("price", 0)
+            }
+        
+        below_cost_sales = []
+        for voucher in sales_vouchers:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                sale_price = item.get("rate", 0)
+                quantity = item.get("quantity", 0)
+                
+                if item_name in item_costs:
+                    purchase_price = item_costs[item_name]["purchase_price"]
+                    
+                    if sale_price < purchase_price:
+                        loss_per_unit = purchase_price - sale_price
+                        total_loss = loss_per_unit * quantity
+                        
+                        below_cost_sales.append({
+                            "item_name": item_name,
+                            "sale_price": sale_price,
+                            "purchase_price": purchase_price,
+                            "loss_per_unit": loss_per_unit,
+                            "quantity_sold": quantity,
+                            "total_loss": total_loss,
+                            "voucher_id": voucher.get("voucher_id"),
+                            "sale_date": voucher.get("voucher_date"),
+                            "customer": voucher.get("party_name")
+                        })
+        
+        total_loss = sum(item["total_loss"] for item in below_cost_sales)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "below_cost_sales": below_cost_sales,
+                "total_loss": total_loss,
+                "count": len(below_cost_sales)
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error finding below cost sales: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/inventory/pivot-data")
+async def get_pivot_data(group_by: str = "category", metric: str = "value"):
+    """Get pivot table data for inventory"""
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        
+        # Group data
+        pivot_data = {}
+        for item in inventory_items:
+            group_key = item.get(group_by, "Uncategorized")
+            
+            if group_key not in pivot_data:
+                pivot_data[group_key] = {
+                    "group": group_key,
+                    "total_items": 0,
+                    "total_quantity": 0,
+                    "total_value": 0,
+                    "items": []
+                }
+            
+            pivot_data[group_key]["total_items"] += 1
+            pivot_data[group_key]["total_quantity"] += item.get("quantity", 0)
+            pivot_data[group_key]["total_value"] += item.get("quantity", 0) * item.get("price", 0)
+            pivot_data[group_key]["items"].append(item)
+        
+        pivot_list = list(pivot_data.values())
+        
+        # Sort by metric
+        if metric == "value":
+            pivot_list.sort(key=lambda x: x["total_value"], reverse=True)
+        elif metric == "quantity":
+            pivot_list.sort(key=lambda x: x["total_quantity"], reverse=True)
+        else:
+            pivot_list.sort(key=lambda x: x["total_items"], reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "pivot_table": pivot_list,
+                "group_by": group_by,
+                "metric": metric
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error creating pivot table: {e}")
+        return APIResponse(success=False, error=str(e))
+
 async def shutdown_db_client():
     client.close()
     if tally_client_instance:
