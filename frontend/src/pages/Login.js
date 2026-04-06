@@ -11,6 +11,7 @@ const Login = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [devMode, setDevMode] = useState(false);
 
   const handleSendOTP = async (e) => {
     e.preventDefault();
@@ -25,6 +26,7 @@ const Login = ({ onLoginSuccess }) => {
       
       if (response.data?.success) {
         toast.success('OTP sent to your email!');
+        setDevMode(response.data?.data?.dev_mode || false);
         setStep('otp');
       } else {
         toast.error(response.data?.error || 'Failed to send OTP');
@@ -132,6 +134,11 @@ const Login = ({ onLoginSuccess }) => {
                 <p className="text-xs text-stone-500 mb-3">
                   OTP sent to {email}
                 </p>
+                {devMode && (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3" data-testid="dev-mode-hint">
+                    Dev mode: Use OTP <span className="font-mono font-bold">123456</span>
+                  </p>
+                )}
                 <input
                   type="text"
                   value={otp}

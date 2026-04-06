@@ -98,11 +98,12 @@ const Navigation = ({ userEmail, onLogout }) => {
             </div>
 
             <div className="flex items-center gap-3 ml-4 pl-4 border-l border-stone-200">
-              <span className="text-sm text-stone-600">{userEmail}</span>
+              <span className="text-sm text-stone-600" data-testid="user-email">{userEmail}</span>
               <button
                 onClick={onLogout}
                 className="text-stone-600 hover:text-red-600 transition-colors"
                 title="Logout"
+                data-testid="logout-button"
               >
                 <LogOut size={18} />
               </button>
