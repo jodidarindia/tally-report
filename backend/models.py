@@ -1,9 +1,9 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import uuid
 
-# Existing models
+# Existing models (keeping all previous models)
 class TallyConnection(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -46,7 +46,6 @@ class SalesVoucher(BaseModel):
     salesman: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# New CRM & Payment Models
 class CustomerOutstanding(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -66,8 +65,8 @@ class CustomerFollowup(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     customer_name: str
     followup_date: datetime
-    followup_type: str  # 'call', 'email', 'visit', 'meeting'
-    status: str  # 'pending', 'completed', 'cancelled'
+    followup_type: str
+    status: str
     notes: Optional[str] = None
     next_followup: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -84,7 +83,7 @@ class CustomerTarget(BaseModel):
     customer_name: str
     target_amount: float
     achieved_amount: float
-    period: str  # 'monthly', 'quarterly', 'yearly'
+    period: str
     start_date: str
     end_date: str
 
@@ -98,7 +97,6 @@ class SalesmanPerformance(BaseModel):
     total_customers: int
     period: str
 
-# AI Report Models
 class AIQuery(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -111,9 +109,8 @@ class AIQuery(BaseModel):
 class AIQueryRequest(BaseModel):
     query: str
     filters: Optional[Dict[str, Any]] = None
-    report_type: Optional[str] = None  # 'inventory', 'sales', 'customer', 'profit'
+    report_type: Optional[str] = None
 
-# Inventory Analytics Models
 class InventoryMovement(BaseModel):
     model_config = ConfigDict(extra="ignore")
     item_name: str
@@ -121,7 +118,7 @@ class InventoryMovement(BaseModel):
     purchases: float
     sales: float
     closing_stock: float
-    movement_rate: float  # (Sales / Average Stock) * 100
+    movement_rate: float
     days_to_sell: float
 
 class BelowCostSale(BaseModel):
@@ -135,7 +132,6 @@ class BelowCostSale(BaseModel):
     voucher_id: str
     sale_date: str
 
-# Export Models
 class ExportRequest(BaseModel):
     report_type: str
     format: str
@@ -146,3 +142,49 @@ class APIResponse(BaseModel):
     data: Optional[Any] = None
     error: Optional[str] = None
     message: Optional[str] = None
+
+# New Authentication Models
+class OTPRequest(BaseModel):
+    email: EmailStr
+
+class OTPVerify(BaseModel):
+    email: EmailStr
+    otp: str
+
+class OTPSession(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: str
+    otp: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime
+    verified: bool = False
+
+class UserSession(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: str
+    session_token: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime
+
+# New Purchase Order Models
+class PurchaseOrderItem(BaseModel):
+    item_name: str
+    current_stock: float
+    reorder_level: float
+    recommended_quantity: float
+    priority: str  # 'urgent', 'high', 'medium', 'low'
+    reason: str
+    estimated_cost: float
+
+class PurchaseOrder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    po_number: str
+    items: List[PurchaseOrderItem]
+    total_items: int
+    total_cost: float
+    ai_analysis: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = "draft"  # draft, approved, sent, received

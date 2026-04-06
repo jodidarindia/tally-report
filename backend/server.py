@@ -16,12 +16,16 @@ from models import (
     ExportRequest, APIResponse,
     CustomerOutstanding, CustomerFollowup, CustomerFollowupCreate,
     CustomerTarget, SalesmanPerformance,
-    InventoryMovement, BelowCostSale
+    InventoryMovement, BelowCostSale,
+    OTPRequest, OTPVerify, OTPSession, UserSession,
+    PurchaseOrder, PurchaseOrderItem
 )
 from services.tally_client import TallyClient
 from services.ai_service import AIReportService
 from services.enhanced_ai_service import EnhancedAIReportService
 from services.export_service import ExportService
+from services.auth_service import AuthService
+from services.purchase_order_ai import PurchaseOrderAI
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -526,6 +530,287 @@ async def get_sync_status():
     
     except Exception as e:
         logger.error(f"Error getting sync status: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@api_router.post("/auth/send-otp")
+async def send_otp(request: OTPRequest):
+    """Send OTP to user's email"""
+    try:
+        auth_service = AuthService()
+        
+        # Generate OTP
+        otp = auth_service.generate_otp()
+        
+        # Send email
+        email_sent = await auth_service.send_otp_email(request.email, otp)
+        
+        if not email_sent:
+            return APIResponse(success=False, error="Failed to send OTP email")
+        
+        # Store OTP in database
+        otp_session = OTPSession(
+            email=request.email,
+            otp=otp,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+        )
+        
+        doc = otp_session.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        doc['expires_at'] = doc['expires_at'].isoformat()
+        
+        # Delete any existing OTPs for this email
+        await db.otp_sessions.delete_many({"email": request.email})
+        
+        await db.otp_sessions.insert_one(doc)
+        
+        logger.info(f"OTP sent to {request.email}")
+        
+        return APIResponse(
+            success=True,
+            message=f"OTP sent to {request.email}",
+            data={"email": request.email}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error sending OTP: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/auth/verify-otp")
+async def verify_otp(request: OTPVerify):
+    """Verify OTP and create session"""
+    try:
+        auth_service = AuthService()
+        
+        # Find OTP session
+        otp_session = await db.otp_sessions.find_one(
+            {"email": request.email, "otp": request.otp},
+            {"_id": 0}
+        )
+        
+        if not otp_session:
+            return APIResponse(success=False, error="Invalid OTP")
+        
+        # Check expiration
+        expires_at = datetime.fromisoformat(otp_session['expires_at'])
+        if auth_service.is_otp_expired(expires_at):
+            return APIResponse(success=False, error="OTP has expired")
+        
+        # Mark as verified
+        await db.otp_sessions.update_one(
+            {"email": request.email, "otp": request.otp},
+            {"$set": {"verified": True}}
+        )
+        
+        # Create user session
+        session_token = auth_service.generate_session_token()
+        user_session = UserSession(
+            email=request.email,
+            session_token=session_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
+        )
+        
+        doc = user_session.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        doc['expires_at'] = doc['expires_at'].isoformat()
+        
+        await db.user_sessions.insert_one(doc)
+        
+        logger.info(f"User logged in: {request.email}")
+        
+        return APIResponse(
+            success=True,
+            message="Login successful",
+            data={
+                "email": request.email,
+                "session_token": session_token,
+                "expires_at": doc['expires_at']
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error verifying OTP: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/auth/verify-session")
+async def verify_session(session_token: str):
+    """Verify if session is still valid"""
+    try:
+        auth_service = AuthService()
+        
+        session = await db.user_sessions.find_one(
+            {"session_token": session_token},
+            {"_id": 0}
+        )
+        
+        if not session:
+            return APIResponse(success=False, error="Invalid session")
+        
+        expires_at = datetime.fromisoformat(session['expires_at'])
+        if not auth_service.is_session_valid(expires_at):
+            return APIResponse(success=False, error="Session expired")
+        
+        return APIResponse(
+            success=True,
+            data={"email": session['email'], "valid": True}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error verifying session: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/auth/logout")
+async def logout(session_token: str):
+    """Logout user by invalidating session"""
+    try:
+        result = await db.user_sessions.delete_one({"session_token": session_token})
+        
+        return APIResponse(
+            success=result.deleted_count > 0,
+            message="Logged out successfully" if result.deleted_count > 0 else "Session not found"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error logging out: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== PURCHASE ORDER AI ENDPOINTS ====================
+
+@api_router.post("/inventory/generate-purchase-order")
+async def generate_purchase_order():
+    """Generate AI-powered purchase order recommendations"""
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        po_ai = PurchaseOrderAI()
+        result = await po_ai.generate_purchase_order(inventory_items, sales_vouchers)
+        
+        if result.get("success"):
+            # Save PO to database
+            po_number = f"PO-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            po_data = result.get("purchase_order", {})
+            
+            purchase_order = PurchaseOrder(
+                po_number=po_number,
+                items=[PurchaseOrderItem(**item) for item in po_data.get("urgent_items", [])],
+                total_items=len(po_data.get("urgent_items", [])),
+                total_cost=po_data.get("total_estimated_cost", 0),
+                ai_analysis=po_data.get("analysis", ""),
+                status="draft"
+            )
+            
+            doc = purchase_order.model_dump()
+            doc['created_at'] = doc['created_at'].isoformat()
+            
+            await db.purchase_orders.insert_one(doc)
+            
+            return APIResponse(
+                success=True,
+                data=po_data,
+                message=f"Purchase order {po_number} generated"
+            )
+        else:
+            return APIResponse(success=False, error=result.get("error"))
+    
+    except Exception as e:
+        logger.error(f"Error generating purchase order: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/inventory/purchase-orders")
+async def get_purchase_orders(status: Optional[str] = None):
+    """Get all purchase orders"""
+    try:
+        query = {}
+        if status:
+            query["status"] = status
+        
+        pos = await db.purchase_orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+        
+        return APIResponse(
+            success=True,
+            data={"purchase_orders": pos, "count": len(pos)}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching purchase orders: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== ENHANCED PIVOT TABLE ENDPOINTS ====================
+
+@api_router.get("/inventory/sales-frequency")
+async def get_sales_frequency(start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """Get sales frequency and unique customers per item"""
+    try:
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        # Apply date filter
+        if start_date or end_date:
+            filtered_vouchers = []
+            for v in sales_vouchers:
+                v_date = v.get("voucher_date", "")
+                if start_date and v_date < start_date:
+                    continue
+                if end_date and v_date > end_date:
+                    continue
+                filtered_vouchers.append(v)
+            sales_vouchers = filtered_vouchers
+        
+        # Calculate frequency and unique customers per item
+        item_stats = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = item.get("quantity", 0)
+                
+                if item_name not in item_stats:
+                    item_stats[item_name] = {
+                        "item_name": item_name,
+                        "total_quantity_sold": 0,
+                        "transaction_count": 0,
+                        "unique_customers": set(),
+                        "total_revenue": 0
+                    }
+                
+                item_stats[item_name]["total_quantity_sold"] += qty
+                item_stats[item_name]["transaction_count"] += 1
+                item_stats[item_name]["unique_customers"].add(party)
+                item_stats[item_name]["total_revenue"] += qty * item.get("rate", 0)
+        
+        # Convert to list and add unique customer count
+        frequency_data = []
+        for item_name, stats in item_stats.items():
+            frequency_data.append({
+                "item_name": item_name,
+                "total_quantity_sold": stats["total_quantity_sold"],
+                "transaction_count": stats["transaction_count"],
+                "unique_customers": len(stats["unique_customers"]),
+                "customer_names": list(stats["unique_customers"]),
+                "total_revenue": stats["total_revenue"],
+                "avg_quantity_per_transaction": stats["total_quantity_sold"] / stats["transaction_count"] if stats["transaction_count"] > 0 else 0
+            })
+        
+        # Sort by transaction count
+        frequency_data.sort(key=lambda x: x["transaction_count"], reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "sales_frequency": frequency_data,
+                "date_range": {"start": start_date, "end": end_date},
+                "total_items": len(frequency_data)
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error calculating sales frequency: {e}")
         return APIResponse(success=False, error=str(e))
 
 
