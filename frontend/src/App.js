@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import axios from 'axios';
-import { BarChart3, Package, TrendingUp, Bot, FileText, Settings, Menu, X, Users, Activity, Zap } from 'lucide-react';
+import { BarChart3, Package, TrendingUp, Bot, FileText, Settings, Menu, X, Users, Activity, Zap, LogOut } from 'lucide-react';
 import '@/App.css';
 import '@/index.css';
 
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
 import Sales from './pages/Sales';
@@ -19,7 +20,7 @@ import SalesmanPerformance from './pages/SalesmanPerformance';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Navigation = () => {
+const Navigation = ({ userEmail, onLogout }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
@@ -91,12 +92,20 @@ const Navigation = () => {
               );
             })}
 
-            <div
-              data-testid="connection-status-badge"
-              className={`status-badge ${isConnected ? 'connected' : 'disconnected'}`}
-            >
+            <div className={`status-badge ${isConnected ? 'connected' : 'disconnected'}`}>
               <span className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-600' : 'bg-red-600'}`} />
               {isConnected ? 'Connected' : 'Disconnected'}
+            </div>
+
+            <div className="flex items-center gap-3 ml-4 pl-4 border-l border-stone-200">
+              <span className="text-sm text-stone-600">{userEmail}</span>
+              <button
+                onClick={onLogout}
+                className="text-stone-600 hover:text-red-600 transition-colors"
+                title="Logout"
+              >
+                <LogOut size={18} />
+              </button>
             </div>
           </div>
         </div>
@@ -130,10 +139,74 @@ const Navigation = () => {
 };
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check if user has valid session
+    const sessionToken = localStorage.getItem('session_token');
+    const savedEmail = localStorage.getItem('user_email');
+    
+    if (sessionToken && savedEmail) {
+      // Verify session with backend
+      axios.post(`${API}/auth/verify-session?session_token=${sessionToken}`)
+        .then(response => {
+          if (response.data?.success) {
+            setIsAuthenticated(true);
+            setUserEmail(savedEmail);
+          } else {
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_email');
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('session_token');
+          localStorage.removeItem('user_email');
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleLoginSuccess = (email, sessionToken) => {
+    setIsAuthenticated(true);
+    setUserEmail(email);
+  };
+
+  const handleLogout = async () => {
+    const sessionToken = localStorage.getItem('session_token');
+    if (sessionToken) {
+      try {
+        await axios.post(`${API}/auth/logout?session_token=${sessionToken}`);
+      } catch (error) {
+        console.error('Logout error:', error);
+      }
+    }
+    
+    localStorage.removeItem('session_token');
+    localStorage.removeItem('user_email');
+    setIsAuthenticated(false);
+    setUserEmail('');
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="App">
       <BrowserRouter>
-        <Navigation />
+        <Navigation userEmail={userEmail} onLogout={handleLogout} />
         <div className="max-w-7xl mx-auto px-6 py-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />
