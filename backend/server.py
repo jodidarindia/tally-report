@@ -502,19 +502,6 @@ async def get_sync_status():
         logger.error(f"Error getting sync status: {e}")
         return APIResponse(success=False, error=str(e))
 
-# Include the router in the main app
-app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("shutdown")
-
 
 # ==================== ENHANCED AI REPORT ENDPOINTS ====================
 
@@ -991,6 +978,20 @@ async def get_pivot_data(group_by: str = "category", metric: str = "value"):
         logger.error(f"Error creating pivot table: {e}")
         return APIResponse(success=False, error=str(e))
 
+
+
+# Include the router in the main app
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
     if tally_client_instance:

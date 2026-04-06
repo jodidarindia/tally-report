@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import { BarChart3, Package, TrendingUp, Bot, FileText, Settings, Menu, X } from 'lucide-react';
+import { BarChart3, Package, TrendingUp, Bot, FileText, Settings, Menu, X, Users, Activity, Zap } from 'lucide-react';
 import '@/App.css';
 import '@/index.css';
 
@@ -11,6 +11,10 @@ import Sales from './pages/Sales';
 import AIQueryBuilder from './pages/AIQueryBuilder';
 import ReportHistory from './pages/ReportHistory';
 import TallySetup from './pages/TallySetup';
+import CustomerCRM from './pages/CustomerCRM';
+import EnhancedAIReports from './pages/EnhancedAIReports';
+import InventoryAnalytics from './pages/InventoryAnalytics';
+import SalesmanPerformance from './pages/SalesmanPerformance';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -37,8 +41,10 @@ const Navigation = () => {
     { path: '/', icon: BarChart3, label: 'Dashboard' },
     { path: '/inventory', icon: Package, label: 'Inventory' },
     { path: '/sales', icon: TrendingUp, label: 'Sales' },
-    { path: '/ai-query', icon: Bot, label: 'AI Reports' },
-    { path: '/history', icon: FileText, label: 'History' },
+    { path: '/crm', icon: Users, label: 'CRM' },
+    { path: '/analytics', icon: Activity, label: 'Analytics' },
+    { path: '/ai-reports', icon: Zap, label: 'AI Reports' },
+    { path: '/salesman', icon: Users, label: 'Salesman' },
     { path: '/setup', icon: Settings, label: 'Setup' }
   ];
 
@@ -133,7 +139,11 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/sales" element={<Sales />} />
+            <Route path="/crm" element={<CustomerCRM />} />
+            <Route path="/analytics" element={<InventoryAnalytics />} />
+            <Route path="/ai-reports" element={<EnhancedAIReports />} />
             <Route path="/ai-query" element={<AIQueryBuilder />} />
+            <Route path="/salesman" element={<SalesmanPerformance />} />
             <Route path="/history" element={<ReportHistory />} />
             <Route path="/setup" element={<TallySetup />} />
           </Routes>
