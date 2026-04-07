@@ -984,27 +984,47 @@ async def update_followup_status(followup_id: str, status: str):
 
 @api_router.get("/customers/targets")
 async def get_customer_targets():
-    """Get customer targets and achievement"""
+    """Get customer targets and achievement with monthly breakdown"""
     try:
         sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        custom_targets = await db.customer_targets.find({}, {"_id": 0}).to_list(100)
+        custom_target_map = {t["customer_name"]: t for t in custom_targets}
         
-        # Calculate achievement by customer
+        # Calculate achievement by customer (current FY and last FY)
         customer_sales = {}
+        customer_monthly = {}
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
             amount = voucher.get("total_amount", 0)
+            v_date = voucher.get("voucher_date", "")
+            
             customer_sales[party] = customer_sales.get(party, 0) + amount
+            
+            # Monthly breakdown
+            if v_date:
+                month_key = v_date[:7]  # YYYY-MM
+                if party not in customer_monthly:
+                    customer_monthly[party] = {}
+                customer_monthly[party][month_key] = customer_monthly[party].get(month_key, 0) + amount
         
-        # Create targets (mock targets, in real scenario from database)
+        # Build targets list
         targets = []
         for customer, achieved in customer_sales.items():
-            target_amount = achieved * 1.2  # Target is 120% of current
+            ct = custom_target_map.get(customer, {})
+            target_amount = ct.get("target_amount", achieved * 1.2)
+            
+            monthly = customer_monthly.get(customer, {})
+            monthly_data = [{"month": k, "amount": v} for k, v in sorted(monthly.items())]
+            
             targets.append({
                 "customer_name": customer,
                 "target_amount": target_amount,
+                "last_fy_sales": ct.get("last_fy_sales", achieved),
                 "achieved_amount": achieved,
                 "achievement_percentage": (achieved / target_amount * 100) if target_amount > 0 else 0,
-                "remaining": target_amount - achieved
+                "remaining": max(0, target_amount - achieved),
+                "monthly_sales": monthly_data,
+                "has_custom_target": customer in custom_target_map
             })
         
         targets.sort(key=lambda x: x["achievement_percentage"], reverse=True)
@@ -1016,6 +1036,138 @@ async def get_customer_targets():
     
     except Exception as e:
         logger.error(f"Error fetching customer targets: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/customers/targets/set")
+async def set_customer_target(request: dict):
+    """Set target for a customer based on last FY sales"""
+    try:
+        customer_name = request.get("customer_name", "").strip()
+        target_amount = request.get("target_amount", 0)
+        last_fy_sales = request.get("last_fy_sales", 0)
+        
+        if not customer_name:
+            return APIResponse(success=False, error="Customer name is required")
+        
+        doc = {
+            "customer_name": customer_name,
+            "target_amount": float(target_amount),
+            "last_fy_sales": float(last_fy_sales),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        await db.customer_targets.update_one(
+            {"customer_name": customer_name},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        return APIResponse(
+            success=True,
+            message=f"Target set for {customer_name}",
+            data=doc
+        )
+    except Exception as e:
+        logger.error(f"Error setting customer target: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/customers/ledger/export")
+async def export_customer_ledger(request: dict):
+    """Export selected customer's ledger as Excel or PDF"""
+    try:
+        customer_name = request.get("customer_name", "")
+        export_format = request.get("format", "excel")
+        
+        if not customer_name:
+            return APIResponse(success=False, error="Customer name is required")
+        
+        sales_vouchers = await db.sales_vouchers.find(
+            {"party_name": customer_name},
+            {"_id": 0}
+        ).to_list(10000)
+        
+        rows = []
+        running_total = 0
+        for v in sorted(sales_vouchers, key=lambda x: x.get("voucher_date", "")):
+            amount = v.get("total_amount", 0)
+            running_total += amount
+            items_str = ", ".join([f"{i.get('item', '')} x{i.get('quantity', 0)}" for i in v.get("items", [])])
+            rows.append({
+                "Date": v.get("voucher_date", ""),
+                "Voucher No": v.get("reference_number", v.get("voucher_id", "")),
+                "Items": items_str,
+                "Amount": amount,
+                "Running Total": running_total,
+                "Salesman": v.get("salesman", "")
+            })
+        
+        if not rows:
+            return APIResponse(success=False, error=f"No transactions found for {customer_name}")
+        
+        export_service = ExportService()
+        
+        if export_format == "excel":
+            output = export_service.export_to_excel(rows, f"Ledger - {customer_name}")
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = f"ledger_{customer_name.replace(' ', '_')}.xlsx"
+        else:
+            output = export_service.export_to_pdf(rows, f"Ledger - {customer_name}", f"Customer Ledger: {customer_name}")
+            media_type = "application/pdf"
+            filename = f"ledger_{customer_name.replace(' ', '_')}.pdf"
+        
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting customer ledger: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/dashboard/reminders")
+async def get_dashboard_reminders():
+    """Get upcoming follow-up reminders for the dashboard"""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Get pending followups
+        followups = await db.customer_followups.find(
+            {"status": "pending"},
+            {"_id": 0}
+        ).sort("followup_date", 1).to_list(50)
+        
+        overdue = []
+        today = []
+        upcoming = []
+        now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        for f in followups:
+            f_date = f.get("followup_date", "")[:10]
+            if f_date < now_date:
+                f["reminder_type"] = "overdue"
+                overdue.append(f)
+            elif f_date == now_date:
+                f["reminder_type"] = "today"
+                today.append(f)
+            else:
+                f["reminder_type"] = "upcoming"
+                upcoming.append(f)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "overdue": overdue,
+                "today": today,
+                "upcoming": upcoming[:5],
+                "total_pending": len(followups),
+                "overdue_count": len(overdue),
+                "today_count": len(today)
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error fetching reminders: {e}")
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/customers/payment-behavior")

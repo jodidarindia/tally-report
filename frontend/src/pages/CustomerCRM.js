@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Users, Phone, Mail, Calendar, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -13,17 +14,40 @@ const CustomerCRM = () => {
   const [targets, setTargets] = useState([]);
   const [paymentBehavior, setPaymentBehavior] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [customerNames, setCustomerNames] = useState([]);
   const [showAddFollowup, setShowAddFollowup] = useState(false);
+  const [showSetTarget, setShowSetTarget] = useState(null);
+  const [expandedTarget, setExpandedTarget] = useState(null);
+  const [exportingLedger, setExportingLedger] = useState(null);
   const [newFollowup, setNewFollowup] = useState({
     customer_name: '',
     followup_date: '',
     followup_type: 'call',
     notes: ''
   });
+  const [targetForm, setTargetForm] = useState({
+    customer_name: '',
+    last_fy_sales: '',
+    target_amount: ''
+  });
+
+  useEffect(() => {
+    fetchCustomerNames();
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  const fetchCustomerNames = async () => {
+    try {
+      const res = await axios.get(`${API}/customers/outstanding`);
+      const custs = res.data?.data?.customers || [];
+      setCustomerNames(custs.map(c => c.customer_name));
+    } catch (error) {
+      console.error('Error fetching customer names:', error);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -49,9 +73,17 @@ const CustomerCRM = () => {
   };
 
   const handleAddFollowup = async () => {
+    if (!newFollowup.customer_name) {
+      toast.error('Please select a customer');
+      return;
+    }
+    if (!newFollowup.followup_date) {
+      toast.error('Please select a date');
+      return;
+    }
     try {
       await axios.post(`${API}/customers/followups`, newFollowup);
-      toast.success('Follow-up created successfully!');
+      toast.success('Follow-up created!');
       setShowAddFollowup(false);
       setNewFollowup({ customer_name: '', followup_date: '', followup_type: 'call', notes: '' });
       fetchData();
@@ -70,12 +102,77 @@ const CustomerCRM = () => {
     }
   };
 
+  const handleSetTarget = async () => {
+    if (!targetForm.customer_name || !targetForm.target_amount) {
+      toast.error('Customer name and target are required');
+      return;
+    }
+    try {
+      const res = await axios.post(`${API}/customers/targets/set`, {
+        customer_name: targetForm.customer_name,
+        target_amount: parseFloat(targetForm.target_amount),
+        last_fy_sales: parseFloat(targetForm.last_fy_sales) || 0
+      });
+      if (res.data?.success) {
+        toast.success(`Target set for ${targetForm.customer_name}`);
+        setShowSetTarget(null);
+        setTargetForm({ customer_name: '', last_fy_sales: '', target_amount: '' });
+        fetchData();
+      }
+    } catch (error) {
+      toast.error('Failed to set target');
+    }
+  };
+
+  const exportLedger = async (customerName, format) => {
+    setExportingLedger(customerName);
+    try {
+      const response = await axios.post(
+        `${API}/customers/ledger/export`,
+        { customer_name: customerName, format },
+        { responseType: 'blob' }
+      );
+      const ext = format === 'excel' ? 'xlsx' : 'pdf';
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `ledger_${customerName.replace(/\s/g, '_')}.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success(`Ledger exported for ${customerName}`);
+    } catch (error) {
+      toast.error('Failed to export ledger');
+    } finally {
+      setExportingLedger(null);
+    }
+  };
+
+  const openTargetForm = (customer) => {
+    setTargetForm({
+      customer_name: customer.customer_name,
+      last_fy_sales: customer.last_fy_sales || customer.achieved_amount || '',
+      target_amount: customer.has_custom_target ? customer.target_amount : ''
+    });
+    setShowSetTarget(customer.customer_name);
+  };
+
   const tabs = [
-    { id: 'outstanding', label: 'Payment Outstanding', icon: AlertTriangle },
+    { id: 'outstanding', label: 'Outstanding', icon: AlertTriangle },
     { id: 'followups', label: 'Follow-ups', icon: Calendar },
-    { id: 'targets', label: 'Targets & Achievement', icon: TrendingUp },
+    { id: 'targets', label: 'Targets', icon: TrendingUp },
     { id: 'behavior', label: 'Payment Behavior', icon: Users }
   ];
+
+  const getFollowupDateColor = (dateStr) => {
+    const fDate = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const fDay = new Date(fDate.getFullYear(), fDate.getMonth(), fDate.getDate());
+    if (fDay < today) return 'text-red-600 bg-red-50 border-red-200';
+    if (fDay.getTime() === today.getTime()) return 'text-amber-600 bg-amber-50 border-amber-200';
+    return 'text-stone-600 bg-stone-50 border-stone-200';
+  };
 
   return (
     <div data-testid="crm-page">
@@ -83,10 +180,9 @@ const CustomerCRM = () => {
         <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Customer CRM
         </h1>
-        <p className="mt-2 text-base text-stone-600">Manage customer relationships and track payments</p>
+        <p className="mt-2 text-base text-stone-600">Manage customers, targets, follow-ups, and export ledgers</p>
       </div>
 
-      {/* Tabs */}
       <div className="bg-white border border-stone-200 rounded-xl p-2 mb-6 flex gap-2">
         {tabs.map(tab => {
           const Icon = tab.icon;
@@ -96,9 +192,7 @@ const CustomerCRM = () => {
               data-testid={`tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
-                activeTab === tab.id
-                  ? 'bg-[#064E3B] text-white'
-                  : 'text-stone-600 hover:bg-stone-50'
+                activeTab === tab.id ? 'bg-[#064E3B] text-white' : 'text-stone-600 hover:bg-stone-50'
               }`}
             >
               <Icon size={18} />
@@ -109,12 +203,10 @@ const CustomerCRM = () => {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-64">
-          <div className="loading-spinner" />
-        </div>
+        <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>
       ) : (
         <>
-          {/* Outstanding Payments */}
+          {/* Outstanding Payments with Ledger Export */}
           {activeTab === 'outstanding' && (
             <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -129,6 +221,7 @@ const CustomerCRM = () => {
                       <th className="numeric">60-90 Days</th>
                       <th className="numeric">90+ Days</th>
                       <th>Status</th>
+                      <th>Export Ledger</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -136,23 +229,41 @@ const CustomerCRM = () => {
                       <tr key={idx}>
                         <td className="font-medium text-stone-900">{customer.customer_name}</td>
                         <td className="numeric font-semibold text-[#064E3B]">
-                          ₹{customer.outstanding_amount.toLocaleString('en-IN')}
+                          Rs.{customer.outstanding_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
                         <td className="numeric text-red-600">
-                          ₹{customer.overdue_amount.toLocaleString('en-IN')}
+                          Rs.{customer.overdue_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
-                        <td className="numeric">₹{customer.aging_30_days.toLocaleString('en-IN')}</td>
-                        <td className="numeric">₹{customer.aging_60_days.toLocaleString('en-IN')}</td>
-                        <td className="numeric">₹{customer.aging_90_days.toLocaleString('en-IN')}</td>
-                        <td className="numeric">₹{customer.aging_90_plus.toLocaleString('en-IN')}</td>
+                        <td className="numeric">Rs.{customer.aging_30_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric">Rs.{customer.aging_60_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric">Rs.{customer.aging_90_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric">Rs.{customer.aging_90_plus.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
                         <td>
                           {customer.overdue_amount > 50000 ? (
-                            <span className="status-badge" style={{ background: '#FEE2E2', color: '#991B1B' }}>
-                              High Risk
-                            </span>
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">High Risk</span>
                           ) : (
-                            <span className="status-badge connected">Normal</span>
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">Normal</span>
                           )}
+                        </td>
+                        <td>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => exportLedger(customer.customer_name, 'excel')}
+                              disabled={exportingLedger === customer.customer_name}
+                              className="px-2 py-1 text-xs rounded bg-[#064E3B] text-white hover:bg-[#065F46] disabled:opacity-50"
+                              data-testid={`export-ledger-excel-${idx}`}
+                            >
+                              XLS
+                            </button>
+                            <button
+                              onClick={() => exportLedger(customer.customer_name, 'pdf')}
+                              disabled={exportingLedger === customer.customer_name}
+                              className="px-2 py-1 text-xs rounded border border-stone-300 text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+                              data-testid={`export-ledger-pdf-${idx}`}
+                            >
+                              PDF
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -162,7 +273,7 @@ const CustomerCRM = () => {
             </div>
           )}
 
-          {/* Follow-ups */}
+          {/* Follow-ups with Customer Dropdown */}
           {activeTab === 'followups' && (
             <div>
               <div className="mb-4 flex justify-end">
@@ -177,25 +288,34 @@ const CustomerCRM = () => {
 
               {showAddFollowup && (
                 <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
-                  <h3 className="text-lg font-medium mb-4">New Follow-up</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium">New Follow-up</h3>
+                    <button onClick={() => setShowAddFollowup(false)} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <input
-                      type="text"
-                      placeholder="Customer Name"
+                    <select
                       value={newFollowup.customer_name}
                       onChange={(e) => setNewFollowup({...newFollowup, customer_name: e.target.value})}
-                      className="px-4 py-2 border rounded-lg"
-                    />
+                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      data-testid="followup-customer-select"
+                    >
+                      <option value="">Select Customer</option>
+                      {customerNames.map((name, idx) => (
+                        <option key={idx} value={name}>{name}</option>
+                      ))}
+                    </select>
                     <input
                       type="datetime-local"
                       value={newFollowup.followup_date}
                       onChange={(e) => setNewFollowup({...newFollowup, followup_date: e.target.value})}
-                      className="px-4 py-2 border rounded-lg"
+                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      data-testid="followup-date-input"
                     />
                     <select
                       value={newFollowup.followup_type}
                       onChange={(e) => setNewFollowup({...newFollowup, followup_type: e.target.value})}
-                      className="px-4 py-2 border rounded-lg"
+                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      data-testid="followup-type-select"
                     >
                       <option value="call">Call</option>
                       <option value="email">Email</option>
@@ -206,29 +326,38 @@ const CustomerCRM = () => {
                       placeholder="Notes"
                       value={newFollowup.notes}
                       onChange={(e) => setNewFollowup({...newFollowup, notes: e.target.value})}
-                      className="px-4 py-2 border rounded-lg col-span-2"
+                      className="px-4 py-2 border border-stone-200 rounded-lg col-span-2 focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
                       rows="3"
+                      data-testid="followup-notes-input"
                     />
                   </div>
                   <div className="flex gap-2 mt-4">
-                    <button onClick={handleAddFollowup} className="btn-primary">Save</button>
+                    <button onClick={handleAddFollowup} className="btn-primary" data-testid="save-followup-button">Save Follow-up</button>
                     <button onClick={() => setShowAddFollowup(false)} className="btn-secondary">Cancel</button>
                   </div>
                 </div>
               )}
 
               <div className="grid grid-cols-1 gap-4">
+                {followups.length === 0 && (
+                  <div className="text-center py-12 text-stone-500">No follow-ups yet. Add one to get started.</div>
+                )}
                 {followups.map((followup, idx) => (
-                  <div key={idx} className="bg-white border border-stone-200 rounded-xl p-6">
+                  <div key={idx} className={`bg-white border rounded-xl p-6 ${getFollowupDateColor(followup.followup_date)}`}>
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
-                        <h3 className="text-lg font-medium text-stone-900">{followup.customer_name}</h3>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-lg font-medium text-stone-900">{followup.customer_name}</h3>
+                          {followup.followup_date && new Date(followup.followup_date) < new Date() && followup.status === 'pending' && (
+                            <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-600 text-white">OVERDUE</span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-4 mt-2 text-sm text-stone-600">
                           <span className="flex items-center gap-1">
                             <Calendar size={14} />
                             {new Date(followup.followup_date).toLocaleString()}
                           </span>
-                          <span className="capitalize">{followup.followup_type}</span>
+                          <span className="capitalize px-2 py-0.5 rounded bg-stone-100 text-stone-700 text-xs">{followup.followup_type}</span>
                         </div>
                         {followup.notes && <p className="mt-2 text-sm text-stone-700">{followup.notes}</p>}
                       </div>
@@ -236,13 +365,14 @@ const CustomerCRM = () => {
                         {followup.status === 'pending' && (
                           <button
                             onClick={() => updateFollowupStatus(followup.id, 'completed')}
-                            className="btn-primary"
+                            className="btn-primary text-sm"
+                            data-testid={`complete-followup-${idx}`}
                           >
                             Mark Complete
                           </button>
                         )}
                         {followup.status === 'completed' && (
-                          <span className="status-badge connected flex items-center gap-1">
+                          <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 flex items-center gap-1">
                             <CheckCircle size={14} /> Completed
                           </span>
                         )}
@@ -254,61 +384,165 @@ const CustomerCRM = () => {
             </div>
           )}
 
-          {/* Targets */}
+          {/* Targets with Set Target & Monthly Sales */}
           {activeTab === 'targets' && (
-            <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="data-table" data-testid="targets-table">
-                  <thead>
-                    <tr>
-                      <th>Customer Name</th>
-                      <th className="numeric">Target</th>
-                      <th className="numeric">Achieved</th>
-                      <th className="numeric">Achievement %</th>
-                      <th className="numeric">Remaining</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {targets.map((target, idx) => (
-                      <tr key={idx}>
-                        <td className="font-medium">{target.customer_name}</td>
-                        <td className="numeric">₹{target.target_amount.toLocaleString('en-IN')}</td>
-                        <td className="numeric font-semibold text-[#064E3B]">
-                          ₹{target.achieved_amount.toLocaleString('en-IN')}
-                        </td>
-                        <td className="numeric">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#064E3B]"
-                                style={{ width: `${Math.min(target.achievement_percentage, 100)}%` }}
-                              />
-                            </div>
-                            <span className="text-sm font-medium">
-                              {target.achievement_percentage.toFixed(1)}%
-                            </span>
-                          </div>
-                        </td>
-                        <td className="numeric">₹{target.remaining.toLocaleString('en-IN')}</td>
-                        <td>
-                          {target.achievement_percentage >= 100 ? (
-                            <span className="status-badge connected">Achieved</span>
-                          ) : target.achievement_percentage >= 75 ? (
-                            <span className="status-badge" style={{ background: '#FEF3E2', color: '#B45309' }}>
-                              On Track
-                            </span>
-                          ) : (
-                            <span className="status-badge" style={{ background: '#FEE2E2', color: '#991B1B' }}>
-                              Behind
-                            </span>
-                          )}
-                        </td>
+            <div>
+              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="data-table" data-testid="targets-table">
+                    <thead>
+                      <tr>
+                        <th>Customer Name</th>
+                        <th className="numeric">Last FY Sales</th>
+                        <th className="numeric">Target</th>
+                        <th className="numeric">Achieved</th>
+                        <th className="numeric">Achievement %</th>
+                        <th className="numeric">Remaining</th>
+                        <th>Status</th>
+                        <th>Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {targets.map((target, idx) => (
+                        <React.Fragment key={idx}>
+                          <tr>
+                            <td className="font-medium text-stone-900">
+                              <div className="flex items-center gap-2">
+                                {target.customer_name}
+                                {target.has_custom_target && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Custom</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="numeric text-stone-500">Rs.{(target.last_fy_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td className="numeric font-medium">Rs.{target.target_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td className="numeric font-semibold text-[#064E3B]">Rs.{target.achieved_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td className="numeric">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden max-w-[80px]">
+                                  <div
+                                    className={`h-full ${target.achievement_percentage >= 100 ? 'bg-green-500' : 'bg-[#064E3B]'}`}
+                                    style={{ width: `${Math.min(target.achievement_percentage, 100)}%` }}
+                                  />
+                                </div>
+                                <span className="text-sm font-medium">{target.achievement_percentage.toFixed(1)}%</span>
+                              </div>
+                            </td>
+                            <td className="numeric">Rs.{target.remaining.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td>
+                              {target.achievement_percentage >= 100 ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">Achieved</span>
+                              ) : target.achievement_percentage >= 75 ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">On Track</span>
+                              ) : (
+                                <span className="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Behind</span>
+                              )}
+                            </td>
+                            <td>
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => openTargetForm(target)}
+                                  className="px-2 py-1 text-xs rounded bg-[#064E3B] text-white hover:bg-[#065F46]"
+                                  data-testid={`set-target-${idx}`}
+                                >
+                                  <Target size={12} className="inline mr-1" />Set Target
+                                </button>
+                                <button
+                                  onClick={() => setExpandedTarget(expandedTarget === idx ? null : idx)}
+                                  className="px-2 py-1 text-xs rounded border border-stone-300 text-stone-600 hover:bg-stone-50"
+                                  data-testid={`monthly-sales-${idx}`}
+                                >
+                                  {expandedTarget === idx ? <ChevronUp size={12} className="inline" /> : <ChevronDown size={12} className="inline" />}
+                                  Monthly
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedTarget === idx && target.monthly_sales?.length > 0 && (
+                            <tr>
+                              <td colSpan="8" className="!p-4 bg-stone-50">
+                                <div className="text-sm font-medium text-stone-700 mb-3">Monthly Sales for {target.customer_name}</div>
+                                <ResponsiveContainer width="100%" height={200}>
+                                  <BarChart data={target.monthly_sales}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#E7E5E4" />
+                                    <XAxis dataKey="month" stroke="#78716C" style={{ fontSize: '11px' }} />
+                                    <YAxis stroke="#78716C" style={{ fontSize: '11px' }} />
+                                    <Tooltip
+                                      contentStyle={{ background: 'white', border: '1px solid #E7E5E4', borderRadius: '8px' }}
+                                      formatter={(val) => [`Rs.${val.toLocaleString('en-IN')}`, 'Sales']}
+                                    />
+                                    <Bar dataKey="amount" fill="#064E3B" radius={[4, 4, 0, 0]} />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                                <div className="mt-2 grid grid-cols-3 md:grid-cols-6 gap-2">
+                                  {target.monthly_sales.map((m, mi) => (
+                                    <div key={mi} className="text-center p-2 bg-white rounded border border-stone-200">
+                                      <div className="text-xs text-stone-500">{m.month}</div>
+                                      <div className="text-sm font-semibold text-[#064E3B]">Rs.{m.amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+
+              {/* Set Target Modal */}
+              {showSetTarget && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowSetTarget(null)}>
+                  <div className="bg-white rounded-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                    <div className="border-b border-stone-200 p-6 flex items-center justify-between">
+                      <h2 className="text-xl font-semibold text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                        Set Target: {targetForm.customer_name}
+                      </h2>
+                      <button onClick={() => setShowSetTarget(null)} className="text-stone-400 hover:text-stone-600"><X size={20} /></button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Last Financial Year Sales (Rs.)</label>
+                        <input
+                          type="number"
+                          value={targetForm.last_fy_sales}
+                          onChange={(e) => {
+                            const fy = e.target.value;
+                            setTargetForm({
+                              ...targetForm,
+                              last_fy_sales: fy,
+                              target_amount: targetForm.target_amount || (fy ? Math.round(parseFloat(fy) * 1.15) : '')
+                            });
+                          }}
+                          className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                          placeholder="Enter last FY sales"
+                          data-testid="last-fy-sales-input"
+                        />
+                        <p className="text-xs text-stone-400 mt-1">Auto-suggests 15% growth target</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Target Amount (Rs.)</label>
+                        <input
+                          type="number"
+                          value={targetForm.target_amount}
+                          onChange={(e) => setTargetForm({...targetForm, target_amount: e.target.value})}
+                          className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                          placeholder="Target for this FY"
+                          data-testid="target-amount-input"
+                        />
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button onClick={handleSetTarget} className="flex-1 btn-primary py-3" data-testid="save-target-button">
+                          Save Target
+                        </button>
+                        <button onClick={() => setShowSetTarget(null)} className="flex-1 btn-secondary py-3">Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -325,11 +559,11 @@ const CustomerCRM = () => {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-stone-600">Total Amount</span>
-                      <span className="font-semibold">₹{customer.total_amount.toLocaleString('en-IN')}</span>
+                      <span className="font-semibold">Rs.{customer.total_amount.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-stone-600">Average Transaction</span>
-                      <span className="font-semibold">₹{customer.average_transaction.toLocaleString('en-IN')}</span>
+                      <span className="font-semibold">Rs.{customer.average_transaction.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-stone-600">Avg Payment Delay</span>
