@@ -3,7 +3,10 @@ FROM node:18-alpine AS build
 WORKDIR /app
 
 COPY package.json ./
-RUN yarn install
+
+# Remove emergent-specific dev dependency that's not needed for production build
+RUN sed -i '/@emergentbase\/visual-edits/d' package.json && \
+    yarn install --network-timeout 600000 || yarn install --network-timeout 600000
 
 COPY . .
 
