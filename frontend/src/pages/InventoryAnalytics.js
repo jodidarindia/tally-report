@@ -13,6 +13,7 @@ const InventoryAnalytics = () => {
   const [pivotData, setPivotData] = useState([]);
   const [salesFrequency, setSalesFrequency] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [pivotGroupBy, setPivotGroupBy] = useState('category');
   const [pivotMetric, setPivotMetric] = useState('value');
   const [expandedGroups, setExpandedGroups] = useState({});
@@ -56,6 +57,36 @@ const InventoryAnalytics = () => {
 
   const toggleGroup = (group) => {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
+  };
+
+  const exportSalesFrequency = async (format) => {
+    setExporting(true);
+    try {
+      const response = await axios.post(
+        `${API}/analytics/sales-frequency/export`,
+        {
+          format,
+          start_date: dateFilter.start_date || null,
+          end_date: dateFilter.end_date || null
+        },
+        { responseType: 'blob' }
+      );
+
+      const ext = format === 'excel' ? 'xlsx' : 'pdf';
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `sales_frequency_report.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success(`Sales frequency exported as ${format.toUpperCase()}`);
+    } catch (error) {
+      console.error('Export error:', error);
+      toast.error('Failed to export sales frequency');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const exportPivot = () => {
@@ -276,12 +307,32 @@ const InventoryAnalytics = () => {
               <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-medium text-stone-900">Date Filter</h3>
-                  <button
-                    onClick={() => setDateFilter({ start_date: '', end_date: '' })}
-                    className="btn-secondary text-sm"
-                  >
-                    Clear Filters
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => exportSalesFrequency('excel')}
+                      disabled={exporting || salesFrequency.length === 0}
+                      className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
+                      data-testid="export-freq-excel"
+                    >
+                      <Download size={14} />
+                      {exporting ? 'Exporting...' : 'Excel'}
+                    </button>
+                    <button
+                      onClick={() => exportSalesFrequency('pdf')}
+                      disabled={exporting || salesFrequency.length === 0}
+                      className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50"
+                      data-testid="export-freq-pdf"
+                    >
+                      <Download size={14} />
+                      PDF
+                    </button>
+                    <button
+                      onClick={() => setDateFilter({ start_date: '', end_date: '' })}
+                      className="btn-secondary text-sm"
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>

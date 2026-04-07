@@ -1131,7 +1131,230 @@ async def get_salesman_performance():
         return APIResponse(success=False, error=str(e))
 
 
-# ==================== INVENTORY ANALYTICS ENDPOINTS ====================
+# ==================== SALESMAN MASTER CRUD ENDPOINTS ====================
+
+@api_router.get("/salesman/master")
+async def get_salesman_master():
+    """Get all salesman master records"""
+    try:
+        salesmen = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        return APIResponse(success=True, data={"salesmen": salesmen})
+    except Exception as e:
+        logger.error(f"Error fetching salesman master: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.post("/salesman/master")
+async def create_salesman(request: dict):
+    """Create or update a salesman with customer mapping and targets"""
+    try:
+        import uuid
+        salesman_name = request.get("salesman_name", "").strip()
+        if not salesman_name:
+            return APIResponse(success=False, error="Salesman name is required")
+        
+        customers = request.get("customers", [])
+        monthly_target = request.get("monthly_target", 0)
+        quarterly_target = request.get("quarterly_target", 0)
+        phone = request.get("phone", "")
+        email = request.get("email", "")
+        
+        doc = {
+            "salesman_id": str(uuid.uuid4()),
+            "salesman_name": salesman_name,
+            "customers": customers,
+            "monthly_target": monthly_target,
+            "quarterly_target": quarterly_target,
+            "phone": phone,
+            "email": email,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Upsert by name
+        result = await db.salesman_master.update_one(
+            {"salesman_name": salesman_name},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        return APIResponse(
+            success=True,
+            message=f"Salesman '{salesman_name}' saved",
+            data=doc
+        )
+    except Exception as e:
+        logger.error(f"Error creating salesman: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.delete("/salesman/master/{salesman_name}")
+async def delete_salesman(salesman_name: str):
+    """Delete a salesman record"""
+    try:
+        result = await db.salesman_master.delete_one({"salesman_name": salesman_name})
+        return APIResponse(
+            success=result.deleted_count > 0,
+            message="Deleted" if result.deleted_count > 0 else "Not found"
+        )
+    except Exception as e:
+        logger.error(f"Error deleting salesman: {e}")
+        return APIResponse(success=False, error=str(e))
+
+@api_router.get("/salesman/performance-detailed")
+async def get_salesman_performance_detailed():
+    """Get salesman performance with master data (targets, customer mapping) and item-wise breakdown"""
+    try:
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        master_map = {m["salesman_name"]: m for m in master_list}
+        
+        salesman_map = {}
+        for voucher in sales_vouchers:
+            salesman = voucher.get("salesman", "Direct Sales")
+            amount = voucher.get("total_amount", 0)
+            customer = voucher.get("party_name", "")
+            
+            if salesman not in salesman_map:
+                salesman_map[salesman] = {
+                    "salesman_name": salesman,
+                    "total_sales": 0,
+                    "customers": set(),
+                    "transactions": 0,
+                    "items_sold": {}
+                }
+            
+            salesman_map[salesman]["total_sales"] += amount
+            salesman_map[salesman]["customers"].add(customer)
+            salesman_map[salesman]["transactions"] += 1
+            
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = item.get("quantity", 0)
+                rate = item.get("rate", 0)
+                if item_name not in salesman_map[salesman]["items_sold"]:
+                    salesman_map[salesman]["items_sold"][item_name] = {
+                        "item_name": item_name,
+                        "total_quantity": 0,
+                        "total_revenue": 0,
+                        "transaction_count": 0
+                    }
+                salesman_map[salesman]["items_sold"][item_name]["total_quantity"] += qty
+                salesman_map[salesman]["items_sold"][item_name]["total_revenue"] += qty * rate
+                salesman_map[salesman]["items_sold"][item_name]["transaction_count"] += 1
+        
+        performance = []
+        for salesman, data in salesman_map.items():
+            master = master_map.get(salesman, {})
+            monthly_target = master.get("monthly_target", data["total_sales"] * 1.15)
+            mapped_customers = master.get("customers", [])
+            
+            items_breakdown = sorted(
+                list(data["items_sold"].values()),
+                key=lambda x: x["total_revenue"],
+                reverse=True
+            )
+            
+            performance.append({
+                "salesman_name": salesman,
+                "phone": master.get("phone", ""),
+                "email": master.get("email", ""),
+                "monthly_target": monthly_target,
+                "quarterly_target": master.get("quarterly_target", monthly_target * 3),
+                "achieved_amount": data["total_sales"],
+                "achievement_percentage": (data["total_sales"] / monthly_target * 100) if monthly_target > 0 else 0,
+                "total_customers": len(data["customers"]),
+                "customer_names": list(data["customers"]),
+                "mapped_customers": mapped_customers,
+                "total_transactions": data["transactions"],
+                "average_transaction": data["total_sales"] / data["transactions"] if data["transactions"] > 0 else 0,
+                "items_sold": items_breakdown,
+                "has_master": salesman in master_map
+            })
+        
+        performance.sort(key=lambda x: x["achievement_percentage"], reverse=True)
+        
+        return APIResponse(success=True, data={"salesman": performance})
+    
+    except Exception as e:
+        logger.error(f"Error fetching detailed salesman performance: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== SALES FREQUENCY EXPORT ENDPOINT ====================
+
+@api_router.post("/analytics/sales-frequency/export")
+async def export_sales_frequency(request: dict):
+    """Export sales frequency data as Excel or PDF"""
+    try:
+        export_format = request.get("format", "excel")
+        start_date = request.get("start_date")
+        end_date = request.get("end_date")
+        
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        
+        if start_date or end_date:
+            filtered = []
+            for v in sales_vouchers:
+                v_date = v.get("voucher_date", "")
+                if start_date and v_date < start_date:
+                    continue
+                if end_date and v_date > end_date:
+                    continue
+                filtered.append(v)
+            sales_vouchers = filtered
+        
+        # Calculate frequency
+        item_stats = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = item.get("quantity", 0)
+                if item_name not in item_stats:
+                    item_stats[item_name] = {
+                        "item_name": item_name,
+                        "total_quantity_sold": 0,
+                        "transaction_count": 0,
+                        "unique_customers": set(),
+                        "total_revenue": 0
+                    }
+                item_stats[item_name]["total_quantity_sold"] += qty
+                item_stats[item_name]["transaction_count"] += 1
+                item_stats[item_name]["unique_customers"].add(party)
+                item_stats[item_name]["total_revenue"] += qty * item.get("rate", 0)
+        
+        rows = []
+        for name, stats in sorted(item_stats.items(), key=lambda x: x[1]["transaction_count"], reverse=True):
+            rows.append({
+                "Item Name": name,
+                "Transaction Count": stats["transaction_count"],
+                "Total Qty Sold": stats["total_quantity_sold"],
+                "Unique Customers": len(stats["unique_customers"]),
+                "Total Revenue": stats["total_revenue"],
+                "Avg Qty/Transaction": round(stats["total_quantity_sold"] / stats["transaction_count"], 1) if stats["transaction_count"] > 0 else 0,
+                "Customers": ", ".join(stats["unique_customers"])
+            })
+        
+        export_service = ExportService()
+        
+        if export_format == "excel":
+            output = export_service.export_to_excel(rows, "Sales Frequency")
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = "sales_frequency_report.xlsx"
+        elif export_format == "pdf":
+            output = export_service.export_to_pdf(rows, "Sales Frequency", "Sales Frequency Report")
+            media_type = "application/pdf"
+            filename = "sales_frequency_report.pdf"
+        else:
+            return APIResponse(success=False, error="Invalid format. Use 'excel' or 'pdf'")
+        
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting sales frequency: {e}")
+        return APIResponse(success=False, error=str(e))
 
 @api_router.get("/inventory/movement-analysis")
 async def get_inventory_movement():

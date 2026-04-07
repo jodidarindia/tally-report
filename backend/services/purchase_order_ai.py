@@ -95,7 +95,12 @@ class PurchaseOrderAI:
             response = await chat.send_message(user_message)
             
             try:
-                po_data = json.loads(response)
+                clean_response = response.strip()
+                if clean_response.startswith("```"):
+                    clean_response = clean_response.split("\n", 1)[1] if "\n" in clean_response else clean_response[3:]
+                    if clean_response.endswith("```"):
+                        clean_response = clean_response[:-3].strip()
+                po_data = json.loads(clean_response)
             except json.JSONDecodeError:
                 po_data = {
                     "analysis": response[:500],

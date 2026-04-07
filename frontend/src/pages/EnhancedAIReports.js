@@ -55,7 +55,7 @@ const EnhancedAIReports = () => {
         query,
         report_type: reportType,
         filters: cleanFilters
-      });
+      }, { timeout: 60000 });
 
       if (response.data?.success) {
         setReport(response.data.data);
@@ -257,7 +257,9 @@ const EnhancedAIReports = () => {
         <div className="space-y-6" data-testid="report-results">
           <div className="bg-white border border-stone-200 rounded-xl p-6">
             <h3 className="text-xl font-medium text-stone-900 mb-3">Summary</h3>
-            <p className="text-base text-stone-700 leading-relaxed">{report.summary}</p>
+            <p className="text-base text-stone-700 leading-relaxed">
+              {typeof report.summary === 'object' ? JSON.stringify(report.summary) : report.summary}
+            </p>
           </div>
 
           {report.key_insights && report.key_insights.length > 0 && (
@@ -269,24 +271,26 @@ const EnhancedAIReports = () => {
                     <div className="w-6 h-6 bg-[#E7F5F0] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                       <span className="text-xs font-semibold text-[#064E3B]">{idx + 1}</span>
                     </div>
-                    <span className="text-base text-stone-700">{insight}</span>
+                    <span className="text-base text-stone-700">
+                      {typeof insight === 'object' ? JSON.stringify(insight) : insight}
+                    </span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {report.metrics && Object.keys(report.metrics).length > 0 && (
+          {report.metrics && typeof report.metrics === 'object' && Object.keys(report.metrics).length > 0 && (
             <div className="bg-white border border-stone-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-stone-900 mb-4">Metrics</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {Object.entries(report.metrics).map(([key, value]) => (
                   <div key={key} className="p-4 bg-[#FDFBF7] rounded-lg">
                     <div className="text-sm text-stone-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
-                    <div className="text-2xl font-semibold text-[#064E3B]">
+                    <div className="text-2xl font-semibold text-[#064E3B] whitespace-pre-wrap break-words">
                       {typeof value === 'object' && value !== null 
                         ? JSON.stringify(value, null, 2) 
-                        : value}
+                        : String(value)}
                     </div>
                   </div>
                 ))}
@@ -301,7 +305,9 @@ const EnhancedAIReports = () => {
                 {report.recommendations.map((rec, idx) => (
                   <li key={idx} className="flex items-start gap-3">
                     <div className="w-2 h-2 bg-[#064E3B] rounded-full flex-shrink-0 mt-2" />
-                    <span className="text-base text-stone-700">{rec}</span>
+                    <span className="text-base text-stone-700">
+                      {typeof rec === 'object' ? JSON.stringify(rec) : rec}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -311,7 +317,9 @@ const EnhancedAIReports = () => {
           {report.detailed_analysis && (
             <div className="bg-white border border-stone-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-stone-900 mb-4">Detailed Analysis</h3>
-              <p className="text-base text-stone-700 leading-relaxed whitespace-pre-wrap">{report.detailed_analysis}</p>
+              <p className="text-base text-stone-700 leading-relaxed whitespace-pre-wrap">
+                {typeof report.detailed_analysis === 'object' ? JSON.stringify(report.detailed_analysis, null, 2) : report.detailed_analysis}
+              </p>
             </div>
           )}
         </div>
