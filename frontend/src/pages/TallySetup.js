@@ -196,7 +196,7 @@ const TallySetup = () => {
             </button>
           </form>
 
-          <div className="mt-6 p-4 bg-[#FDFBF7] rounded-lg">
+          <div className="mt-6 p-4 bg-[#F0F4FF] rounded-lg">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">Setup Instructions</h3>
             <ul className="text-sm text-slate-600 space-y-1">
               <li>• For XML/HTTP: Ensure TallyPrime is running on your local machine</li>

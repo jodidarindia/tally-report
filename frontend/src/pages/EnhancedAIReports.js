@@ -285,7 +285,7 @@ const EnhancedAIReports = () => {
               <h3 className="text-xl font-medium text-slate-900 mb-4">Metrics</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {Object.entries(report.metrics).map(([key, value]) => (
-                  <div key={key} className="p-4 bg-[#FDFBF7] rounded-lg">
+                  <div key={key} className="p-4 bg-[#F0F4FF] rounded-lg">
                     <div className="text-sm text-slate-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
                     <div className="text-2xl font-semibold text-[#2563EB] whitespace-pre-wrap break-words">
                       {typeof value === 'object' && value !== null 

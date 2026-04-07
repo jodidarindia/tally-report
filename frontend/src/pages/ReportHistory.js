@@ -66,7 +66,7 @@ const ReportHistory = () => {
                     </div>
                   )}
                   {item.response && (
-                    <div className="p-4 bg-[#FDFBF7] rounded-lg">
+                    <div className="p-4 bg-[#F0F4FF] rounded-lg">
                       <p className="text-sm text-slate-700 line-clamp-3">{item.response}</p>
                     </div>
                   )}
