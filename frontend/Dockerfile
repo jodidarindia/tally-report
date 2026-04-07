@@ -1,9 +1,9 @@
-FROM node:18-alpine AS build
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
 COPY package.json clean-pkg.js ./
-RUN node clean-pkg.js && yarn install --network-timeout 600000
+RUN node clean-pkg.js && yarn install --network-timeout 600000 --ignore-engines
 
 COPY . .
 
