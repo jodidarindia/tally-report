@@ -1,6 +1,6 @@
 .App {
   min-height: 100vh;
-  background: #FDFBF7;
+  background: #F0F4FF;
 }
 
 /* Navigation */
@@ -8,15 +8,15 @@
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(253, 251, 247, 0.8);
+  background: rgba(240, 244, 255, 0.85);
   backdrop-filter: blur(24px);
-  border-bottom: 1px solid #E7E5E4;
+  border-bottom: 1px solid #E0E7FF;
 }
 
 /* Cards with hover effects */
 .stat-card {
   background: white;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #E0E7FF;
   border-radius: 0.75rem;
   padding: 1.5rem;
   transition: all 0.3s ease;
@@ -24,12 +24,12 @@
 
 .stat-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 8px 30px rgba(37, 99, 235, 0.08);
 }
 
 /* Buttons */
 .btn-primary {
-  background: #064E3B;
+  background: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
   color: white;
   padding: 0.5rem 1.5rem;
   border-radius: 0.5rem;
@@ -40,24 +40,24 @@
 }
 
 .btn-primary:hover {
-  background: #047857;
-  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.2);
+  background: linear-gradient(135deg, #1D4ED8 0%, #6D28D9 100%);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.3);
 }
 
 .btn-secondary {
   background: white;
-  color: #1C1917;
+  color: #0F172A;
   padding: 0.5rem 1.5rem;
   border-radius: 0.5rem;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #E0E7FF;
   font-weight: 500;
   transition: all 0.2s;
   cursor: pointer;
 }
 
 .btn-secondary:hover {
-  background: #F5F5F4;
-  box-shadow: 0 2px 4px rgba(28, 25, 23, 0.05);
+  background: #F0F4FF;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.08);
 }
 
 /* AI Query Builder */
@@ -65,9 +65,9 @@
   position: relative;
   overflow: hidden;
   border-radius: 1rem;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #E0E7FF;
   padding: 2rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.04);
 }
 
 .ai-query-bg {
@@ -82,11 +82,11 @@
 .ai-query-input-area {
   position: relative;
   z-index: 10;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(12px);
   border-radius: 0.75rem;
   padding: 0.5rem;
-  border: 1px solid rgba(231, 229, 228, 0.5);
+  border: 1px solid rgba(224, 231, 255, 0.5);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
@@ -101,7 +101,7 @@
 }
 
 .data-table thead {
-  background: #F5F5F4;
+  background: #F0F4FF;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -114,23 +114,23 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #78716C;
-  border-bottom: 1px solid #E7E5E4;
+  color: #64748B;
+  border-bottom: 1px solid #E0E7FF;
 }
 
 .data-table td {
   padding: 1rem;
   font-size: 0.875rem;
-  color: #44403C;
-  border-bottom: 1px solid #F5F5F4;
+  color: #334155;
+  border-bottom: 1px solid #F0F4FF;
 }
 
 .data-table tbody tr:hover {
-  background: rgba(245, 245, 244, 0.5);
+  background: rgba(224, 231, 255, 0.3);
 }
 
 .data-table tbody tr:nth-child(odd) {
-  background: #FDFBF7;
+  background: #FAFBFF;
 }
 
 .data-table tbody tr:nth-child(even) {
@@ -147,8 +147,8 @@
   display: inline-block;
   width: 20px;
   height: 20px;
-  border: 2px solid #E7E5E4;
-  border-top-color: #064E3B;
+  border: 2px solid #E0E7FF;
+  border-top-color: #2563EB;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -160,7 +160,7 @@
 /* Charts container */
 .chart-container {
   background: white;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #E0E7FF;
   border-radius: 0.75rem;
   padding: 1.5rem;
 }
@@ -176,8 +176,8 @@
 }
 
 .status-badge.connected {
-  background: #D1FAE5;
-  color: #065F46;
+  background: #DBEAFE;
+  color: #1D4ED8;
 }
 
 .status-badge.disconnected {

@@ -131,10 +131,10 @@ const SalesmanPerformance = () => {
     <div data-testid="salesman-page">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+          <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Salesman Performance
           </h1>
-          <p className="mt-2 text-base text-stone-600">Track sales team, set targets, and manage customer mapping</p>
+          <p className="mt-2 text-base text-slate-600">Track sales team, set targets, and manage customer mapping</p>
         </div>
         <button
           onClick={() => { setShowAddForm(true); setFormData({ salesman_name: '', phone: '', email: '', monthly_target: '', quarterly_target: '', customers: [] }); }}
@@ -147,7 +147,7 @@ const SalesmanPerformance = () => {
       </div>
 
       {/* Tabs */}
-      <div className="bg-white border border-stone-200 rounded-xl p-2 mb-6 flex gap-2">
+      <div className="bg-white border border-slate-200 rounded-xl p-2 mb-6 flex gap-2">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
@@ -156,7 +156,7 @@ const SalesmanPerformance = () => {
               onClick={() => setActiveTab(tab.id)}
               data-testid={`salesman-tab-${tab.id}`}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
-                activeTab === tab.id ? 'bg-[#064E3B] text-white' : 'text-stone-600 hover:bg-stone-50'
+                activeTab === tab.id ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <Icon size={18} />
@@ -168,7 +168,7 @@ const SalesmanPerformance = () => {
 
       {/* Top Performer Card */}
       {topPerformer && activeTab === 'performance' && (
-        <div className="bg-gradient-to-r from-[#064E3B] to-[#047857] text-white rounded-xl p-8 mb-6">
+        <div className="bg-gradient-to-r from-[#2563EB] to-[#7C3AED] text-white rounded-xl p-8 mb-6">
           <div className="flex items-center gap-3 mb-4">
             <Award size={32} />
             <h2 className="text-2xl font-semibold">Top Performer</h2>
@@ -197,25 +197,25 @@ const SalesmanPerformance = () => {
       {/* Performance Tab */}
       {activeTab === 'performance' && (
         <>
-          <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
-            <h3 className="text-xl font-medium text-stone-900 mb-4">Target vs Achievement</h3>
+          <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
+            <h3 className="text-xl font-medium text-slate-900 mb-4">Target vs Achievement</h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E7E5E4" />
-                <XAxis dataKey="name" stroke="#78716C" style={{ fontSize: '12px' }} />
-                <YAxis stroke="#78716C" style={{ fontSize: '12px' }} />
-                <Tooltip contentStyle={{ background: 'white', border: '1px solid #E7E5E4', borderRadius: '8px' }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E0E7FF" />
+                <XAxis dataKey="name" stroke="#64748B" style={{ fontSize: '12px' }} />
+                <YAxis stroke="#64748B" style={{ fontSize: '12px' }} />
+                <Tooltip contentStyle={{ background: 'white', border: '1px solid #E0E7FF', borderRadius: '8px' }} />
                 <Bar dataKey="target" fill="#D1D5DB" name="Target" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="achieved" fill="#064E3B" name="Achieved" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="achieved" fill="#2563EB" name="Achieved" radius={[4, 4, 0, 0]}>
                   {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.percentage >= 100 ? '#10B981' : '#064E3B'} />
+                    <Cell key={`cell-${index}`} fill={entry.percentage >= 100 ? '#06B6D4' : '#2563EB'} />
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
 
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="data-table" data-testid="performance-table">
                 <thead>
@@ -237,16 +237,16 @@ const SalesmanPerformance = () => {
                         {idx === 0 ? '1' : idx === 1 ? '2' : idx === 2 ? '3' : idx + 1}
                       </td>
                       <td>
-                        <div className="font-medium text-stone-900">{person.salesman_name}</div>
+                        <div className="font-medium text-slate-900">{person.salesman_name}</div>
                         {person.has_master && <div className="text-xs text-green-600">Registered</div>}
                       </td>
                       <td className="numeric">Rs.{person.monthly_target.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                      <td className="numeric font-semibold text-[#064E3B]">Rs.{person.achieved_amount.toLocaleString('en-IN')}</td>
+                      <td className="numeric font-semibold text-[#2563EB]">Rs.{person.achieved_amount.toLocaleString('en-IN')}</td>
                       <td className="numeric">
                         <div className="flex items-center gap-2">
-                          <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden max-w-[100px]">
+                          <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden max-w-[100px]">
                             <div
-                              className={`h-full ${person.achievement_percentage >= 100 ? 'bg-green-500' : 'bg-[#064E3B]'}`}
+                              className={`h-full ${person.achievement_percentage >= 100 ? 'bg-green-500' : 'bg-[#2563EB]'}`}
                               style={{ width: `${Math.min(person.achievement_percentage, 100)}%` }}
                             />
                           </div>
@@ -277,26 +277,26 @@ const SalesmanPerformance = () => {
       {activeTab === 'items' && (
         <div className="space-y-4">
           {performance.map((person, idx) => (
-            <div key={idx} className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <button
                 onClick={() => setExpandedSalesman(expandedSalesman === idx ? null : idx)}
-                className="w-full flex items-center justify-between p-5 hover:bg-stone-50 transition-colors"
+                className="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors"
                 data-testid={`salesman-item-expand-${idx}`}
               >
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-[#064E3B] rounded-full flex items-center justify-center text-white font-bold">
+                  <div className="w-10 h-10 bg-[#2563EB] rounded-full flex items-center justify-center text-white font-bold">
                     {person.salesman_name.charAt(0)}
                   </div>
                   <div className="text-left">
-                    <div className="font-semibold text-stone-900">{person.salesman_name}</div>
-                    <div className="text-sm text-stone-500">{person.items_sold?.length || 0} items sold | Rs.{person.achieved_amount.toLocaleString('en-IN')} total</div>
+                    <div className="font-semibold text-slate-900">{person.salesman_name}</div>
+                    <div className="text-sm text-slate-500">{person.items_sold?.length || 0} items sold | Rs.{person.achieved_amount.toLocaleString('en-IN')} total</div>
                   </div>
                 </div>
-                {expandedSalesman === idx ? <ChevronUp size={20} className="text-stone-400" /> : <ChevronDown size={20} className="text-stone-400" />}
+                {expandedSalesman === idx ? <ChevronUp size={20} className="text-slate-400" /> : <ChevronDown size={20} className="text-slate-400" />}
               </button>
 
               {expandedSalesman === idx && (
-                <div className="border-t border-stone-200">
+                <div className="border-t border-slate-200">
                   <div className="overflow-x-auto">
                     <table className="data-table" data-testid={`item-table-${idx}`}>
                       <thead>
@@ -311,15 +311,15 @@ const SalesmanPerformance = () => {
                       <tbody>
                         {(person.items_sold || []).map((item, itemIdx) => (
                           <tr key={itemIdx}>
-                            <td className="font-medium text-stone-900">{item.item_name}</td>
+                            <td className="font-medium text-slate-900">{item.item_name}</td>
                             <td className="numeric font-semibold">{item.total_quantity}</td>
-                            <td className="numeric text-[#064E3B] font-semibold">Rs.{item.total_revenue.toLocaleString('en-IN')}</td>
+                            <td className="numeric text-[#2563EB] font-semibold">Rs.{item.total_revenue.toLocaleString('en-IN')}</td>
                             <td className="numeric">{item.transaction_count}</td>
                             <td className="numeric">{(item.total_quantity / item.transaction_count).toFixed(1)}</td>
                           </tr>
                         ))}
                         {(!person.items_sold || person.items_sold.length === 0) && (
-                          <tr><td colSpan="5" className="text-center py-4 text-stone-500">No items sold</td></tr>
+                          <tr><td colSpan="5" className="text-center py-4 text-slate-500">No items sold</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -335,19 +335,19 @@ const SalesmanPerformance = () => {
       {activeTab === 'manage' && (
         <div className="space-y-4">
           {performance.map((person, idx) => (
-            <div key={idx} className="bg-white border border-stone-200 rounded-xl p-5">
+            <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-[#064E3B] rounded-full flex items-center justify-center text-white font-bold">
+                  <div className="w-10 h-10 bg-[#2563EB] rounded-full flex items-center justify-center text-white font-bold">
                     {person.salesman_name.charAt(0)}
                   </div>
                   <div>
-                    <div className="font-semibold text-stone-900">{person.salesman_name}</div>
-                    <div className="text-sm text-stone-500">
+                    <div className="font-semibold text-slate-900">{person.salesman_name}</div>
+                    <div className="text-sm text-slate-500">
                       {person.phone && <span className="mr-3">Phone: {person.phone}</span>}
                       {person.email && <span>Email: {person.email}</span>}
                     </div>
-                    <div className="text-xs text-stone-400 mt-1">
+                    <div className="text-xs text-slate-400 mt-1">
                       Target: Rs.{(person.monthly_target || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}/month
                       {person.mapped_customers?.length > 0 && (
                         <span className="ml-3">Mapped: {person.mapped_customers.join(', ')}</span>
@@ -383,23 +383,23 @@ const SalesmanPerformance = () => {
       {showAddForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowAddForm(false)}>
           <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-stone-200 p-6 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+            <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
                 {formData.salesman_name ? `Edit: ${formData.salesman_name}` : 'Add Salesman'}
               </h2>
-              <button onClick={() => setShowAddForm(false)} className="text-stone-400 hover:text-stone-600">
+              <button onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleSaveSalesman} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Name *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
                 <input
                   type="text"
                   value={formData.salesman_name}
                   onChange={(e) => setFormData({...formData, salesman_name: e.target.value})}
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                   placeholder="Salesman name"
                   data-testid="salesman-name-input"
                   required
@@ -408,23 +408,23 @@ const SalesmanPerformance = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Phone</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
                   <input
                     type="text"
                     value={formData.phone}
                     onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                     placeholder="Phone number"
                     data-testid="salesman-phone-input"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Email</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
                   <input
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                     placeholder="Email"
                     data-testid="salesman-email-input"
                   />
@@ -433,23 +433,23 @@ const SalesmanPerformance = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Monthly Target (Rs.)</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Monthly Target (Rs.)</label>
                   <input
                     type="number"
                     value={formData.monthly_target}
                     onChange={(e) => setFormData({...formData, monthly_target: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                     placeholder="0"
                     data-testid="salesman-monthly-target"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Quarterly Target (Rs.)</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Quarterly Target (Rs.)</label>
                   <input
                     type="number"
                     value={formData.quarterly_target}
                     onChange={(e) => setFormData({...formData, quarterly_target: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                     placeholder="0"
                     data-testid="salesman-quarterly-target"
                   />
@@ -457,24 +457,24 @@ const SalesmanPerformance = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-stone-700 mb-2">Map Customers</label>
-                <div className="border border-stone-200 rounded-lg max-h-48 overflow-y-auto p-2 space-y-1">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Map Customers</label>
+                <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto p-2 space-y-1">
                   {customers.length > 0 ? customers.map((cust, idx) => (
-                    <label key={idx} className="flex items-center gap-2 px-3 py-2 rounded hover:bg-stone-50 cursor-pointer">
+                    <label key={idx} className="flex items-center gap-2 px-3 py-2 rounded hover:bg-slate-50 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={formData.customers.includes(cust)}
                         onChange={() => toggleCustomer(cust)}
-                        className="accent-[#064E3B]"
+                        className="accent-[#2563EB]"
                       />
-                      <span className="text-sm text-stone-700">{cust}</span>
+                      <span className="text-sm text-slate-700">{cust}</span>
                     </label>
                   )) : (
-                    <p className="text-sm text-stone-500 p-2">No customers available. Sync Tally data first.</p>
+                    <p className="text-sm text-slate-500 p-2">No customers available. Sync Tally data first.</p>
                   )}
                 </div>
                 {formData.customers.length > 0 && (
-                  <p className="text-xs text-stone-500 mt-1">{formData.customers.length} customer(s) selected</p>
+                  <p className="text-xs text-slate-500 mt-1">{formData.customers.length} customer(s) selected</p>
                 )}
               </div>
 

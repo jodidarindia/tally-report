@@ -39,7 +39,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app
-app = FastAPI(title="Tally SaaS Report Builder")
+app = FastAPI(title="FLOWRA - Organize. Automate. Accelerate.")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")

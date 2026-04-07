@@ -79,15 +79,15 @@ const EnhancedAIReports = () => {
   return (
     <div data-testid="enhanced-ai-page">
       <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Enhanced AI Reports
         </h1>
-        <p className="mt-2 text-base text-stone-600">Advanced report generation with filters and specialized analysis</p>
+        <p className="mt-2 text-base text-slate-600">Advanced report generation with filters and specialized analysis</p>
       </div>
 
       {/* Report Type Selection */}
-      <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
-        <h3 className="text-lg font-medium text-stone-900 mb-4">Select Report Type</h3>
+      <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
+        <h3 className="text-lg font-medium text-slate-900 mb-4">Select Report Type</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {reportTypes.map((type) => {
             const Icon = type.icon;
@@ -98,11 +98,11 @@ const EnhancedAIReports = () => {
                 data-testid={`report-type-${type.value}`}
                 className={`flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all ${
                   reportType === type.value
-                    ? 'border-[#064E3B] bg-[#E7F5F0]'
-                    : 'border-stone-200 hover:border-stone-300'
+                    ? 'border-[#2563EB] bg-[#E7F5F0]'
+                    : 'border-slate-200 hover:border-slate-300'
                 }`}
               >
-                <Icon size={24} className={reportType === type.value ? 'text-[#064E3B]' : 'text-stone-600'} />
+                <Icon size={24} className={reportType === type.value ? 'text-[#2563EB]' : 'text-slate-600'} />
                 <span className="text-xs font-medium text-center">{type.label}</span>
               </button>
             );
@@ -111,12 +111,12 @@ const EnhancedAIReports = () => {
       </div>
 
       {/* Filters Panel */}
-      <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+      <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-stone-900">Filters</h3>
+          <h3 className="text-lg font-medium text-slate-900">Filters</h3>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center gap-2 text-sm text-[#064E3B] font-medium"
+            className="flex items-center gap-2 text-sm text-[#2563EB] font-medium"
             data-testid="toggle-filters"
           >
             <Filter size={16} />
@@ -132,10 +132,10 @@ const EnhancedAIReports = () => {
                 key={key}
                 className="flex items-center gap-2 px-3 py-1 bg-[#E7F5F0] rounded-full text-sm"
               >
-                <span className="text-stone-700">
+                <span className="text-slate-700">
                   <strong>{key.replace('_', ' ')}:</strong> {value}
                 </span>
-                <button onClick={() => clearFilter(key)} className="text-stone-500 hover:text-stone-700">
+                <button onClick={() => clearFilter(key)} className="text-slate-500 hover:text-slate-700">
                   <X size={14} />
                 </button>
               </div>
@@ -146,61 +146,61 @@ const EnhancedAIReports = () => {
         {showFilters && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Start Date</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Start Date</label>
               <input
                 type="date"
                 value={filters.start_date}
                 onChange={(e) => setFilters({ ...filters, start_date: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">End Date</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">End Date</label>
               <input
                 type="date"
                 value={filters.end_date}
                 onChange={(e) => setFilters({ ...filters, end_date: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Category</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Category</label>
               <input
                 type="text"
                 placeholder="e.g., Electronics"
                 value={filters.category}
                 onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Customer</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Customer</label>
               <input
                 type="text"
                 placeholder="Customer name"
                 value={filters.customer}
                 onChange={(e) => setFilters({ ...filters, customer: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Min Amount</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Min Amount</label>
               <input
                 type="number"
                 placeholder="0"
                 value={filters.min_amount}
                 onChange={(e) => setFilters({ ...filters, min_amount: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Max Amount</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Max Amount</label>
               <input
                 type="number"
                 placeholder="999999"
                 value={filters.max_amount}
                 onChange={(e) => setFilters({ ...filters, max_amount: e.target.value })}
-                className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
           </div>
@@ -214,14 +214,14 @@ const EnhancedAIReports = () => {
         <form onSubmit={handleSubmit}>
           <div className="ai-query-input-area">
             <div className="flex items-center gap-4 w-full">
-              <Bot className="text-[#064E3B]" size={24} />
+              <Bot className="text-[#2563EB]" size={24} />
               <input
                 type="text"
                 placeholder="Ask detailed questions about your business data..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 disabled={loading}
-                className="flex-1 bg-transparent border-none outline-none text-stone-900 placeholder-stone-400"
+                className="flex-1 bg-transparent border-none outline-none text-slate-900 placeholder-slate-400"
                 data-testid="enhanced-ai-input"
               />
               <button
@@ -237,13 +237,13 @@ const EnhancedAIReports = () => {
         </form>
 
         <div className="relative z-10 mt-4">
-          <div className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">Sample Queries</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Sample Queries</div>
           <div className="flex flex-wrap gap-2">
             {sampleQueries.map((sample, idx) => (
               <button
                 key={idx}
                 onClick={() => setQuery(sample)}
-                className="px-3 py-2 bg-white/60 hover:bg-white border border-stone-200/50 rounded-lg text-xs text-stone-700 transition-all"
+                className="px-3 py-2 bg-white/60 hover:bg-white border border-slate-200/50 rounded-lg text-xs text-slate-700 transition-all"
               >
                 {sample}
               </button>
@@ -255,23 +255,23 @@ const EnhancedAIReports = () => {
       {/* Report Results */}
       {report && (
         <div className="space-y-6" data-testid="report-results">
-          <div className="bg-white border border-stone-200 rounded-xl p-6">
-            <h3 className="text-xl font-medium text-stone-900 mb-3">Summary</h3>
-            <p className="text-base text-stone-700 leading-relaxed">
+          <div className="bg-white border border-slate-200 rounded-xl p-6">
+            <h3 className="text-xl font-medium text-slate-900 mb-3">Summary</h3>
+            <p className="text-base text-slate-700 leading-relaxed">
               {typeof report.summary === 'object' ? JSON.stringify(report.summary) : report.summary}
             </p>
           </div>
 
           {report.key_insights && report.key_insights.length > 0 && (
-            <div className="bg-white border border-stone-200 rounded-xl p-6">
-              <h3 className="text-xl font-medium text-stone-900 mb-4">Key Insights</h3>
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="text-xl font-medium text-slate-900 mb-4">Key Insights</h3>
               <ul className="space-y-2">
                 {report.key_insights.map((insight, idx) => (
                   <li key={idx} className="flex items-start gap-3">
                     <div className="w-6 h-6 bg-[#E7F5F0] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-xs font-semibold text-[#064E3B]">{idx + 1}</span>
+                      <span className="text-xs font-semibold text-[#2563EB]">{idx + 1}</span>
                     </div>
-                    <span className="text-base text-stone-700">
+                    <span className="text-base text-slate-700">
                       {typeof insight === 'object' ? JSON.stringify(insight) : insight}
                     </span>
                   </li>
@@ -281,13 +281,13 @@ const EnhancedAIReports = () => {
           )}
 
           {report.metrics && typeof report.metrics === 'object' && Object.keys(report.metrics).length > 0 && (
-            <div className="bg-white border border-stone-200 rounded-xl p-6">
-              <h3 className="text-xl font-medium text-stone-900 mb-4">Metrics</h3>
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="text-xl font-medium text-slate-900 mb-4">Metrics</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {Object.entries(report.metrics).map(([key, value]) => (
                   <div key={key} className="p-4 bg-[#FDFBF7] rounded-lg">
-                    <div className="text-sm text-stone-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
-                    <div className="text-2xl font-semibold text-[#064E3B] whitespace-pre-wrap break-words">
+                    <div className="text-sm text-slate-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
+                    <div className="text-2xl font-semibold text-[#2563EB] whitespace-pre-wrap break-words">
                       {typeof value === 'object' && value !== null 
                         ? JSON.stringify(value, null, 2) 
                         : String(value)}
@@ -299,13 +299,13 @@ const EnhancedAIReports = () => {
           )}
 
           {report.recommendations && report.recommendations.length > 0 && (
-            <div className="bg-white border border-stone-200 rounded-xl p-6">
-              <h3 className="text-xl font-medium text-stone-900 mb-4">Recommendations</h3>
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="text-xl font-medium text-slate-900 mb-4">Recommendations</h3>
               <ul className="space-y-2">
                 {report.recommendations.map((rec, idx) => (
                   <li key={idx} className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-[#064E3B] rounded-full flex-shrink-0 mt-2" />
-                    <span className="text-base text-stone-700">
+                    <div className="w-2 h-2 bg-[#2563EB] rounded-full flex-shrink-0 mt-2" />
+                    <span className="text-base text-slate-700">
                       {typeof rec === 'object' ? JSON.stringify(rec) : rec}
                     </span>
                   </li>
@@ -315,9 +315,9 @@ const EnhancedAIReports = () => {
           )}
 
           {report.detailed_analysis && (
-            <div className="bg-white border border-stone-200 rounded-xl p-6">
-              <h3 className="text-xl font-medium text-stone-900 mb-4">Detailed Analysis</h3>
-              <p className="text-base text-stone-700 leading-relaxed whitespace-pre-wrap">
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <h3 className="text-xl font-medium text-slate-900 mb-4">Detailed Analysis</h3>
+              <p className="text-base text-slate-700 leading-relaxed whitespace-pre-wrap">
                 {typeof report.detailed_analysis === 'object' ? JSON.stringify(report.detailed_analysis, null, 2) : report.detailed_analysis}
               </p>
             </div>

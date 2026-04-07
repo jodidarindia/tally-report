@@ -93,7 +93,7 @@ const Inventory = ({ selectedFY }) => {
     return (
       <div className="flex items-center justify-center h-64" data-testid="inventory-loading">
         <div className="loading-spinner" />
-        <span className="ml-3 text-stone-600">Loading inventory...</span>
+        <span className="ml-3 text-slate-600">Loading inventory...</span>
       </div>
     );
   }
@@ -102,10 +102,10 @@ const Inventory = ({ selectedFY }) => {
     <div data-testid="inventory-page">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+          <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Inventory
           </h1>
-          <p className="mt-2 text-base text-stone-600">Manage your stock items</p>
+          <p className="mt-2 text-base text-slate-600">Manage your stock items</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -144,26 +144,26 @@ const Inventory = ({ selectedFY }) => {
         </div>
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+      <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
             <input
               type="text"
               data-testid="search-inventory-input"
               placeholder="Search items..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
             />
           </div>
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
             <select
               data-testid="stock-group-filter"
               value={selectedGroup}
               onChange={(e) => setSelectedGroup(e.target.value)}
-              className="pl-10 pr-8 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent appearance-none bg-white"
+              className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white"
             >
               <option value="all">All Stock Groups</option>
               {stockGroups.map(g => (
@@ -172,12 +172,12 @@ const Inventory = ({ selectedFY }) => {
             </select>
           </div>
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
             <select
               data-testid="category-filter-select"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="pl-10 pr-8 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent appearance-none bg-white"
+              className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white"
             >
               <option value="all">All Categories</option>
               {categories.map(cat => (
@@ -188,7 +188,7 @@ const Inventory = ({ selectedFY }) => {
         </div>
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="data-table" data-testid="inventory-table">
             <thead>
@@ -212,8 +212,8 @@ const Inventory = ({ selectedFY }) => {
                   
                   return (
                     <tr key={item.item_id} data-testid={`inventory-row-${item.item_id}`}>
-                      <td className="font-medium text-stone-900">{item.item_name}</td>
-                      <td className="text-stone-600">{item.stock_group || '-'}</td>
+                      <td className="font-medium text-slate-900">{item.item_name}</td>
+                      <td className="text-slate-600">{item.stock_group || '-'}</td>
                       <td>{item.category || '-'}</td>
                       <td className="numeric font-semibold">{item.quantity}</td>
                       <td>{item.unit}</td>
@@ -234,7 +234,7 @@ const Inventory = ({ selectedFY }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan="8" className="text-center py-8 text-stone-500">
+                  <td colSpan="8" className="text-center py-8 text-slate-500">
                     No items found
                   </td>
                 </tr>
@@ -244,7 +244,7 @@ const Inventory = ({ selectedFY }) => {
         </div>
       </div>
 
-      <div className="mt-4 text-sm text-stone-500">
+      <div className="mt-4 text-sm text-slate-500">
         Showing {filteredItems.length} of {items.length} items
       </div>
 
@@ -252,15 +252,15 @@ const Inventory = ({ selectedFY }) => {
       {showPOModal && purchaseOrder && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowPOModal(false)}>
           <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-stone-200 p-6">
+            <div className="sticky top-0 bg-white border-b border-slate-200 p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-semibold text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  <h2 className="text-2xl font-semibold text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
                     AI-Generated Purchase Order
                   </h2>
-                  <p className="text-sm text-stone-600 mt-1">Powered by GPT-5.2 Analysis</p>
+                  <p className="text-sm text-slate-600 mt-1">Powered by GPT-5.2 Analysis</p>
                 </div>
-                <button onClick={() => setShowPOModal(false)} className="text-stone-400 hover:text-stone-600">
+                <button onClick={() => setShowPOModal(false)} className="text-slate-400 hover:text-slate-600">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -271,23 +271,23 @@ const Inventory = ({ selectedFY }) => {
             <div className="p-6 space-y-6">
               {/* AI Analysis */}
               {purchaseOrder.analysis && (
-                <div className="bg-[#E7F5F0] border border-[#064E3B]/20 rounded-lg p-4">
-                  <h3 className="text-sm font-semibold text-[#064E3B] mb-2">AI Analysis</h3>
-                  <p className="text-sm text-stone-700">{purchaseOrder.analysis}</p>
+                <div className="bg-[#E7F5F0] border border-[#2563EB]/20 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-[#2563EB] mb-2">AI Analysis</h3>
+                  <p className="text-sm text-slate-700">{purchaseOrder.analysis}</p>
                 </div>
               )}
 
               {/* Urgent Items */}
               {purchaseOrder.urgent_items && purchaseOrder.urgent_items.length > 0 && (
                 <div>
-                  <h3 className="text-lg font-semibold text-stone-900 mb-4">Items to Order</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Items to Order</h3>
                   <div className="space-y-3">
                     {purchaseOrder.urgent_items.map((item, idx) => (
-                      <div key={idx} className="bg-white border border-stone-200 rounded-lg p-4">
+                      <div key={idx} className="bg-white border border-slate-200 rounded-lg p-4">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <div className="flex items-center gap-3">
-                              <h4 className="font-semibold text-stone-900">{item.item_name}</h4>
+                              <h4 className="font-semibold text-slate-900">{item.item_name}</h4>
                               <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                 item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                                 item.priority === 'high' ? 'bg-orange-100 text-orange-700' :
@@ -297,25 +297,25 @@ const Inventory = ({ selectedFY }) => {
                                 {item.priority.toUpperCase()}
                               </span>
                             </div>
-                            <p className="text-sm text-stone-600 mt-2">{item.reason}</p>
+                            <p className="text-sm text-slate-600 mt-2">{item.reason}</p>
                             <div className="grid grid-cols-3 gap-4 mt-3">
                               <div>
-                                <div className="text-xs text-stone-500">Current Stock</div>
+                                <div className="text-xs text-slate-500">Current Stock</div>
                                 <div className="text-sm font-semibold">{item.current_stock}</div>
                               </div>
                               <div>
-                                <div className="text-xs text-stone-500">Reorder Level</div>
+                                <div className="text-xs text-slate-500">Reorder Level</div>
                                 <div className="text-sm font-semibold">{item.reorder_level}</div>
                               </div>
                               <div>
-                                <div className="text-xs text-stone-500">Recommended Qty</div>
-                                <div className="text-sm font-semibold text-[#064E3B]">{item.recommended_quantity}</div>
+                                <div className="text-xs text-slate-500">Recommended Qty</div>
+                                <div className="text-sm font-semibold text-[#2563EB]">{item.recommended_quantity}</div>
                               </div>
                             </div>
                           </div>
                           <div className="text-right ml-4">
-                            <div className="text-xs text-stone-500">Est. Cost</div>
-                            <div className="text-lg font-semibold text-[#064E3B]">
+                            <div className="text-xs text-slate-500">Est. Cost</div>
+                            <div className="text-lg font-semibold text-[#2563EB]">
                               ₹{item.estimated_cost.toLocaleString('en-IN')}
                             </div>
                           </div>
@@ -329,11 +329,11 @@ const Inventory = ({ selectedFY }) => {
               {/* Recommendations */}
               {purchaseOrder.recommendations && purchaseOrder.recommendations.length > 0 && (
                 <div>
-                  <h3 className="text-lg font-semibold text-stone-900 mb-3">Recommendations</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-3">Recommendations</h3>
                   <ul className="space-y-2">
                     {purchaseOrder.recommendations.map((rec, idx) => (
-                      <li key={idx} className="flex items-start gap-2 text-sm text-stone-700">
-                        <span className="text-[#064E3B] mt-0.5">•</span>
+                      <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                        <span className="text-[#2563EB] mt-0.5">•</span>
                         {rec}
                       </li>
                     ))}
@@ -342,14 +342,14 @@ const Inventory = ({ selectedFY }) => {
               )}
 
               {/* Total */}
-              <div className="bg-stone-50 rounded-lg p-4 flex items-center justify-between">
+              <div className="bg-slate-50 rounded-lg p-4 flex items-center justify-between">
                 <div>
-                  <div className="text-sm text-stone-600">Total Estimated Cost</div>
-                  <div className="text-xs text-stone-500 mt-1">
+                  <div className="text-sm text-slate-600">Total Estimated Cost</div>
+                  <div className="text-xs text-slate-500 mt-1">
                     {purchaseOrder.urgent_items?.length || 0} items
                   </div>
                 </div>
-                <div className="text-3xl font-bold text-[#064E3B]">
+                <div className="text-3xl font-bold text-[#2563EB]">
                   ₹{(purchaseOrder.total_estimated_cost || 0).toLocaleString('en-IN')}
                 </div>
               </div>

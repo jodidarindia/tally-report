@@ -119,14 +119,14 @@ const InventoryAnalytics = () => {
   return (
     <div data-testid="analytics-page">
       <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Inventory Analytics
         </h1>
-        <p className="mt-2 text-base text-stone-600">Advanced inventory analysis and insights</p>
+        <p className="mt-2 text-base text-slate-600">Advanced inventory analysis and insights</p>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white border border-stone-200 rounded-xl p-2 mb-6 flex gap-2">
+      <div className="bg-white border border-slate-200 rounded-xl p-2 mb-6 flex gap-2">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
@@ -136,8 +136,8 @@ const InventoryAnalytics = () => {
               data-testid={`tab-${tab.id}`}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
                 activeTab === tab.id
-                  ? 'bg-[#064E3B] text-white'
-                  : 'text-stone-600 hover:bg-stone-50'
+                  ? 'bg-[#2563EB] text-white'
+                  : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <Icon size={18} />
@@ -157,36 +157,36 @@ const InventoryAnalytics = () => {
           {activeTab === 'movement' && (
             <div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                <div className="bg-white border border-stone-200 rounded-xl p-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-6">
                   <div className="flex items-center gap-3 mb-2">
                     <TrendingUp className="text-green-600" size={24} />
-                    <span className="text-sm font-medium text-stone-600">Fast Moving</span>
+                    <span className="text-sm font-medium text-slate-600">Fast Moving</span>
                   </div>
-                  <div className="text-3xl font-semibold text-stone-900">
+                  <div className="text-3xl font-semibold text-slate-900">
                     {movementData.filter(m => m.classification === 'fast-moving').length}
                   </div>
                 </div>
-                <div className="bg-white border border-stone-200 rounded-xl p-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-6">
                   <div className="flex items-center gap-3 mb-2">
                     <TrendingDown className="text-yellow-600" size={24} />
-                    <span className="text-sm font-medium text-stone-600">Slow Moving</span>
+                    <span className="text-sm font-medium text-slate-600">Slow Moving</span>
                   </div>
-                  <div className="text-3xl font-semibold text-stone-900">
+                  <div className="text-3xl font-semibold text-slate-900">
                     {movementData.filter(m => m.classification === 'slow-moving').length}
                   </div>
                 </div>
-                <div className="bg-white border border-stone-200 rounded-xl p-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-6">
                   <div className="flex items-center gap-3 mb-2">
                     <AlertTriangle className="text-red-600" size={24} />
-                    <span className="text-sm font-medium text-stone-600">Dead Stock</span>
+                    <span className="text-sm font-medium text-slate-600">Dead Stock</span>
                   </div>
-                  <div className="text-3xl font-semibold text-stone-900">
+                  <div className="text-3xl font-semibold text-slate-900">
                     {movementData.filter(m => m.classification === 'dead-stock').length}
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="movement-table">
                     <thead>
@@ -251,7 +251,7 @@ const InventoryAnalytics = () => {
                 </div>
               </div>
 
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="below-cost-table">
                     <thead>
@@ -304,9 +304,9 @@ const InventoryAnalytics = () => {
           {/* Sales Frequency Report */}
           {activeTab === 'sales-frequency' && (
             <div>
-              <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-stone-900">Date Filter</h3>
+                  <h3 className="text-lg font-medium text-slate-900">Date Filter</h3>
                   <div className="flex gap-2">
                     <button
                       onClick={() => exportSalesFrequency('excel')}
@@ -336,34 +336,34 @@ const InventoryAnalytics = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-2">Start Date</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Start Date</label>
                     <input
                       type="date"
                       value={dateFilter.start_date}
                       onChange={(e) => setDateFilter({ ...dateFilter, start_date: e.target.value })}
-                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
                       data-testid="sales-freq-start-date"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-2">End Date</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">End Date</label>
                     <input
                       type="date"
                       value={dateFilter.end_date}
                       onChange={(e) => setDateFilter({ ...dateFilter, end_date: e.target.value })}
-                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
                       data-testid="sales-freq-end-date"
                     />
                   </div>
                 </div>
                 {(dateFilter.start_date || dateFilter.end_date) && (
-                  <div className="mt-3 text-sm text-stone-600">
+                  <div className="mt-3 text-sm text-slate-600">
                     Filtering: {dateFilter.start_date || 'All'} to {dateFilter.end_date || 'All'}
                   </div>
                 )}
               </div>
 
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="sales-frequency-table">
                     <thead>
@@ -381,9 +381,9 @@ const InventoryAnalytics = () => {
                       {salesFrequency.length > 0 ? (
                         salesFrequency.map((item, idx) => (
                           <tr key={idx}>
-                            <td className="font-medium text-stone-900">{item.item_name}</td>
+                            <td className="font-medium text-slate-900">{item.item_name}</td>
                             <td className="numeric">
-                              <span className="px-3 py-1 bg-[#E7F5F0] text-[#064E3B] rounded-full font-semibold">
+                              <span className="px-3 py-1 bg-[#E7F5F0] text-[#2563EB] rounded-full font-semibold">
                                 {item.transaction_count}
                               </span>
                             </td>
@@ -393,12 +393,12 @@ const InventoryAnalytics = () => {
                                 {item.unique_customers}
                               </span>
                             </td>
-                            <td className="numeric text-[#064E3B] font-semibold">
+                            <td className="numeric text-[#2563EB] font-semibold">
                               ₹{item.total_revenue.toLocaleString('en-IN')}
                             </td>
                             <td className="numeric">{item.avg_quantity_per_transaction.toFixed(1)}</td>
                             <td>
-                              <div className="text-xs text-stone-600">
+                              <div className="text-xs text-slate-600">
                                 {item.customer_names.slice(0, 2).join(', ')}
                                 {item.customer_names.length > 2 && ` +${item.customer_names.length - 2} more`}
                               </div>
@@ -407,7 +407,7 @@ const InventoryAnalytics = () => {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="7" className="text-center py-8 text-stone-500">
+                          <td colSpan="7" className="text-center py-8 text-slate-500">
                             No sales data available for the selected date range
                           </td>
                         </tr>
@@ -419,19 +419,19 @@ const InventoryAnalytics = () => {
 
               {salesFrequency.length > 0 && (
                 <div className="mt-4 grid grid-cols-3 gap-4">
-                  <div className="bg-white border border-stone-200 rounded-xl p-4">
-                    <div className="text-sm text-stone-600">Total Items</div>
-                    <div className="text-2xl font-semibold text-stone-900">{salesFrequency.length}</div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4">
+                    <div className="text-sm text-slate-600">Total Items</div>
+                    <div className="text-2xl font-semibold text-slate-900">{salesFrequency.length}</div>
                   </div>
-                  <div className="bg-white border border-stone-200 rounded-xl p-4">
-                    <div className="text-sm text-stone-600">Total Transactions</div>
-                    <div className="text-2xl font-semibold text-stone-900">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4">
+                    <div className="text-sm text-slate-600">Total Transactions</div>
+                    <div className="text-2xl font-semibold text-slate-900">
                       {salesFrequency.reduce((sum, item) => sum + item.transaction_count, 0)}
                     </div>
                   </div>
-                  <div className="bg-white border border-stone-200 rounded-xl p-4">
-                    <div className="text-sm text-stone-600">Total Revenue</div>
-                    <div className="text-2xl font-semibold text-[#064E3B]">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4">
+                    <div className="text-sm text-slate-600">Total Revenue</div>
+                    <div className="text-2xl font-semibold text-[#2563EB]">
                       ₹{salesFrequency.reduce((sum, item) => sum + item.total_revenue, 0).toLocaleString('en-IN')}
                     </div>
                   </div>
@@ -443,9 +443,9 @@ const InventoryAnalytics = () => {
           {/* Pivot Table */}
           {activeTab === 'pivot' && (
             <div>
-              <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+              <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-stone-900">Pivot Configuration</h3>
+                  <h3 className="text-lg font-medium text-slate-900">Pivot Configuration</h3>
                   <button
                     onClick={exportPivot}
                     className="btn-primary flex items-center gap-2"
@@ -457,11 +457,11 @@ const InventoryAnalytics = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-2">Group By</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Group By</label>
                     <select
                       value={pivotGroupBy}
                       onChange={(e) => setPivotGroupBy(e.target.value)}
-                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
                       data-testid="pivot-group-by"
                     >
                       <option value="category">Category</option>
@@ -470,11 +470,11 @@ const InventoryAnalytics = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-2">Sort By</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Sort By</label>
                     <select
                       value={pivotMetric}
                       onChange={(e) => setPivotMetric(e.target.value)}
-                      className="w-full px-4 py-2 border border-stone-200 rounded-lg"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
                       data-testid="pivot-metric"
                     >
                       <option value="value">Total Value</option>
@@ -485,7 +485,7 @@ const InventoryAnalytics = () => {
                 </div>
               </div>
 
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="pivot-table">
                     <thead>
@@ -500,17 +500,17 @@ const InventoryAnalytics = () => {
                     <tbody>
                       {pivotData.map((group, idx) => (
                         <React.Fragment key={idx}>
-                          <tr className="bg-stone-50 font-semibold">
+                          <tr className="bg-slate-50 font-semibold">
                             <td>{group.group}</td>
                             <td className="numeric">{group.total_items}</td>
                             <td className="numeric">{group.total_quantity}</td>
-                            <td className="numeric text-[#064E3B]">
+                            <td className="numeric text-[#2563EB]">
                               ₹{group.total_value.toLocaleString('en-IN')}
                             </td>
                             <td>
                               <button
                                 onClick={() => toggleGroup(group.group)}
-                                className="text-sm text-[#064E3B] font-medium"
+                                className="text-sm text-[#2563EB] font-medium"
                               >
                                 {expandedGroups[group.group] ? '− Collapse' : '+ Expand'}
                               </button>
@@ -518,7 +518,7 @@ const InventoryAnalytics = () => {
                           </tr>
                           {expandedGroups[group.group] && group.items.map((item, itemIdx) => (
                             <tr key={`${idx}-${itemIdx}`} className="bg-white">
-                              <td className="pl-8 text-sm text-stone-600">{item.item_name}</td>
+                              <td className="pl-8 text-sm text-slate-600">{item.item_name}</td>
                               <td className="numeric text-sm">1</td>
                               <td className="numeric text-sm">{item.quantity}</td>
                               <td className="numeric text-sm">

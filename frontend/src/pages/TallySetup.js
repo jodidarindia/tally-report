@@ -63,7 +63,7 @@ const TallySetup = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="loading-spinner" />
-        <span className="ml-3 text-stone-600">Checking connection...</span>
+        <span className="ml-3 text-slate-600">Checking connection...</span>
       </div>
     );
   }
@@ -71,20 +71,20 @@ const TallySetup = () => {
   return (
     <div data-testid="setup-page">
       <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Tally Setup
         </h1>
-        <p className="mt-2 text-base text-stone-600">Configure your TallyPrime connection</p>
+        <p className="mt-2 text-base text-slate-600">Configure your TallyPrime connection</p>
       </div>
 
       <div className="max-w-2xl">
-        <div className="bg-white border border-stone-200 rounded-xl p-8">
+        <div className="bg-white border border-slate-200 rounded-xl p-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-12 h-12 bg-[#E7F5F0] rounded-lg flex items-center justify-center">
-              <SettingsIcon className="text-[#064E3B]" size={24} />
+              <SettingsIcon className="text-[#2563EB]" size={24} />
             </div>
             <div>
-              <h2 className="text-xl font-medium text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+              <h2 className="text-xl font-medium text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
                 Connection Settings
               </h2>
               <div className="flex items-center gap-2 mt-1">
@@ -105,7 +105,7 @@ const TallySetup = () => {
 
           <form onSubmit={handleConnect} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
                 Connection Type
               </label>
               <div className="flex gap-4">
@@ -115,8 +115,8 @@ const TallySetup = () => {
                   onClick={() => setConnectionType('xml')}
                   className={`flex-1 px-4 py-3 border-2 rounded-lg transition-all ${
                     connectionType === 'xml'
-                      ? 'border-[#064E3B] bg-[#E7F5F0] text-[#064E3B]'
-                      : 'border-stone-200 text-stone-600 hover:border-stone-300'
+                      ? 'border-[#2563EB] bg-[#E7F5F0] text-[#2563EB]'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}
                 >
                   <div className="font-medium">XML/HTTP API</div>
@@ -128,8 +128,8 @@ const TallySetup = () => {
                   onClick={() => setConnectionType('rest')}
                   className={`flex-1 px-4 py-3 border-2 rounded-lg transition-all ${
                     connectionType === 'rest'
-                      ? 'border-[#064E3B] bg-[#E7F5F0] text-[#064E3B]'
-                      : 'border-stone-200 text-stone-600 hover:border-stone-300'
+                      ? 'border-[#2563EB] bg-[#E7F5F0] text-[#2563EB]'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}
                 >
                   <div className="font-medium">REST API</div>
@@ -141,7 +141,7 @@ const TallySetup = () => {
             {connectionType === 'xml' ? (
               <>
                 <div>
-                  <label htmlFor="host" className="block text-sm font-medium text-stone-700 mb-2">
+                  <label htmlFor="host" className="block text-sm font-medium text-slate-700 mb-2">
                     Host
                   </label>
                   <input
@@ -150,12 +150,12 @@ const TallySetup = () => {
                     data-testid="host-input"
                     value={host}
                     onChange={(e) => setHost(e.target.value)}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
                     placeholder="localhost"
                   />
                 </div>
                 <div>
-                  <label htmlFor="port" className="block text-sm font-medium text-stone-700 mb-2">
+                  <label htmlFor="port" className="block text-sm font-medium text-slate-700 mb-2">
                     Port
                   </label>
                   <input
@@ -164,14 +164,14 @@ const TallySetup = () => {
                     data-testid="port-input"
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
                     placeholder="9000"
                   />
                 </div>
               </>
             ) : (
               <div>
-                <label htmlFor="apiKey" className="block text-sm font-medium text-stone-700 mb-2">
+                <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 mb-2">
                   API Key
                 </label>
                 <input
@@ -180,7 +180,7 @@ const TallySetup = () => {
                   data-testid="api-key-input"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
                   placeholder="Enter your Tally API key"
                 />
               </div>
@@ -197,8 +197,8 @@ const TallySetup = () => {
           </form>
 
           <div className="mt-6 p-4 bg-[#FDFBF7] rounded-lg">
-            <h3 className="text-sm font-semibold text-stone-900 mb-2">Setup Instructions</h3>
-            <ul className="text-sm text-stone-600 space-y-1">
+            <h3 className="text-sm font-semibold text-slate-900 mb-2">Setup Instructions</h3>
+            <ul className="text-sm text-slate-600 space-y-1">
               <li>• For XML/HTTP: Ensure TallyPrime is running on your local machine</li>
               <li>• Default port is 9000 (can be configured in Tally settings)</li>
               <li>• For REST API: Obtain your API key from Tally Developer portal</li>

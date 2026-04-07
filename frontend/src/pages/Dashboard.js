@@ -80,7 +80,7 @@ const Dashboard = () => {
     return (
       <div className="flex items-center justify-center h-64" data-testid="dashboard-loading">
         <div className="loading-spinner" />
-        <span className="ml-3 text-stone-600">Loading dashboard...</span>
+        <span className="ml-3 text-slate-600">Loading dashboard...</span>
       </div>
     );
   }
@@ -91,13 +91,13 @@ const Dashboard = () => {
     <div data-testid="dashboard-page">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+          <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Dashboard
           </h1>
           <div className="flex items-center gap-4 mt-2">
-            <p className="text-base text-stone-600">Overview of your Tally data</p>
+            <p className="text-base text-slate-600">Overview of your Tally data</p>
             {syncStatus?.last_sync && (
-              <div className="flex items-center gap-2 text-sm text-stone-500">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
                 <Activity size={14} />
                 Last sync: {new Date(syncStatus.last_sync).toLocaleTimeString()}
               </div>
@@ -109,8 +109,8 @@ const Dashboard = () => {
             onClick={() => setAutoRefresh(!autoRefresh)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               autoRefresh
-                ? 'bg-[#E7F5F0] text-[#064E3B] border border-[#064E3B]'
-                : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
+                ? 'bg-[#E7F5F0] text-[#2563EB] border border-[#2563EB]'
+                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
             }`}
             data-testid="auto-refresh-toggle"
           >
@@ -129,11 +129,11 @@ const Dashboard = () => {
 
       {/* Follow-up Reminders Banner */}
       {hasReminders && (
-        <div className="mb-6 bg-white border border-stone-200 rounded-xl overflow-hidden" data-testid="reminders-section">
-          <div className="px-6 py-4 flex items-center gap-3 border-b border-stone-100 bg-stone-50">
-            <Bell size={20} className="text-[#064E3B]" />
-            <h3 className="text-lg font-medium text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>Follow-up Reminders</h3>
-            <span className="ml-auto text-sm text-stone-500">{reminders.total_pending} pending</span>
+        <div className="mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="reminders-section">
+          <div className="px-6 py-4 flex items-center gap-3 border-b border-slate-100 bg-slate-50">
+            <Bell size={20} className="text-[#2563EB]" />
+            <h3 className="text-lg font-medium text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>Follow-up Reminders</h3>
+            <span className="ml-auto text-sm text-slate-500">{reminders.total_pending} pending</span>
           </div>
           <div className="p-4 space-y-2">
             {/* Overdue */}
@@ -141,14 +141,14 @@ const Dashboard = () => {
               <div key={`o-${idx}`} className="flex items-center gap-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg" data-testid={`reminder-overdue-${idx}`}>
                 <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
                 <div className="flex-1">
-                  <span className="font-medium text-stone-900">{f.customer_name}</span>
+                  <span className="font-medium text-slate-900">{f.customer_name}</span>
                   <span className="text-sm text-red-600 ml-3">OVERDUE</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-stone-500">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Calendar size={14} />
                   {new Date(f.followup_date).toLocaleDateString()}
                 </div>
-                <span className="px-2 py-0.5 rounded text-xs bg-stone-100 text-stone-600 capitalize">{f.followup_type}</span>
+                <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600 capitalize">{f.followup_type}</span>
               </div>
             ))}
             {/* Today */}
@@ -156,28 +156,28 @@ const Dashboard = () => {
               <div key={`t-${idx}`} className="flex items-center gap-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg" data-testid={`reminder-today-${idx}`}>
                 <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
                 <div className="flex-1">
-                  <span className="font-medium text-stone-900">{f.customer_name}</span>
+                  <span className="font-medium text-slate-900">{f.customer_name}</span>
                   <span className="text-sm text-amber-600 ml-3">Today</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-stone-500">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Clock size={14} />
                   {new Date(f.followup_date).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
                 </div>
-                <span className="px-2 py-0.5 rounded text-xs bg-stone-100 text-stone-600 capitalize">{f.followup_type}</span>
+                <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600 capitalize">{f.followup_type}</span>
               </div>
             ))}
             {/* Upcoming */}
             {reminders.upcoming?.map((f, idx) => (
-              <div key={`u-${idx}`} className="flex items-center gap-4 px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg" data-testid={`reminder-upcoming-${idx}`}>
-                <div className="w-2 h-2 rounded-full bg-stone-400 flex-shrink-0" />
+              <div key={`u-${idx}`} className="flex items-center gap-4 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg" data-testid={`reminder-upcoming-${idx}`}>
+                <div className="w-2 h-2 rounded-full bg-slate-400 flex-shrink-0" />
                 <div className="flex-1">
-                  <span className="font-medium text-stone-900">{f.customer_name}</span>
+                  <span className="font-medium text-slate-900">{f.customer_name}</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-stone-500">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Calendar size={14} />
                   {new Date(f.followup_date).toLocaleDateString()}
                 </div>
-                <span className="px-2 py-0.5 rounded text-xs bg-stone-100 text-stone-600 capitalize">{f.followup_type}</span>
+                <span className="px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600 capitalize">{f.followup_type}</span>
               </div>
             ))}
           </div>
@@ -188,25 +188,25 @@ const Dashboard = () => {
         <div className="stat-card" data-testid="total-items-card">
           <div className="flex items-center justify-between mb-3">
             <div className="w-12 h-12 bg-[#E7F5F0] rounded-lg flex items-center justify-center">
-              <Package className="text-[#064E3B]" size={24} />
+              <Package className="text-[#2563EB]" size={24} />
             </div>
           </div>
-          <div className="text-3xl font-semibold text-stone-900">
+          <div className="text-3xl font-semibold text-slate-900">
             {inventorySummary?.total_items || 0}
           </div>
-          <div className="text-sm text-stone-500 mt-1">Total Items</div>
+          <div className="text-sm text-slate-500 mt-1">Total Items</div>
         </div>
 
         <div className="stat-card" data-testid="inventory-value-card">
           <div className="flex items-center justify-between mb-3">
             <div className="w-12 h-12 bg-[#E7F5F0] rounded-lg flex items-center justify-center">
-              <TrendingUp className="text-[#064E3B]" size={24} />
+              <TrendingUp className="text-[#2563EB]" size={24} />
             </div>
           </div>
-          <div className="text-3xl font-semibold text-stone-900">
+          <div className="text-3xl font-semibold text-slate-900">
             Rs.{inventorySummary?.total_value?.toLocaleString('en-IN') || 0}
           </div>
-          <div className="text-sm text-stone-500 mt-1">Inventory Value</div>
+          <div className="text-sm text-slate-500 mt-1">Inventory Value</div>
         </div>
 
         <div className="stat-card" data-testid="low-stock-card">
@@ -215,66 +215,66 @@ const Dashboard = () => {
               <AlertCircle className="text-[#B45309]" size={24} />
             </div>
           </div>
-          <div className="text-3xl font-semibold text-stone-900">
+          <div className="text-3xl font-semibold text-slate-900">
             {inventorySummary?.low_stock_items || 0}
           </div>
-          <div className="text-sm text-stone-500 mt-1">Low Stock Items</div>
+          <div className="text-sm text-slate-500 mt-1">Low Stock Items</div>
         </div>
 
         <div className="stat-card" data-testid="total-sales-card">
           <div className="flex items-center justify-between mb-3">
             <div className="w-12 h-12 bg-[#E7F5F0] rounded-lg flex items-center justify-center">
-              <Activity className="text-[#064E3B]" size={24} />
+              <Activity className="text-[#2563EB]" size={24} />
             </div>
           </div>
-          <div className="text-3xl font-semibold text-stone-900">
+          <div className="text-3xl font-semibold text-slate-900">
             Rs.{salesSummary?.total_sales?.toLocaleString('en-IN') || 0}
           </div>
-          <div className="text-sm text-stone-500 mt-1">Total Sales</div>
+          <div className="text-sm text-slate-500 mt-1">Total Sales</div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white border border-stone-200 rounded-xl p-6">
-          <h3 className="text-xl font-medium text-stone-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <div className="bg-white border border-slate-200 rounded-xl p-6">
+          <h3 className="text-xl font-medium text-slate-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Top Customers
           </h3>
           {salesSummary?.top_customers?.length > 0 ? (
             <div className="space-y-3">
               {salesSummary.top_customers.map((customer, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-[#FDFBF7] rounded-lg">
-                  <span className="text-sm font-medium text-stone-700">{customer.name}</span>
-                  <span className="text-sm font-semibold text-[#064E3B]">
+                <div key={index} className="flex items-center justify-between p-3 bg-[#F0F4FF] rounded-lg">
+                  <span className="text-sm font-medium text-slate-700">{customer.name}</span>
+                  <span className="text-sm font-semibold text-[#2563EB]">
                     Rs.{customer.total.toLocaleString('en-IN')}
                   </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-stone-500 text-sm">No customer data available</p>
+            <p className="text-slate-500 text-sm">No customer data available</p>
           )}
         </div>
 
-        <div className="bg-white border border-stone-200 rounded-xl p-6">
-          <h3 className="text-xl font-medium text-stone-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <div className="bg-white border border-slate-200 rounded-xl p-6">
+          <h3 className="text-xl font-medium text-slate-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Recent Transactions
           </h3>
           {salesSummary?.recent_vouchers?.length > 0 ? (
             <div className="space-y-3">
               {salesSummary.recent_vouchers.map((voucher, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-[#FDFBF7] rounded-lg">
+                <div key={index} className="flex items-center justify-between p-3 bg-[#F0F4FF] rounded-lg">
                   <div>
-                    <div className="text-sm font-medium text-stone-700">{voucher.party_name}</div>
-                    <div className="text-xs text-stone-500">{voucher.voucher_date}</div>
+                    <div className="text-sm font-medium text-slate-700">{voucher.party_name}</div>
+                    <div className="text-xs text-slate-500">{voucher.voucher_date}</div>
                   </div>
-                  <span className="text-sm font-semibold text-[#064E3B]">
+                  <span className="text-sm font-semibold text-[#2563EB]">
                     Rs.{voucher.total_amount.toLocaleString('en-IN')}
                   </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-stone-500 text-sm">No recent transactions</p>
+            <p className="text-slate-500 text-sm">No recent transactions</p>
           )}
         </div>
       </div>

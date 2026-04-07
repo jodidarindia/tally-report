@@ -175,19 +175,19 @@ const CustomerCRM = ({ user, selectedFY }) => {
     const fDay = new Date(fDate.getFullYear(), fDate.getMonth(), fDate.getDate());
     if (fDay < today) return 'text-red-600 bg-red-50 border-red-200';
     if (fDay.getTime() === today.getTime()) return 'text-amber-600 bg-amber-50 border-amber-200';
-    return 'text-stone-600 bg-stone-50 border-stone-200';
+    return 'text-slate-600 bg-slate-50 border-slate-200';
   };
 
   return (
     <div data-testid="crm-page">
       <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Customer CRM
         </h1>
-        <p className="mt-2 text-base text-stone-600">Manage customers, targets, follow-ups, and export ledgers</p>
+        <p className="mt-2 text-base text-slate-600">Manage customers, targets, follow-ups, and export ledgers</p>
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-xl p-2 mb-6 flex gap-2">
+      <div className="bg-white border border-slate-200 rounded-xl p-2 mb-6 flex gap-2">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
@@ -196,7 +196,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
               data-testid={`tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
-                activeTab === tab.id ? 'bg-[#064E3B] text-white' : 'text-stone-600 hover:bg-stone-50'
+                activeTab === tab.id ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <Icon size={18} />
@@ -212,7 +212,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
           <select
             value={selectedGroup}
             onChange={(e) => setSelectedGroup(e.target.value)}
-            className="px-4 py-2 border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+            className="px-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
             data-testid="customer-group-filter"
           >
             <option value="all">All Customer Groups</option>
@@ -227,7 +227,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
         <>
           {/* Outstanding Payments - Proper Aging */}
           {activeTab === 'outstanding' && (
-            <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="data-table" data-testid="outstanding-table">
                   <thead>
@@ -256,12 +256,12 @@ const CustomerCRM = ({ user, selectedFY }) => {
                         };
                         return (
                       <tr key={idx}>
-                        <td className="font-medium text-stone-900">{customer.customer_name}</td>
-                        <td className="text-stone-500 text-xs">{customer.ledger_group || '-'}</td>
-                        <td className="numeric text-stone-600">
+                        <td className="font-medium text-slate-900">{customer.customer_name}</td>
+                        <td className="text-slate-500 text-xs">{customer.ledger_group || '-'}</td>
+                        <td className="numeric text-slate-600">
                           Rs.{(customer.total_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
-                        <td className="numeric font-semibold text-[#064E3B]">
+                        <td className="numeric font-semibold text-[#2563EB]">
                           Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
                         <td className="numeric">Rs.{(customer.aging_0_30 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
@@ -278,7 +278,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                             <button
                               onClick={() => exportLedger(customer.customer_name, 'excel')}
                               disabled={exportingLedger === customer.customer_name}
-                              className="px-2 py-1 text-xs rounded bg-[#064E3B] text-white hover:bg-[#065F46] disabled:opacity-50"
+                              className="px-2 py-1 text-xs rounded bg-[#2563EB] text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                               data-testid={`export-ledger-excel-${idx}`}
                             >
                               XLS
@@ -286,7 +286,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                             <button
                               onClick={() => exportLedger(customer.customer_name, 'pdf')}
                               disabled={exportingLedger === customer.customer_name}
-                              className="px-2 py-1 text-xs rounded border border-stone-300 text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+                              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                               data-testid={`export-ledger-pdf-${idx}`}
                             >
                               PDF
@@ -316,16 +316,16 @@ const CustomerCRM = ({ user, selectedFY }) => {
               </div>
 
               {showAddFollowup && (
-                <div className="bg-white border border-stone-200 rounded-xl p-6 mb-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-medium">New Follow-up</h3>
-                    <button onClick={() => setShowAddFollowup(false)} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+                    <button onClick={() => setShowAddFollowup(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <select
                       value={newFollowup.customer_name}
                       onChange={(e) => setNewFollowup({...newFollowup, customer_name: e.target.value})}
-                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                       data-testid="followup-customer-select"
                     >
                       <option value="">Select Customer</option>
@@ -337,13 +337,13 @@ const CustomerCRM = ({ user, selectedFY }) => {
                       type="datetime-local"
                       value={newFollowup.followup_date}
                       onChange={(e) => setNewFollowup({...newFollowup, followup_date: e.target.value})}
-                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                       data-testid="followup-date-input"
                     />
                     <select
                       value={newFollowup.followup_type}
                       onChange={(e) => setNewFollowup({...newFollowup, followup_type: e.target.value})}
-                      className="px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                       data-testid="followup-type-select"
                     >
                       <option value="call">Call</option>
@@ -355,7 +355,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                       placeholder="Notes"
                       value={newFollowup.notes}
                       onChange={(e) => setNewFollowup({...newFollowup, notes: e.target.value})}
-                      className="px-4 py-2 border border-stone-200 rounded-lg col-span-2 focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                      className="px-4 py-2 border border-slate-200 rounded-lg col-span-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                       rows="3"
                       data-testid="followup-notes-input"
                     />
@@ -369,29 +369,29 @@ const CustomerCRM = ({ user, selectedFY }) => {
 
               <div className="grid grid-cols-1 gap-4">
                 {followups.length === 0 && (
-                  <div className="text-center py-12 text-stone-500">No follow-ups yet. Add one to get started.</div>
+                  <div className="text-center py-12 text-slate-500">No follow-ups yet. Add one to get started.</div>
                 )}
                 {followups.map((followup, idx) => (
                   <div key={idx} className={`bg-white border rounded-xl p-6 ${getFollowupDateColor(followup.followup_date)}`}>
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-3">
-                          <h3 className="text-lg font-medium text-stone-900">{followup.customer_name}</h3>
+                          <h3 className="text-lg font-medium text-slate-900">{followup.customer_name}</h3>
                           {followup.followup_date && new Date(followup.followup_date) < new Date() && followup.status === 'pending' && (
                             <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-600 text-white">OVERDUE</span>
                           )}
                         </div>
-                        <div className="flex items-center gap-4 mt-2 text-sm text-stone-600">
+                        <div className="flex items-center gap-4 mt-2 text-sm text-slate-600">
                           <span className="flex items-center gap-1">
                             <Calendar size={14} />
                             {new Date(followup.followup_date).toLocaleString()}
                           </span>
-                          <span className="capitalize px-2 py-0.5 rounded bg-stone-100 text-stone-700 text-xs">{followup.followup_type}</span>
+                          <span className="capitalize px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">{followup.followup_type}</span>
                           {followup.created_by_name && (
-                            <span className="text-xs text-stone-400">by {followup.created_by_name}</span>
+                            <span className="text-xs text-slate-400">by {followup.created_by_name}</span>
                           )}
                         </div>
-                        {followup.notes && <p className="mt-2 text-sm text-stone-700">{followup.notes}</p>}
+                        {followup.notes && <p className="mt-2 text-sm text-slate-700">{followup.notes}</p>}
                       </div>
                       <div className="flex gap-2">
                         {followup.status === 'pending' && (
@@ -419,7 +419,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
           {/* Targets with Set Target & Monthly Sales */}
           {activeTab === 'targets' && (
             <div>
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="targets-table">
                     <thead>
@@ -438,7 +438,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                       {targets.map((target, idx) => (
                         <React.Fragment key={idx}>
                           <tr>
-                            <td className="font-medium text-stone-900">
+                            <td className="font-medium text-slate-900">
                               <div className="flex items-center gap-2">
                                 {target.customer_name}
                                 {target.has_custom_target && (
@@ -446,14 +446,14 @@ const CustomerCRM = ({ user, selectedFY }) => {
                                 )}
                               </div>
                             </td>
-                            <td className="numeric text-stone-500">Rs.{(target.last_fy_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td className="numeric text-slate-500">Rs.{(target.last_fy_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
                             <td className="numeric font-medium">Rs.{target.target_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                            <td className="numeric font-semibold text-[#064E3B]">Rs.{target.achieved_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                            <td className="numeric font-semibold text-[#2563EB]">Rs.{target.achieved_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
                             <td className="numeric">
                               <div className="flex items-center gap-2">
-                                <div className="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden max-w-[80px]">
+                                <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden max-w-[80px]">
                                   <div
-                                    className={`h-full ${target.achievement_percentage >= 100 ? 'bg-green-500' : 'bg-[#064E3B]'}`}
+                                    className={`h-full ${target.achievement_percentage >= 100 ? 'bg-green-500' : 'bg-[#2563EB]'}`}
                                     style={{ width: `${Math.min(target.achievement_percentage, 100)}%` }}
                                   />
                                 </div>
@@ -474,14 +474,14 @@ const CustomerCRM = ({ user, selectedFY }) => {
                               <div className="flex gap-1">
                                 <button
                                   onClick={() => openTargetForm(target)}
-                                  className="px-2 py-1 text-xs rounded bg-[#064E3B] text-white hover:bg-[#065F46]"
+                                  className="px-2 py-1 text-xs rounded bg-[#2563EB] text-white hover:bg-[#1D4ED8]"
                                   data-testid={`set-target-${idx}`}
                                 >
                                   <Target size={12} className="inline mr-1" />Set Target
                                 </button>
                                 <button
                                   onClick={() => setExpandedTarget(expandedTarget === idx ? null : idx)}
-                                  className="px-2 py-1 text-xs rounded border border-stone-300 text-stone-600 hover:bg-stone-50"
+                                  className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-600 hover:bg-slate-50"
                                   data-testid={`monthly-sales-${idx}`}
                                 >
                                   {expandedTarget === idx ? <ChevronUp size={12} className="inline" /> : <ChevronDown size={12} className="inline" />}
@@ -492,25 +492,25 @@ const CustomerCRM = ({ user, selectedFY }) => {
                           </tr>
                           {expandedTarget === idx && target.monthly_sales?.length > 0 && (
                             <tr>
-                              <td colSpan="8" className="!p-4 bg-stone-50">
-                                <div className="text-sm font-medium text-stone-700 mb-3">Monthly Sales for {target.customer_name}</div>
+                              <td colSpan="8" className="!p-4 bg-slate-50">
+                                <div className="text-sm font-medium text-slate-700 mb-3">Monthly Sales for {target.customer_name}</div>
                                 <ResponsiveContainer width="100%" height={200}>
                                   <BarChart data={target.monthly_sales}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#E7E5E4" />
-                                    <XAxis dataKey="month" stroke="#78716C" style={{ fontSize: '11px' }} />
-                                    <YAxis stroke="#78716C" style={{ fontSize: '11px' }} />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#E0E7FF" />
+                                    <XAxis dataKey="month" stroke="#64748B" style={{ fontSize: '11px' }} />
+                                    <YAxis stroke="#64748B" style={{ fontSize: '11px' }} />
                                     <Tooltip
-                                      contentStyle={{ background: 'white', border: '1px solid #E7E5E4', borderRadius: '8px' }}
+                                      contentStyle={{ background: 'white', border: '1px solid #E0E7FF', borderRadius: '8px' }}
                                       formatter={(val) => [`Rs.${val.toLocaleString('en-IN')}`, 'Sales']}
                                     />
-                                    <Bar dataKey="amount" fill="#064E3B" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="amount" fill="#2563EB" radius={[4, 4, 0, 0]} />
                                   </BarChart>
                                 </ResponsiveContainer>
                                 <div className="mt-2 grid grid-cols-3 md:grid-cols-6 gap-2">
                                   {target.monthly_sales.map((m, mi) => (
-                                    <div key={mi} className="text-center p-2 bg-white rounded border border-stone-200">
-                                      <div className="text-xs text-stone-500">{m.month}</div>
-                                      <div className="text-sm font-semibold text-[#064E3B]">Rs.{m.amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                                    <div key={mi} className="text-center p-2 bg-white rounded border border-slate-200">
+                                      <div className="text-xs text-slate-500">{m.month}</div>
+                                      <div className="text-sm font-semibold text-[#2563EB]">Rs.{m.amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
                                     </div>
                                   ))}
                                 </div>
@@ -528,15 +528,15 @@ const CustomerCRM = ({ user, selectedFY }) => {
               {showSetTarget && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowSetTarget(null)}>
                   <div className="bg-white rounded-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-                    <div className="border-b border-stone-200 p-6 flex items-center justify-between">
-                      <h2 className="text-xl font-semibold text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                    <div className="border-b border-slate-200 p-6 flex items-center justify-between">
+                      <h2 className="text-xl font-semibold text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
                         Set Target: {targetForm.customer_name}
                       </h2>
-                      <button onClick={() => setShowSetTarget(null)} className="text-stone-400 hover:text-stone-600"><X size={20} /></button>
+                      <button onClick={() => setShowSetTarget(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
                     </div>
                     <div className="p-6 space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-stone-700 mb-1">Last Financial Year Sales (Rs.)</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Last Financial Year Sales (Rs.)</label>
                         <input
                           type="number"
                           value={targetForm.last_fy_sales}
@@ -548,19 +548,19 @@ const CustomerCRM = ({ user, selectedFY }) => {
                               target_amount: targetForm.target_amount || (fy ? Math.round(parseFloat(fy) * 1.15) : '')
                             });
                           }}
-                          className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                           placeholder="Enter last FY sales"
                           data-testid="last-fy-sales-input"
                         />
-                        <p className="text-xs text-stone-400 mt-1">Auto-suggests 15% growth target</p>
+                        <p className="text-xs text-slate-400 mt-1">Auto-suggests 15% growth target</p>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-stone-700 mb-1">Target Amount (Rs.)</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Target Amount (Rs.)</label>
                         <input
                           type="number"
                           value={targetForm.target_amount}
                           onChange={(e) => setTargetForm({...targetForm, target_amount: e.target.value})}
-                          className="w-full px-4 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B]"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                           placeholder="Target for this FY"
                           data-testid="target-amount-input"
                         />
@@ -582,31 +582,31 @@ const CustomerCRM = ({ user, selectedFY }) => {
           {activeTab === 'behavior' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {paymentBehavior.map((customer, idx) => (
-                <div key={idx} className="bg-white border border-stone-200 rounded-xl p-6">
-                  <h3 className="text-lg font-medium text-stone-900 mb-4">{customer.customer_name}</h3>
+                <div key={idx} className="bg-white border border-slate-200 rounded-xl p-6">
+                  <h3 className="text-lg font-medium text-slate-900 mb-4">{customer.customer_name}</h3>
                   <div className="space-y-3">
                     <div className="flex justify-between">
-                      <span className="text-sm text-stone-600">Total Transactions</span>
+                      <span className="text-sm text-slate-600">Total Transactions</span>
                       <span className="font-semibold">{customer.total_transactions}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-stone-600">Total Amount</span>
+                      <span className="text-sm text-slate-600">Total Amount</span>
                       <span className="font-semibold">Rs.{customer.total_amount.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-stone-600">Average Transaction</span>
+                      <span className="text-sm text-slate-600">Average Transaction</span>
                       <span className="font-semibold">Rs.{customer.average_transaction.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-stone-600">Avg Payment Delay</span>
+                      <span className="text-sm text-slate-600">Avg Payment Delay</span>
                       <span className="font-semibold">{customer.average_payment_delay} days</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-stone-600">Credit Score</span>
-                      <span className="font-semibold text-[#064E3B]">{customer.credit_score.toFixed(0)}/100</span>
+                      <span className="text-sm text-slate-600">Credit Score</span>
+                      <span className="font-semibold text-[#2563EB]">{customer.credit_score.toFixed(0)}/100</span>
                     </div>
                     <div className="pt-3 border-t">
-                      <span className="text-sm text-stone-600">Payment Pattern:</span>
+                      <span className="text-sm text-slate-600">Payment Pattern:</span>
                       <span className={`ml-2 px-3 py-1 rounded-full text-xs font-medium ${
                         customer.payment_pattern === 'excellent' ? 'bg-green-100 text-green-700' :
                         customer.payment_pattern === 'regular' ? 'bg-blue-100 text-blue-700' :
