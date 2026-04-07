@@ -152,14 +152,34 @@ class TallySyncAgent:
             
             # Parse XML response - sanitize Tally's messy XML first
             raw_xml = response.content.decode('utf-8', errors='replace')
-            # Remove invalid XML characters
-            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', '', raw_xml)
-            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw_xml)
-            # Handle multiple XML documents (Tally sometimes sends multiple root elements)
-            if raw_xml.count('<?xml') > 1:
-                raw_xml = raw_xml.split('<?xml')[1]
-                raw_xml = '<?xml' + raw_xml
-            data = xmltodict.parse(raw_xml)
+            logger.info(f"Inventory XML response length: {len(raw_xml)} chars")
+            
+            # Remove BOM if present
+            raw_xml = raw_xml.lstrip('\ufeff')
+            
+            # Remove invalid XML character references
+            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', ' ', raw_xml)
+            raw_xml = re.sub(r'&#[0-9]+;?', ' ', raw_xml)
+            
+            # Remove control characters
+            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw_xml)
+            
+            # Handle multiple XML documents - keep only the first complete one
+            # Find the first <?xml...?> or <ENVELOPE> tag
+            envelope_start = raw_xml.find('<ENVELOPE')
+            if envelope_start == -1:
+                logger.error("No ENVELOPE tag found in Tally response")
+                logger.info(f"First 500 chars of response: {raw_xml[:500]}")
+                return []
+            
+            envelope_end = raw_xml.find('</ENVELOPE>')
+            if envelope_end == -1:
+                logger.error("No closing ENVELOPE tag found")
+                return []
+            
+            clean_xml = raw_xml[envelope_start:envelope_end + len('</ENVELOPE>')]
+            
+            data = xmltodict.parse(clean_xml)
             items = []
             
             # Extract stock items from response
@@ -239,12 +259,33 @@ class TallySyncAgent:
             
             # Parse XML response - sanitize Tally's messy XML first
             raw_xml = response.content.decode('utf-8', errors='replace')
-            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', '', raw_xml)
-            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw_xml)
-            if raw_xml.count('<?xml') > 1:
-                raw_xml = raw_xml.split('<?xml')[1]
-                raw_xml = '<?xml' + raw_xml
-            data = xmltodict.parse(raw_xml)
+            logger.info(f"Sales XML response length: {len(raw_xml)} chars")
+            
+            # Remove BOM if present
+            raw_xml = raw_xml.lstrip('\ufeff')
+            
+            # Remove invalid XML character references
+            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', ' ', raw_xml)
+            raw_xml = re.sub(r'&#[0-9]+;?', ' ', raw_xml)
+            
+            # Remove control characters
+            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw_xml)
+            
+            # Extract just the ENVELOPE portion
+            envelope_start = raw_xml.find('<ENVELOPE')
+            if envelope_start == -1:
+                logger.error("No ENVELOPE tag found in sales response")
+                logger.info(f"First 500 chars of response: {raw_xml[:500]}")
+                return []
+            
+            envelope_end = raw_xml.find('</ENVELOPE>')
+            if envelope_end == -1:
+                logger.error("No closing ENVELOPE tag in sales response")
+                return []
+            
+            clean_xml = raw_xml[envelope_start:envelope_end + len('</ENVELOPE>')]
+            
+            data = xmltodict.parse(clean_xml)
             vouchers = []
             
             envelope = data.get('ENVELOPE', {})
