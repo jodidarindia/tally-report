@@ -130,41 +130,48 @@ async def get_tally_status():
 # Inventory Endpoints
 @api_router.get("/inventory/items")
 async def get_inventory_items(category: Optional[str] = None, min_quantity: Optional[float] = None):
-    """Fetch inventory items from Tally"""
+    """Fetch inventory items - prefer real synced data from DB, fallback to TallyClient demo"""
     try:
-        global tally_client_instance
-        
-        if not tally_client_instance:
-            # Initialize with default XML connection for demo
-            tally_client_instance = TallyClient(connection_type="xml")
-        
-        filters = {}
+        # First check if we have real synced data in the database
+        query = {}
         if category:
-            filters["category"] = category
+            query["category"] = category
         if min_quantity is not None:
-            filters["min_quantity"] = min_quantity
+            query["quantity"] = {"$gte": min_quantity}
         
-        items = tally_client_instance.fetch_inventory(filters)
+        items = await db.inventory_items.find(query, {"_id": 0}).to_list(1000)
         
-        # Save to database using bulk operations for better performance
-        if items:
-            from pymongo import UpdateOne
-            operations = []
-            for item in items:
-                inventory_obj = InventoryItem(**item)
-                doc = inventory_obj.model_dump()
-                doc['last_updated'] = doc['last_updated'].isoformat()
-                
-                operations.append(
-                    UpdateOne(
-                        {"item_id": item["item_id"]},
-                        {"$set": doc},
-                        upsert=True
-                    )
-                )
+        # If no data in DB, use TallyClient (demo/mock data)
+        if not items:
+            global tally_client_instance
+            if not tally_client_instance:
+                tally_client_instance = TallyClient(connection_type="xml")
             
-            if operations:
-                await db.inventory_items.bulk_write(operations)
+            filters = {}
+            if category:
+                filters["category"] = category
+            if min_quantity is not None:
+                filters["min_quantity"] = min_quantity
+            
+            items = tally_client_instance.fetch_inventory(filters)
+            
+            # Save demo data to database
+            if items:
+                from pymongo import UpdateOne
+                operations = []
+                for item in items:
+                    inventory_obj = InventoryItem(**item)
+                    doc = inventory_obj.model_dump()
+                    doc['last_updated'] = doc['last_updated'].isoformat()
+                    operations.append(
+                        UpdateOne(
+                            {"item_id": item["item_id"]},
+                            {"$set": doc},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.inventory_items.bulk_write(operations)
         
         return APIResponse(
             success=True,
@@ -214,38 +221,52 @@ async def get_inventory_summary():
 # Sales Endpoints
 @api_router.get("/sales/vouchers")
 async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None):
-    """Fetch sales vouchers from Tally"""
+    """Fetch sales vouchers - prefer real synced data from DB, fallback to TallyClient demo"""
     try:
-        global tally_client_instance
-        
-        if not tally_client_instance:
-            tally_client_instance = TallyClient(connection_type="xml")
-        
-        vouchers = tally_client_instance.fetch_sales_vouchers(start_date, end_date)
-        
-        # Apply party name filter if provided
+        # First check DB for real synced data
+        query = {}
         if party_name:
-            vouchers = [v for v in vouchers if party_name.lower() in v.get("party_name", "").lower()]
+            query["party_name"] = {"$regex": party_name, "$options": "i"}
         
-        # Save to database using bulk operations for better performance
-        if vouchers:
-            from pymongo import UpdateOne
-            operations = []
-            for voucher in vouchers:
-                sales_obj = SalesVoucher(**voucher)
-                doc = sales_obj.model_dump()
-                doc['last_updated'] = doc['last_updated'].isoformat()
-                
-                operations.append(
-                    UpdateOne(
-                        {"voucher_id": voucher["voucher_id"]},
-                        {"$set": doc},
-                        upsert=True
-                    )
-                )
+        vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
+        
+        # Apply date filters on DB data
+        if vouchers and (start_date or end_date):
+            filtered = []
+            for v in vouchers:
+                v_date = v.get("voucher_date", "")
+                if start_date and v_date < start_date:
+                    continue
+                if end_date and v_date > end_date:
+                    continue
+                filtered.append(v)
+            vouchers = filtered
+        
+        # If no data in DB, use TallyClient (demo/mock data)
+        if not vouchers and not party_name:
+            global tally_client_instance
+            if not tally_client_instance:
+                tally_client_instance = TallyClient(connection_type="xml")
             
-            if operations:
-                await db.sales_vouchers.bulk_write(operations)
+            vouchers = tally_client_instance.fetch_sales_vouchers(start_date, end_date)
+            
+            # Save demo data to database
+            if vouchers:
+                from pymongo import UpdateOne
+                operations = []
+                for voucher in vouchers:
+                    sales_obj = SalesVoucher(**voucher)
+                    doc = sales_obj.model_dump()
+                    doc['last_updated'] = doc['last_updated'].isoformat()
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": voucher["voucher_id"]},
+                            {"$set": doc},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.sales_vouchers.bulk_write(operations)
         
         return APIResponse(
             success=True,
