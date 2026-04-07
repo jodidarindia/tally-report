@@ -267,6 +267,30 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
         logger.error(f"Error fetching sales vouchers: {e}")
         return APIResponse(success=False, error=str(e))
 
+
+@api_router.get("/sales/vouchers/{voucher_id}")
+async def get_voucher_detail(voucher_id: str):
+    """Get full details of a single sales voucher (invoice view)"""
+    try:
+        voucher = await db.sales_vouchers.find_one({"voucher_id": voucher_id}, {"_id": 0})
+        if not voucher:
+            return APIResponse(success=False, error="Voucher not found")
+
+        # Calculate line totals
+        items = voucher.get("items", [])
+        subtotal = sum(item.get("amount", item.get("quantity", 0) * item.get("rate", 0)) for item in items)
+        total = voucher.get("total_amount", subtotal)
+
+        voucher["subtotal"] = subtotal
+        voucher["computed_total"] = total
+        voucher["item_count"] = len(items)
+
+        return APIResponse(success=True, data=voucher)
+
+    except Exception as e:
+        logger.error(f"Error fetching voucher detail: {e}")
+        return APIResponse(success=False, error=str(e))
+
 @api_router.get("/sales/summary")
 async def get_sales_summary():
     """Get sales summary statistics"""
@@ -913,20 +937,24 @@ async def ai_advanced_query(request: AIQueryRequest):
 
 @api_router.get("/customers/outstanding")
 async def get_customer_outstanding(customer: Optional[str] = None):
-    """Get outstanding payments by customer, merging synced customer data"""
+    """Get outstanding payments by customer with proper aging based on invoice dates"""
     try:
-        # Get synced customer data (has ledger_group, phone, etc.)
+        from datetime import date as date_type
+        today = date_type.today()
+
+        # Get synced customer data (has ledger_group, phone, outstanding from Tally closing balance)
         synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
         synced_map = {c["customer_name"].lower(): c for c in synced_customers}
 
-        # Calculate from sales data
+        # Get all sales vouchers for aging calculation
         sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        
+
         customer_map = {}
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
             amount = voucher.get("total_amount", 0)
-            
+            v_date_str = voucher.get("voucher_date", "")
+
             if party not in customer_map:
                 synced = synced_map.get(party.lower(), {})
                 customer_map[party] = {
@@ -936,15 +964,39 @@ async def get_customer_outstanding(customer: Optional[str] = None):
                     "outstanding_amount": synced.get("outstanding_amount", 0),
                     "total_sales": 0,
                     "voucher_count": 0,
-                    "last_transaction": voucher.get("voucher_date")
+                    "last_transaction": v_date_str,
+                    "aging_0_30": 0.0,
+                    "aging_30_60": 0.0,
+                    "aging_60_90": 0.0,
+                    "aging_90_plus": 0.0,
+                    "oldest_invoice_days": 0
                 }
-            
+
             customer_map[party]["total_sales"] += amount
             customer_map[party]["voucher_count"] += 1
-            if customer_map[party]["outstanding_amount"] == 0:
-                customer_map[party]["outstanding_amount"] = amount * 0.3
+            if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
+                customer_map[party]["last_transaction"] = v_date_str
 
-        # Also add synced customers not in sales
+            # Calculate aging bucket for this voucher
+            try:
+                parts = v_date_str.split("-")
+                if len(parts) == 3:
+                    v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+                    days_old = (today - v_date).days
+                    if days_old > customer_map[party]["oldest_invoice_days"]:
+                        customer_map[party]["oldest_invoice_days"] = days_old
+                    if days_old <= 30:
+                        customer_map[party]["aging_0_30"] += amount
+                    elif days_old <= 60:
+                        customer_map[party]["aging_30_60"] += amount
+                    elif days_old <= 90:
+                        customer_map[party]["aging_60_90"] += amount
+                    else:
+                        customer_map[party]["aging_90_plus"] += amount
+            except (ValueError, TypeError):
+                customer_map[party]["aging_0_30"] += amount
+
+        # Add synced customers not in sales
         for sc in synced_customers:
             name = sc["customer_name"]
             if name not in customer_map:
@@ -955,27 +1007,47 @@ async def get_customer_outstanding(customer: Optional[str] = None):
                     "outstanding_amount": sc.get("outstanding_amount", 0),
                     "total_sales": sc.get("total_purchases", 0),
                     "voucher_count": sc.get("transaction_count", 0),
-                    "last_transaction": None
+                    "last_transaction": None,
+                    "aging_0_30": 0.0, "aging_30_60": 0.0,
+                    "aging_60_90": 0.0, "aging_90_plus": 0.0,
+                    "oldest_invoice_days": 0
                 }
-        
+
         customers = list(customer_map.values())
-        
+
         if customer:
             customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
-        
+
+        # Finalize: outstanding = Tally closing balance, else total_sales as proxy
         for cust in customers:
+            if cust["outstanding_amount"] == 0 and cust["total_sales"] > 0:
+                cust["outstanding_amount"] = cust["total_sales"]
+
             outstanding = cust["outstanding_amount"]
-            cust["aging_30_days"] = outstanding * 0.4
-            cust["aging_60_days"] = outstanding * 0.3
-            cust["aging_90_days"] = outstanding * 0.2
-            cust["aging_90_plus"] = outstanding * 0.1
-            cust["overdue_amount"] = outstanding * 0.5
-        
+            cust["overdue_amount"] = cust["aging_60_90"] + cust["aging_90_plus"]
+
+            # Status based on oldest invoice days
+            oldest = cust["oldest_invoice_days"]
+            if oldest > 90:
+                cust["status"] = "critical"
+                cust["status_label"] = "Critical"
+            elif oldest > 60:
+                cust["status"] = "overdue"
+                cust["status_label"] = "Overdue"
+            elif oldest > 30:
+                cust["status"] = "at_risk"
+                cust["status_label"] = "At Risk"
+            else:
+                cust["status"] = "normal"
+                cust["status_label"] = "Normal"
+
+        customers.sort(key=lambda c: c["outstanding_amount"], reverse=True)
+
         return APIResponse(
             success=True,
             data={"customers": customers, "total_outstanding": sum(c["outstanding_amount"] for c in customers)}
         )
-    
+
     except Exception as e:
         logger.error(f"Error fetching customer outstanding: {e}")
         return APIResponse(success=False, error=str(e))

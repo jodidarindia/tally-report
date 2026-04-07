@@ -225,7 +225,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
         <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>
       ) : (
         <>
-          {/* Outstanding Payments with Ledger Export */}
+          {/* Outstanding Payments - Proper Aging */}
           {activeTab === 'outstanding' && (
             <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -233,8 +233,9 @@ const CustomerCRM = ({ user, selectedFY }) => {
                   <thead>
                     <tr>
                       <th>Customer Name</th>
+                      <th>Group</th>
+                      <th className="numeric">Total Sales</th>
                       <th className="numeric">Outstanding</th>
-                      <th className="numeric">Overdue</th>
                       <th className="numeric">0-30 Days</th>
                       <th className="numeric">30-60 Days</th>
                       <th className="numeric">60-90 Days</th>
@@ -244,25 +245,33 @@ const CustomerCRM = ({ user, selectedFY }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {outstanding.map((customer, idx) => (
+                    {outstanding
+                      .filter(c => selectedGroup === 'all' || c.ledger_group === selectedGroup)
+                      .map((customer, idx) => {
+                        const statusColors = {
+                          normal: 'bg-green-100 text-green-700',
+                          at_risk: 'bg-amber-100 text-amber-700',
+                          overdue: 'bg-orange-100 text-orange-700',
+                          critical: 'bg-red-100 text-red-700'
+                        };
+                        return (
                       <tr key={idx}>
                         <td className="font-medium text-stone-900">{customer.customer_name}</td>
+                        <td className="text-stone-500 text-xs">{customer.ledger_group || '-'}</td>
+                        <td className="numeric text-stone-600">
+                          Rs.{(customer.total_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                        </td>
                         <td className="numeric font-semibold text-[#064E3B]">
-                          Rs.{customer.outstanding_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                          Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
-                        <td className="numeric text-red-600">
-                          Rs.{customer.overdue_amount.toLocaleString('en-IN', {maximumFractionDigits: 0})}
-                        </td>
-                        <td className="numeric">Rs.{customer.aging_30_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                        <td className="numeric">Rs.{customer.aging_60_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                        <td className="numeric">Rs.{customer.aging_90_days.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                        <td className="numeric">Rs.{customer.aging_90_plus.toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric">Rs.{(customer.aging_0_30 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric">Rs.{(customer.aging_30_60 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric text-orange-600">Rs.{(customer.aging_60_90 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                        <td className="numeric text-red-600 font-medium">Rs.{(customer.aging_90_plus || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
                         <td>
-                          {customer.overdue_amount > 50000 ? (
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">High Risk</span>
-                          ) : (
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">Normal</span>
-                          )}
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColors[customer.status] || statusColors.normal}`}>
+                            {customer.status_label || 'Normal'}
+                          </span>
                         </td>
                         <td>
                           <div className="flex gap-1">
@@ -285,7 +294,8 @@ const CustomerCRM = ({ user, selectedFY }) => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                        );
+                    })}
                   </tbody>
                 </table>
               </div>

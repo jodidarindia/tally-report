@@ -1,0 +1,91 @@
+{
+  "summary": "Iteration 6: All new features tested and working. CRM Outstanding shows proper aging columns (0-30, 30-60, 60-90, 90+ days) with real invoice date calculations. Status based on oldest_invoice_days (Normal/At Risk/Overdue/Critical). Customer group filter works. Sales voucher numbers are clickable and open invoice modal with full details. Followups show created_by_name.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "Backend: GET /api/customers/outstanding returns aging_0_30, aging_30_60, aging_60_90, aging_90_plus fields",
+    "Backend: GET /api/customers/outstanding returns status based on oldest_invoice_days (not mocked 30%)",
+    "Backend: GET /api/customers/outstanding returns ledger_group (customer group) field",
+    "Backend: GET /api/customers/outstanding - outstanding = total_sales when no Tally closing balance",
+    "Backend: GET /api/sales/vouchers/{id} returns full voucher with items, subtotal, computed_total",
+    "Backend: GET /api/sales/vouchers/{id} returns line items with item name, quantity, rate",
+    "Backend: GET /api/sales/vouchers/{id} returns salesman field",
+    "Backend: GET /api/sales/vouchers/{id} returns reference_number field",
+    "Backend: GET /api/sales/vouchers/NONEXISTENT returns success=false with 'not found' error",
+    "Backend: GET /api/customers/followups returns created_by_name field",
+    "Backend: GET /api/sales/vouchers returns list of vouchers with count",
+    "Frontend: Sales page voucher numbers are clickable (green links)",
+    "Frontend: Clicking voucher opens InvoiceModal with voucher ID, customer, date, reference, salesman",
+    "Frontend: InvoiceModal shows line items table with #, Item, Qty, Rate, Amount columns",
+    "Frontend: InvoiceModal shows total amount",
+    "Frontend: CRM Outstanding tab shows aging columns: 0-30 Days, 30-60 Days, 60-90 Days, 90+ Days",
+    "Frontend: CRM Outstanding tab shows Group column",
+    "Frontend: CRM Outstanding tab shows Status column with Critical/Overdue/Normal badges",
+    "Frontend: CRM Outstanding has customer group filter dropdown",
+    "Frontend: CRM Follow-ups tab shows 'by Administrator' for followups with created_by_name"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6_features.py",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_features.py (created 11 tests for new features)"
+  ],
+
+  "success_rate": {
+    "backend": "100% (11/11 tests passing)",
+    "frontend": "100% (all features working)"
+  },
+
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123"},
+    "employee": {"username": "emp1", "password": "emp123"}
+  },
+
+  "seed_data_creation": "Using existing demo data from previous iterations. Sales vouchers from January 2026 show proper aging (60-90 and 90+ day buckets).",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 6 added: 1) CRM Outstanding with real aging calculation from invoice dates (not mocked 30%), 2) Status based on oldest_invoice_days (Normal <30, At Risk 30-60, Overdue 60-90, Critical 90+), 3) Customer group filter on CRM Outstanding, 4) Sales voucher detail endpoint /api/sales/vouchers/{id}, 5) InvoiceModal component in Sales page for viewing invoice details. All features working correctly.",
+
+  "features_verified": {
+    "crm_outstanding_aging": {
+      "aging_0_30": "Shows amount for invoices 0-30 days old",
+      "aging_30_60": "Shows amount for invoices 30-60 days old",
+      "aging_60_90": "Shows amount for invoices 60-90 days old (orange text)",
+      "aging_90_plus": "Shows amount for invoices 90+ days old (red text)",
+      "status_logic": "Based on oldest_invoice_days: Normal (<30), At Risk (30-60), Overdue (60-90), Critical (90+)"
+    },
+    "customer_group_filter": {
+      "dropdown": "Shows 'All Customer Groups' and 'Sundry Debtors' options",
+      "filtering": "Filters outstanding table by ledger_group"
+    },
+    "sales_invoice_modal": {
+      "trigger": "Click voucher number in Sales table",
+      "fields": ["voucher_id", "party_name", "voucher_date", "reference_number", "salesman"],
+      "line_items": ["item name", "quantity", "rate", "amount"],
+      "totals": ["subtotal", "total_amount"]
+    },
+    "followups_created_by": {
+      "field": "created_by_name",
+      "display": "Shows 'by {name}' in followup cards"
+    }
+  }
+}
