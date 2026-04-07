@@ -50,7 +50,7 @@ class TallySyncAgent:
         self.tally_url = f"http://{self.tally_host}:{self.tally_port}"
         
         # Cloud backend settings
-        self.backend_url = os.getenv('BACKEND_URL', 'https://tally-report-ai.preview.emergentagent.com')
+        self.backend_url = os.getenv('BACKEND_URL', 'http://localhost:8001')
         self.api_key = os.getenv('AGENT_API_KEY', '')  # For authenticating agent
         
         # Sync settings
