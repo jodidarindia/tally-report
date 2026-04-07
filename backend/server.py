@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -17,14 +17,17 @@ from models import (
     CustomerOutstanding, CustomerFollowup, CustomerFollowupCreate,
     CustomerTarget, SalesmanPerformance,
     InventoryMovement, BelowCostSale,
-    OTPRequest, OTPVerify, OTPSession, UserSession,
+    LoginRequest, ChangePasswordRequest, CreateUserRequest, ResetPasswordRequest,
     PurchaseOrder, PurchaseOrderItem
 )
 from services.tally_client import TallyClient
 from services.ai_service import AIReportService
 from services.enhanced_ai_service import EnhancedAIReportService
 from services.export_service import ExportService
-from services.auth_service import AuthService
+from services.auth_service import (
+    hash_password, verify_password, create_access_token,
+    get_current_user, seed_admin
+)
 from services.purchase_order_ai import PurchaseOrderAI
 
 ROOT_DIR = Path(__file__).parent
@@ -103,43 +106,44 @@ async def connect_tally(connection: TallyConnectionCreate):
 
 @api_router.get("/tally/status")
 async def get_tally_status():
-    """Check Tally connection status"""
+    """Check Tally connection status - based on last agent sync"""
     try:
-        global tally_client_instance
-        
-        if not tally_client_instance:
+        sync_status = await db.sync_status.find_one({'type': 'agent_sync'}, {'_id': 0})
+        if sync_status and sync_status.get('last_sync'):
+            last_sync = sync_status['last_sync']
+            company = sync_status.get('company_name', '')
             return APIResponse(
-                success=False,
-                data={"is_connected": False, "message": "No connection configured"}
+                success=True,
+                data={
+                    "is_connected": True,
+                    "message": f"Connected - {company}" if company else "Connected",
+                    "last_sync": last_sync,
+                    "company_name": company,
+                    "agent_version": sync_status.get('agent_version', '')
+                }
             )
-        
-        is_connected = tally_client_instance.test_connection()
-        
         return APIResponse(
             success=True,
-            data={
-                "is_connected": is_connected,
-                "message": "Connected" if is_connected else "Disconnected"
-            }
+            data={"is_connected": False, "message": "No sync data yet. Run the desktop agent."}
         )
-    
     except Exception as e:
         logger.error(f"Error checking Tally status: {e}")
         return APIResponse(success=False, error=str(e))
 
 # Inventory Endpoints
 @api_router.get("/inventory/items")
-async def get_inventory_items(category: Optional[str] = None, min_quantity: Optional[float] = None):
-    """Fetch inventory items - prefer real synced data from DB, fallback to TallyClient demo"""
+async def get_inventory_items(category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None):
+    """Fetch inventory items with optional group/category filter"""
     try:
-        # First check if we have real synced data in the database
         query = {}
-        if category:
+        if category and category != 'all':
             query["category"] = category
+        if stock_group and stock_group != 'all':
+            query["stock_group"] = stock_group
         if min_quantity is not None:
             query["quantity"] = {"$gte": min_quantity}
         
-        items = await db.inventory_items.find(query, {"_id": 0}).to_list(1000)
+        items = await db.inventory_items.find(query, {"_id": 0}).to_list(5000)
         
         # If no data in DB, use TallyClient (demo/mock data)
         if not items:
@@ -154,28 +158,14 @@ async def get_inventory_items(category: Optional[str] = None, min_quantity: Opti
                 filters["min_quantity"] = min_quantity
             
             items = tally_client_instance.fetch_inventory(filters)
-            
-            # Save demo data to database
-            if items:
-                from pymongo import UpdateOne
-                operations = []
-                for item in items:
-                    inventory_obj = InventoryItem(**item)
-                    doc = inventory_obj.model_dump()
-                    doc['last_updated'] = doc['last_updated'].isoformat()
-                    operations.append(
-                        UpdateOne(
-                            {"item_id": item["item_id"]},
-                            {"$set": doc},
-                            upsert=True
-                        )
-                    )
-                if operations:
-                    await db.inventory_items.bulk_write(operations)
+        
+        # Get unique stock groups
+        all_items = await db.inventory_items.find({}, {"_id": 0, "stock_group": 1}).to_list(5000)
+        stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))
         
         return APIResponse(
             success=True,
-            data={"items": items, "count": len(items)}
+            data={"items": items, "count": len(items), "stock_groups": stock_groups}
         )
     
     except Exception as e:
@@ -522,9 +512,13 @@ async def receive_agent_sync(request: dict):
                             {"customer_name": customer_name},
                             {"$set": {
                                 "customer_name": customer_name,
+                                "ledger_group": cust.get('ledger_group', 'Sundry Debtors'),
                                 "outstanding_amount": cust.get('outstanding_amount', 0),
                                 "total_purchases": cust.get('total_purchases', 0),
                                 "transaction_count": cust.get('transaction_count', 0),
+                                "phone": cust.get('phone', ''),
+                                "contact_person": cust.get('contact_person', ''),
+                                "state": cust.get('state', ''),
                                 "last_synced": sync_time
                             }},
                             upsert=True
@@ -537,6 +531,7 @@ async def receive_agent_sync(request: dict):
         
         # Update last sync time
         company_name = request.get('company_name', '')
+        financial_year = request.get('financial_year', '')
         await db.sync_status.update_one(
             {'type': 'agent_sync'},
             {'$set': {
@@ -544,7 +539,8 @@ async def receive_agent_sync(request: dict):
                 'data_type': data_type,
                 'count': len(data),
                 'agent_version': request.get('agent_version', ''),
-                'company_name': company_name
+                'company_name': company_name,
+                'financial_year': financial_year
             }},
             upsert=True
         )
@@ -588,153 +584,150 @@ async def get_sync_status():
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
 
-@api_router.post("/auth/send-otp")
-async def send_otp(request: OTPRequest):
-    """Send OTP to user's email"""
+@api_router.post("/auth/login")
+async def login(request: LoginRequest, response: Response):
+    """Login with username and password"""
     try:
-        auth_service = AuthService()
-        
-        # Generate OTP
-        otp = auth_service.generate_otp()
-        
-        # Try sending email, fall back to dev mode if Resend key is placeholder
-        resend_key = os.environ.get("RESEND_API_KEY", "")
-        is_dev_mode = not resend_key or "placeholder" in resend_key
-        
-        if not is_dev_mode:
-            email_sent = await auth_service.send_otp_email(request.email, otp)
-            if not email_sent:
-                is_dev_mode = True
-        
-        if is_dev_mode:
-            otp = "123456"
-            logger.info(f"Dev mode: Using static OTP 123456 for {request.email}")
-        
-        # Store OTP in database
-        otp_session = OTPSession(
-            email=request.email,
-            otp=otp,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
-        )
-        
-        doc = otp_session.model_dump()
-        doc['created_at'] = doc['created_at'].isoformat()
-        doc['expires_at'] = doc['expires_at'].isoformat()
-        
-        # Delete any existing OTPs for this email
-        await db.otp_sessions.delete_many({"email": request.email})
-        
-        await db.otp_sessions.insert_one(doc)
-        
-        logger.info(f"OTP sent to {request.email}")
-        
-        return APIResponse(
-            success=True,
-            message=f"OTP sent to {request.email}",
-            data={"email": request.email, "dev_mode": is_dev_mode}
-        )
-    
-    except Exception as e:
-        logger.error(f"Error sending OTP: {e}")
-        return APIResponse(success=False, error=str(e))
+        user = await db.users.find_one({"username": request.username}, {"_id": 0})
+        if not user:
+            return APIResponse(success=False, error="Invalid username or password")
+        if not verify_password(request.password, user["password_hash"]):
+            return APIResponse(success=False, error="Invalid username or password")
 
-@api_router.post("/auth/verify-otp")
-async def verify_otp(request: OTPVerify):
-    """Verify OTP and create session"""
-    try:
-        auth_service = AuthService()
-        
-        # Find OTP session
-        otp_session = await db.otp_sessions.find_one(
-            {"email": request.email, "otp": request.otp},
-            {"_id": 0}
+        token = create_access_token(user["username"], user["username"], user["role"])
+        response.set_cookie(
+            key="access_token", value=token,
+            httponly=True, secure=False, samesite="lax",
+            max_age=86400, path="/"
         )
-        
-        if not otp_session:
-            return APIResponse(success=False, error="Invalid OTP")
-        
-        # Check expiration
-        expires_at = datetime.fromisoformat(otp_session['expires_at']).replace(tzinfo=timezone.utc) if datetime.fromisoformat(otp_session['expires_at']).tzinfo is None else datetime.fromisoformat(otp_session['expires_at'])
-        if auth_service.is_otp_expired(expires_at):
-            return APIResponse(success=False, error="OTP has expired")
-        
-        # Mark as verified
-        await db.otp_sessions.update_one(
-            {"email": request.email, "otp": request.otp},
-            {"$set": {"verified": True}}
-        )
-        
-        # Create user session
-        session_token = auth_service.generate_session_token()
-        user_session = UserSession(
-            email=request.email,
-            session_token=session_token,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
-        )
-        
-        doc = user_session.model_dump()
-        doc['created_at'] = doc['created_at'].isoformat()
-        doc['expires_at'] = doc['expires_at'].isoformat()
-        
-        await db.user_sessions.insert_one(doc)
-        
-        logger.info(f"User logged in: {request.email}")
-        
         return APIResponse(
             success=True,
             message="Login successful",
             data={
-                "email": request.email,
-                "session_token": session_token,
-                "expires_at": doc['expires_at']
+                "username": user["username"],
+                "name": user.get("name", ""),
+                "role": user["role"],
+                "token": token
             }
         )
-    
     except Exception as e:
-        logger.error(f"Error verifying OTP: {e}")
+        logger.error(f"Login error: {e}")
         return APIResponse(success=False, error=str(e))
 
-@api_router.post("/auth/verify-session")
-async def verify_session(session_token: str):
-    """Verify if session is still valid"""
+
+@api_router.get("/auth/me")
+async def get_me(request: Request):
+    """Get current user info"""
     try:
-        auth_service = AuthService()
-        
-        session = await db.user_sessions.find_one(
-            {"session_token": session_token},
-            {"_id": 0}
-        )
-        
-        if not session:
-            return APIResponse(success=False, error="Invalid session")
-        
-        expires_at_raw = datetime.fromisoformat(session['expires_at'])
-        expires_at = expires_at_raw.replace(tzinfo=timezone.utc) if expires_at_raw.tzinfo is None else expires_at_raw
-        if not auth_service.is_session_valid(expires_at):
-            return APIResponse(success=False, error="Session expired")
-        
-        return APIResponse(
-            success=True,
-            data={"email": session['email'], "valid": True}
-        )
-    
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Not authenticated")
+        return APIResponse(success=True, data={
+            "username": user["username"],
+            "name": user.get("name", ""),
+            "role": user["role"]
+        })
     except Exception as e:
-        logger.error(f"Error verifying session: {e}")
         return APIResponse(success=False, error=str(e))
+
 
 @api_router.post("/auth/logout")
-async def logout(session_token: str):
-    """Logout user by invalidating session"""
+async def logout(response: Response):
+    """Logout by clearing cookie"""
+    response.delete_cookie("access_token", path="/")
+    return APIResponse(success=True, message="Logged out successfully")
+
+
+@api_router.post("/auth/change-password")
+async def change_password(req: ChangePasswordRequest, request: Request):
+    """Change own password"""
     try:
-        result = await db.user_sessions.delete_one({"session_token": session_token})
-        
-        return APIResponse(
-            success=result.deleted_count > 0,
-            message="Logged out successfully" if result.deleted_count > 0 else "Session not found"
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Not authenticated")
+        full_user = await db.users.find_one({"username": user["username"]})
+        if not verify_password(req.current_password, full_user["password_hash"]):
+            return APIResponse(success=False, error="Current password is incorrect")
+        await db.users.update_one(
+            {"username": user["username"]},
+            {"$set": {"password_hash": hash_password(req.new_password)}}
         )
-    
+        return APIResponse(success=True, message="Password changed successfully")
     except Exception as e:
-        logger.error(f"Error logging out: {e}")
+        logger.error(f"Change password error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest, request: Request):
+    """Admin resets another user's password"""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] != "admin":
+            return APIResponse(success=False, error="Admin access required")
+        target = await db.users.find_one({"username": req.username})
+        if not target:
+            return APIResponse(success=False, error="User not found")
+        await db.users.update_one(
+            {"username": req.username},
+            {"$set": {"password_hash": hash_password(req.new_password)}}
+        )
+        return APIResponse(success=True, message=f"Password reset for {req.username}")
+    except Exception as e:
+        logger.error(f"Reset password error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@api_router.post("/auth/users")
+async def create_user(req: CreateUserRequest, request: Request):
+    """Admin creates a new user (employee)"""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] != "admin":
+            return APIResponse(success=False, error="Admin access required")
+        existing = await db.users.find_one({"username": req.username})
+        if existing:
+            return APIResponse(success=False, error="Username already exists")
+        await db.users.insert_one({
+            "username": req.username,
+            "password_hash": hash_password(req.password),
+            "name": req.name,
+            "role": req.role,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        return APIResponse(success=True, message=f"User '{req.username}' created", data={"username": req.username, "role": req.role})
+    except Exception as e:
+        logger.error(f"Create user error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@api_router.get("/auth/users")
+async def list_users(request: Request):
+    """Admin lists all users"""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] != "admin":
+            return APIResponse(success=False, error="Admin access required")
+        users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+        return APIResponse(success=True, data={"users": users})
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@api_router.delete("/auth/users/{username}")
+async def delete_user(username: str, request: Request):
+    """Admin deletes a user"""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] != "admin":
+            return APIResponse(success=False, error="Admin access required")
+        if username == user["username"]:
+            return APIResponse(success=False, error="Cannot delete yourself")
+        result = await db.users.delete_one({"username": username})
+        if result.deleted_count == 0:
+            return APIResponse(success=False, error="User not found")
+        return APIResponse(success=True, message=f"User '{username}' deleted")
+    except Exception as e:
         return APIResponse(success=False, error=str(e))
 
 
@@ -920,21 +913,27 @@ async def ai_advanced_query(request: AIQueryRequest):
 
 @api_router.get("/customers/outstanding")
 async def get_customer_outstanding(customer: Optional[str] = None):
-    """Get outstanding payments by customer"""
+    """Get outstanding payments by customer, merging synced customer data"""
     try:
+        # Get synced customer data (has ledger_group, phone, etc.)
+        synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+        synced_map = {c["customer_name"].lower(): c for c in synced_customers}
+
         # Calculate from sales data
         sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
         
-        # Group by customer
         customer_map = {}
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
             amount = voucher.get("total_amount", 0)
             
             if party not in customer_map:
+                synced = synced_map.get(party.lower(), {})
                 customer_map[party] = {
                     "customer_name": party,
-                    "outstanding_amount": 0,
+                    "ledger_group": synced.get("ledger_group", "Sundry Debtors"),
+                    "phone": synced.get("phone", ""),
+                    "outstanding_amount": synced.get("outstanding_amount", 0),
                     "total_sales": 0,
                     "voucher_count": 0,
                     "last_transaction": voucher.get("voucher_date")
@@ -942,15 +941,28 @@ async def get_customer_outstanding(customer: Optional[str] = None):
             
             customer_map[party]["total_sales"] += amount
             customer_map[party]["voucher_count"] += 1
-            customer_map[party]["outstanding_amount"] += amount * 0.3  # Mock 30% outstanding
+            if customer_map[party]["outstanding_amount"] == 0:
+                customer_map[party]["outstanding_amount"] = amount * 0.3
+
+        # Also add synced customers not in sales
+        for sc in synced_customers:
+            name = sc["customer_name"]
+            if name not in customer_map:
+                customer_map[name] = {
+                    "customer_name": name,
+                    "ledger_group": sc.get("ledger_group", "Sundry Debtors"),
+                    "phone": sc.get("phone", ""),
+                    "outstanding_amount": sc.get("outstanding_amount", 0),
+                    "total_sales": sc.get("total_purchases", 0),
+                    "voucher_count": sc.get("transaction_count", 0),
+                    "last_transaction": None
+                }
         
         customers = list(customer_map.values())
         
-        # Filter if customer specified
         if customer:
             customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
         
-        # Calculate aging
         for cust in customers:
             outstanding = cust["outstanding_amount"]
             cust["aging_30_days"] = outstanding * 0.4
@@ -988,15 +1000,18 @@ async def get_followups(status: Optional[str] = None):
         return APIResponse(success=False, error=str(e))
 
 @api_router.post("/customers/followups")
-async def create_followup(followup: CustomerFollowupCreate):
+async def create_followup(followup: CustomerFollowupCreate, request: Request):
     """Create a new customer follow-up"""
     try:
+        user = await get_current_user(request, db)
         followup_obj = CustomerFollowup(
             customer_name=followup.customer_name,
             followup_date=datetime.fromisoformat(followup.followup_date),
             followup_type=followup.followup_type,
             status="pending",
-            notes=followup.notes
+            notes=followup.notes,
+            created_by=user["username"] if user else "unknown",
+            created_by_name=user.get("name", "") if user else "Unknown"
         )
         
         doc = followup_obj.model_dump()
@@ -1735,6 +1750,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    await seed_admin(db)
+    logger.info("Admin user seeded")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

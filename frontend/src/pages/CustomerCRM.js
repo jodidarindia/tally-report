@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const CustomerCRM = () => {
+const CustomerCRM = ({ user, selectedFY }) => {
   const [activeTab, setActiveTab] = useState('outstanding');
   const [outstanding, setOutstanding] = useState([]);
   const [followups, setFollowups] = useState([]);
@@ -15,6 +15,8 @@ const CustomerCRM = () => {
   const [paymentBehavior, setPaymentBehavior] = useState([]);
   const [loading, setLoading] = useState(true);
   const [customerNames, setCustomerNames] = useState([]);
+  const [customerGroups, setCustomerGroups] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState('all');
   const [showAddFollowup, setShowAddFollowup] = useState(false);
   const [showSetTarget, setShowSetTarget] = useState(null);
   const [expandedTarget, setExpandedTarget] = useState(null);
@@ -44,6 +46,8 @@ const CustomerCRM = () => {
       const res = await axios.get(`${API}/customers/outstanding`);
       const custs = res.data?.data?.customers || [];
       setCustomerNames(custs.map(c => c.customer_name));
+      const groups = [...new Set(custs.map(c => c.ledger_group).filter(Boolean))];
+      setCustomerGroups(groups);
     } catch (error) {
       console.error('Error fetching customer names:', error);
     }
@@ -202,6 +206,21 @@ const CustomerCRM = () => {
         })}
       </div>
 
+      {/* Customer Group Filter */}
+      {customerGroups.length > 0 && (activeTab === 'outstanding' || activeTab === 'targets') && (
+        <div className="mb-4">
+          <select
+            value={selectedGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            className="px-4 py-2 border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+            data-testid="customer-group-filter"
+          >
+            <option value="all">All Customer Groups</option>
+            {customerGroups.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>
       ) : (
@@ -358,6 +377,9 @@ const CustomerCRM = () => {
                             {new Date(followup.followup_date).toLocaleString()}
                           </span>
                           <span className="capitalize px-2 py-0.5 rounded bg-stone-100 text-stone-700 text-xs">{followup.followup_type}</span>
+                          {followup.created_by_name && (
+                            <span className="text-xs text-stone-400">by {followup.created_by_name}</span>
+                          )}
                         </div>
                         {followup.notes && <p className="mt-2 text-sm text-stone-700">{followup.notes}</p>}
                       </div>

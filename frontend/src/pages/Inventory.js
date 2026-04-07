@@ -6,29 +6,36 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Inventory = () => {
+const Inventory = ({ selectedFY }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedGroup, setSelectedGroup] = useState('all');
   const [categories, setCategories] = useState([]);
+  const [stockGroups, setStockGroups] = useState([]);
   const [showPOModal, setShowPOModal] = useState(false);
   const [purchaseOrder, setPurchaseOrder] = useState(null);
   const [generatingPO, setGeneratingPO] = useState(false);
 
   useEffect(() => {
     fetchInventory();
-  }, []);
+  }, [selectedGroup]);
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API}/inventory/items`);
+      const params = {};
+      if (selectedGroup && selectedGroup !== 'all') params.stock_group = selectedGroup;
+      const response = await axios.get(`${API}/inventory/items`, { params });
       const itemsData = response.data?.data?.items || [];
       setItems(itemsData);
 
       const uniqueCategories = [...new Set(itemsData.map(item => item.category).filter(Boolean))];
       setCategories(uniqueCategories);
+
+      const groups = response.data?.data?.stock_groups || [];
+      if (groups.length > 0) setStockGroups(groups);
     } catch (error) {
       console.error('Error fetching inventory:', error);
     } finally {
@@ -153,6 +160,20 @@ const Inventory = () => {
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
             <select
+              data-testid="stock-group-filter"
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              className="pl-10 pr-8 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent appearance-none bg-white"
+            >
+              <option value="all">All Stock Groups</option>
+              {stockGroups.map(g => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
+            <select
               data-testid="category-filter-select"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
@@ -173,6 +194,7 @@ const Inventory = () => {
             <thead>
               <tr>
                 <th>Item Name</th>
+                <th>Stock Group</th>
                 <th>Category</th>
                 <th className="numeric">Quantity</th>
                 <th>Unit</th>
@@ -191,6 +213,7 @@ const Inventory = () => {
                   return (
                     <tr key={item.item_id} data-testid={`inventory-row-${item.item_id}`}>
                       <td className="font-medium text-stone-900">{item.item_name}</td>
+                      <td className="text-stone-600">{item.stock_group || '-'}</td>
                       <td>{item.category || '-'}</td>
                       <td className="numeric font-semibold">{item.quantity}</td>
                       <td>{item.unit}</td>

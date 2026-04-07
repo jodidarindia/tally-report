@@ -1,87 +1,82 @@
 import os
-import secrets
-import asyncio
-import resend
-from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
+import bcrypt
+import jwt
+from datetime import datetime, timezone, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
-load_dotenv()
 
-class AuthService:
-    def __init__(self):
-        self.resend_api_key = os.getenv("RESEND_API_KEY")
-        self.sender_email = os.getenv("SENDER_EMAIL", "onboarding@resend.dev")
-        if self.resend_api_key:
-            resend.api_key = self.resend_api_key
-    
-    def generate_otp(self) -> str:
-        """Generate 6-digit OTP"""
-        return str(secrets.randbelow(1000000)).zfill(6)
-    
-    def generate_session_token(self) -> str:
-        """Generate secure session token"""
-        return secrets.token_urlsafe(32)
-    
-    async def send_otp_email(self, email: str, otp: str) -> bool:
-        """Send OTP via email using Resend"""
-        try:
-            html_content = f"""
-            <html>
-                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #064E3B 0%, #047857 100%); color: white; padding: 30px; border-radius: 10px; text-align: center;">
-                        <h1 style="margin: 0; font-size: 28px;">Tally Reports</h1>
-                        <p style="margin: 10px 0 0 0; opacity: 0.9;">Your Login Verification Code</p>
-                    </div>
-                    
-                    <div style="background: #FDFBF7; padding: 40px; border-radius: 10px; margin-top: 20px;">
-                        <h2 style="color: #1C1917; margin-top: 0;">Your OTP Code</h2>
-                        <p style="color: #44403C; font-size: 16px; line-height: 1.6;">
-                            Use this code to complete your login:
-                        </p>
-                        
-                        <div style="background: white; border: 2px solid #064E3B; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0;">
-                            <div style="font-size: 36px; font-weight: bold; color: #064E3B; letter-spacing: 8px; font-family: 'Courier New', monospace;">
-                                {otp}
-                            </div>
-                        </div>
-                        
-                        <p style="color: #78716C; font-size: 14px;">
-                            This code will expire in <strong>10 minutes</strong>.
-                        </p>
-                        <p style="color: #78716C; font-size: 14px;">
-                            If you didn't request this code, please ignore this email.
-                        </p>
-                    </div>
-                    
-                    <div style="text-align: center; margin-top: 30px; color: #A8A29E; font-size: 12px;">
-                        <p>Tally SaaS Report Builder - AI-Powered Analytics</p>
-                    </div>
-                </body>
-            </html>
-            """
-            
-            params = {
-                "from": self.sender_email,
-                "to": [email],
-                "subject": "Your Login OTP for Tally Reports",
-                "html": html_content
-            }
-            
-            # Run sync SDK in thread to keep FastAPI non-blocking
-            result = await asyncio.to_thread(resend.Emails.send, params)
-            logger.info(f"OTP email sent to {email}, ID: {result.get('id')}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to send OTP email: {e}")
-            return False
-    
-    def is_otp_expired(self, expires_at: datetime) -> bool:
-        """Check if OTP has expired"""
-        return datetime.now(timezone.utc) > expires_at
-    
-    def is_session_valid(self, expires_at: datetime) -> bool:
-        """Check if session is still valid"""
-        return datetime.now(timezone.utc) < expires_at
+JWT_ALGORITHM = "HS256"
+
+
+def get_jwt_secret() -> str:
+    return os.environ["JWT_SECRET"]
+
+
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+
+
+def create_access_token(user_id: str, username: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        "type": "access"
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+
+
+async def get_current_user(request, db) -> dict:
+    """Extract and validate user from JWT cookie or Authorization header."""
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            return None
+        user = await db.users.find_one({"username": payload["username"]}, {"_id": 0, "password_hash": 0})
+        return user
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+async def seed_admin(db):
+    """Seed default admin user on startup."""
+    admin_username = os.environ.get("ADMIN_USERNAME", "admin")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"username": admin_username})
+    if existing is None:
+        hashed = hash_password(admin_password)
+        await db.users.insert_one({
+            "username": admin_username,
+            "password_hash": hashed,
+            "name": "Administrator",
+            "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        logger.info(f"Admin user '{admin_username}' seeded")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one(
+            {"username": admin_username},
+            {"$set": {"password_hash": hash_password(admin_password)}}
+        )
+        logger.info(f"Admin password updated from .env")
+    await db.users.create_index("username", unique=True)

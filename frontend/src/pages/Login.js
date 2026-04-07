@@ -1,77 +1,53 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Mail, Lock, Loader } from 'lucide-react';
+import { User, Lock, Loader, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const Login = ({ onLoginSuccess }) => {
-  const [step, setStep] = useState('email'); // 'email' or 'otp'
-  const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [devMode, setDevMode] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const handleSendOTP = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (!email || !email.includes('@')) {
-      toast.error('Please enter a valid email');
+    if (!username.trim()) {
+      toast.error('Please enter your User ID');
+      return;
+    }
+    if (!password) {
+      toast.error('Please enter your password');
       return;
     }
 
     setLoading(true);
     try {
-      const response = await axios.post(`${API}/auth/send-otp`, { email });
-      
+      const response = await axios.post(`${API}/auth/login`, { username, password }, { withCredentials: true });
+
       if (response.data?.success) {
-        toast.success('OTP sent to your email!');
-        setDevMode(response.data?.data?.dev_mode || false);
-        setStep('otp');
+        const { username: uname, name, role, token } = response.data.data;
+        localStorage.setItem('auth_token', token);
+        localStorage.setItem('user_data', JSON.stringify({ username: uname, name, role }));
+        toast.success(`Welcome, ${name || uname}!`);
+        onLoginSuccess({ username: uname, name, role, token });
       } else {
-        toast.error(response.data?.error || 'Failed to send OTP');
+        toast.error(response.data?.error || 'Login failed');
       }
     } catch (error) {
-      console.error('Error sending OTP:', error);
-      toast.error('Failed to send OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOTP = async (e) => {
-    e.preventDefault();
-    if (!otp || otp.length !== 6) {
-      toast.error('Please enter a 6-digit OTP');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await axios.post(`${API}/auth/verify-otp`, { email, otp });
-      
-      if (response.data?.success) {
-        const sessionToken = response.data.data.session_token;
-        localStorage.setItem('session_token', sessionToken);
-        localStorage.setItem('user_email', email);
-        
-        toast.success('Login successful!');
-        onLoginSuccess(email, sessionToken);
-      } else {
-        toast.error(response.data?.error || 'Invalid OTP');
-      }
-    } catch (error) {
-      console.error('Error verifying OTP:', error);
-      toast.error('Invalid OTP. Please try again.');
+      const detail = error.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : error.response?.data?.error || 'Login failed';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-6">
+    <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-6" data-testid="login-page">
       <div className="w-full max-w-md">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-[#064E3B] rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Lock className="text-white" size={32} />
@@ -79,123 +55,73 @@ const Login = ({ onLoginSuccess }) => {
           <h1 className="text-3xl font-light text-stone-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Tally Reports
           </h1>
-          <p className="text-stone-600 mt-2">Secure login with email OTP</p>
+          <p className="text-stone-600 mt-2">Sign in with your credentials</p>
         </div>
 
-        {/* Login Form */}
         <div className="bg-white border border-stone-200 rounded-xl p-8 shadow-lg">
-          {step === 'email' ? (
-            <form onSubmit={handleSendOTP}>
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-stone-700 mb-2">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={20} />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="your@email.com"
-                    className="w-full pl-11 pr-4 py-3 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
-                    disabled={loading}
-                    data-testid="email-input"
-                    required
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full btn-primary py-3 flex items-center justify-center gap-2 disabled:opacity-50"
-                data-testid="send-otp-button"
-              >
-                {loading ? (
-                  <>
-                    <Loader className="animate-spin" size={20} />
-                    Sending OTP...
-                  </>
-                ) : (
-                  'Send OTP'
-                )}
-              </button>
-
-              <p className="text-xs text-stone-500 mt-4 text-center">
-                A 6-digit OTP will be sent to your email. Valid for 10 minutes.
-              </p>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifyOTP}>
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-stone-700 mb-2">
-                  Enter OTP
-                </label>
-                <p className="text-xs text-stone-500 mb-3">
-                  OTP sent to {email}
-                </p>
-                {devMode && (
-                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3" data-testid="dev-mode-hint">
-                    Dev mode: Use OTP <span className="font-mono font-bold">123456</span>
-                  </p>
-                )}
+          <form onSubmit={handleLogin}>
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-stone-700 mb-2">User ID</label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={20} />
                 <input
                   type="text"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="000000"
-                  className="w-full px-4 py-3 border border-stone-200 rounded-lg text-center text-2xl font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter your User ID"
+                  className="w-full pl-11 pr-4 py-3 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
                   disabled={loading}
-                  data-testid="otp-input"
-                  maxLength={6}
-                  required
+                  data-testid="username-input"
+                  autoComplete="username"
                 />
               </div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading || otp.length !== 6}
-                className="w-full btn-primary py-3 flex items-center justify-center gap-2 disabled:opacity-50"
-                data-testid="verify-otp-button"
-              >
-                {loading ? (
-                  <>
-                    <Loader className="animate-spin" size={20} />
-                    Verifying...
-                  </>
-                ) : (
-                  'Verify & Login'
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setStep('email');
-                  setOtp('');
-                }}
-                className="w-full mt-3 text-sm text-stone-600 hover:text-stone-900"
-              >
-                ← Change email
-              </button>
-
-              <p className="text-xs text-stone-500 mt-4 text-center">
-                Didn't receive OTP?{' '}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-stone-700 mb-2">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400" size={20} />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className="w-full pl-11 pr-12 py-3 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#064E3B] focus:border-transparent"
+                  disabled={loading}
+                  data-testid="password-input"
+                  autoComplete="current-password"
+                />
                 <button
                   type="button"
-                  onClick={handleSendOTP}
-                  className="text-[#064E3B] font-medium hover:underline"
-                  disabled={loading}
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  tabIndex={-1}
                 >
-                  Resend
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                 </button>
-              </p>
-            </form>
-          )}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary py-3 flex items-center justify-center gap-2 disabled:opacity-50"
+              data-testid="login-button"
+            >
+              {loading ? (
+                <>
+                  <Loader className="animate-spin" size={20} />
+                  Signing in...
+                </>
+              ) : (
+                'Sign In'
+              )}
+            </button>
+          </form>
         </div>
 
         <p className="text-xs text-stone-500 mt-6 text-center">
-          🔒 Secure authentication via email OTP
+          Contact your administrator if you forgot your password
         </p>
       </div>
     </div>

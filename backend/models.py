@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict, EmailStr
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import uuid
@@ -31,6 +31,7 @@ class InventoryItem(BaseModel):
     price: Optional[float] = None
     purchase_price: Optional[float] = None
     category: Optional[str] = None
+    stock_group: Optional[str] = None
     reorder_level: Optional[float] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -69,6 +70,8 @@ class CustomerFollowup(BaseModel):
     status: str
     notes: Optional[str] = None
     next_followup: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CustomerFollowupCreate(BaseModel):
@@ -144,29 +147,23 @@ class APIResponse(BaseModel):
     message: Optional[str] = None
 
 # New Authentication Models
-class OTPRequest(BaseModel):
-    email: EmailStr
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-class OTPVerify(BaseModel):
-    email: EmailStr
-    otp: str
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
-class OTPSession(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    email: str
-    otp: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    expires_at: datetime
-    verified: bool = False
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    name: str
+    role: str = "employee"
 
-class UserSession(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    email: str
-    session_token: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    expires_at: datetime
+class ResetPasswordRequest(BaseModel):
+    username: str
+    new_password: str
 
 # New Purchase Order Models
 class PurchaseOrderItem(BaseModel):
