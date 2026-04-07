@@ -508,13 +508,43 @@ async def receive_agent_sync(request: dict):
             
             logger.info(f"Synced {len(data)} sales vouchers to database")
         
+        elif data_type == 'customers':
+            # Upsert customers from agent sync (don't delete - merge with existing)
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for cust in data:
+                    customer_name = cust.get('customer_name', '')
+                    if not customer_name:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"customer_name": customer_name},
+                            {"$set": {
+                                "customer_name": customer_name,
+                                "outstanding_amount": cust.get('outstanding_amount', 0),
+                                "total_purchases": cust.get('total_purchases', 0),
+                                "transaction_count": cust.get('transaction_count', 0),
+                                "last_synced": sync_time
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.customers.bulk_write(operations)
+            
+            logger.info(f"Synced {len(data)} customers to database")
+        
         # Update last sync time
+        company_name = request.get('company_name', '')
         await db.sync_status.update_one(
             {'type': 'agent_sync'},
             {'$set': {
                 'last_sync': sync_time,
                 'data_type': data_type,
-                'count': len(data)
+                'count': len(data),
+                'agent_version': request.get('agent_version', ''),
+                'company_name': company_name
             }},
             upsert=True
         )
