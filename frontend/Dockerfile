@@ -2,14 +2,8 @@ FROM node:18-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
-
-# Remove emergent-specific dev dependency not needed for self-hosted build
-RUN node -e " \
-  const pkg = JSON.parse(require('fs').readFileSync('package.json','utf8')); \
-  if(pkg.devDependencies) delete pkg.devDependencies['@emergentbase/visual-edits']; \
-  require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));" && \
-  yarn install --network-timeout 600000
+COPY package.json clean-pkg.js ./
+RUN node clean-pkg.js && yarn install --network-timeout 600000
 
 COPY . .
 
