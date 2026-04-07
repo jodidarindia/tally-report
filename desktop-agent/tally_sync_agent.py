@@ -25,16 +25,24 @@ from typing import Dict, List, Any, Optional
 import schedule
 from dotenv import load_dotenv
 
-# Configure logging
+import re
+
+# Configure logging - use utf-8 for Windows compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('tally_sync_agent.log'),
+        logging.FileHandler('tally_sync_agent.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger('TallySyncAgent')
+
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 load_dotenv()
 
@@ -86,17 +94,17 @@ class TallySyncAgent:
             )
             
             if response.status_code == 200:
-                logger.info("✓ Connected to TallyPrime successfully")
+                logger.info("[OK] Connected to TallyPrime successfully")
                 return True
             else:
-                logger.error(f"✗ TallyPrime connection failed: HTTP {response.status_code}")
+                logger.error(f"[ERROR] TallyPrime connection failed: HTTP {response.status_code}")
                 return False
                 
         except requests.exceptions.ConnectionError:
-            logger.error("✗ Cannot connect to TallyPrime. Ensure Tally is running and port 9000 is accessible.")
+            logger.error("[ERROR] Cannot connect to TallyPrime. Ensure Tally is running and port 9000 is accessible.")
             return False
         except Exception as e:
-            logger.error(f"✗ Error testing Tally connection: {e}")
+            logger.error(f"[ERROR] Error testing Tally connection: {e}")
             return False
     
     def fetch_inventory_from_tally(self) -> List[Dict[str, Any]]:
@@ -142,8 +150,16 @@ class TallySyncAgent:
                 logger.error(f"Failed to fetch inventory: HTTP {response.status_code}")
                 return []
             
-            # Parse XML response
-            data = xmltodict.parse(response.content)
+            # Parse XML response - sanitize Tally's messy XML first
+            raw_xml = response.content.decode('utf-8', errors='replace')
+            # Remove invalid XML characters
+            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', '', raw_xml)
+            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw_xml)
+            # Handle multiple XML documents (Tally sometimes sends multiple root elements)
+            if raw_xml.count('<?xml') > 1:
+                raw_xml = raw_xml.split('<?xml')[1]
+                raw_xml = '<?xml' + raw_xml
+            data = xmltodict.parse(raw_xml)
             items = []
             
             # Extract stock items from response
@@ -221,8 +237,14 @@ class TallySyncAgent:
                 logger.error(f"Failed to fetch sales: HTTP {response.status_code}")
                 return []
             
-            # Parse XML response
-            data = xmltodict.parse(response.content)
+            # Parse XML response - sanitize Tally's messy XML first
+            raw_xml = response.content.decode('utf-8', errors='replace')
+            raw_xml = re.sub(r'&#x[0-9a-fA-F]+;?', '', raw_xml)
+            raw_xml = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw_xml)
+            if raw_xml.count('<?xml') > 1:
+                raw_xml = raw_xml.split('<?xml')[1]
+                raw_xml = '<?xml' + raw_xml
+            data = xmltodict.parse(raw_xml)
             vouchers = []
             
             envelope = data.get('ENVELOPE', {})
@@ -278,10 +300,10 @@ class TallySyncAgent:
             )
             
             if response.status_code == 200:
-                logger.info(f"✓ Synced {len(data)} {data_type} items to backend")
+                logger.info(f"[OK] Synced {len(data)} {data_type} items to backend")
                 return True
             else:
-                logger.error(f"✗ Failed to sync {data_type}: HTTP {response.status_code}")
+                logger.error(f"[ERROR] Failed to sync {data_type}: HTTP {response.status_code}")
                 logger.error(f"Response: {response.text}")
                 return False
                 
@@ -318,7 +340,7 @@ class TallySyncAgent:
                 self.sync_to_backend('sales', sales_data)
             
             self.last_sync_time = datetime.now()
-            logger.info(f"✓ Sync cycle completed at {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"[OK] Sync cycle completed at {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info("="*60)
             
         except Exception as e:
@@ -329,9 +351,9 @@ class TallySyncAgent:
     def start(self):
         """Start the sync agent with scheduled syncs"""
         logger.info("")
-        logger.info("╔═══════════════════════════════════════════════════════╗")
-        logger.info("║        TALLY DESKTOP SYNC AGENT STARTED              ║")
-        logger.info("╚═══════════════════════════════════════════════════════╝")
+        logger.info("========================================================")
+        logger.info("       TALLY DESKTOP SYNC AGENT STARTED                ")
+        logger.info("========================================================")
         logger.info("")
         
         # Initial sync
