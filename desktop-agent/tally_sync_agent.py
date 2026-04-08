@@ -55,6 +55,21 @@ def get_fy_dates(fy_str: str):
     return f"{start_year}0401", f"{end_year}0331"
 
 
+SYNC_STATE_FILE = 'sync_state.json'
+
+def load_sync_state():
+    """Load last sync state from local file."""
+    if os.path.exists(SYNC_STATE_FILE):
+        with open(SYNC_STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_sync_state(state):
+    """Save sync state to local file."""
+    with open(SYNC_STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2)
+
+
 class TallySyncAgent:
 
     def __init__(self):
@@ -112,22 +127,22 @@ class TallySyncAgent:
 </ENVELOPE>"""
 
     def _stock_summary_xml(self):
-        """Fallback: Stock Summary report with EXPLODEFLAG to get individual items."""
+        """Fallback: Stock Summary report (fast, returns groups)."""
         return f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Stock Summary</REPORTNAME>
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-<EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{self.fy_from}</SVFROMDATE>
 <SVTODATE>{self.fy_to}</SVTODATE>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY>
 </ENVELOPE>"""
 
-    def _sales_vouchers_xml(self):
-        """Structured VOUCHER export for given FY."""
+    def _sales_vouchers_xml(self, from_date=None):
+        """Structured VOUCHER export. from_date overrides SVFROMDATE for incremental sync."""
+        start = from_date or self.fy_from
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
@@ -139,7 +154,7 @@ class TallySyncAgent:
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{self.fy_from}</SVFROMDATE>
+<SVFROMDATE>{start}</SVFROMDATE>
 <SVTODATE>{self.fy_to}</SVTODATE>
 </STATICVARIABLES>
 <TDL><TDLMESSAGE>
@@ -298,9 +313,9 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         return self._fetch_inventory_summary()
 
     def _fetch_inventory_tdl(self):
-        """Fetch stock items as TDL collection objects."""
+        """Fetch stock items as TDL collection objects (30s timeout, fail fast)."""
         logger.info("Fetching stock items via TDL collection...")
-        raw = self._send(self._stock_items_xml(), timeout=120)
+        raw = self._send(self._stock_items_xml(), timeout=30)
         if not raw:
             return []
         self._dump('stock_items_tdl', raw)
@@ -456,9 +471,9 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
     # ---- SALES ----
 
-    def fetch_sales(self):
+    def fetch_sales(self, from_date=None):
         logger.info("Fetching Sales Vouchers...")
-        raw = self._send(self._sales_vouchers_xml(), timeout=180)
+        raw = self._send(self._sales_vouchers_xml(from_date=from_date), timeout=180)
         if not raw:
             return []
         self._dump('sales_vouchers', raw)
@@ -693,13 +708,21 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             return
         try:
             self.sync_running = True
-            logger.info("=" * 50)
-            logger.info(f"Starting sync cycle (FY: {self.financial_year})...")
+            state = load_sync_state()
+            is_first_sync = not state.get('full_sync_done')
+            last_sales_date = state.get('last_sales_date')
+
+            if is_first_sync:
+                logger.info("=" * 50)
+                logger.info("FIRST RUN - Full sync...")
+            else:
+                logger.info("=" * 50)
+                logger.info(f"Incremental sync (changes since {last_sales_date})...")
 
             if not self.test_connection():
                 return
 
-            # Inventory
+            # Inventory: always refresh (it's fast ~1 second)
             logger.info("--- Inventory ---")
             inventory = self.fetch_inventory()
             if inventory:
@@ -707,20 +730,25 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             else:
                 logger.warning("No inventory data fetched")
 
-            # Sales
+            # Sales: full on first run, incremental after
             logger.info("--- Sales ---")
-            sales = self.fetch_sales()
+            sales_from_date = None
+            if not is_first_sync and last_sales_date:
+                sales_from_date = last_sales_date.replace('-', '')
+                logger.info(f"Fetching sales from {last_sales_date} onwards...")
+
+            sales = self.fetch_sales(from_date=sales_from_date)
             if sales:
                 self.sync_to_backend('sales', sales)
-            else:
-                logger.warning("No sales data fetched")
 
-            # Customers (TDL + sales extract merge)
-            logger.info("--- Customers ---")
-            customers = self.fetch_customers()
-            if sales:
+                # Track latest voucher date for next incremental
+                latest_date = max(v.get('voucher_date', '') for v in sales)
+                state['last_sales_date'] = latest_date
+
+                # Customers: extract from sales
+                logger.info("--- Customers ---")
+                customers = self.fetch_customers()
                 sales_customers = self.extract_customers_from_sales(sales)
-                # Merge: add sales data to TDL customers, add missing ones
                 cust_map = {c['customer_name'].lower(): c for c in customers}
                 for sc in sales_customers:
                     key = sc['customer_name'].lower()
@@ -729,8 +757,14 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                         cust_map[key]['transaction_count'] = sc['transaction_count']
                     else:
                         customers.append(sc)
-            if customers:
-                self.sync_to_backend('customers', customers)
+                if customers:
+                    self.sync_to_backend('customers', customers)
+            elif is_first_sync:
+                logger.warning("No sales data fetched")
+
+            state['full_sync_done'] = True
+            state['last_sync_time'] = datetime.now().isoformat()
+            save_sync_state(state)
 
             self.last_sync_time = datetime.now()
             logger.info(f"[OK] Sync completed at {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -743,9 +777,16 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
     def start(self):
         logger.info("")
         logger.info("=" * 50)
-        logger.info("  TALLY DESKTOP SYNC AGENT v3")
+        logger.info("  FLOWRA TALLY SYNC AGENT v3")
         logger.info(f"  Financial Year: {self.financial_year}")
         logger.info("=" * 50)
+
+        state = load_sync_state()
+        if state.get('full_sync_done'):
+            logger.info(f"Previous sync found. Last: {state.get('last_sync_time', 'unknown')}")
+            logger.info("Will do incremental sync (new data only)")
+        else:
+            logger.info("First run - will do full sync")
 
         self.run_sync_cycle()
         schedule.every(self.sync_interval).minutes.do(self.run_sync_cycle)
