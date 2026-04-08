@@ -35,18 +35,19 @@ const CustomerCRM = ({ user, selectedFY }) => {
 
   useEffect(() => {
     fetchCustomerNames();
-  }, []);
+  }, [selectedFY]);
 
   useEffect(() => {
     fetchData();
-  }, [activeTab]);
+  }, [activeTab, selectedFY]);
 
   const fetchCustomerNames = async () => {
     try {
-      const res = await axios.get(`${API}/customers/outstanding`);
+      const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
+      const res = await axios.get(`${API}/customers/outstanding${fyParam}`);
       const custs = res.data?.data?.customers || [];
       setCustomerNames(custs.map(c => c.customer_name));
-      const groups = [...new Set(custs.map(c => c.ledger_group).filter(Boolean))];
+      const groups = res.data?.data?.groups || [...new Set(custs.map(c => c.ledger_group).filter(Boolean))];
       setCustomerGroups(groups);
     } catch (error) {
       console.error('Error fetching customer names:', error);
@@ -56,17 +57,21 @@ const CustomerCRM = ({ user, selectedFY }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
+      const fyParam = selectedFY ? `fy=${selectedFY}` : '';
       if (activeTab === 'outstanding') {
-        const res = await axios.get(`${API}/customers/outstanding`);
+        const res = await axios.get(`${API}/customers/outstanding?${fyParam}`);
         setOutstanding(res.data?.data?.customers || []);
+        // Also set groups from response
+        const groups = res.data?.data?.groups || [];
+        if (groups.length) setCustomerGroups(groups);
       } else if (activeTab === 'followups') {
         const res = await axios.get(`${API}/customers/followups`);
         setFollowups(res.data?.data?.followups || []);
       } else if (activeTab === 'targets') {
-        const res = await axios.get(`${API}/customers/targets`);
+        const res = await axios.get(`${API}/customers/targets?${fyParam}`);
         setTargets(res.data?.data?.targets || []);
       } else if (activeTab === 'behavior') {
-        const res = await axios.get(`${API}/customers/payment-behavior`);
+        const res = await axios.get(`${API}/customers/payment-behavior?${fyParam}`);
         setPaymentBehavior(res.data?.data?.customers || []);
       }
     } catch (error) {
@@ -235,6 +240,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                       <th>Customer Name</th>
                       <th>Group</th>
                       <th className="numeric">Total Sales</th>
+                      <th className="numeric">Paid</th>
                       <th className="numeric">Outstanding</th>
                       <th className="numeric">0-30 Days</th>
                       <th className="numeric">30-60 Days</th>
@@ -260,6 +266,9 @@ const CustomerCRM = ({ user, selectedFY }) => {
                         <td className="text-slate-500 text-xs">{customer.ledger_group || '-'}</td>
                         <td className="numeric text-slate-600">
                           Rs.{(customer.total_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                        </td>
+                        <td className="numeric text-emerald-600">
+                          Rs.{(customer.paid_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
                         <td className="numeric font-semibold text-[#2563EB]">
                           Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
@@ -425,9 +434,9 @@ const CustomerCRM = ({ user, selectedFY }) => {
                     <thead>
                       <tr>
                         <th>Customer Name</th>
-                        <th className="numeric">Last FY Sales</th>
+                        <th className="numeric">Prev FY Sales{targets[0]?.previous_fy ? ` (${targets[0].previous_fy})` : ''}</th>
                         <th className="numeric">Target</th>
-                        <th className="numeric">Achieved</th>
+                        <th className="numeric">Current FY Achieved{targets[0]?.current_fy ? ` (${targets[0].current_fy})` : ''}</th>
                         <th className="numeric">Achievement %</th>
                         <th className="numeric">Remaining</th>
                         <th>Status</th>
@@ -582,28 +591,40 @@ const CustomerCRM = ({ user, selectedFY }) => {
           {activeTab === 'behavior' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {paymentBehavior.map((customer, idx) => (
-                <div key={idx} className="bg-white border border-slate-200 rounded-xl p-6">
+                <div key={idx} className="bg-white border border-slate-200 rounded-xl p-6" data-testid={`payment-card-${idx}`}>
                   <h3 className="text-lg font-medium text-slate-900 mb-4">{customer.customer_name}</h3>
                   <div className="space-y-3">
                     <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Total Transactions</span>
+                      <span className="text-sm text-slate-600">Total Sales</span>
+                      <span className="font-semibold">Rs.{(customer.total_amount || 0).toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-slate-600">Paid Amount</span>
+                      <span className="font-semibold text-emerald-600">Rs.{(customer.paid_amount || 0).toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-slate-600">Outstanding</span>
+                      <span className="font-semibold text-red-600">Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-slate-600">Payment Ratio</span>
+                      <span className="font-semibold">{customer.payment_ratio || 0}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-slate-600">Transactions</span>
                       <span className="font-semibold">{customer.total_transactions}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Total Amount</span>
-                      <span className="font-semibold">Rs.{customer.total_amount.toLocaleString('en-IN')}</span>
+                      <span className="text-sm text-slate-600">Avg Transaction</span>
+                      <span className="font-semibold">Rs.{(customer.average_transaction || 0).toLocaleString('en-IN')}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Average Transaction</span>
-                      <span className="font-semibold">Rs.{customer.average_transaction.toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Avg Payment Delay</span>
-                      <span className="font-semibold">{customer.average_payment_delay} days</span>
+                      <span className="text-sm text-slate-600">Est. Avg Payment Delay</span>
+                      <span className="font-semibold">{customer.average_payment_delay || 0} days</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-slate-600">Credit Score</span>
-                      <span className="font-semibold text-[#2563EB]">{customer.credit_score.toFixed(0)}/100</span>
+                      <span className="font-semibold text-[#2563EB]">{(customer.credit_score || 0).toFixed(0)}/100</span>
                     </div>
                     <div className="pt-3 border-t">
                       <span className="text-sm text-slate-600">Payment Pattern:</span>

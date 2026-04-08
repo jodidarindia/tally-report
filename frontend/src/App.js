@@ -391,10 +391,10 @@ function App() {
             <Route path="/sales" element={<Sales selectedFY={selectedFY} />} />
             <Route path="/crm" element={<CustomerCRM user={user} selectedFY={selectedFY} />} />
             {isAdmin && <>
-              <Route path="/analytics" element={<InventoryAnalytics />} />
-              <Route path="/ai-reports" element={<EnhancedAIReports />} />
+              <Route path="/analytics" element={<InventoryAnalytics selectedFY={selectedFY} />} />
+              <Route path="/ai-reports" element={<EnhancedAIReports selectedFY={selectedFY} />} />
               <Route path="/ai-query" element={<AIQueryBuilder />} />
-              <Route path="/salesman" element={<SalesmanPerformance />} />
+              <Route path="/salesman" element={<SalesmanPerformance selectedFY={selectedFY} />} />
               <Route path="/history" element={<ReportHistory />} />
               <Route path="/setup" element={<TallySetup />} />
             </>}

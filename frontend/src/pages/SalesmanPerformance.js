@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const SalesmanPerformance = () => {
+const SalesmanPerformance = ({ selectedFY }) => {
   const [performance, setPerformance] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('performance');
@@ -27,14 +27,15 @@ const SalesmanPerformance = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedFY]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
       const [perfRes, custRes] = await Promise.all([
-        axios.get(`${API}/salesman/performance-detailed`),
-        axios.get(`${API}/customers/outstanding`)
+        axios.get(`${API}/salesman/performance-detailed${fyParam}`),
+        axios.get(`${API}/customers/outstanding${fyParam}`)
       ]);
       setPerformance(perfRes.data?.data?.salesman || []);
       const custList = custRes.data?.data?.customers || [];

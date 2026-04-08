@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const InventoryAnalytics = () => {
+const InventoryAnalytics = ({ selectedFY }) => {
   const [activeTab, setActiveTab] = useState('movement');
   const [movementData, setMovementData] = useState([]);
   const [belowCostSales, setBelowCostSales] = useState([]);
@@ -24,16 +24,17 @@ const InventoryAnalytics = () => {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, pivotGroupBy, pivotMetric, dateFilter]);
+  }, [activeTab, pivotGroupBy, pivotMetric, dateFilter, selectedFY]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const fyParam = selectedFY ? `fy=${selectedFY}` : '';
       if (activeTab === 'movement') {
-        const res = await axios.get(`${API}/inventory/movement-analysis`);
+        const res = await axios.get(`${API}/inventory/movement-analysis?${fyParam}`);
         setMovementData(res.data?.data?.movements || []);
       } else if (activeTab === 'below-cost') {
-        const res = await axios.get(`${API}/inventory/below-cost-sales`);
+        const res = await axios.get(`${API}/inventory/below-cost-sales?${fyParam}`);
         setBelowCostSales(res.data?.data?.below_cost_sales || []);
       } else if (activeTab === 'pivot') {
         const res = await axios.get(`${API}/inventory/pivot-data?group_by=${pivotGroupBy}&metric=${pivotMetric}`);
@@ -42,6 +43,7 @@ const InventoryAnalytics = () => {
         const params = new URLSearchParams();
         if (dateFilter.start_date) params.append('start_date', dateFilter.start_date);
         if (dateFilter.end_date) params.append('end_date', dateFilter.end_date);
+        if (selectedFY) params.append('fy', selectedFY);
         
         const url = params.toString() ? `${API}/inventory/sales-frequency?${params.toString()}` : `${API}/inventory/sales-frequency`;
         const res = await axios.get(url);

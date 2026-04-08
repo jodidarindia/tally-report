@@ -164,14 +164,15 @@ const Sales = ({ selectedFY }) => {
 
   useEffect(() => {
     fetchSalesData();
-  }, []);
+  }, [selectedFY]);
 
   const fetchSalesData = async () => {
     setLoading(true);
     try {
+      const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
       const [vouchersRes, analyticsRes] = await Promise.all([
-        axios.get(`${API}/sales/vouchers`),
-        axios.get(`${API}/sales/analytics`)
+        axios.get(`${API}/sales/vouchers${fyParam}`),
+        axios.get(`${API}/sales/analytics${fyParam}`)
       ]);
 
       setVouchers(vouchersRes.data?.data?.vouchers || []);

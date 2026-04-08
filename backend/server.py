@@ -48,6 +48,41 @@ api_router = APIRouter(prefix="/api")
 # Global Tally client instance
 tally_client_instance = None
 
+
+# ==================== FY UTILITY ====================
+
+def fy_to_date_range(fy: str):
+    """Convert '2025-26' to ('2025-04-01', '2026-03-31')"""
+    if not fy or '-' not in fy:
+        return None, None
+    parts = fy.split('-')
+    start_year = int(parts[0])
+    end_year_short = int(parts[1])
+    end_year = start_year // 100 * 100 + end_year_short if end_year_short < 100 else end_year_short
+    return f"{start_year}-04-01", f"{end_year}-03-31"
+
+
+def filter_vouchers_by_fy(vouchers, fy):
+    """Filter vouchers by financial year date range"""
+    if not fy:
+        return vouchers
+    fy_start, fy_end = fy_to_date_range(fy)
+    if not fy_start:
+        return vouchers
+    return [v for v in vouchers if fy_start <= v.get('voucher_date', '') <= fy_end]
+
+
+def get_previous_fy(fy: str):
+    """Given '2025-26', returns '2024-25'"""
+    if not fy or '-' not in fy:
+        return None
+    parts = fy.split('-')
+    start_year = int(parts[0])
+    end_short = int(parts[1])
+    prev_start = start_year - 1
+    prev_end = end_short - 1 if end_short > 0 else 99
+    return f"{prev_start}-{str(prev_end).zfill(2)}"
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -253,17 +288,20 @@ async def get_inventory_summary():
 
 # Sales Endpoints
 @api_router.get("/sales/vouchers")
-async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None):
-    """Fetch sales vouchers - prefer real synced data from DB, fallback to TallyClient demo"""
+async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None):
+    """Fetch sales vouchers filtered by FY"""
     try:
-        # First check DB for real synced data
         query = {}
         if party_name:
             query["party_name"] = {"$regex": party_name, "$options": "i"}
         
         vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
         
-        # Apply date filters on DB data
+        # Apply FY filter
+        if fy:
+            vouchers = filter_vouchers_by_fy(vouchers, fy)
+        
+        # Apply date filters
         if vouchers and (start_date or end_date):
             filtered = []
             for v in vouchers:
@@ -276,14 +314,13 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
             vouchers = filtered
         
         # If no data in DB, use TallyClient (demo/mock data)
-        if not vouchers and not party_name:
+        if not vouchers and not party_name and not fy:
             global tally_client_instance
             if not tally_client_instance:
                 tally_client_instance = TallyClient(connection_type="xml")
             
             vouchers = tally_client_instance.fetch_sales_vouchers(start_date, end_date)
             
-            # Save demo data to database
             if vouchers:
                 from pymongo import UpdateOne
                 operations = []
@@ -311,15 +348,23 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
         return APIResponse(success=False, error=str(e))
 
 
-@api_router.get("/sales/vouchers/{voucher_id}")
+@api_router.get("/sales/vouchers/{voucher_id:path}")
 async def get_voucher_detail(voucher_id: str):
     """Get full details of a single sales voucher (invoice view)"""
     try:
-        voucher = await db.sales_vouchers.find_one({"voucher_id": voucher_id}, {"_id": 0})
+        from urllib.parse import unquote
+        decoded_id = unquote(voucher_id)
+        
+        voucher = await db.sales_vouchers.find_one({"voucher_id": decoded_id}, {"_id": 0})
+        if not voucher:
+            # Try partial match
+            voucher = await db.sales_vouchers.find_one(
+                {"voucher_id": {"$regex": f"^{decoded_id}$", "$options": "i"}},
+                {"_id": 0}
+            )
         if not voucher:
             return APIResponse(success=False, error="Voucher not found")
 
-        # Calculate line totals
         items = voucher.get("items", [])
         subtotal = sum(item.get("amount", item.get("quantity", 0) * item.get("rate", 0)) for item in items)
         total = voucher.get("total_amount", subtotal)
@@ -335,10 +380,11 @@ async def get_voucher_detail(voucher_id: str):
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/sales/summary")
-async def get_sales_summary():
-    """Get sales summary statistics"""
+async def get_sales_summary(fy: Optional[str] = None):
+    """Get sales summary statistics filtered by FY"""
     try:
-        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        vouchers = filter_vouchers_by_fy(vouchers, fy)
         
         if not vouchers:
             return APIResponse(
@@ -388,10 +434,11 @@ async def get_sales_summary():
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/sales/analytics")
-async def get_sales_analytics():
-    """Get sales analytics data for charts"""
+async def get_sales_analytics(fy: Optional[str] = None):
+    """Get sales analytics data for charts, filtered by FY"""
     try:
-        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        vouchers = filter_vouchers_by_fy(vouchers, fy)
         
         if not vouchers:
             return APIResponse(success=True, data={"daily_sales": [], "category_sales": []})
@@ -934,10 +981,11 @@ async def get_purchase_orders(status: Optional[str] = None):
 # ==================== ENHANCED PIVOT TABLE ENDPOINTS ====================
 
 @api_router.get("/inventory/sales-frequency")
-async def get_sales_frequency(start_date: Optional[str] = None, end_date: Optional[str] = None):
+async def get_sales_frequency(start_date: Optional[str] = None, end_date: Optional[str] = None, fy: Optional[str] = None):
     """Get sales frequency and unique customers per item"""
     try:
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         
         # Apply date filter
         if start_date or end_date:
@@ -1011,7 +1059,7 @@ async def ai_advanced_query(request: AIQueryRequest):
     try:
         inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
         sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        customer_data = await db.customer_outstanding.find({}, {"_id": 0}).to_list(1000)
+        customer_data = await db.customers.find({}, {"_id": 0}).to_list(1000)
         
         ai_service = EnhancedAIReportService()
         result = await ai_service.generate_advanced_report(
@@ -1049,8 +1097,10 @@ async def ai_advanced_query(request: AIQueryRequest):
 # ==================== CUSTOMER & CRM ENDPOINTS ====================
 
 @api_router.get("/customers/outstanding")
-async def get_customer_outstanding(customer: Optional[str] = None):
-    """Get outstanding payments by customer with proper aging based on invoice dates"""
+async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[str] = None):
+    """Get outstanding payments by customer with proper aging.
+    Outstanding = Tally closing balance (accounts for payments received).
+    Aging distributes outstanding across invoices FIFO (oldest unpaid first)."""
     try:
         from datetime import date as date_type
         today = date_type.today()
@@ -1059,10 +1109,14 @@ async def get_customer_outstanding(customer: Optional[str] = None):
         synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
         synced_map = {c["customer_name"].lower(): c for c in synced_customers}
 
-        # Get all sales vouchers for aging calculation
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        # Get sales vouchers filtered by FY
+        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_sales, fy)
 
         customer_map = {}
+        # Build per-customer voucher list for FIFO aging
+        customer_vouchers = {}
+
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
             amount = voucher.get("total_amount", 0)
@@ -1074,6 +1128,8 @@ async def get_customer_outstanding(customer: Optional[str] = None):
                     "customer_name": party,
                     "ledger_group": synced.get("ledger_group", "Sundry Debtors"),
                     "phone": synced.get("phone", ""),
+                    "contact_person": synced.get("contact_person", ""),
+                    "state": synced.get("state", ""),
                     "outstanding_amount": synced.get("outstanding_amount", 0),
                     "total_sales": 0,
                     "voucher_count": 0,
@@ -1084,30 +1140,28 @@ async def get_customer_outstanding(customer: Optional[str] = None):
                     "aging_90_plus": 0.0,
                     "oldest_invoice_days": 0
                 }
+                customer_vouchers[party] = []
 
             customer_map[party]["total_sales"] += amount
             customer_map[party]["voucher_count"] += 1
             if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
                 customer_map[party]["last_transaction"] = v_date_str
 
-            # Calculate aging bucket for this voucher
+            # Collect voucher date + amount for FIFO aging
             try:
                 parts = v_date_str.split("-")
                 if len(parts) == 3:
                     v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
                     days_old = (today - v_date).days
+                    customer_vouchers.setdefault(party, []).append({
+                        "amount": amount, "days_old": days_old
+                    })
                     if days_old > customer_map[party]["oldest_invoice_days"]:
                         customer_map[party]["oldest_invoice_days"] = days_old
-                    if days_old <= 30:
-                        customer_map[party]["aging_0_30"] += amount
-                    elif days_old <= 60:
-                        customer_map[party]["aging_30_60"] += amount
-                    elif days_old <= 90:
-                        customer_map[party]["aging_60_90"] += amount
-                    else:
-                        customer_map[party]["aging_90_plus"] += amount
             except (ValueError, TypeError):
-                customer_map[party]["aging_0_30"] += amount
+                customer_vouchers.setdefault(party, []).append({
+                    "amount": amount, "days_old": 0
+                })
 
         # Add synced customers not in sales
         for sc in synced_customers:
@@ -1117,9 +1171,11 @@ async def get_customer_outstanding(customer: Optional[str] = None):
                     "customer_name": name,
                     "ledger_group": sc.get("ledger_group", "Sundry Debtors"),
                     "phone": sc.get("phone", ""),
+                    "contact_person": sc.get("contact_person", ""),
+                    "state": sc.get("state", ""),
                     "outstanding_amount": sc.get("outstanding_amount", 0),
-                    "total_sales": sc.get("total_purchases", 0),
-                    "voucher_count": sc.get("transaction_count", 0),
+                    "total_sales": 0,
+                    "voucher_count": 0,
                     "last_transaction": None,
                     "aging_0_30": 0.0, "aging_30_60": 0.0,
                     "aging_60_90": 0.0, "aging_90_plus": 0.0,
@@ -1131,17 +1187,43 @@ async def get_customer_outstanding(customer: Optional[str] = None):
         if customer:
             customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
 
-        # Finalize: outstanding = Tally closing balance, else total_sales as proxy
+        # FIFO aging: distribute outstanding across invoices oldest-first
         for cust in customers:
-            if cust["outstanding_amount"] == 0 and cust["total_sales"] > 0:
-                cust["outstanding_amount"] = cust["total_sales"]
-
             outstanding = cust["outstanding_amount"]
+            party = cust["customer_name"]
+            voucher_list = customer_vouchers.get(party, [])
+
+            if outstanding > 0 and voucher_list:
+                # Sort oldest first for FIFO
+                voucher_list.sort(key=lambda x: x["days_old"], reverse=True)
+                remaining = outstanding
+                for v in voucher_list:
+                    if remaining <= 0:
+                        break
+                    alloc = min(v["amount"], remaining)
+                    days = v["days_old"]
+                    if days > 90:
+                        cust["aging_90_plus"] += alloc
+                    elif days > 60:
+                        cust["aging_60_90"] += alloc
+                    elif days > 30:
+                        cust["aging_30_60"] += alloc
+                    else:
+                        cust["aging_0_30"] += alloc
+                    remaining -= alloc
+                # If outstanding exceeds all vouchers, put remainder in 0-30
+                if remaining > 0:
+                    cust["aging_0_30"] += remaining
+
             cust["overdue_amount"] = cust["aging_60_90"] + cust["aging_90_plus"]
+            cust["paid_amount"] = max(0, cust["total_sales"] - outstanding)
 
             # Status based on oldest invoice days
             oldest = cust["oldest_invoice_days"]
-            if oldest > 90:
+            if outstanding <= 0:
+                cust["status"] = "normal"
+                cust["status_label"] = "Normal"
+            elif oldest > 90:
                 cust["status"] = "critical"
                 cust["status_label"] = "Critical"
             elif oldest > 60:
@@ -1156,9 +1238,18 @@ async def get_customer_outstanding(customer: Optional[str] = None):
 
         customers.sort(key=lambda c: c["outstanding_amount"], reverse=True)
 
+        # Collect all unique groups + states for dropdown
+        all_groups = list(set(c.get("ledger_group", "") for c in customers if c.get("ledger_group")))
+        all_states = list(set(c.get("state", "") for c in customers if c.get("state")))
+
         return APIResponse(
             success=True,
-            data={"customers": customers, "total_outstanding": sum(c["outstanding_amount"] for c in customers)}
+            data={
+                "customers": customers,
+                "total_outstanding": sum(c["outstanding_amount"] for c in customers),
+                "groups": sorted(all_groups),
+                "states": sorted(all_states)
+            }
         )
 
     except Exception as e:
@@ -1234,57 +1325,81 @@ async def update_followup_status(followup_id: str, status: str):
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/customers/targets")
-async def get_customer_targets():
-    """Get customer targets and achievement with monthly breakdown"""
+async def get_customer_targets(fy: Optional[str] = None):
+    """Get customer targets: Column 1 = Previous FY sales, Column 3 = Current FY achieved"""
     try:
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
         custom_targets = await db.customer_targets.find({}, {"_id": 0}).to_list(100)
         custom_target_map = {t["customer_name"]: t for t in custom_targets}
-        
-        # Calculate achievement by customer (current FY and last FY)
-        customer_sales = {}
-        customer_monthly = {}
-        for voucher in sales_vouchers:
-            party = voucher.get("party_name", "Unknown")
-            amount = voucher.get("total_amount", 0)
-            v_date = voucher.get("voucher_date", "")
-            
-            customer_sales[party] = customer_sales.get(party, 0) + amount
-            
-            # Monthly breakdown
+
+        # Current FY sales
+        current_fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
+
+        # Previous FY sales
+        prev_fy = get_previous_fy(fy) if fy else None
+        prev_fy_vouchers = filter_vouchers_by_fy(all_vouchers, prev_fy) if prev_fy else []
+
+        # Aggregate current FY by customer
+        current_sales = {}
+        current_monthly = {}
+        for v in current_fy_vouchers:
+            party = v.get("party_name", "Unknown")
+            amount = v.get("total_amount", 0)
+            v_date = v.get("voucher_date", "")
+            current_sales[party] = current_sales.get(party, 0) + amount
             if v_date:
-                month_key = v_date[:7]  # YYYY-MM
-                if party not in customer_monthly:
-                    customer_monthly[party] = {}
-                customer_monthly[party][month_key] = customer_monthly[party].get(month_key, 0) + amount
-        
-        # Build targets list
+                month_key = v_date[:7]
+                if party not in current_monthly:
+                    current_monthly[party] = {}
+                current_monthly[party][month_key] = current_monthly[party].get(month_key, 0) + amount
+
+        # Aggregate previous FY by customer
+        prev_sales = {}
+        for v in prev_fy_vouchers:
+            party = v.get("party_name", "Unknown")
+            amount = v.get("total_amount", 0)
+            prev_sales[party] = prev_sales.get(party, 0) + amount
+
+        # Build targets for all customers in current or previous FY
+        all_customers = set(list(current_sales.keys()) + list(prev_sales.keys()))
         targets = []
-        for customer, achieved in customer_sales.items():
-            ct = custom_target_map.get(customer, {})
-            target_amount = ct.get("target_amount", achieved * 1.2)
-            
-            monthly = customer_monthly.get(customer, {})
+        for cust in all_customers:
+            ct = custom_target_map.get(cust, {})
+            last_fy = prev_sales.get(cust, 0)
+            achieved = current_sales.get(cust, 0)
+
+            # Use custom target if set, else auto-calculate from last FY (15% growth)
+            if cust in custom_target_map:
+                target_amount = ct.get("target_amount", last_fy * 1.15)
+                last_fy_override = ct.get("last_fy_sales", last_fy)
+                if last_fy_override > 0:
+                    last_fy = last_fy_override
+            else:
+                target_amount = last_fy * 1.15 if last_fy > 0 else achieved * 1.2 if achieved > 0 else 0
+
+            monthly = current_monthly.get(cust, {})
             monthly_data = [{"month": k, "amount": v} for k, v in sorted(monthly.items())]
-            
+
             targets.append({
-                "customer_name": customer,
-                "target_amount": target_amount,
-                "last_fy_sales": ct.get("last_fy_sales", achieved),
-                "achieved_amount": achieved,
-                "achievement_percentage": (achieved / target_amount * 100) if target_amount > 0 else 0,
-                "remaining": max(0, target_amount - achieved),
+                "customer_name": cust,
+                "target_amount": round(target_amount, 2),
+                "last_fy_sales": round(last_fy, 2),
+                "achieved_amount": round(achieved, 2),
+                "achievement_percentage": round((achieved / target_amount * 100), 1) if target_amount > 0 else 0,
+                "remaining": round(max(0, target_amount - achieved), 2),
                 "monthly_sales": monthly_data,
-                "has_custom_target": customer in custom_target_map
+                "has_custom_target": cust in custom_target_map,
+                "previous_fy": prev_fy or "",
+                "current_fy": fy or ""
             })
-        
+
         targets.sort(key=lambda x: x["achievement_percentage"], reverse=True)
-        
+
         return APIResponse(
             success=True,
-            data={"targets": targets}
+            data={"targets": targets, "current_fy": fy, "previous_fy": prev_fy}
         )
-    
+
     except Exception as e:
         logger.error(f"Error fetching customer targets: {e}")
         return APIResponse(success=False, error=str(e))
@@ -1422,60 +1537,105 @@ async def get_dashboard_reminders():
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/customers/payment-behavior")
-async def get_payment_behavior(customer: Optional[str] = None):
-    """Analyze customer payment behavior"""
+async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str] = None):
+    """Analyze customer payment behavior using real data (outstanding vs sales)"""
     try:
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        
-        # Group by customer and analyze behavior
+        from datetime import date as date_type
+        today = date_type.today()
+
+        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_sales, fy)
+
+        synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+        synced_map = {c["customer_name"].lower(): c for c in synced_customers}
+
         behavior_map = {}
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
             amount = voucher.get("total_amount", 0)
-            date = voucher.get("voucher_date", "")
-            
+            v_date_str = voucher.get("voucher_date", "")
+
             if party not in behavior_map:
+                synced = synced_map.get(party.lower(), {})
                 behavior_map[party] = {
                     "customer_name": party,
                     "total_transactions": 0,
                     "total_amount": 0,
                     "average_transaction": 0,
-                    "payment_pattern": "regular",  # regular, irregular, risky
-                    "average_payment_delay": 15,  # mock days
-                    "credit_score": 0
+                    "outstanding_amount": synced.get("outstanding_amount", 0),
+                    "paid_amount": 0,
+                    "payment_ratio": 0,
+                    "payment_pattern": "regular",
+                    "average_payment_delay": 0,
+                    "credit_score": 0,
+                    "oldest_invoice_days": 0,
+                    "invoices": []
                 }
-            
+
             behavior_map[party]["total_transactions"] += 1
             behavior_map[party]["total_amount"] += amount
-        
-        # Calculate averages and scores
-        for customer_name, data in behavior_map.items():
-            data["average_transaction"] = data["total_amount"] / data["total_transactions"]
-            
-            # Mock credit score based on transaction count and amount
-            data["credit_score"] = min(100, (data["total_transactions"] * 5) + (data["total_amount"] / 10000))
-            
-            # Classify payment pattern
-            if data["average_payment_delay"] < 10:
+
+            try:
+                parts = v_date_str.split("-")
+                if len(parts) == 3:
+                    v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+                    days_old = (today - v_date).days
+                    behavior_map[party]["invoices"].append({"amount": amount, "days_old": days_old})
+                    if days_old > behavior_map[party]["oldest_invoice_days"]:
+                        behavior_map[party]["oldest_invoice_days"] = days_old
+            except (ValueError, TypeError):
+                pass
+
+        # Calculate real metrics
+        for party, data in behavior_map.items():
+            total = data["total_amount"]
+            outstanding = data["outstanding_amount"]
+            data["paid_amount"] = max(0, total - outstanding)
+            data["average_transaction"] = round(total / data["total_transactions"], 2) if data["total_transactions"] > 0 else 0
+
+            # Payment ratio: what % of total sales has been paid
+            data["payment_ratio"] = round((data["paid_amount"] / total * 100), 1) if total > 0 else 100
+
+            # Estimate avg payment delay from outstanding ratio and invoice age
+            if total > 0 and outstanding > 0 and data["invoices"]:
+                # Higher outstanding ratio = longer delays
+                outstanding_ratio = outstanding / total
+                avg_invoice_age = sum(i["days_old"] for i in data["invoices"]) / len(data["invoices"])
+                data["average_payment_delay"] = round(avg_invoice_age * outstanding_ratio, 0)
+            else:
+                data["average_payment_delay"] = 0
+
+            # Credit score based on real data
+            payment_score = data["payment_ratio"]  # 0-100
+            volume_score = min(20, data["total_transactions"] * 2)  # 0-20
+            delay_penalty = min(20, data["average_payment_delay"] / 3)  # 0-20
+            data["credit_score"] = round(max(0, min(100, payment_score * 0.7 + volume_score - delay_penalty)), 1)
+
+            # Payment pattern based on real metrics
+            if data["payment_ratio"] >= 90 and data["average_payment_delay"] < 15:
                 data["payment_pattern"] = "excellent"
-            elif data["average_payment_delay"] < 30:
+            elif data["payment_ratio"] >= 70 and data["average_payment_delay"] < 30:
                 data["payment_pattern"] = "regular"
-            elif data["average_payment_delay"] < 60:
+            elif data["payment_ratio"] >= 50:
                 data["payment_pattern"] = "irregular"
             else:
                 data["payment_pattern"] = "risky"
-        
+
+            # Remove internal invoices list
+            del data["invoices"]
+
         customers = list(behavior_map.values())
-        
-        # Filter if specified
+
         if customer:
             customers = [c for c in customers if customer.lower() in c["customer_name"].lower()]
-        
+
+        customers.sort(key=lambda c: c["credit_score"], reverse=True)
+
         return APIResponse(
             success=True,
             data={"customers": customers}
         )
-    
+
     except Exception as e:
         logger.error(f"Error analyzing payment behavior: {e}")
         return APIResponse(success=False, error=str(e))
@@ -1484,18 +1644,29 @@ async def get_payment_behavior(customer: Optional[str] = None):
 # ==================== SALESMAN PERFORMANCE ENDPOINTS ====================
 
 @api_router.get("/salesman/performance")
-async def get_salesman_performance():
-    """Get salesman-wise performance"""
+async def get_salesman_performance(fy: Optional[str] = None):
+    """Get salesman-wise performance filtered by FY"""
     try:
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        
-        # Group by salesman
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+        master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        master_map = {m["salesman_name"]: m for m in master_list}
+
+        # Group by salesman - use master customer mapping if exists
         salesman_map = {}
-        for voucher in sales_vouchers:
-            salesman = voucher.get("salesman", "Direct Sales")
-            amount = voucher.get("total_amount", 0)
+
+        # First, build customer-to-salesman mapping from master data
+        customer_to_salesman = {}
+        for m in master_list:
+            for cust in m.get("customers", []):
+                customer_to_salesman[cust.lower()] = m["salesman_name"]
+
+        for voucher in vouchers:
             customer = voucher.get("party_name", "")
-            
+            # Check if customer is mapped to a salesman in master
+            salesman = customer_to_salesman.get(customer.lower(), voucher.get("salesman", "Unassigned"))
+            amount = voucher.get("total_amount", 0)
+
             if salesman not in salesman_map:
                 salesman_map[salesman] = {
                     "salesman_name": salesman,
@@ -1503,32 +1674,40 @@ async def get_salesman_performance():
                     "customers": set(),
                     "transactions": 0
                 }
-            
             salesman_map[salesman]["total_sales"] += amount
             salesman_map[salesman]["customers"].add(customer)
             salesman_map[salesman]["transactions"] += 1
-        
-        # Create performance list
+
+        # Add salesmen from master who have no sales in this FY
+        for m in master_list:
+            name = m["salesman_name"]
+            if name not in salesman_map:
+                salesman_map[name] = {
+                    "salesman_name": name,
+                    "total_sales": 0,
+                    "customers": set(m.get("customers", [])),
+                    "transactions": 0
+                }
+
         performance = []
         for salesman, data in salesman_map.items():
-            target_amount = data["total_sales"] * 1.15  # Target 115% of current
+            master = master_map.get(salesman, {})
+            monthly_target = master.get("monthly_target", 0)
             performance.append({
                 "salesman_name": salesman,
-                "target_amount": target_amount,
+                "target_amount": monthly_target * 12 if monthly_target else 0,
                 "achieved_amount": data["total_sales"],
-                "achievement_percentage": (data["total_sales"] / target_amount * 100),
+                "achievement_percentage": (data["total_sales"] / (monthly_target * 12) * 100) if monthly_target > 0 else 0,
                 "total_customers": len(data["customers"]),
                 "total_transactions": data["transactions"],
-                "average_transaction": data["total_sales"] / data["transactions"] if data["transactions"] > 0 else 0
+                "average_transaction": data["total_sales"] / data["transactions"] if data["transactions"] > 0 else 0,
+                "has_master": salesman in master_map
             })
-        
-        performance.sort(key=lambda x: x["achievement_percentage"], reverse=True)
-        
-        return APIResponse(
-            success=True,
-            data={"salesman": performance}
-        )
-    
+
+        performance.sort(key=lambda x: x["achieved_amount"], reverse=True)
+
+        return APIResponse(success=True, data={"salesman": performance})
+
     except Exception as e:
         logger.error(f"Error fetching salesman performance: {e}")
         return APIResponse(success=False, error=str(e))
@@ -1602,19 +1781,26 @@ async def delete_salesman(salesman_name: str):
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/salesman/performance-detailed")
-async def get_salesman_performance_detailed():
+async def get_salesman_performance_detailed(fy: Optional[str] = None):
     """Get salesman performance with master data (targets, customer mapping) and item-wise breakdown"""
     try:
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list}
-        
+
+        # Build customer-to-salesman mapping from master
+        customer_to_salesman = {}
+        for m in master_list:
+            for cust in m.get("customers", []):
+                customer_to_salesman[cust.lower()] = m["salesman_name"]
+
         salesman_map = {}
-        for voucher in sales_vouchers:
-            salesman = voucher.get("salesman", "Direct Sales")
-            amount = voucher.get("total_amount", 0)
+        for voucher in vouchers:
             customer = voucher.get("party_name", "")
-            
+            salesman = customer_to_salesman.get(customer.lower(), voucher.get("salesman", "Unassigned"))
+            amount = voucher.get("total_amount", 0)
+
             if salesman not in salesman_map:
                 salesman_map[salesman] = {
                     "salesman_name": salesman,
@@ -1623,38 +1809,51 @@ async def get_salesman_performance_detailed():
                     "transactions": 0,
                     "items_sold": {}
                 }
-            
+
             salesman_map[salesman]["total_sales"] += amount
             salesman_map[salesman]["customers"].add(customer)
             salesman_map[salesman]["transactions"] += 1
-            
+
             for item in voucher.get("items", []):
                 item_name = item.get("item", "")
                 qty = item.get("quantity", 0)
                 rate = item.get("rate", 0)
-                if item_name not in salesman_map[salesman]["items_sold"]:
-                    salesman_map[salesman]["items_sold"][item_name] = {
-                        "item_name": item_name,
-                        "total_quantity": 0,
-                        "total_revenue": 0,
-                        "transaction_count": 0
-                    }
-                salesman_map[salesman]["items_sold"][item_name]["total_quantity"] += qty
-                salesman_map[salesman]["items_sold"][item_name]["total_revenue"] += qty * rate
-                salesman_map[salesman]["items_sold"][item_name]["transaction_count"] += 1
-        
+                item_amount = item.get("amount", qty * rate)
+                if item_name:
+                    if item_name not in salesman_map[salesman]["items_sold"]:
+                        salesman_map[salesman]["items_sold"][item_name] = {
+                            "item_name": item_name,
+                            "total_quantity": 0,
+                            "total_revenue": 0,
+                            "transaction_count": 0
+                        }
+                    salesman_map[salesman]["items_sold"][item_name]["total_quantity"] += qty
+                    salesman_map[salesman]["items_sold"][item_name]["total_revenue"] += item_amount
+                    salesman_map[salesman]["items_sold"][item_name]["transaction_count"] += 1
+
+        # Add salesmen from master with no sales
+        for m in master_list:
+            name = m["salesman_name"]
+            if name not in salesman_map:
+                salesman_map[name] = {
+                    "salesman_name": name,
+                    "total_sales": 0,
+                    "customers": set(m.get("customers", [])),
+                    "transactions": 0,
+                    "items_sold": {}
+                }
+
         performance = []
         for salesman, data in salesman_map.items():
             master = master_map.get(salesman, {})
-            monthly_target = master.get("monthly_target", data["total_sales"] * 1.15)
-            mapped_customers = master.get("customers", [])
-            
+            monthly_target = master.get("monthly_target", 0)
+
             items_breakdown = sorted(
                 list(data["items_sold"].values()),
                 key=lambda x: x["total_revenue"],
                 reverse=True
             )
-            
+
             performance.append({
                 "salesman_name": salesman,
                 "phone": master.get("phone", ""),
@@ -1662,20 +1861,20 @@ async def get_salesman_performance_detailed():
                 "monthly_target": monthly_target,
                 "quarterly_target": master.get("quarterly_target", monthly_target * 3),
                 "achieved_amount": data["total_sales"],
-                "achievement_percentage": (data["total_sales"] / monthly_target * 100) if monthly_target > 0 else 0,
+                "achievement_percentage": (data["total_sales"] / (monthly_target * 12) * 100) if monthly_target > 0 else 0,
                 "total_customers": len(data["customers"]),
                 "customer_names": list(data["customers"]),
-                "mapped_customers": mapped_customers,
+                "mapped_customers": master.get("customers", []),
                 "total_transactions": data["transactions"],
                 "average_transaction": data["total_sales"] / data["transactions"] if data["transactions"] > 0 else 0,
                 "items_sold": items_breakdown,
                 "has_master": salesman in master_map
             })
-        
-        performance.sort(key=lambda x: x["achievement_percentage"], reverse=True)
-        
+
+        performance.sort(key=lambda x: x["achieved_amount"], reverse=True)
+
         return APIResponse(success=True, data={"salesman": performance})
-    
+
     except Exception as e:
         logger.error(f"Error fetching detailed salesman performance: {e}")
         return APIResponse(success=False, error=str(e))
@@ -1760,49 +1959,66 @@ async def export_sales_frequency(request: dict):
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/inventory/movement-analysis")
-async def get_inventory_movement():
+async def get_inventory_movement(fy: Optional[str] = None):
     """Analyze inventory movement patterns"""
     try:
         inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        
-        # Calculate movement for each item
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+
+        # Calculate movement for each item from sales
         item_sales = {}
         for voucher in sales_vouchers:
             for item in voucher.get("items", []):
-                item_name = item.get("item", "")
+                item_name = item.get("item", "").strip()
                 qty = item.get("quantity", 0)
-                item_sales[item_name] = item_sales.get(item_name, 0) + qty
-        
+                if item_name:
+                    item_sales[item_name.lower()] = item_sales.get(item_name.lower(), 0) + qty
+
         movement_data = []
+
+        # From inventory items
+        seen_items = set()
         for item in inventory_items:
-            item_name = item["item_name"]
-            current_stock = item["quantity"]
-            sales_qty = item_sales.get(item_name, 0)
-            
-            # Mock opening stock (in real scenario, get from Tally)
+            item_name = item.get("item_name", "")
+            current_stock = item.get("quantity", 0)
+            sales_qty = item_sales.get(item_name.lower(), 0)
+            seen_items.add(item_name.lower())
+
             opening_stock = current_stock + sales_qty
-            
-            # Calculate movement rate
             avg_stock = (opening_stock + current_stock) / 2
             movement_rate = (sales_qty / avg_stock * 100) if avg_stock > 0 else 0
             days_to_sell = (current_stock / (sales_qty / 30)) if sales_qty > 0 else 999
-            
+
             movement_data.append({
                 "item_name": item_name,
-                "category": item.get("category", "General"),
-                "opening_stock": opening_stock,
-                "purchases": 0,  # Would come from purchase data
-                "sales": sales_qty,
-                "closing_stock": current_stock,
+                "category": item.get("category", item.get("stock_group", "General")),
+                "opening_stock": round(opening_stock, 2),
+                "purchases": 0,
+                "sales": round(sales_qty, 2),
+                "closing_stock": round(current_stock, 2),
                 "movement_rate": round(movement_rate, 2),
-                "days_to_sell": round(days_to_sell, 1),
+                "days_to_sell": round(min(days_to_sell, 999), 1),
                 "classification": "fast-moving" if movement_rate > 30 else "slow-moving" if movement_rate > 10 else "dead-stock"
             })
-        
-        # Sort by movement rate
+
+        # Also include items sold but not in inventory
+        for item_key, qty in item_sales.items():
+            if item_key not in seen_items and qty > 0:
+                movement_data.append({
+                    "item_name": item_key.title(),
+                    "category": "General",
+                    "opening_stock": qty,
+                    "purchases": 0,
+                    "sales": round(qty, 2),
+                    "closing_stock": 0,
+                    "movement_rate": 100.0,
+                    "days_to_sell": 0,
+                    "classification": "fast-moving"
+                })
+
         movement_data.sort(key=lambda x: x["movement_rate"], reverse=True)
-        
+
         return APIResponse(
             success=True,
             data={
@@ -1814,17 +2030,18 @@ async def get_inventory_movement():
                 }
             }
         )
-    
+
     except Exception as e:
         logger.error(f"Error analyzing inventory movement: {e}")
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/inventory/below-cost-sales")
-async def get_below_cost_sales():
+async def get_below_cost_sales(fy: Optional[str] = None):
     """Identify items sold below purchase cost"""
     try:
         inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         
         # Create item cost map
         item_costs = {}

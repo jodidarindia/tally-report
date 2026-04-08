@@ -7,7 +7,7 @@ import SyncStatusBar from '../components/SyncStatusBar';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Dashboard = () => {
+const Dashboard = ({ selectedFY }) => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [reminders, setReminders] = useState(null);
@@ -31,14 +31,15 @@ const Dashboard = () => {
     }
 
     return () => { if (intervalId) clearInterval(intervalId); };
-  }, [autoRefresh]);
+  }, [autoRefresh, selectedFY]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
       const [inventoryRes, salesRes] = await Promise.all([
         axios.get(`${API}/inventory/summary`),
-        axios.get(`${API}/sales/summary`)
+        axios.get(`${API}/sales/summary${fyParam}`)
       ]);
       setInventorySummary(inventoryRes.data?.data);
       setSalesSummary(salesRes.data?.data);
