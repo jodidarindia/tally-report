@@ -1,37 +1,37 @@
 @echo off
-title FLOWRA Tally Sync Agent
-echo.
-echo  ====================================================
-echo   FLOWRA Tally Sync Agent v4 (Batch Mode)
-echo   Organize. Automate. Accelerate.
-echo  ====================================================
+title FLOWRA Sync Agent v6 (File-Based)
+echo =============================================
+echo   FLOWRA Tally Sync Agent v6 - Zero Freeze
+echo =============================================
 echo.
 
-cd /d %~dp0
-
-:: Check if Python is installed
+REM Check Python
 python --version >nul 2>&1
-if errorlevel 1 (
-    echo  [ERROR] Python is not installed or not in PATH.
-    echo  Download from: https://www.python.org/downloads/
-    echo.
+if %errorlevel% neq 0 (
+    echo ERROR: Python is not installed or not in PATH.
+    echo Download from https://python.org
     pause
     exit /b 1
 )
 
-:: Check/install dependencies
-echo  Checking dependencies...
-pip install -q -r requirements.txt >nul 2>&1
+REM Install dependencies
+echo Installing dependencies...
+pip install requests xmltodict python-dotenv schedule watchdog websockets -q
 
-:: Start the sync agent
-echo  Starting sync agent...
-echo.
-python tally_sync_agent.py
-
-if errorlevel 1 (
-    echo.
-    echo  [ERROR] Agent stopped with an error.
-    echo  Check tally_sync_agent.log for details.
-    echo.
+REM Check .env
+if not exist .env (
+    echo ERROR: .env file not found!
+    echo Copy .env.example to .env and fill in your settings.
     pause
+    exit /b 1
 )
+
+REM Create export directory
+if not exist "C:\FlowraExport" mkdir "C:\FlowraExport"
+
+echo.
+echo Starting FLOWRA File-Based Sync Agent...
+echo (Reads exported files from C:\FlowraExport)
+echo.
+python tally_sync_agent_v6.py
+pause

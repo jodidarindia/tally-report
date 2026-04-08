@@ -1,0 +1,249 @@
+;; FLOWRA Auto-Export TDL for TallyPrime
+;; ======================================
+;; This TDL file makes Tally automatically export data to JSON files
+;; in the background WITHOUT freezing the Tally UI.
+;;
+;; SETUP:
+;;   1. Copy this file to your TallyPrime folder (e.g. C:\TallyPrime\)
+;;   2. In TallyPrime: Gateway > F1 (Help) > TDL & Add-On > F4 (Manage Local TDLs)
+;;   3. Add the path to this file and set to "Yes"
+;;   4. Restart TallyPrime
+;;
+;; The exports will be saved to C:\FlowraExport\ (configurable below)
+;; The FLOWRA desktop agent reads these files and syncs to cloud.
+
+;; ==================== CONFIGURATION ====================
+;; Change EXPORT_PATH if you want a different folder
+
+[System: Formula]
+    FLOWRA_EXPORT_PATH : "C:\\FlowraExport\\"
+
+;; ==================== MENU INTEGRATION ====================
+;; Adds "FLOWRA Export" option to Gateway of Tally menu
+
+[#Menu: Gateway of Tally]
+    Add: Key Item : FLOWRA Auto Export : F : Call : FlowraExportAll
+
+;; ==================== MASTER FUNCTION ====================
+;; Exports all data types in sequence
+
+[Function: FlowraExportAll]
+    ;; Create output directory
+    00 : EXEC COMMAND : "cmd /c mkdir C:\\FlowraExport 2>NUL"
+    ;; Export Stock Items
+    05 : Call : FlowraExportStockItems
+    ;; Export Sales Vouchers
+    10 : Call : FlowraExportSales
+    ;; Export Receipt/Payment Vouchers
+    15 : Call : FlowraExportReceipts
+    ;; Export Customer Ledgers
+    20 : Call : FlowraExportCustomers
+    ;; Write completion marker
+    25 : EXEC COMMAND : "cmd /c echo %DATE% %TIME% > C:\\FlowraExport\\_export_complete.txt"
+    30 : LOG : "FLOWRA: All exports completed to C:\\FlowraExport\\"
+    35 : MSGBOX : "FLOWRA Export Complete!" : "All data exported to C:\\FlowraExport\\"
+
+;; ==================== STOCK ITEMS EXPORT ====================
+
+[Report: FlowraStockItemsReport]
+    Form    : FlowraStockItemsForm
+    Title   : "FLOWRA Stock Items Export"
+
+[Form: FlowraStockItemsForm]
+    Parts   : FlowraStockItemsPart
+    Output  : "C:\\FlowraExport\\stock_items.xml"
+
+[Part: FlowraStockItemsPart]
+    Lines   : FlowraStockItemsLine
+    Repeat  : FlowraStockItemsLine : FlowraStockItemsColl
+
+[Line: FlowraStockItemsLine]
+    Fields  : FldSIName, FldSIParent, FldSIClosBal, FldSIClosVal, FldSIClosRate
+
+[Field: FldSIName]
+    Set As  : $Name
+    XMLTag  : "NAME"
+
+[Field: FldSIParent]
+    Set As  : $Parent
+    XMLTag  : "PARENT"
+
+[Field: FldSIClosBal]
+    Set As  : $$String:$ClosingBalance
+    XMLTag  : "CLOSINGBALANCE"
+
+[Field: FldSIClosVal]
+    Set As  : $$String:$ClosingValue
+    XMLTag  : "CLOSINGVALUE"
+
+[Field: FldSIClosRate]
+    Set As  : $$String:$ClosingRate
+    XMLTag  : "CLOSINGRATE"
+
+[Collection: FlowraStockItemsColl]
+    Type        : Stock Item
+    Fetch       : Name, Parent, ClosingBalance, ClosingValue, ClosingRate
+
+[Function: FlowraExportStockItems]
+    00 : Export Report : FlowraStockItemsReport
+
+;; ==================== SALES VOUCHERS EXPORT ====================
+
+[Report: FlowraSalesReport]
+    Form    : FlowraSalesForm
+    Title   : "FLOWRA Sales Export"
+
+[Form: FlowraSalesForm]
+    Parts   : FlowraSalesPart
+    Output  : "C:\\FlowraExport\\sales_vouchers.xml"
+
+[Part: FlowraSalesPart]
+    Lines   : FlowraSalesLine
+    Repeat  : FlowraSalesLine : FlowraSalesColl
+
+[Line: FlowraSalesLine]
+    Fields  : FldSVNum, FldSVDate, FldSVParty, FldSVAmt, FldSVRef, FldSVType
+
+[Field: FldSVNum]
+    Set As  : $VoucherNumber
+    XMLTag  : "VOUCHERNUMBER"
+
+[Field: FldSVDate]
+    Set As  : $$String:$Date:"YYYYMMDD"
+    XMLTag  : "DATE"
+
+[Field: FldSVParty]
+    Set As  : $PartyLedgerName
+    XMLTag  : "PARTYLEDGERNAME"
+
+[Field: FldSVAmt]
+    Set As  : $$String:$Amount
+    XMLTag  : "AMOUNT"
+
+[Field: FldSVRef]
+    Set As  : $Reference
+    XMLTag  : "REFERENCE"
+
+[Field: FldSVType]
+    Set As  : $VoucherTypeName
+    XMLTag  : "VOUCHERTYPENAME"
+
+[Collection: FlowraSalesColl]
+    Type            : Voucher
+    ChildOf         : $$VchTypeSales
+    Fetch           : VoucherNumber, Date, PartyLedgerName, Amount, Reference, VoucherTypeName
+    Fetch           : AllLedgerEntries, AllInventoryEntries
+    Filter          : FlowraSalesFilter
+
+[System: Formula]
+    FlowraSalesFilter : $VoucherTypeName = "Sales" OR $VoucherTypeName = "Credit Note"
+
+[Function: FlowraExportSales]
+    00 : Export Report : FlowraSalesReport
+
+;; ==================== RECEIPT/PAYMENT VOUCHERS EXPORT ====================
+
+[Report: FlowraReceiptsReport]
+    Form    : FlowraReceiptsForm
+    Title   : "FLOWRA Receipts Export"
+
+[Form: FlowraReceiptsForm]
+    Parts   : FlowraReceiptsPart
+    Output  : "C:\\FlowraExport\\receipt_vouchers.xml"
+
+[Part: FlowraReceiptsPart]
+    Lines   : FlowraReceiptsLine
+    Repeat  : FlowraReceiptsLine : FlowraReceiptsColl
+
+[Line: FlowraReceiptsLine]
+    Fields  : FldRVNum, FldRVDate, FldRVParty, FldRVAmt, FldRVType, FldRVNarr
+
+[Field: FldRVNum]
+    Set As  : $VoucherNumber
+    XMLTag  : "VOUCHERNUMBER"
+
+[Field: FldRVDate]
+    Set As  : $$String:$Date:"YYYYMMDD"
+    XMLTag  : "DATE"
+
+[Field: FldRVParty]
+    Set As  : $PartyLedgerName
+    XMLTag  : "PARTYLEDGERNAME"
+
+[Field: FldRVAmt]
+    Set As  : $$String:$Amount
+    XMLTag  : "AMOUNT"
+
+[Field: FldRVType]
+    Set As  : $VoucherTypeName
+    XMLTag  : "VOUCHERTYPENAME"
+
+[Field: FldRVNarr]
+    Set As  : $Narration
+    XMLTag  : "NARRATION"
+
+[Collection: FlowraReceiptsColl]
+    Type            : Voucher
+    Fetch           : VoucherNumber, Date, PartyLedgerName, Amount, VoucherTypeName, Narration
+    Fetch           : AllLedgerEntries, BillAllocations
+    Filter          : FlowraReceiptsFilter
+
+[System: Formula]
+    FlowraReceiptsFilter : $VoucherTypeName = "Receipt" OR $VoucherTypeName = "Payment" OR $VoucherTypeName = "Contra" OR $VoucherTypeName = "Journal"
+
+[Function: FlowraExportReceipts]
+    00 : Export Report : FlowraReceiptsReport
+
+;; ==================== CUSTOMER LEDGERS EXPORT ====================
+
+[Report: FlowraCustomersReport]
+    Form    : FlowraCustomersForm
+    Title   : "FLOWRA Customers Export"
+
+[Form: FlowraCustomersForm]
+    Parts   : FlowraCustomersPart
+    Output  : "C:\\FlowraExport\\customers.xml"
+
+[Part: FlowraCustomersPart]
+    Lines   : FlowraCustomersLine
+    Repeat  : FlowraCustomersLine : FlowraCustomersColl
+
+[Line: FlowraCustomersLine]
+    Fields  : FldCLName, FldCLParent, FldCLBal, FldCLPhone, FldCLContact, FldCLState
+
+[Field: FldCLName]
+    Set As  : $Name
+    XMLTag  : "NAME"
+
+[Field: FldCLParent]
+    Set As  : $Parent
+    XMLTag  : "PARENT"
+
+[Field: FldCLBal]
+    Set As  : $$String:$ClosingBalance
+    XMLTag  : "CLOSINGBALANCE"
+
+[Field: FldCLPhone]
+    Set As  : $LedgerPhone
+    XMLTag  : "LEDGERPHONE"
+
+[Field: FldCLContact]
+    Set As  : $LedgerContact
+    XMLTag  : "LEDGERCONTACT"
+
+[Field: FldCLState]
+    Set As  : $LedStateName
+    XMLTag  : "LEDSTATENAME"
+
+[Collection: FlowraCustomersColl]
+    Type        : Ledger
+    Fetch       : Name, Parent, ClosingBalance, LedgerPhone, LedgerContact, LedStateName
+    Filter      : FlowraCustomerFilter
+
+[System: Formula]
+    FlowraCustomerFilter : $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
+
+[Function: FlowraExportCustomers]
+    00 : Export Report : FlowraCustomersReport
+
+;; ==================== END OF TDL ====================
