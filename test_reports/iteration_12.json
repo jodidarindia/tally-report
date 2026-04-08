@@ -1,0 +1,118 @@
+{
+  "summary": "Iteration 12: Verified NEW Overdue Digest feature. Backend: 11/11 tests passing. Frontend: All UI elements working correctly - widget displays, expands, shows customer summary and invoice details table with color-coded days badges.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Console",
+        "issues": ["React hydration warning about span inside option element in FY selector - cosmetic only"]
+      },
+      {
+        "screen": "WebSocket",
+        "issues": ["WebSocket connection to sync-status fails on initial load - reconnects automatically"]
+      },
+      {
+        "screen": "Dashboard Reminders",
+        "issues": ["GET /api/customers/followups/reminders returns 405 - known issue from iteration 11"]
+      }
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/dashboard/overdue-digest returns success with all required fields",
+    "Backend: Response contains total_overdue_amount, total_overdue_invoices, customer_summary, overdue_invoices arrays",
+    "Backend: Overdue threshold is correctly set to 55 days (threshold_days=55)",
+    "Backend: GET /api/dashboard/overdue-digest?recompute=true forces fresh computation",
+    "Backend: Overdue invoice has correct fields (voucher_id, party_name, voucher_date, invoice_amount, paid_amount, overdue_amount, days_overdue)",
+    "Backend: Customer summary has correct fields (customer_name, phone, total_overdue, invoice_count, oldest_days)",
+    "Backend: All overdue invoices have days_overdue > 55 threshold",
+    "Backend: Total overdue amount matches sum of individual invoice overdue amounts",
+    "Backend: POST /api/agent/sync with sales data triggers overdue digest recomputation",
+    "Backend: Overdue amount calculation correct (overdue_amount = invoice_amount - paid_amount)",
+    "Frontend: Login with admin/admin123 works, Dashboard loads",
+    "Frontend: Overdue Payments widget displays with red border (border-red-200)",
+    "Frontend: Total overdue amount displayed in red (Rs.6,82,000 with text-red-600)",
+    "Frontend: Click widget header expands to show details",
+    "Frontend: Customer-wise Overdue section visible with 5 customers",
+    "Frontend: Invoice Details table shows all 7 columns (Invoice, Customer, Date, Amount, Paid, Overdue, Days)",
+    "Frontend: 6 invoice rows displayed in table",
+    "Frontend: Days badge is color-coded (orange for >90 days, amber for 55-90 days)"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_overdue_digest.py",
+    "/app/test_reports/pytest/iteration12_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "compute_overdue_digest() function correctly calculates overdue invoices >55 days from invoice date",
+    "FIFO distribution logic properly handles receipt payments when no bill-level allocations exist",
+    "Overdue digest is cached in MongoDB overdue_digest collection for fast dashboard reads",
+    "Digest is automatically recomputed after every sync (sales, receipts, customers)",
+    "Frontend widget is expandable/collapsible with proper state management"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_overdue_digest.py (created 11 tests for overdue digest feature)"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (11/11 tests passing)",
+    "frontend": "100% (all overdue digest UI elements working)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123"}
+  },
+  
+  "seed_data_creation": "Used existing sales vouchers: 6 invoices from Jan 2026 (SALE001-SALE006) totaling Rs.682,000, all >55 days old and unpaid. Customers: Tech Solutions Pvt Ltd (Rs.310,000), Corporate Hub Ltd (Rs.180,000), Office Mart (Rs.102,000), Smart Enterprises (Rs.66,000), Global Systems Inc (Rs.24,000).",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 12 verified the NEW Overdue Digest feature. Key findings: (1) GET /api/dashboard/overdue-digest returns overdue invoices >55 days with customer summary, (2) ?recompute=true forces fresh calculation, (3) Sync endpoint triggers automatic recomputation, (4) Frontend widget shows expandable overdue summary with customer breakdown and invoice table, (5) Days badges are color-coded (red >120, orange >90, amber otherwise). Minor known issues: WebSocket reconnection on load, /api/customers/followups/reminders returns 405.",
+  
+  "features_verified": {
+    "overdue_digest_endpoint": {
+      "status": "WORKING",
+      "verification": "GET /api/dashboard/overdue-digest returns success with all required fields"
+    },
+    "overdue_threshold_55_days": {
+      "status": "WORKING",
+      "verification": "threshold_days=55 in response, all invoices have days_overdue > 55"
+    },
+    "recompute_parameter": {
+      "status": "WORKING",
+      "verification": "?recompute=true forces fresh computation with new computed_at timestamp"
+    },
+    "sync_triggers_recompute": {
+      "status": "WORKING",
+      "verification": "POST /api/agent/sync with sales data updates overdue_digest collection"
+    },
+    "frontend_overdue_widget": {
+      "status": "WORKING",
+      "verification": "Widget displays with red border, total amount in red, expandable"
+    },
+    "customer_wise_overdue": {
+      "status": "WORKING",
+      "verification": "Customer summary section shows 5 customers with totals and oldest days"
+    },
+    "invoice_details_table": {
+      "status": "WORKING",
+      "verification": "Table shows Invoice, Customer, Date, Amount, Paid, Overdue, Days columns"
+    },
+    "days_badge_color_coding": {
+      "status": "WORKING",
+      "verification": "93d badge is orange (>90 days), 80-88d badges are amber"
+    }
+  }
+}

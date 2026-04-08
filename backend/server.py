@@ -99,6 +99,175 @@ def get_previous_fy(fy: str):
     prev_end = end_short - 1 if end_short > 0 else 99
     return f"{prev_start}-{str(prev_end).zfill(2)}"
 
+
+OVERDUE_THRESHOLD_DAYS = 55
+
+
+async def compute_overdue_digest(db_ref):
+    """Compute overdue invoices (>55 days from invoice date) considering receipt payments.
+    Stores result in overdue_digest collection for quick dashboard retrieval."""
+    from datetime import date as date_type
+
+    today = date_type.today()
+
+    # Fetch all sales vouchers and receipt vouchers
+    sales = await db_ref.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
+    receipts = await db_ref.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
+    synced_customers = await db_ref.customers.find({}, {"_id": 0}).to_list(5000)
+    synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
+
+    # Aggregate receipt payments per customer
+    customer_receipt_total = {}
+    receipt_bill_allocs = {}  # {customer_lower: {bill_ref: amount_paid}}
+    for r in receipts:
+        party = safe_str(r.get("party_name")).strip()
+        if not party:
+            continue
+        amt = safe_num(r.get("amount"))
+        customer_receipt_total[party] = customer_receipt_total.get(party, 0) + amt
+
+        # Track bill-level allocations if available
+        for alloc in r.get("bill_allocations", []):
+            bill_ref = safe_str(alloc.get("bill_ref", alloc.get("name", ""))).strip()
+            alloc_amt = safe_num(alloc.get("amount"))
+            key = party.lower()
+            if key not in receipt_bill_allocs:
+                receipt_bill_allocs[key] = {}
+            receipt_bill_allocs[key][bill_ref] = receipt_bill_allocs[key].get(bill_ref, 0) + alloc_amt
+
+    # Build per-invoice overdue list
+    overdue_invoices = []
+    customer_overdue = {}
+
+    for v in sales:
+        v_date_str = v.get("voucher_date", "")
+        if not v_date_str:
+            continue
+        try:
+            parts = v_date_str.split("-")
+            if len(parts) != 3:
+                continue
+            v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, TypeError):
+            continue
+
+        days_old = (today - v_date).days
+        if days_old <= OVERDUE_THRESHOLD_DAYS:
+            continue
+
+        party = v.get("party_name", "Unknown")
+        invoice_amt = safe_num(v.get("total_amount"))
+        voucher_id = v.get("voucher_id", "")
+        ref_number = v.get("reference_number", voucher_id)
+
+        # Check if this invoice is paid via bill allocations
+        paid_for_invoice = 0
+        allocs = receipt_bill_allocs.get(party.lower(), {})
+        if ref_number and ref_number in allocs:
+            paid_for_invoice = allocs[ref_number]
+        elif voucher_id and voucher_id in allocs:
+            paid_for_invoice = allocs[voucher_id]
+
+        remaining = invoice_amt - paid_for_invoice
+        if remaining <= 0:
+            continue
+
+        overdue_invoices.append({
+            "voucher_id": voucher_id,
+            "reference_number": ref_number,
+            "party_name": party,
+            "voucher_date": v_date_str,
+            "invoice_amount": round(invoice_amt, 2),
+            "paid_amount": round(paid_for_invoice, 2),
+            "overdue_amount": round(remaining, 2),
+            "days_overdue": days_old,
+        })
+
+        if party not in customer_overdue:
+            synced = synced_map.get(party.lower(), {})
+            customer_overdue[party] = {
+                "customer_name": party,
+                "phone": synced.get("phone", ""),
+                "total_overdue": 0,
+                "invoice_count": 0,
+                "oldest_days": 0,
+            }
+        customer_overdue[party]["total_overdue"] += remaining
+        customer_overdue[party]["invoice_count"] += 1
+        if days_old > customer_overdue[party]["oldest_days"]:
+            customer_overdue[party]["oldest_days"] = days_old
+
+    # FIFO distribution: if no bill-level data, distribute receipts across oldest invoices first
+    # Group invoices by customer for FIFO
+    if not receipt_bill_allocs:
+        customer_invoices_map = {}
+        for inv in overdue_invoices:
+            p = inv["party_name"]
+            customer_invoices_map.setdefault(p, []).append(inv)
+
+        # Re-distribute receipt payments FIFO
+        for party, invoices in customer_invoices_map.items():
+            total_receipts = customer_receipt_total.get(party, 0)
+            if total_receipts <= 0:
+                continue
+            invoices.sort(key=lambda x: x["days_overdue"], reverse=True)  # oldest first
+            remaining_receipts = total_receipts
+            for inv in invoices:
+                if remaining_receipts <= 0:
+                    break
+                payoff = min(inv["overdue_amount"], remaining_receipts)
+                inv["paid_amount"] += payoff
+                inv["overdue_amount"] -= payoff
+                remaining_receipts -= payoff
+
+        # Remove fully paid invoices and recalculate customer totals
+        overdue_invoices = [inv for inv in overdue_invoices if inv["overdue_amount"] > 0.5]
+        customer_overdue = {}
+        for inv in overdue_invoices:
+            party = inv["party_name"]
+            if party not in customer_overdue:
+                synced = synced_map.get(party.lower(), {})
+                customer_overdue[party] = {
+                    "customer_name": party,
+                    "phone": synced.get("phone", ""),
+                    "total_overdue": 0,
+                    "invoice_count": 0,
+                    "oldest_days": 0,
+                }
+            customer_overdue[party]["total_overdue"] += inv["overdue_amount"]
+            customer_overdue[party]["invoice_count"] += 1
+            if inv["days_overdue"] > customer_overdue[party]["oldest_days"]:
+                customer_overdue[party]["oldest_days"] = inv["days_overdue"]
+
+    # Round customer totals
+    for c in customer_overdue.values():
+        c["total_overdue"] = round(c["total_overdue"], 2)
+
+    # Sort
+    overdue_invoices.sort(key=lambda x: x["days_overdue"], reverse=True)
+    customer_summary = sorted(customer_overdue.values(), key=lambda x: x["total_overdue"], reverse=True)
+
+    total_overdue = round(sum(inv["overdue_amount"] for inv in overdue_invoices), 2)
+
+    digest = {
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "threshold_days": OVERDUE_THRESHOLD_DAYS,
+        "total_overdue_amount": total_overdue,
+        "total_overdue_invoices": len(overdue_invoices),
+        "total_customers_overdue": len(customer_summary),
+        "customer_summary": customer_summary[:20],
+        "overdue_invoices": overdue_invoices[:50],
+    }
+
+    # Store in DB for fast dashboard reads
+    await db_ref.overdue_digest.update_one(
+        {"_type": "latest"},
+        {"$set": {**digest, "_type": "latest"}},
+        upsert=True
+    )
+
+    return digest
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -787,6 +956,23 @@ async def receive_agent_sync(request: dict):
             }},
             upsert=True
         )
+
+        # Recompute overdue digest after every sync (sales or receipts affect it)
+        if data_type in ('sales', 'receipts', 'customers'):
+            try:
+                digest = await compute_overdue_digest(db)
+                logger.info(f"Overdue digest recomputed after {data_type} sync: {digest['total_overdue_invoices']} overdue invoices")
+                # Notify WebSocket clients about the updated digest
+                await ws_manager.broadcast({
+                    'event': 'overdue_digest_updated',
+                    'data': {
+                        'total_overdue_invoices': digest['total_overdue_invoices'],
+                        'total_overdue_amount': digest['total_overdue_amount'],
+                    },
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                })
+            except Exception as digest_err:
+                logger.error(f"Error recomputing overdue digest: {digest_err}")
         
         return APIResponse(
             success=True,
@@ -1703,6 +1889,30 @@ async def get_dashboard_reminders():
     except Exception as e:
         logger.error(f"Error fetching reminders: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@api_router.get("/dashboard/overdue-digest")
+async def get_overdue_digest(recompute: Optional[str] = None):
+    """Get the latest overdue digest (invoices >55 days unpaid).
+    Pass ?recompute=true to force a fresh calculation."""
+    try:
+        if recompute == "true":
+            digest = await compute_overdue_digest(db)
+            return APIResponse(success=True, data=digest)
+
+        # Try to read cached digest
+        cached = await db.overdue_digest.find_one({"_type": "latest"}, {"_id": 0, "_type": 0})
+        if cached:
+            return APIResponse(success=True, data=cached)
+
+        # No cached digest — compute fresh
+        digest = await compute_overdue_digest(db)
+        return APIResponse(success=True, data=digest)
+
+    except Exception as e:
+        logger.error(f"Error fetching overdue digest: {e}")
+        return APIResponse(success=False, error=str(e))
+
 
 @api_router.get("/customers/payment-behavior")
 async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str] = None):

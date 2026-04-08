@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Package, TrendingUp, AlertCircle, Activity, RefreshCw, Bell, Calendar, Clock } from 'lucide-react';
+import { Package, TrendingUp, AlertCircle, Activity, RefreshCw, Bell, Calendar, Clock, AlertTriangle, ChevronDown, ChevronUp, Phone } from 'lucide-react';
 import { useSyncWebSocket } from '../hooks/useSyncWebSocket';
 import SyncStatusBar from '../components/SyncStatusBar';
 
@@ -11,6 +11,8 @@ const Dashboard = ({ selectedFY }) => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [reminders, setReminders] = useState(null);
+  const [overdueDigest, setOverdueDigest] = useState(null);
+  const [overdueExpanded, setOverdueExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -20,6 +22,7 @@ const Dashboard = ({ selectedFY }) => {
     fetchData();
     fetchSyncStatus();
     fetchReminders();
+    fetchOverdueDigest();
 
     let intervalId;
     if (autoRefresh) {
@@ -27,6 +30,7 @@ const Dashboard = ({ selectedFY }) => {
         fetchData();
         fetchSyncStatus();
         fetchReminders();
+        fetchOverdueDigest();
       }, 30000);
     }
 
@@ -68,6 +72,15 @@ const Dashboard = ({ selectedFY }) => {
     }
   };
 
+  const fetchOverdueDigest = async () => {
+    try {
+      const response = await axios.get(`${API}/dashboard/overdue-digest`);
+      setOverdueDigest(response.data?.data || null);
+    } catch (error) {
+      console.error('Error fetching overdue digest:', error);
+    }
+  };
+
   const StatCard = ({ title, value, subtitle, icon: Icon, color }) => (
     <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-lg transition-shadow" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>
       <div className="flex items-start justify-between">
@@ -95,7 +108,7 @@ const Dashboard = ({ selectedFY }) => {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => { fetchData(); fetchSyncStatus(); fetchReminders(); }}
+            onClick={() => { fetchData(); fetchSyncStatus(); fetchReminders(); fetchOverdueDigest(); }}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-sm"
             data-testid="refresh-btn"
           >
@@ -157,6 +170,127 @@ const Dashboard = ({ selectedFY }) => {
             icon={Activity}
             color="bg-cyan-50 text-cyan-600"
           />
+        </div>
+      )}
+
+      {/* Overdue Digest (55+ days) */}
+      {overdueDigest && overdueDigest.total_overdue_invoices > 0 && (
+        <div className="bg-white border border-red-200 rounded-xl overflow-hidden" data-testid="overdue-digest">
+          <div
+            className="flex items-center justify-between p-5 cursor-pointer hover:bg-red-50/40 transition-colors"
+            onClick={() => setOverdueExpanded(!overdueExpanded)}
+            data-testid="overdue-digest-header"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
+                <AlertTriangle size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Overdue Payments ({overdueDigest.total_overdue_invoices} invoices)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {overdueDigest.total_customers_overdue} customers with invoices older than {overdueDigest.threshold_days} days
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-lg font-bold text-red-600" data-testid="overdue-total-amount">
+                Rs.{(overdueDigest.total_overdue_amount || 0).toLocaleString('en-IN')}
+              </span>
+              {overdueExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+            </div>
+          </div>
+
+          {overdueExpanded && (
+            <div className="border-t border-red-100">
+              {/* Customer Summary */}
+              <div className="p-5 pb-3">
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Customer-wise Overdue</h4>
+                <div className="space-y-2">
+                  {overdueDigest.customer_summary?.map((c, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-50/70 hover:bg-slate-100/70 transition-colors" data-testid={`overdue-customer-${i}`}>
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-full bg-red-100 text-red-700 text-xs flex items-center justify-center font-bold">{i + 1}</span>
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{c.customer_name}</p>
+                          <p className="text-xs text-slate-400">{c.invoice_count} invoice{c.invoice_count > 1 ? 's' : ''} | Oldest: {c.oldest_days} days</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {c.phone && (
+                          <a href={`tel:${c.phone}`} className="text-slate-400 hover:text-blue-500" title={c.phone}>
+                            <Phone size={14} />
+                          </a>
+                        )}
+                        <span className="text-sm font-semibold text-red-600">Rs.{(c.total_overdue || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Invoice Detail Table */}
+              {overdueDigest.overdue_invoices?.length > 0 && (
+                <div className="p-5 pt-2">
+                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Invoice Details (Top {Math.min(overdueDigest.overdue_invoices.length, 50)})</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-slate-500 uppercase border-b border-slate-200">
+                          <th className="pb-2 pr-4 font-medium">Invoice</th>
+                          <th className="pb-2 pr-4 font-medium">Customer</th>
+                          <th className="pb-2 pr-4 font-medium">Date</th>
+                          <th className="pb-2 pr-4 font-medium text-right">Amount</th>
+                          <th className="pb-2 pr-4 font-medium text-right">Paid</th>
+                          <th className="pb-2 pr-4 font-medium text-right">Overdue</th>
+                          <th className="pb-2 font-medium text-right">Days</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {overdueDigest.overdue_invoices.map((inv, i) => (
+                          <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50" data-testid={`overdue-invoice-${i}`}>
+                            <td className="py-2 pr-4 text-slate-700 font-mono text-xs">{inv.reference_number || inv.voucher_id}</td>
+                            <td className="py-2 pr-4 text-slate-700">{inv.party_name}</td>
+                            <td className="py-2 pr-4 text-slate-500">{inv.voucher_date}</td>
+                            <td className="py-2 pr-4 text-right text-slate-700">Rs.{(inv.invoice_amount || 0).toLocaleString('en-IN')}</td>
+                            <td className="py-2 pr-4 text-right text-green-600">Rs.{(inv.paid_amount || 0).toLocaleString('en-IN')}</td>
+                            <td className="py-2 pr-4 text-right font-semibold text-red-600">Rs.{(inv.overdue_amount || 0).toLocaleString('en-IN')}</td>
+                            <td className="py-2 text-right">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                                inv.days_overdue > 120 ? 'bg-red-100 text-red-700' :
+                                inv.days_overdue > 90 ? 'bg-orange-100 text-orange-700' :
+                                'bg-amber-100 text-amber-700'
+                              }`}>
+                                {inv.days_overdue}d
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Last computed timestamp */}
+              {overdueDigest.computed_at && (
+                <div className="px-5 pb-4 text-xs text-slate-400 text-right">
+                  Last computed: {new Date(overdueDigest.computed_at).toLocaleString()}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty overdue state */}
+      {overdueDigest && overdueDigest.total_overdue_invoices === 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3" data-testid="no-overdue-banner">
+          <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+            <Activity size={16} className="text-emerald-600" />
+          </div>
+          <p className="text-sm text-emerald-800 font-medium">No overdue payments! All invoices within 55-day window.</p>
         </div>
       )}
 
