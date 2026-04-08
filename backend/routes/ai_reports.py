@@ -1,0 +1,218 @@
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from typing import Optional
+from datetime import datetime, timezone
+import logging
+
+from db import db
+from models import (
+    AIQuery, AIQueryRequest, ExportRequest, APIResponse
+)
+from utils import safe_num
+from services.ai_service import AIReportService
+from services.enhanced_ai_service import EnhancedAIReportService
+from services.export_service import ExportService
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("/ai/query")
+async def ai_query(request: AIQueryRequest):
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(1000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+
+        ai_service = AIReportService()
+        result = await ai_service.generate_report(
+            query=request.query,
+            inventory_data=inventory_items,
+            sales_data=sales_vouchers
+        )
+
+        ai_query_obj = AIQuery(
+            query_text=request.query,
+            response=result.get("raw_response"),
+            report_data=result.get("report")
+        )
+        doc = ai_query_obj.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        await db.ai_queries.insert_one(doc)
+
+        return APIResponse(
+            success=result.get("success", False),
+            data=result.get("report"),
+            error=result.get("error")
+        )
+    except Exception as e:
+        logger.error(f"Error processing AI query: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/ai/advanced-query")
+async def ai_advanced_query(request: AIQueryRequest):
+    try:
+        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        customer_data = await db.customers.find({}, {"_id": 0}).to_list(1000)
+
+        ai_service = EnhancedAIReportService()
+        result = await ai_service.generate_advanced_report(
+            query=request.query,
+            report_type=request.report_type or 'general',
+            filters=request.filters or {},
+            inventory_data=inventory_items,
+            sales_data=sales_vouchers,
+            customer_data=customer_data
+        )
+
+        if result.get("success"):
+            ai_query_obj = AIQuery(
+                query_text=request.query,
+                response=result.get("raw_response"),
+                report_data=result.get("report"),
+                filters=request.filters
+            )
+            doc = ai_query_obj.model_dump()
+            doc['created_at'] = doc['created_at'].isoformat()
+            await db.ai_queries.insert_one(doc)
+
+        return APIResponse(
+            success=result.get("success", False),
+            data=result.get("report"),
+            error=result.get("error")
+        )
+    except Exception as e:
+        logger.error(f"Error in advanced AI query: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/reports/export")
+async def export_report(request: ExportRequest):
+    try:
+        if request.report_type == "inventory":
+            data = await db.inventory_items.find({}, {"_id": 0}).to_list(1000)
+            report_title = "Inventory Report"
+        elif request.report_type == "sales":
+            data = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+            report_title = "Sales Report"
+        else:
+            return APIResponse(success=False, error="Invalid report type")
+
+        if not data:
+            return APIResponse(success=False, error="No data available to export")
+
+        clean_data = []
+        for item in data:
+            clean_item = {k: v for k, v in item.items() if k not in ['last_updated', 'created_at']}
+            clean_data.append(clean_item)
+
+        export_service = ExportService()
+
+        if request.format == "csv":
+            output = export_service.export_to_csv(clean_data)
+            media_type = "text/csv"
+            filename = f"{request.report_type}_report.csv"
+        elif request.format == "excel":
+            output = export_service.export_to_excel(clean_data, request.report_type.title())
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = f"{request.report_type}_report.xlsx"
+        elif request.format == "pdf":
+            output = export_service.export_to_pdf(clean_data, request.report_type.title(), report_title)
+            media_type = "application/pdf"
+            filename = f"{request.report_type}_report.pdf"
+        else:
+            return APIResponse(success=False, error="Invalid export format")
+
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting report: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/reports/history")
+async def get_report_history():
+    try:
+        queries = await db.ai_queries.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+        return APIResponse(success=True, data={"queries": queries, "count": len(queries)})
+    except Exception as e:
+        logger.error(f"Error fetching report history: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/analytics/sales-frequency/export")
+async def export_sales_frequency(request: dict):
+    try:
+        export_format = request.get("format", "excel")
+        start_date = request.get("start_date")
+        end_date = request.get("end_date")
+
+        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+
+        if start_date or end_date:
+            filtered = []
+            for v in sales_vouchers:
+                v_date = v.get("voucher_date", "")
+                if start_date and v_date < start_date:
+                    continue
+                if end_date and v_date > end_date:
+                    continue
+                filtered.append(v)
+            sales_vouchers = filtered
+
+        item_stats = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = safe_num(item.get("quantity"))
+                if item_name not in item_stats:
+                    item_stats[item_name] = {
+                        "item_name": item_name,
+                        "total_quantity_sold": 0,
+                        "transaction_count": 0,
+                        "unique_customers": set(),
+                        "total_revenue": 0
+                    }
+                item_stats[item_name]["total_quantity_sold"] += qty
+                item_stats[item_name]["transaction_count"] += 1
+                item_stats[item_name]["unique_customers"].add(party)
+                item_stats[item_name]["total_revenue"] += qty * safe_num(item.get("rate"))
+
+        rows = []
+        for name, stats in sorted(item_stats.items(), key=lambda x: x[1]["transaction_count"], reverse=True):
+            rows.append({
+                "Item Name": name,
+                "Transaction Count": stats["transaction_count"],
+                "Total Qty Sold": stats["total_quantity_sold"],
+                "Unique Customers": len(stats["unique_customers"]),
+                "Total Revenue": stats["total_revenue"],
+                "Avg Qty/Transaction": round(stats["total_quantity_sold"] / stats["transaction_count"], 1) if stats["transaction_count"] > 0 else 0,
+                "Customers": ", ".join(stats["unique_customers"])
+            })
+
+        export_service = ExportService()
+
+        if export_format == "excel":
+            output = export_service.export_to_excel(rows, "Sales Frequency")
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = "sales_frequency_report.xlsx"
+        elif export_format == "pdf":
+            output = export_service.export_to_pdf(rows, "Sales Frequency", "Sales Frequency Report")
+            media_type = "application/pdf"
+            filename = "sales_frequency_report.pdf"
+        else:
+            return APIResponse(success=False, error="Invalid format. Use 'excel' or 'pdf'")
+
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting sales frequency: {e}")
+        return APIResponse(success=False, error=str(e))
