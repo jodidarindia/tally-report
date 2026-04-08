@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
 """
-FLOWRA Tally Sync Agent v4
-Non-blocking batch sync with WebSocket progress reporting.
+FLOWRA Tally Sync Agent v5
+Lightweight XML exports + Receipt/Payment sync + long timeouts.
 
-Key improvements over v3:
-- Monthly batch fetching for sales (prevents Tally from freezing)
-- Configurable sleep between batches to let Tally breathe
-- Real-time progress reporting to cloud backend via HTTP
-- Optional local WebSocket server for monitoring
+Key changes from v4:
+- Uses standard Tally report exports (lighter on ODBC than TDL collections)
+- HTTP Session with keep-alive (avoids reconnection overhead per request)
+- Timeouts increased to 120s (Tally on large databases needs this)
+- Added Receipt/Payment voucher sync for accurate outstanding calculation
+- Retry logic per request (2 retries with backoff)
 
 Setup:
 1. pip install requests xmltodict python-dotenv schedule websockets
-2. Create .env:
-   BACKEND_URL=https://your-flowra-app.com
-   FINANCIAL_YEAR=2025-26
-   TALLY_HOST=localhost
-   TALLY_PORT=9000
-   SYNC_INTERVAL_MINUTES=10
-   BATCH_SLEEP_SECONDS=3
-   ENABLE_WEBSOCKET=true
-   WEBSOCKET_PORT=8765
-   DEBUG_MODE=true
+2. Create .env with your settings (see QUICK_START.txt)
 3. Run: python tally_sync_agent.py
 """
 
@@ -63,22 +55,22 @@ logger = logging.getLogger('TallySyncAgent')
 load_dotenv()
 
 
+# ==================== HELPERS ====================
+
 def get_fy_dates(fy_str: str):
     """Convert '2025-26' to ('20250401', '20260331')."""
     parts = fy_str.split('-')
     start_year = int(parts[0])
-    end_year_short = int(parts[1]) if len(parts) > 1 else (start_year + 1) % 100
-    end_year = start_year // 100 * 100 + end_year_short if end_year_short < 100 else end_year_short
+    end_short = int(parts[1]) if len(parts) > 1 else (start_year + 1) % 100
+    end_year = start_year // 100 * 100 + end_short if end_short < 100 else end_short
     return f"{start_year}0401", f"{end_year}0331"
 
 
 def get_monthly_ranges(fy_from: str, fy_to: str):
-    """Break FY date range into monthly chunks.
-    Returns list of (from_date, to_date, label) tuples in YYYYMMDD format."""
+    """Break FY into monthly (from_date, to_date, label) tuples in YYYYMMDD."""
     start = date(int(fy_from[:4]), int(fy_from[4:6]), int(fy_from[6:8]))
     end = date(int(fy_to[:4]), int(fy_to[4:6]), int(fy_to[6:8]))
-    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    month_names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
     ranges = []
     current = start
@@ -91,10 +83,7 @@ def get_monthly_ranges(fy_from: str, fy_to: str):
             month_end = end
         label = f"{month_names[current.month - 1]} {current.year}"
         ranges.append((current.strftime('%Y%m%d'), month_end.strftime('%Y%m%d'), label))
-        if current.month == 12:
-            current = date(current.year + 1, 1, 1)
-        else:
-            current = date(current.year, current.month + 1, 1)
+        current = (month_end + timedelta(days=1))
 
     return ranges
 
@@ -114,11 +103,9 @@ def save_sync_state(state):
         json.dump(state, f, indent=2)
 
 
-# ---- WebSocket Server (optional, for local monitoring) ----
+# ==================== WEBSOCKET SERVER ====================
 
 class WebSocketServer:
-    """Local WebSocket server that broadcasts sync progress events."""
-
     def __init__(self, port=8765):
         self.port = port
         self.clients = set()
@@ -127,12 +114,10 @@ class WebSocketServer:
 
     def start(self):
         if not HAS_WEBSOCKETS:
-            logger.warning("websockets package not installed. Local WebSocket disabled.")
-            logger.warning("Install with: pip install websockets")
+            logger.warning("websockets not installed. pip install websockets")
             return
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        logger.info(f"Local WebSocket server on ws://localhost:{self.port}")
 
     def _run(self):
         self.loop = asyncio.new_event_loop()
@@ -141,24 +126,18 @@ class WebSocketServer:
 
     async def _serve(self):
         async with websockets.serve(self._handler, "0.0.0.0", self.port):
+            logger.info(f"WebSocket server on ws://localhost:{self.port}")
             await asyncio.Future()
 
     async def _handler(self, websocket, path=None):
         self.clients.add(websocket)
-        logger.info(f"WebSocket client connected ({len(self.clients)} total)")
         try:
-            async for message in websocket:
-                try:
-                    cmd = json.loads(message)
-                    if cmd.get('action') == 'status':
-                        await websocket.send(json.dumps({'type': 'status', 'clients': len(self.clients)}))
-                except Exception:
-                    pass
-        except websockets.exceptions.ConnectionClosed:
+            async for msg in websocket:
+                pass
+        except:
             pass
         finally:
             self.clients.discard(websocket)
-            logger.info(f"WebSocket client disconnected ({len(self.clients)} total)")
 
     def broadcast(self, data: dict):
         if not self.loop or not self.clients:
@@ -166,19 +145,127 @@ class WebSocketServer:
         asyncio.run_coroutine_threadsafe(self._broadcast(data), self.loop)
 
     async def _broadcast(self, data: dict):
-        if not self.clients:
-            return
-        message = json.dumps(data)
+        msg = json.dumps(data)
         dead = set()
-        for client in self.clients:
+        for c in self.clients:
             try:
-                await client.send(message)
-            except Exception:
-                dead.add(client)
+                await c.send(msg)
+            except:
+                dead.add(c)
         self.clients -= dead
 
 
-# ---- Main Sync Agent ----
+# ==================== XML REQUEST TEMPLATES ====================
+# These use standard Tally report exports (much lighter than TDL collections)
+
+def xml_stock_summary(fy_from, fy_to):
+    """Stock Summary report — standard Tally report, very lightweight."""
+    return f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Stock Summary</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+<SVFROMDATE>{fy_from}</SVFROMDATE>
+<SVTODATE>{fy_to}</SVTODATE>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY>
+</ENVELOPE>"""
+
+
+def xml_stock_items_simple(fy_from, fy_to):
+    """Minimal TDL collection — only Name, Parent, ClosingBalance, ClosingValue."""
+    return f"""<ENVELOPE>
+<HEADER>
+<VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>MyStockItems</ID>
+</HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+<SVFROMDATE>{fy_from}</SVFROMDATE>
+<SVTODATE>{fy_to}</SVTODATE>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="MyStockItems" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
+<TYPE>Stock Item</TYPE>
+<NATIVEMETHOD>Name</NATIVEMETHOD>
+<NATIVEMETHOD>Parent</NATIVEMETHOD>
+<NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
+<NATIVEMETHOD>ClosingValue</NATIVEMETHOD>
+<NATIVEMETHOD>ClosingRate</NATIVEMETHOD>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY>
+</ENVELOPE>"""
+
+
+def xml_daybook(from_date, to_date):
+    """Day Book report for a date range — standard report, lists all vouchers."""
+    return f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Day Book</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{from_date}</SVFROMDATE>
+<SVTODATE>{to_date}</SVTODATE>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY>
+</ENVELOPE>"""
+
+
+def xml_bills_receivable(fy_from, fy_to):
+    """Bills Receivable (Outstandings) — standard Tally report."""
+    return f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Bills Receivable</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+<SVFROMDATE>{fy_from}</SVFROMDATE>
+<SVTODATE>{fy_to}</SVTODATE>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY>
+</ENVELOPE>"""
+
+
+def xml_ledger_list():
+    """Minimal ledger list — Sundry Debtors/Creditors only."""
+    return """<ENVELOPE>
+<HEADER>
+<VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>CustLedgers</ID>
+</HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="CustLedgers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
+<TYPE>Ledger</TYPE>
+<NATIVEMETHOD>Name</NATIVEMETHOD>
+<NATIVEMETHOD>Parent</NATIVEMETHOD>
+<NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
+<NATIVEMETHOD>LedgerPhone</NATIVEMETHOD>
+<NATIVEMETHOD>LedgerContact</NATIVEMETHOD>
+<NATIVEMETHOD>LedStateName</NATIVEMETHOD>
+<FILTER>CustFilter</FILTER>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="CustFilter">
+$Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
+</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY>
+</ENVELOPE>"""
+
+
+# ==================== MAIN AGENT ====================
 
 class TallySyncAgent:
 
@@ -195,27 +282,39 @@ class TallySyncAgent:
         self.batch_sleep = int(os.getenv('BATCH_SLEEP_SECONDS', '3'))
         self.enable_ws = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
         self.ws_port = int(os.getenv('WEBSOCKET_PORT', '8765'))
+        self.request_timeout = int(os.getenv('REQUEST_TIMEOUT', '120'))
+        self.max_retries = int(os.getenv('MAX_RETRIES', '2'))
         self.last_sync_time = None
         self.sync_running = False
         self.company_name = None
         self.ws_server = None
 
+        # HTTP session with keep-alive (avoids reconnecting per request)
+        self.session = requests.Session()
+        self.session.headers.update({'Content-Type': 'text/xml'})
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=1, pool_maxsize=1, max_retries=0
+        )
+        self.session.mount('http://', adapter)
+
         logger.info("=" * 55)
-        logger.info("  FLOWRA TALLY SYNC AGENT v4 (Batch Mode)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v5")
+        logger.info("  (Lightweight Exports + Receipt/Payment Sync)")
         logger.info("=" * 55)
         logger.info(f"  Tally Server  : {self.tally_url}")
         logger.info(f"  Cloud Backend : {self.backend_url}")
         logger.info(f"  Financial Year: {self.financial_year} ({self.fy_from} - {self.fy_to})")
-        logger.info(f"  Batch Sleep   : {self.batch_sleep}s between Tally requests")
+        logger.info(f"  Timeout       : {self.request_timeout}s per request")
+        logger.info(f"  Batch Sleep   : {self.batch_sleep}s between requests")
+        logger.info(f"  Retries       : {self.max_retries} per request")
         logger.info(f"  Sync Interval : every {self.sync_interval} min")
         logger.info(f"  WebSocket     : {'enabled' if self.enable_ws else 'disabled'}")
         logger.info(f"  Debug Mode    : {self.debug_mode}")
         logger.info("=" * 55)
 
-    # ---- Progress Reporting ----
+    # ---- Progress ----
 
     def report_progress(self, event_type, **kwargs):
-        """Send sync progress to cloud backend and local WebSocket clients."""
         progress = {
             'type': event_type,
             'timestamp': datetime.now().isoformat(),
@@ -223,12 +322,8 @@ class TallySyncAgent:
             'company_name': self.company_name or '',
             **kwargs
         }
-
-        # Local WebSocket broadcast
         if self.ws_server:
             self.ws_server.broadcast(progress)
-
-        # Cloud backend notification (fire-and-forget, don't block sync)
         try:
             requests.post(
                 f"{self.backend_url}/api/agent/sync-progress",
@@ -236,141 +331,49 @@ class TallySyncAgent:
                 headers={'Content-Type': 'application/json', 'X-Agent-Key': self.api_key},
                 timeout=5
             )
-        except Exception:
+        except:
             pass
 
-    # ---- XML request builders ----
+    # ---- Core HTTP ----
 
-    def _stock_items_xml(self):
-        return f"""<ENVELOPE>
-<HEADER>
-<VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Collection</TYPE>
-<ID>StockItemColl</ID>
-</HEADER>
-<BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-<SVFROMDATE>{self.fy_from}</SVFROMDATE>
-<SVTODATE>{self.fy_to}</SVTODATE>
-</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="StockItemColl" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
-<TYPE>Stock Item</TYPE>
-<NATIVEMETHOD>Name</NATIVEMETHOD>
-<NATIVEMETHOD>Parent</NATIVEMETHOD>
-<NATIVEMETHOD>BaseUnits</NATIVEMETHOD>
-<NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
-<NATIVEMETHOD>ClosingRate</NATIVEMETHOD>
-<NATIVEMETHOD>ClosingValue</NATIVEMETHOD>
-<NATIVEMETHOD>OpeningBalance</NATIVEMETHOD>
-<NATIVEMETHOD>OpeningValue</NATIVEMETHOD>
-<NATIVEMETHOD>Category</NATIVEMETHOD>
-</COLLECTION>
-</TDLMESSAGE></TDL>
-</DESC></BODY>
-</ENVELOPE>"""
+    def _send(self, xml_body, timeout=None):
+        """Send XML to Tally with retry logic and keep-alive session."""
+        if timeout is None:
+            timeout = self.request_timeout
 
-    def _stock_summary_xml(self):
-        return f"""<ENVELOPE>
-<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-<BODY><EXPORTDATA><REQUESTDESC>
-<REPORTNAME>Stock Summary</REPORTNAME>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-<SVFROMDATE>{self.fy_from}</SVFROMDATE>
-<SVTODATE>{self.fy_to}</SVTODATE>
-</STATICVARIABLES>
-</REQUESTDESC></EXPORTDATA></BODY>
-</ENVELOPE>"""
-
-    def _sales_vouchers_xml(self, from_date, to_date):
-        """Sales voucher XML for a specific date range (monthly batch)."""
-        return f"""<ENVELOPE>
-<HEADER>
-<VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Data</TYPE>
-<ID>Sales Vouchers</ID>
-</HEADER>
-<BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-<EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{from_date}</SVFROMDATE>
-<SVTODATE>{to_date}</SVTODATE>
-</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="SalesCollection" ISMODIFY="No">
-<TYPE>Voucher</TYPE>
-<FETCH>VoucherNumber, Date, PartyLedgerName, Amount, VoucherTypeName</FETCH>
-<FILTER>VoucherTypeFilter</FILTER>
-</COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="VoucherTypeFilter">
-$$IsSales:$VoucherTypeName
-</SYSTEM>
-</TDLMESSAGE></TDL>
-</DESC></BODY>
-</ENVELOPE>"""
-
-    def _ledger_list_xml(self):
-        return f"""<ENVELOPE>
-<HEADER>
-<VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Collection</TYPE>
-<ID>CustLedgerColl</ID>
-</HEADER>
-<BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-<SVFROMDATE>{self.fy_from}</SVFROMDATE>
-<SVTODATE>{self.fy_to}</SVTODATE>
-</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="CustLedgerColl" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
-<TYPE>Ledger</TYPE>
-<NATIVEMETHOD>Name</NATIVEMETHOD>
-<NATIVEMETHOD>Parent</NATIVEMETHOD>
-<NATIVEMETHOD>ClosingBalance</NATIVEMETHOD>
-<NATIVEMETHOD>Address</NATIVEMETHOD>
-<NATIVEMETHOD>LedStateName</NATIVEMETHOD>
-<NATIVEMETHOD>LedgerPhone</NATIVEMETHOD>
-<NATIVEMETHOD>LedgerContact</NATIVEMETHOD>
-<FILTER>CustGroupFilter</FILTER>
-</COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="CustGroupFilter">
-$Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
-</SYSTEM>
-</TDLMESSAGE></TDL>
-</DESC></BODY>
-</ENVELOPE>"""
-
-    # ---- HTTP + XML helpers ----
-
-    def _send(self, xml_body, timeout=30):
-        try:
-            resp = requests.post(
-                self.tally_url,
-                data=xml_body.encode('utf-8'),
-                headers={'Content-Type': 'text/xml'},
-                timeout=timeout
-            )
-            if resp.status_code != 200:
-                logger.error(f"Tally HTTP {resp.status_code}")
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = self.session.post(
+                    self.tally_url,
+                    data=xml_body.encode('utf-8'),
+                    timeout=timeout
+                )
+                if resp.status_code != 200:
+                    logger.error(f"  Tally HTTP {resp.status_code} (attempt {attempt})")
+                    if attempt < self.max_retries:
+                        time.sleep(2)
+                        continue
+                    return None
+                raw = resp.content.decode('utf-8', errors='replace').lstrip('\ufeff')
+                return raw
+            except requests.exceptions.ReadTimeout:
+                logger.warning(f"  Tally timeout ({timeout}s) attempt {attempt}/{self.max_retries}")
+                if attempt < self.max_retries:
+                    logger.info(f"  Retrying in {self.batch_sleep}s...")
+                    time.sleep(self.batch_sleep)
+                    continue
+                logger.error(f"  All {self.max_retries} attempts timed out")
                 return None
-            raw = resp.content.decode('utf-8', errors='replace').lstrip('\ufeff')
-            return raw
-        except requests.exceptions.ReadTimeout:
-            logger.error(f"Tally timed out ({timeout}s)")
-            return None
-        except requests.exceptions.ConnectionError:
-            logger.error("Cannot connect to Tally")
-            return None
-        except Exception as e:
-            logger.error(f"Request error: {e}")
-            return None
+            except requests.exceptions.ConnectionError:
+                logger.error(f"  Cannot connect to Tally (attempt {attempt})")
+                if attempt < self.max_retries:
+                    time.sleep(2)
+                    continue
+                return None
+            except Exception as e:
+                logger.error(f"  Request error: {e}")
+                return None
+        return None
 
     def _sanitize(self, xml):
         xml = re.sub(r'&#x[0-9a-fA-F]+;?', ' ', xml)
@@ -406,7 +409,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         parts = str(val).strip().split()
         try:
             qty = abs(float(parts[0].replace(',', '')))
-        except (ValueError, TypeError):
+        except:
             qty = 0.0
         unit = parts[1] if len(parts) > 1 else 'Pcs'
         return qty, unit
@@ -426,42 +429,51 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     return r
         return None
 
-    # ---- Connection test ----
+    # ---- Connection Test ----
 
     def test_connection(self):
         try:
-            resp = requests.post(
+            resp = self.session.post(
                 self.tally_url,
                 data='<ENVELOPE></ENVELOPE>'.encode('utf-8'),
-                headers={'Content-Type': 'text/xml'},
-                timeout=5
+                timeout=10
             )
             if resp.status_code == 200:
                 logger.info("[OK] Connected to TallyPrime")
                 return True
             return False
-        except Exception:
+        except:
             logger.error("Cannot connect to TallyPrime")
             return False
 
-    # ---- INVENTORY ----
+    # ==================== INVENTORY ====================
 
     def fetch_inventory(self):
-        items = self._fetch_inventory_tdl()
-        if items:
-            return items
-        logger.info("TDL stock export returned 0 items, trying Stock Summary...")
-        return self._fetch_inventory_summary()
+        """Try simple TDL collection first, fallback to Stock Summary report."""
+        logger.info("Fetching stock items (simple TDL)...")
+        self.report_progress('phase_start', phase='inventory')
 
-    def _fetch_inventory_tdl(self):
-        logger.info("Fetching stock items via TDL collection...")
-        raw = self._send(self._stock_items_xml(), timeout=30)
-        if not raw:
-            return []
-        self._dump('stock_items_tdl', raw)
+        raw = self._send(xml_stock_items_simple(self.fy_from, self.fy_to))
+        if raw:
+            items = self._parse_stock_items(raw)
+            if items:
+                logger.info(f"  Parsed {len(items)} stock items via TDL")
+                return items
+
+        logger.info("  TDL returned 0 items, trying Stock Summary report...")
+        raw = self._send(xml_stock_summary(self.fy_from, self.fy_to))
+        if raw:
+            items = self._parse_stock_summary(raw)
+            if items:
+                logger.info(f"  Parsed {len(items)} items via Stock Summary")
+                return items
+
+        logger.warning("  No inventory data fetched")
+        return []
+
+    def _parse_stock_items(self, raw):
+        self._dump('stock_items', raw)
         raw = self._sanitize(raw)
-        logger.info(f"Stock items TDL response: {len(raw)} chars")
-
         items = []
         try:
             if raw.count('<ENVELOPE') > 1:
@@ -477,27 +489,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             for envelope in envelopes:
                 if not isinstance(envelope, dict):
                     continue
-                stock_items = None
-                body = envelope.get('BODY', {})
-                if isinstance(body, dict):
-                    ds = body.get('DATA', {})
-                    if isinstance(ds, dict):
-                        tm = ds.get('TALLYMESSAGE', {})
-                        if isinstance(tm, dict):
-                            stock_items = tm.get('STOCKITEM')
-                        elif isinstance(tm, list):
-                            for msg in tm:
-                                if isinstance(msg, dict) and 'STOCKITEM' in msg:
-                                    si = msg['STOCKITEM']
-                                    if stock_items is None:
-                                        stock_items = si if isinstance(si, list) else [si]
-                                    else:
-                                        if isinstance(si, list):
-                                            stock_items.extend(si)
-                                        else:
-                                            stock_items.append(si)
-                if not stock_items:
-                    stock_items = self._find_deep(envelope, 'STOCKITEM')
+                stock_items = self._find_deep(envelope, 'STOCKITEM')
                 if not stock_items:
                     stock_items = self._find_deep(envelope, 'COLLECTION')
                 if not stock_items:
@@ -508,51 +500,34 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 for si in stock_items:
                     if not isinstance(si, dict):
                         continue
-                    name = si.get('NAME', si.get('@NAME', si.get('STOCKITEMNAME', '')))
-                    if not name or not str(name).strip():
+                    name = si.get('NAME', si.get('@NAME', '')).strip() if si.get('NAME', si.get('@NAME', '')) else ''
+                    if not name:
                         continue
-                    name = str(name).strip()
-                    parent = str(si.get('PARENT', si.get('STOCKGROUP', 'General')) or 'General').strip()
-                    category = str(si.get('CATEGORY', parent) or parent).strip()
-                    cb = si.get('CLOSINGBALANCE', si.get('BASEUNITS', 0))
+                    parent = str(si.get('PARENT', 'General') or 'General').strip()
+                    cb = si.get('CLOSINGBALANCE', 0)
                     qty, unit = self._qty_unit(cb)
-                    cr = si.get('CLOSINGRATE', si.get('RATE', 0))
-                    rate_str = str(cr) if cr else '0'
-                    rate = self._num(rate_str.split('/')[0])
+                    cr = si.get('CLOSINGRATE', 0)
+                    rate = self._num(str(cr).split('/')[0]) if cr else 0
                     cv = self._num(si.get('CLOSINGVALUE', 0))
                     if rate == 0 and qty > 0 and cv > 0:
                         rate = round(cv / qty, 2)
                     items.append({
-                        'item_id': name,
-                        'item_name': name,
-                        'quantity': qty,
-                        'unit': unit,
-                        'price': rate,
-                        'category': category,
-                        'stock_group': parent,
+                        'item_id': name, 'item_name': name,
+                        'quantity': qty, 'unit': unit, 'price': rate,
+                        'category': parent, 'stock_group': parent,
                         'reorder_level': 10.0
                     })
-
-            logger.info(f"TDL: Parsed {len(items)} stock items")
         except Exception as e:
-            logger.error(f"Error parsing TDL stock items: {e}")
-
+            logger.error(f"  Error parsing stock items: {e}")
         return items
 
-    def _fetch_inventory_summary(self):
-        logger.info("Fetching Stock Summary report...")
-        raw = self._send(self._stock_summary_xml(), timeout=60)
-        if not raw:
-            return []
+    def _parse_stock_summary(self, raw):
         self._dump('stock_summary', raw)
         raw = self._sanitize(raw)
         items = []
-
         try:
             data = xmltodict.parse(raw)
             envelope = data.get('ENVELOPE', {})
-            if not isinstance(envelope, dict):
-                return []
             names_raw = envelope.get('DSPACCNAME', [])
             infos_raw = envelope.get('DSPSTKINFO', [])
             if isinstance(names_raw, dict):
@@ -577,50 +552,38 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 if rate == 0 and qty > 0 and amount > 0:
                     rate = round(amount / qty, 2)
                 items.append({
-                    'item_id': item_name,
-                    'item_name': item_name,
-                    'quantity': qty,
-                    'unit': unit,
-                    'price': rate,
-                    'category': 'General',
-                    'stock_group': 'General',
+                    'item_id': item_name, 'item_name': item_name,
+                    'quantity': qty, 'unit': unit, 'price': rate,
+                    'category': 'General', 'stock_group': 'General',
                     'reorder_level': 10.0
                 })
-
-            logger.info(f"Summary: Parsed {len(items)} items")
         except Exception as e:
-            logger.error(f"Error parsing Stock Summary: {e}")
-
+            logger.error(f"  Error parsing stock summary: {e}")
         return items
 
-    # ---- SALES (MONTHLY BATCH) ----
+    # ==================== SALES + RECEIPTS (MONTHLY BATCHES) ====================
 
-    def fetch_sales_batched(self, incremental_from=None):
-        """Fetch sales vouchers in monthly batches to avoid overwhelming Tally.
-        If incremental_from is set (YYYYMMDD), only fetch from that date onward."""
+    def fetch_vouchers_batched(self, incremental_from=None):
+        """Fetch ALL vouchers (Sales + Receipts + Payments) using Day Book report
+        in monthly batches. Returns (sales_vouchers, receipt_vouchers)."""
         monthly_ranges = get_monthly_ranges(self.fy_from, self.fy_to)
 
-        # For incremental sync, skip months before the incremental_from date
         if incremental_from:
-            monthly_ranges = [
-                (f, t, label) for f, t, label in monthly_ranges
-                if t >= incremental_from
-            ]
-            # Adjust the first batch's start date
+            monthly_ranges = [(f, t, l) for f, t, l in monthly_ranges if t >= incremental_from]
             if monthly_ranges:
-                f, t, label = monthly_ranges[0]
+                f, t, l = monthly_ranges[0]
                 if f < incremental_from:
-                    monthly_ranges[0] = (incremental_from, t, label)
+                    monthly_ranges[0] = (incremental_from, t, l)
 
         total_months = len(monthly_ranges)
         if total_months == 0:
-            logger.info("No date ranges to fetch for sales")
-            return []
+            return [], []
 
-        logger.info(f"Fetching sales in {total_months} monthly batches...")
+        logger.info(f"Fetching vouchers (Day Book) in {total_months} monthly batches...")
         self.report_progress('sales_batch_start', total_batches=total_months)
 
-        all_vouchers = []
+        all_sales = []
+        all_receipts = []
         failed_months = []
 
         for idx, (from_date, to_date, label) in enumerate(monthly_ranges):
@@ -629,57 +592,52 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
             self.report_progress(
                 'sales_batch_progress',
-                batch=batch_num,
-                total_batches=total_months,
-                month=label,
-                from_date=from_date,
-                to_date=to_date,
-                vouchers_so_far=len(all_vouchers)
+                batch=batch_num, total_batches=total_months,
+                month=label, from_date=from_date, to_date=to_date,
+                vouchers_so_far=len(all_sales)
             )
 
-            raw = self._send(self._sales_vouchers_xml(from_date, to_date), timeout=45)
+            raw = self._send(xml_daybook(from_date, to_date))
             if not raw:
-                logger.warning(f"  Batch {batch_num} failed (timeout or no response) - skipping {label}")
+                logger.warning(f"  Batch {batch_num} failed — skipping {label}")
                 failed_months.append(label)
-                # Still sleep before next request
                 if batch_num < total_months:
-                    logger.info(f"  Sleeping {self.batch_sleep}s before next batch...")
                     time.sleep(self.batch_sleep)
                 continue
 
-            self._dump(f'sales_{from_date}_{to_date}', raw)
+            self._dump(f'daybook_{from_date}_{to_date}', raw)
             raw = self._sanitize(raw)
-            batch_vouchers = self._parse_sales_xml(raw)
-            logger.info(f"  Batch {batch_num}: {len(batch_vouchers)} vouchers from {label}")
-            all_vouchers.extend(batch_vouchers)
+            sales, receipts = self._parse_daybook(raw)
+            logger.info(f"  Batch {batch_num}: {len(sales)} sales, {len(receipts)} receipts/payments")
+            all_sales.extend(sales)
+            all_receipts.extend(receipts)
 
-            # Sleep between batches to let Tally breathe
             if batch_num < total_months:
-                logger.info(f"  Sleeping {self.batch_sleep}s before next batch...")
+                logger.info(f"  Sleeping {self.batch_sleep}s...")
                 time.sleep(self.batch_sleep)
 
         if failed_months:
             logger.warning(f"Failed months: {', '.join(failed_months)}")
-            self.report_progress('sales_batch_warning', failed_months=failed_months)
 
-        logger.info(f"Total: {len(all_vouchers)} sales vouchers across {total_months} batches")
+        logger.info(f"TOTAL: {len(all_sales)} sales, {len(all_receipts)} receipts/payments across {total_months} batches")
         self.report_progress(
             'sales_batch_complete',
-            total_vouchers=len(all_vouchers),
+            total_vouchers=len(all_sales),
+            total_receipts=len(all_receipts),
             total_batches=total_months,
             failed_batches=len(failed_months)
         )
 
-        return all_vouchers
+        return all_sales, all_receipts
 
-    def _parse_sales_xml(self, raw):
-        """Parse sales voucher XML into list of voucher dicts."""
-        vouchers = []
+    def _parse_daybook(self, raw):
+        """Parse Day Book XML — separates Sales vs Receipt/Payment vouchers."""
+        sales = []
+        receipts = []
         try:
             data = xmltodict.parse(raw)
             envelope = data.get('ENVELOPE', {})
             body = envelope.get('BODY', {})
-
             if isinstance(body, dict):
                 desc = body.get('DESC', {})
                 if isinstance(desc, dict):
@@ -700,25 +658,26 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     continue
                 v_list = voucher_raw if isinstance(voucher_raw, list) else [voucher_raw]
                 for v in v_list:
-                    parsed = self._parse_voucher(v)
-                    if parsed:
-                        vouchers.append(parsed)
+                    if not isinstance(v, dict):
+                        continue
+                    vtype = str(v.get('VOUCHERTYPENAME', v.get('@VCHTYPE', ''))).strip().lower()
+
+                    if vtype in ('sales', 'sales return', 'credit note'):
+                        parsed = self._parse_sale(v)
+                        if parsed:
+                            sales.append(parsed)
+                    elif vtype in ('receipt', 'payment', 'contra', 'journal'):
+                        parsed = self._parse_receipt(v, vtype)
+                        if parsed:
+                            receipts.append(parsed)
         except Exception as e:
-            logger.error(f"Error parsing sales batch: {e}")
+            logger.error(f"  Error parsing Day Book: {e}")
+        return sales, receipts
 
-        return vouchers
-
-    def _parse_voucher(self, v):
-        if not isinstance(v, dict):
-            return None
+    def _parse_sale(self, v):
         v_number = v.get('VOUCHERNUMBER') or v.get('NUMBER') or v.get('@REMOTEID', '')[:20] or f"V-{id(v)}"
         raw_date = v.get('DATE', '')
-        if raw_date and len(str(raw_date)) == 8 and str(raw_date).isdigit():
-            d = str(raw_date)
-            formatted_date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
-        else:
-            formatted_date = str(raw_date)
-
+        formatted_date = self._format_date(raw_date)
         party = v.get('PARTYLEDGERNAME') or v.get('BASICBUYERNAME') or v.get('PARTYNAME') or 'Unknown'
 
         amount = 0.0
@@ -754,8 +713,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 aq = entry.get('ACTUALQTY', entry.get('BILLEDQTY', 0))
                 rt = entry.get('RATE', entry.get('AMOUNT', 0))
                 qty_val = self._num(aq)
-                rate_str = str(rt) if rt else '0'
-                rate_val = self._num(rate_str.split('/')[0])
+                rate_val = self._num(str(rt).split('/')[0]) if rt else 0
                 ea = self._num(entry.get('AMOUNT', 0))
                 line_items.append({
                     'item': str(iname).strip(),
@@ -775,18 +733,83 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             'reference_number': str(ref) if ref else ''
         }
 
-    # ---- CUSTOMERS ----
+    def _parse_receipt(self, v, vtype):
+        """Parse a receipt/payment/contra/journal voucher."""
+        v_number = v.get('VOUCHERNUMBER') or v.get('NUMBER') or f"R-{id(v)}"
+        raw_date = v.get('DATE', '')
+        formatted_date = self._format_date(raw_date)
+        party = v.get('PARTYLEDGERNAME') or v.get('PARTYNAME') or ''
+
+        amount = 0.0
+        for f in ['AMOUNT', 'PARTYLEDGERAMOUNT']:
+            val = v.get(f)
+            if val is not None:
+                amount = self._num(val)
+                if amount > 0:
+                    break
+
+        # For receipts, try ledger entries
+        if amount == 0:
+            le = v.get('ALLLEDGERENTRIES.LIST', v.get('LEDGERENTRIES.LIST', []))
+            if isinstance(le, dict):
+                le = [le]
+            if isinstance(le, list):
+                for entry in le:
+                    if isinstance(entry, dict):
+                        a = self._num(entry.get('AMOUNT', 0))
+                        if a > amount:
+                            amount = a
+                        # Also capture party from ledger entries
+                        if not party:
+                            party = str(entry.get('LEDGERNAME', '')).strip()
+
+        # Bill allocations (which invoices this receipt applies to)
+        bill_refs = []
+        le = v.get('ALLLEDGERENTRIES.LIST', v.get('LEDGERENTRIES.LIST', []))
+        if isinstance(le, dict):
+            le = [le]
+        if isinstance(le, list):
+            for entry in le:
+                if not isinstance(entry, dict):
+                    continue
+                bills = entry.get('BILLALLOCATIONS.LIST', [])
+                if isinstance(bills, dict):
+                    bills = [bills]
+                if isinstance(bills, list):
+                    for bill in bills:
+                        if isinstance(bill, dict):
+                            bill_refs.append({
+                                'bill_ref': str(bill.get('NAME', '')),
+                                'bill_type': str(bill.get('BILLTYPE', '')),
+                                'bill_amount': self._num(bill.get('AMOUNT', 0))
+                            })
+
+        narration = v.get('NARRATION', '')
+
+        return {
+            'voucher_id': str(v_number),
+            'voucher_type': vtype,
+            'voucher_date': formatted_date,
+            'party_name': str(party) if party else 'Unknown',
+            'amount': amount,
+            'bill_allocations': bill_refs,
+            'narration': str(narration) if narration else ''
+        }
+
+    @staticmethod
+    def _format_date(raw_date):
+        if raw_date and len(str(raw_date)) == 8 and str(raw_date).isdigit():
+            d = str(raw_date)
+            return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+        return str(raw_date)
+
+    # ==================== CUSTOMERS ====================
 
     def fetch_customers(self):
-        customers = self._fetch_ledgers_tdl()
-        if customers:
-            return customers
-        logger.info("TDL ledger fetch returned 0, extracting customers from sales...")
-        return []
+        logger.info("Fetching customer ledgers...")
+        self.report_progress('phase_start', phase='customers')
 
-    def _fetch_ledgers_tdl(self):
-        logger.info("Fetching customer ledgers via TDL...")
-        raw = self._send(self._ledger_list_xml(), timeout=30)
+        raw = self._send(xml_ledger_list())
         if not raw:
             return []
         self._dump('customer_ledgers', raw)
@@ -834,15 +857,15 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                         'transaction_count': 0
                     })
 
-            logger.info(f"TDL: Parsed {len(customers)} customer ledgers")
+            logger.info(f"  Parsed {len(customers)} customer ledgers")
         except Exception as e:
-            logger.error(f"Error parsing customer ledgers: {e}")
+            logger.error(f"  Error parsing customer ledgers: {e}")
 
         return customers
 
-    def extract_customers_from_sales(self, vouchers):
+    def extract_customers_from_sales(self, sales_vouchers):
         seen = {}
-        for v in vouchers:
+        for v in sales_vouchers:
             name = v.get('party_name', '').strip()
             if not name or name == 'Unknown':
                 continue
@@ -859,18 +882,18 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             seen[key]['transaction_count'] += 1
         return list(seen.values())
 
-    # ---- SYNC TO BACKEND ----
+    # ==================== SYNC TO BACKEND ====================
 
     def sync_to_backend(self, data_type, data):
         if not data:
-            logger.info(f"No {data_type} data to sync, skipping")
+            logger.info(f"  No {data_type} data to sync, skipping")
             return True
         try:
             payload = {
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '4.0.0',
+                'agent_version': '5.0.0',
                 'company_name': self.company_name or '',
                 'financial_year': self.financial_year
             }
@@ -881,20 +904,20 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 timeout=30
             )
             if resp.status_code == 200:
-                logger.info(f"[OK] Synced {len(data)} {data_type} to backend")
+                logger.info(f"  [OK] Synced {len(data)} {data_type} to backend")
                 return True
             else:
-                logger.error(f"Sync {data_type} failed: HTTP {resp.status_code} - {resp.text[:300]}")
+                logger.error(f"  Sync {data_type} failed: HTTP {resp.status_code}")
                 return False
         except Exception as e:
-            logger.error(f"Sync error ({data_type}): {e}")
+            logger.error(f"  Sync error ({data_type}): {e}")
             return False
 
-    # ---- MAIN SYNC CYCLE ----
+    # ==================== MAIN SYNC CYCLE ====================
 
     def run_sync_cycle(self):
         if self.sync_running:
-            logger.info("Sync already in progress, skipping...")
+            logger.info("Sync already running, skipping...")
             return
         try:
             self.sync_running = True
@@ -905,59 +928,56 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             logger.info("")
             logger.info("=" * 55)
             if is_first_sync:
-                logger.info("FIRST RUN - Full batch sync...")
+                logger.info("FIRST RUN — Full batch sync...")
             else:
-                logger.info(f"Incremental sync (changes since {last_sales_date})...")
+                logger.info(f"Incremental sync (since {last_sales_date})...")
             logger.info("=" * 55)
 
-            self.report_progress(
-                'sync_started',
-                is_first_sync=is_first_sync,
-                last_sales_date=last_sales_date
-            )
+            self.report_progress('sync_started', is_first_sync=is_first_sync, last_sales_date=last_sales_date)
 
             if not self.test_connection():
                 self.report_progress('sync_error', error='Cannot connect to TallyPrime')
                 return
 
-            # --- Inventory (fast, single request) ---
-            logger.info("--- Inventory ---")
-            self.report_progress('phase_start', phase='inventory')
+            # --- Inventory ---
+            logger.info("--- Phase 1: Inventory ---")
             inventory = self.fetch_inventory()
             if inventory:
                 self.sync_to_backend('inventory', inventory)
                 self.report_progress('phase_complete', phase='inventory', count=len(inventory))
             else:
-                logger.warning("No inventory data fetched")
                 self.report_progress('phase_warning', phase='inventory', message='No data')
 
-            # Brief pause between data types
             time.sleep(self.batch_sleep)
 
-            # --- Sales (monthly batches) ---
-            logger.info("--- Sales (Batch Mode) ---")
+            # --- Vouchers (Sales + Receipts) in monthly batches ---
+            logger.info("--- Phase 2: Vouchers (Day Book — Sales + Receipts) ---")
             self.report_progress('phase_start', phase='sales')
 
             incremental_from = None
             if not is_first_sync and last_sales_date:
                 incremental_from = last_sales_date.replace('-', '')
-                logger.info(f"Incremental: fetching from {last_sales_date} onwards...")
 
-            sales = self.fetch_sales_batched(incremental_from=incremental_from)
+            sales, receipts = self.fetch_vouchers_batched(incremental_from=incremental_from)
+
             if sales:
                 self.sync_to_backend('sales', sales)
                 self.report_progress('phase_complete', phase='sales', count=len(sales))
-
                 latest_date = max(v.get('voucher_date', '') for v in sales)
                 state['last_sales_date'] = latest_date
 
-                # Brief pause before customers
-                time.sleep(self.batch_sleep)
+            if receipts:
+                self.sync_to_backend('receipts', receipts)
+                self.report_progress('phase_complete', phase='receipts', count=len(receipts))
+                logger.info(f"  Synced {len(receipts)} receipt/payment vouchers")
 
-                # --- Customers ---
-                logger.info("--- Customers ---")
-                self.report_progress('phase_start', phase='customers')
-                customers = self.fetch_customers()
+            time.sleep(self.batch_sleep)
+
+            # --- Customers ---
+            logger.info("--- Phase 3: Customers ---")
+            self.report_progress('phase_start', phase='customers')
+            customers = self.fetch_customers()
+            if sales:
                 sales_customers = self.extract_customers_from_sales(sales)
                 cust_map = {c['customer_name'].lower(): c for c in customers}
                 for sc in sales_customers:
@@ -967,26 +987,30 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                         cust_map[key]['transaction_count'] = sc['transaction_count']
                     else:
                         customers.append(sc)
-                if customers:
-                    self.sync_to_backend('customers', customers)
-                    self.report_progress('phase_complete', phase='customers', count=len(customers))
-            elif is_first_sync:
-                logger.warning("No sales data fetched on first sync")
-                self.report_progress('phase_warning', phase='sales', message='No data on first sync')
+            if customers:
+                self.sync_to_backend('customers', customers)
+                self.report_progress('phase_complete', phase='customers', count=len(customers))
 
+            # Save state
             state['full_sync_done'] = True
             state['last_sync_time'] = datetime.now().isoformat()
             save_sync_state(state)
 
             self.last_sync_time = datetime.now()
+            logger.info("")
             logger.info(f"[OK] Sync completed at {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"  Inventory: {len(inventory)} items")
+            logger.info(f"  Sales:     {len(sales)} vouchers")
+            logger.info(f"  Receipts:  {len(receipts)} vouchers")
+            logger.info(f"  Customers: {len(customers)} ledgers")
             logger.info("=" * 55)
 
             self.report_progress(
                 'sync_complete',
-                inventory_count=len(inventory) if inventory else 0,
-                sales_count=len(sales) if sales else 0,
-                customer_count=len(customers) if 'customers' in dir() else 0
+                inventory_count=len(inventory),
+                sales_count=len(sales),
+                receipt_count=len(receipts),
+                customer_count=len(customers)
             )
 
         except Exception as e:
@@ -996,7 +1020,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             self.sync_running = False
 
     def start(self):
-        # Start local WebSocket server if enabled
         if self.enable_ws:
             self.ws_server = WebSocketServer(port=self.ws_port)
             self.ws_server.start()
@@ -1004,9 +1027,8 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         state = load_sync_state()
         if state.get('full_sync_done'):
             logger.info(f"Previous sync found. Last: {state.get('last_sync_time', 'unknown')}")
-            logger.info("Will do incremental sync (new data only)")
         else:
-            logger.info("First run - will do full batch sync")
+            logger.info("First run — full batch sync")
 
         logger.info("")
         self.run_sync_cycle()

@@ -654,6 +654,36 @@ async def receive_agent_sync(request: dict):
             
             logger.info(f"Synced {len(data)} customers to database")
         
+        elif data_type == 'receipts':
+            # Store receipt/payment vouchers for outstanding calculation
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for receipt in data:
+                    v_id = receipt.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": receipt.get('voucher_type', 'receipt'),
+                                "voucher_date": receipt.get('voucher_date', ''),
+                                "party_name": receipt.get('party_name', ''),
+                                "amount": receipt.get('amount', 0),
+                                "bill_allocations": receipt.get('bill_allocations', []),
+                                "narration": receipt.get('narration', ''),
+                                "last_synced": sync_time
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.receipt_vouchers.bulk_write(operations)
+
+            logger.info(f"Synced {len(data)} receipt/payment vouchers to database")
+        
         # Update last sync time
         company_name = request.get('company_name', '')
         financial_year = request.get('financial_year', '')
@@ -1113,6 +1143,21 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
         all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
         sales_vouchers = filter_vouchers_by_fy(all_sales, fy)
 
+        # Get receipt/payment vouchers for payment tracking
+        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(10000)
+        receipt_vouchers = filter_vouchers_by_fy(
+            [{"voucher_date": r.get("voucher_date", ""), **r} for r in all_receipts], fy
+        )
+
+        # Aggregate receipts per customer
+        customer_payments = {}
+        for r in receipt_vouchers:
+            party = r.get("party_name", "").strip()
+            if not party or party == "Unknown":
+                continue
+            amt = r.get("amount", 0)
+            customer_payments[party] = customer_payments.get(party, 0) + amt
+
         customer_map = {}
         # Build per-customer voucher list for FIFO aging
         customer_vouchers = {}
@@ -1216,7 +1261,15 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
                     cust["aging_0_30"] += remaining
 
             cust["overdue_amount"] = cust["aging_60_90"] + cust["aging_90_plus"]
-            cust["paid_amount"] = max(0, cust["total_sales"] - outstanding)
+
+            # paid_amount: prefer receipt data, fallback to total_sales - outstanding
+            receipt_paid = customer_payments.get(cust["customer_name"], 0)
+            if receipt_paid > 0:
+                cust["paid_amount"] = receipt_paid
+                cust["receipt_count"] = len([r for r in receipt_vouchers if r.get("party_name") == cust["customer_name"]])
+            else:
+                cust["paid_amount"] = max(0, cust["total_sales"] - outstanding)
+                cust["receipt_count"] = 0
 
             # Status based on oldest invoice days
             oldest = cust["oldest_invoice_days"]
@@ -1549,6 +1602,22 @@ async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str]
         synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
         synced_map = {c["customer_name"].lower(): c for c in synced_customers}
 
+        # Get receipt data for actual payment tracking
+        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(10000)
+        receipt_vouchers = filter_vouchers_by_fy(
+            [{"voucher_date": r.get("voucher_date", ""), **r} for r in all_receipts], fy
+        )
+        customer_payments = {}
+        customer_receipt_dates = {}
+        for r in receipt_vouchers:
+            party = r.get("party_name", "").strip()
+            if not party or party == "Unknown":
+                continue
+            customer_payments[party] = customer_payments.get(party, 0) + r.get("amount", 0)
+            if party not in customer_receipt_dates:
+                customer_receipt_dates[party] = []
+            customer_receipt_dates[party].append(r.get("voucher_date", ""))
+
         behavior_map = {}
         for voucher in sales_vouchers:
             party = voucher.get("party_name", "Unknown")
@@ -1590,15 +1659,32 @@ async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str]
         for party, data in behavior_map.items():
             total = data["total_amount"]
             outstanding = data["outstanding_amount"]
-            data["paid_amount"] = max(0, total - outstanding)
+            receipt_paid = customer_payments.get(party, 0)
+
+            # Use receipt data for paid amount when available
+            if receipt_paid > 0:
+                data["paid_amount"] = receipt_paid
+                data["receipt_count"] = len(customer_receipt_dates.get(party, []))
+            else:
+                data["paid_amount"] = max(0, total - outstanding)
+                data["receipt_count"] = 0
+
             data["average_transaction"] = round(total / data["total_transactions"], 2) if data["total_transactions"] > 0 else 0
 
-            # Payment ratio: what % of total sales has been paid
+            # Payment ratio
             data["payment_ratio"] = round((data["paid_amount"] / total * 100), 1) if total > 0 else 100
 
-            # Estimate avg payment delay from outstanding ratio and invoice age
-            if total > 0 and outstanding > 0 and data["invoices"]:
-                # Higher outstanding ratio = longer delays
+            # Estimate avg payment delay
+            if receipt_paid > 0 and data["invoices"]:
+                # If we have receipt dates, calculate average delay between invoice and receipt
+                receipt_dates = sorted(customer_receipt_dates.get(party, []))
+                invoice_dates = sorted([i["days_old"] for i in data["invoices"]])
+                # Average age of outstanding invoices
+                if outstanding > 0:
+                    data["average_payment_delay"] = round(sum(invoice_dates) / len(invoice_dates) * (outstanding / total), 0) if invoice_dates else 0
+                else:
+                    data["average_payment_delay"] = 0
+            elif total > 0 and outstanding > 0 and data["invoices"]:
                 outstanding_ratio = outstanding / total
                 avg_invoice_age = sum(i["days_old"] for i in data["invoices"]) / len(data["invoices"])
                 data["average_payment_delay"] = round(avg_invoice_age * outstanding_ratio, 0)

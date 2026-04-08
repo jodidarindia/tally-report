@@ -1,10 +1,14 @@
 ==========================================
-  FLOWRA TALLY SYNC AGENT v4 - QUICK START
-  Non-Blocking Batch Sync + WebSocket
+  FLOWRA TALLY SYNC AGENT v5 - QUICK START
+  Lightweight Exports + Receipt/Payment Sync
 ==========================================
 
-This agent syncs your local TallyPrime data to the FLOWRA cloud app.
-v4 uses monthly batch fetching to prevent Tally from freezing.
+WHAT'S NEW IN v5:
+- Uses standard Tally report exports (Day Book) instead of heavy TDL
+- HTTP keep-alive session (faster, fewer connection issues)
+- 120-second timeout with 2 retries per request
+- Receipt/Payment voucher sync for accurate outstanding calculation
+- Automatic retry with backoff on timeout
 
 STEP 1: CONFIGURE TALLYPRIME
 -----------------------------
@@ -14,98 +18,64 @@ STEP 1: CONFIGURE TALLYPRIME
 4. Enable: "Use Tally as Server" on port 9000
 5. Save and restart Tally
 
-STEP 2: INSTALL PYTHON
------------------------
-Download Python 3.11+ from: https://www.python.org/downloads/
-During installation, CHECK "Add Python to PATH"
-
-STEP 3: INSTALL AGENT
-----------------------
-1. Open Command Prompt in this folder
-2. Run: pip install -r requirements.txt
-
-STEP 4: CONFIGURE AGENT
-------------------------
-Create a .env file with your settings:
-
-  BACKEND_URL=https://your-flowra-app.com
-  FINANCIAL_YEAR=2025-26
-  TALLY_HOST=localhost
-  TALLY_PORT=9000
-  SYNC_INTERVAL_MINUTES=10
-  BATCH_SLEEP_SECONDS=3
-  ENABLE_WEBSOCKET=true
-  WEBSOCKET_PORT=8765
-  DEBUG_MODE=false
-
-Key settings:
-  - BATCH_SLEEP_SECONDS: Pause between monthly fetches (default: 3s).
-    Increase to 5-10 if Tally still lags.
-  - ENABLE_WEBSOCKET: Runs a local WebSocket server for monitoring.
-  - SYNC_INTERVAL_MINUTES: How often to sync (default: 10 min).
-
-STEP 5: RUN AGENT
-------------------
-Double-click: run_agent.bat
-
-Or from command line:
-  python tally_sync_agent.py
-
-You should see:
-  =======================================================
-    FLOWRA TALLY SYNC AGENT v4 (Batch Mode)
-  =======================================================
-    Tally Server  : http://localhost:9000
-    Cloud Backend : https://your-app.com
-    Financial Year: 2025-26 (20250401 - 20260331)
-    Batch Sleep   : 3s between Tally requests
-  =======================================================
-
-  [OK] Connected to TallyPrime
-  Fetching sales in 12 monthly batches...
-    Batch 1/12: Apr 2025 - 23 vouchers
-    Sleeping 3s before next batch...
-    Batch 2/12: May 2025 - 45 vouchers
-    ...
-  Total: 1255 sales vouchers across 12 batches
-  [OK] Synced 1255 sales to backend
-
-STEP 6: AUTO-START WITH TALLY
-------------------------------
-Option A: Use the provided script
-  Double-click: start_with_tally.bat
-  (Edit the TALLY_PATH variable inside if needed)
-
-Option B: Windows Task Scheduler
-  1. Open Task Scheduler
-  2. Create Basic Task > "FLOWRA Sync Agent"
-  3. Trigger: "When a specific program starts" > tally.exe
-  4. Action: Start a program > python
-  5. Arguments: tally_sync_agent.py
-  6. Start in: (this folder path)
-
-STEP 7: VERIFY
---------------
-Open your FLOWRA web app and check:
-- Dashboard shows "Live" badge (green) = WebSocket connected
-- Live sync progress bar appears during sync
-- Data refreshes automatically after sync completes
-
-TROUBLESHOOTING
+STEP 2: INSTALL
 ---------------
-1. "Tally timed out" on some months
-   -> Increase BATCH_SLEEP_SECONDS to 5 or 10
-   -> The agent will skip failed months and continue
+pip install -r requirements.txt
 
-2. "Cannot connect to TallyPrime"
-   -> Ensure Tally is running with server mode on port 9000
+STEP 3: CONFIGURE (.env file)
+------------------------------
+BACKEND_URL=https://your-flowra-app.com
+FINANCIAL_YEAR=2025-26
+TALLY_HOST=localhost
+TALLY_PORT=9000
+SYNC_INTERVAL_MINUTES=10
+BATCH_SLEEP_SECONDS=3
+REQUEST_TIMEOUT=120
+MAX_RETRIES=2
+ENABLE_WEBSOCKET=true
+WEBSOCKET_PORT=8765
+DEBUG_MODE=false
 
-3. "Failed to sync to backend"
-   -> Verify BACKEND_URL is correct
-   -> Check internet connection
+KEY SETTINGS:
+- REQUEST_TIMEOUT: Seconds to wait per Tally request (default 120)
+- MAX_RETRIES: Retries per request on timeout (default 2)
+- BATCH_SLEEP_SECONDS: Pause between monthly fetches (default 3)
 
-4. Check logs: tally_sync_agent.log
+STEP 4: RUN
+-----------
+Double-click: run_agent.bat
+  or
+python tally_sync_agent.py
 
-==========================================
-Support: Include tally_sync_agent.log when requesting help
+STEP 5: AUTO-START WITH TALLY
+------------------------------
+Double-click: start_with_tally.bat
+
+HOW IT WORKS:
+1. Connects to Tally ODBC server
+2. Fetches stock items (single request)
+3. Fetches ALL vouchers (Sales + Receipts + Payments) via Day Book
+   report in monthly batches with sleep between each
+4. Pushes data to FLOWRA cloud backend
+5. Repeats every SYNC_INTERVAL_MINUTES
+
+RECEIPT/PAYMENT SYNC:
+- The Day Book report includes ALL voucher types
+- Sales, Receipt, Payment, Contra, Journal vouchers are all captured
+- Receipt data is used for accurate outstanding calculation
+- Payment behavior analysis uses real receipt amounts
+
+TROUBLESHOOTING:
+1. Still timing out?
+   -> Increase REQUEST_TIMEOUT to 180 or 300
+   -> Increase BATCH_SLEEP_SECONDS to 10
+   -> Restart TallyPrime before running the agent
+
+2. Cannot connect?
+   -> Check Tally server mode is enabled (F12 > Connectivity)
+   -> Check port 9000 is not blocked
+
+3. Debug mode: Set DEBUG_MODE=true in .env
+   -> XML responses saved to debug_xml/ folder
+
 ==========================================
