@@ -169,10 +169,11 @@ class TallyCollectionClient:
     """Makes lightweight Collection requests to Tally's HTTP server.
     Each request takes 1-5 seconds (vs 30-120 sec for report requests)."""
 
-    def __init__(self, url=TALLY_URL, company='', timeout=15):
+    def __init__(self, url=TALLY_URL, company='', timeout=15, debug_dir=None):
         self.url = url
         self.company = company
         self.timeout = timeout
+        self.debug_dir = debug_dir
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'text/xml',
@@ -185,11 +186,17 @@ class TallyCollectionClient:
         xml_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', xml_text)
         return xml_text
 
-    def _post(self, xml_payload: str) -> Optional[dict]:
+    def _post(self, xml_payload: str, debug_name: str = '') -> Optional[dict]:
         try:
             resp = self.session.post(self.url, data=xml_payload, timeout=self.timeout)
             if resp.status_code == 200:
                 clean = self._sanitize(resp.text)
+                # Always save raw response for debugging
+                if debug_name and self.debug_dir:
+                    debug_path = os.path.join(self.debug_dir, f"{debug_name}_raw.xml")
+                    with open(debug_path, 'w', encoding='utf-8') as f:
+                        f.write(clean[:50000])  # First 50KB
+                    logger.info(f"  [DEBUG] Saved raw XML → {debug_path}")
                 return xmltodict.parse(clean)
             else:
                 logger.error(f"Tally HTTP {resp.status_code}")
@@ -218,7 +225,7 @@ class TallyCollectionClient:
             <BODY><DESC><STATICVARIABLES>
             <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
             </STATICVARIABLES></DESC></BODY></ENVELOPE>"""
-        data = self._post(xml)
+        data = self._post(xml, debug_name='companies')
         if data:
             # Try to extract company name
             companies = self._find_deep(data, 'COMPANY')
@@ -308,7 +315,7 @@ class TallyCollectionClient:
             </TDLMESSAGE></TDL>
             </DESC></BODY></ENVELOPE>"""
 
-        data = self._post(xml)
+        data = self._post(xml, debug_name='stock_items')
         if not data:
             return []
 
@@ -317,6 +324,17 @@ class TallyCollectionClient:
         if not stock_list:
             stock_list = self._find_deep(data, 'COLLECTION')
         if not stock_list:
+            # Debug: log the top-level keys we actually got
+            logger.warning(f"  [DEBUG] Stock items: no STOCKITEM/COLLECTION found. Top keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            envelope = data.get('ENVELOPE', data)
+            if isinstance(envelope, dict):
+                logger.warning(f"  [DEBUG] ENVELOPE keys: {list(envelope.keys())}")
+                body = envelope.get('BODY', {})
+                if isinstance(body, dict):
+                    logger.warning(f"  [DEBUG] BODY keys: {list(body.keys())}")
+                    desc_data = body.get('DATA', body.get('DESC', {}))
+                    if isinstance(desc_data, dict):
+                        logger.warning(f"  [DEBUG] DATA keys: {list(desc_data.keys())}")
             return []
         if not isinstance(stock_list, list):
             stock_list = [stock_list]
@@ -377,13 +395,23 @@ class TallyCollectionClient:
             </TDLMESSAGE></TDL>
             </DESC></BODY></ENVELOPE>"""
 
-        data = self._post(xml)
+        data = self._post(xml, debug_name='customers')
         if not data:
             return []
 
         customers = []
         ledgers = self._find_deep(data, 'LEDGER')
         if not ledgers:
+            logger.warning(f"  [DEBUG] Customers: no LEDGER found. Top keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            envelope = data.get('ENVELOPE', data)
+            if isinstance(envelope, dict):
+                logger.warning(f"  [DEBUG] ENVELOPE keys: {list(envelope.keys())}")
+                body = envelope.get('BODY', {})
+                if isinstance(body, dict):
+                    logger.warning(f"  [DEBUG] BODY keys: {list(body.keys())}")
+                    desc_data = body.get('DATA', body.get('DESC', {}))
+                    if isinstance(desc_data, dict):
+                        logger.warning(f"  [DEBUG] DATA keys: {list(desc_data.keys())}")
             return []
         if not isinstance(ledgers, list):
             ledgers = [ledgers]
@@ -450,7 +478,7 @@ class TallyCollectionClient:
             </TDLMESSAGE></TDL>
             </DESC></BODY></ENVELOPE>"""
 
-        data = self._post(xml)
+        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
         if not data:
             return []
         return self._parse_vouchers(data, 'sales')
@@ -491,7 +519,7 @@ class TallyCollectionClient:
             </TDLMESSAGE></TDL>
             </DESC></BODY></ENVELOPE>"""
 
-        data = self._post(xml)
+        data = self._post(xml, debug_name=f'receipts_{from_date.strftime("%Y%m")}')
         if not data:
             return []
         return self._parse_vouchers(data, 'receipt')
@@ -500,7 +528,30 @@ class TallyCollectionClient:
         """Parse voucher XML response into clean dicts."""
         vouchers_raw = self._find_deep(data, 'VOUCHER')
         if not vouchers_raw:
-            return []
+            # Debug: try to find what Tally actually returned
+            logger.warning(f"  [DEBUG] {vtype}: no VOUCHER key found.")
+            envelope = data.get('ENVELOPE', data)
+            if isinstance(envelope, dict):
+                body = envelope.get('BODY', {})
+                if isinstance(body, dict):
+                    desc_data = body.get('DATA', body.get('DESC', {}))
+                    if isinstance(desc_data, dict):
+                        logger.warning(f"  [DEBUG] DATA keys: {list(desc_data.keys())}")
+                        # Try TALLYMESSAGE wrapper
+                        tally_msg = desc_data.get('TALLYMESSAGE', {})
+                        if isinstance(tally_msg, dict) and 'VOUCHER' in tally_msg:
+                            vouchers_raw = tally_msg['VOUCHER']
+                        elif isinstance(tally_msg, list):
+                            vouchers_raw = []
+                            for msg in tally_msg:
+                                if isinstance(msg, dict) and 'VOUCHER' in msg:
+                                    v = msg['VOUCHER']
+                                    if isinstance(v, list):
+                                        vouchers_raw.extend(v)
+                                    else:
+                                        vouchers_raw.append(v)
+            if not vouchers_raw:
+                return []
         if not isinstance(vouchers_raw, list):
             vouchers_raw = [vouchers_raw]
 
@@ -621,7 +672,8 @@ class FlowraSyncAgent:
         self.tally = TallyCollectionClient(
             url=TALLY_URL,
             company=COMPANY_NAME,
-            timeout=REQUEST_TIMEOUT
+            timeout=REQUEST_TIMEOUT,
+            debug_dir=self.export_dir
         )
 
         os.makedirs(self.export_dir, exist_ok=True)
