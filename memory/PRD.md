@@ -51,13 +51,26 @@ SaaS-based web application connecting to TallyPrime for inventory and sales repo
 - FY dropdown in navigation (April-March, Indian standard)
 - Last 5 FY options generated dynamically
 
-### Desktop Sync Agent (v3)
+### Desktop Sync Agent (v4 - Batch Mode)
 - Connects to local TallyPrime ODBC server
+- **Monthly batch fetching** for sales (prevents Tally from freezing)
+- Configurable sleep between batches (BATCH_SLEEP_SECONDS, default 3s)
 - Fetches stock items with groups (TDL collection, fallback to Stock Summary)
-- Fetches sales vouchers (structured VOUCHER export)
 - Fetches customer ledgers with groups
 - FY-based date filtering (FINANCIAL_YEAR env var)
-- Syncs to cloud/local backend every N minutes
+- Incremental sync via sync_state.json
+- **Real-time progress reporting** to cloud backend
+- **Optional local WebSocket server** for monitoring (ws://localhost:8765)
+- Auto-start scripts: `run_agent.bat`, `start_with_tally.bat`
+
+### WebSocket Real-Time Sync (NEW - Apr 2026)
+- **Backend WebSocket endpoint**: `/api/ws/sync-status`
+- **Progress endpoint**: `POST /api/agent/sync-progress`
+- **Frontend SyncStatusBar**: Live progress bar during sync (batch count, month, vouchers)
+- **SyncConnectionBadge**: "Live" (green) / "Offline" (gray) in navigation
+- Desktop agent reports progress as it fetches each monthly batch
+- Backend broadcasts progress to all connected WebSocket frontend clients
+- Supports events: sync_started, phase_start, sales_batch_progress, sync_complete, sync_error
 
 ### PDF/Excel Exports
 - FLOWRA logo on all PDF exports
@@ -76,7 +89,8 @@ SaaS-based web application connecting to TallyPrime for inventory and sales repo
 - GET /api/customers/outstanding
 - POST /api/customers/followups
 - POST /api/agent/sync
+- POST /api/agent/sync-progress (NEW)
+- WebSocket /api/ws/sync-status (NEW)
 
 ## Backlog
-- P2: Real-time WebSocket sync
 - P2: Multi-tenant support
