@@ -10,7 +10,7 @@ JWT_ALGORITHM = "HS256"
 
 
 def get_jwt_secret() -> str:
-    return os.environ["JWT_SECRET"]
+    return os.environ.get("JWT_SECRET", "flowra_default_jwt_secret_key_2026_change_in_production")
 
 
 def hash_password(password: str) -> str:
