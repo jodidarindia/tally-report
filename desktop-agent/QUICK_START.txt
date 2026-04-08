@@ -1,15 +1,16 @@
 ==========================================
-  TALLY DESKTOP SYNC AGENT - QUICK START
+  FLOWRA TALLY SYNC AGENT v4 - QUICK START
+  Non-Blocking Batch Sync + WebSocket
 ==========================================
 
-This agent syncs your local TallyPrime data to the cloud app every 10 minutes,
-enabling remote access from anywhere!
+This agent syncs your local TallyPrime data to the FLOWRA cloud app.
+v4 uses monthly batch fetching to prevent Tally from freezing.
 
 STEP 1: CONFIGURE TALLYPRIME
 -----------------------------
 1. Open TallyPrime
 2. Press F12 (Configure)
-3. Go to: Advanced Configuration → Connectivity
+3. Go to: Advanced Configuration > Connectivity
 4. Enable: "Use Tally as Server" on port 9000
 5. Save and restart Tally
 
@@ -25,54 +26,86 @@ STEP 3: INSTALL AGENT
 
 STEP 4: CONFIGURE AGENT
 ------------------------
-1. Copy .env.example to .env
-2. Edit .env with your settings:
-   - BACKEND_URL = your cloud app URL
-   - AGENT_API_KEY = generate secure key (see README.md)
+Create a .env file with your settings:
+
+  BACKEND_URL=https://your-flowra-app.com
+  FINANCIAL_YEAR=2025-26
+  TALLY_HOST=localhost
+  TALLY_PORT=9000
+  SYNC_INTERVAL_MINUTES=10
+  BATCH_SLEEP_SECONDS=3
+  ENABLE_WEBSOCKET=true
+  WEBSOCKET_PORT=8765
+  DEBUG_MODE=false
+
+Key settings:
+  - BATCH_SLEEP_SECONDS: Pause between monthly fetches (default: 3s).
+    Increase to 5-10 if Tally still lags.
+  - ENABLE_WEBSOCKET: Runs a local WebSocket server for monitoring.
+  - SYNC_INTERVAL_MINUTES: How often to sync (default: 10 min).
 
 STEP 5: RUN AGENT
 ------------------
 Double-click: run_agent.bat
 
-You should see:
-  ╔════════════════════════════════════════════╗
-  ║   TALLY DESKTOP SYNC AGENT STARTED        ║
-  ╚════════════════════════════════════════════╝
-  
-  ✓ Connected to TallyPrime successfully
-  ✓ Synced inventory items to backend
-  ✓ Synced sales vouchers to backend
-  
-  Agent running. Syncing every 10 minutes...
+Or from command line:
+  python tally_sync_agent.py
 
-STEP 6: VERIFY
+You should see:
+  =======================================================
+    FLOWRA TALLY SYNC AGENT v4 (Batch Mode)
+  =======================================================
+    Tally Server  : http://localhost:9000
+    Cloud Backend : https://your-app.com
+    Financial Year: 2025-26 (20250401 - 20260331)
+    Batch Sleep   : 3s between Tally requests
+  =======================================================
+
+  [OK] Connected to TallyPrime
+  Fetching sales in 12 monthly batches...
+    Batch 1/12: Apr 2025 - 23 vouchers
+    Sleeping 3s before next batch...
+    Batch 2/12: May 2025 - 45 vouchers
+    ...
+  Total: 1255 sales vouchers across 12 batches
+  [OK] Synced 1255 sales to backend
+
+STEP 6: AUTO-START WITH TALLY
+------------------------------
+Option A: Use the provided script
+  Double-click: start_with_tally.bat
+  (Edit the TALLY_PATH variable inside if needed)
+
+Option B: Windows Task Scheduler
+  1. Open Task Scheduler
+  2. Create Basic Task > "FLOWRA Sync Agent"
+  3. Trigger: "When a specific program starts" > tally.exe
+  4. Action: Start a program > python
+  5. Arguments: tally_sync_agent.py
+  6. Start in: (this folder path)
+
+STEP 7: VERIFY
 --------------
-Open your web app and check:
-- Connection status shows "Connected" (green)
-- Dashboard displays your Tally data
-- Auto-refresh is enabled
+Open your FLOWRA web app and check:
+- Dashboard shows "Live" badge (green) = WebSocket connected
+- Live sync progress bar appears during sync
+- Data refreshes automatically after sync completes
 
 TROUBLESHOOTING
 ---------------
-If you see errors:
+1. "Tally timed out" on some months
+   -> Increase BATCH_SLEEP_SECONDS to 5 or 10
+   -> The agent will skip failed months and continue
 
-1. "Cannot connect to TallyPrime"
-   → Ensure Tally is running
-   → Check port 9000 is accessible
+2. "Cannot connect to TallyPrime"
+   -> Ensure Tally is running with server mode on port 9000
 
-2. "Failed to sync to backend"
-   → Verify BACKEND_URL is correct
-   → Check internet connection
+3. "Failed to sync to backend"
+   -> Verify BACKEND_URL is correct
+   -> Check internet connection
 
-3. Still having issues?
-   → Read full guide: TALLY_SETUP_GUIDE.md
-   → Check logs: tally_sync_agent.log
+4. Check logs: tally_sync_agent.log
 
 ==========================================
-For detailed instructions, see:
-  - README.md (complete documentation)
-  - TALLY_SETUP_GUIDE.md (step-by-step guide)
-==========================================
-
 Support: Include tally_sync_agent.log when requesting help
 ==========================================

@@ -1,9 +1,10 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Response, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Response, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import json
 import logging
 from pathlib import Path
 from typing import Optional, List
@@ -53,6 +54,48 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# ---- WebSocket Connection Manager ----
+
+class SyncWebSocketManager:
+    """Manages WebSocket connections for real-time sync status updates."""
+
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.last_progress: dict = {}
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"WebSocket client connected ({len(self.active_connections)} total)")
+        # Send last known progress on connect
+        if self.last_progress:
+            try:
+                await websocket.send_json(self.last_progress)
+            except Exception:
+                pass
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"WebSocket client disconnected ({len(self.active_connections)} total)")
+
+    async def broadcast(self, message: dict):
+        self.last_progress = message
+        dead = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead.append(connection)
+        for conn in dead:
+            if conn in self.active_connections:
+                self.active_connections.remove(conn)
+
+
+ws_manager = SyncWebSocketManager()
+
 
 # Tally Connection Endpoints
 @api_router.post("/tally/connect")
@@ -487,6 +530,17 @@ async def receive_agent_sync(request: dict):
         sync_time = request.get('sync_time')
         
         logger.info(f"Received {data_type} sync from agent: {len(data)} items")
+
+        # Broadcast data arrival to WebSocket clients
+        await ws_manager.broadcast({
+            'event': 'data_synced',
+            'data': {
+                'data_type': data_type,
+                'count': len(data),
+                'sync_time': sync_time
+            },
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
         
         if data_type == 'inventory':
             # Clear existing and insert new inventory data
@@ -577,6 +631,65 @@ async def receive_agent_sync(request: dict):
     except Exception as e:
         logger.error(f"Error receiving agent sync: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@api_router.post("/agent/sync-progress")
+async def receive_sync_progress(request: dict):
+    """Receive real-time sync progress from desktop agent and broadcast to WebSocket clients."""
+    try:
+        event_type = request.get('type', 'unknown')
+        logger.info(f"Sync progress: {event_type} - {json.dumps({k: v for k, v in request.items() if k != 'type'}, default=str)[:200]}")
+
+        # Store latest progress in DB
+        await db.sync_status.update_one(
+            {'type': 'sync_progress'},
+            {'$set': {
+                'event': event_type,
+                'details': request,
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+
+        # Broadcast to all connected WebSocket clients
+        await ws_manager.broadcast({
+            'event': event_type,
+            'data': request,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+
+        return APIResponse(success=True, message="Progress received")
+    except Exception as e:
+        logger.error(f"Error receiving sync progress: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@api_router.websocket("/ws/sync-status")
+async def websocket_sync_status(websocket: WebSocket):
+    """WebSocket endpoint for real-time sync status updates."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive; handle incoming messages
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get('action') == 'get_status':
+                    sync_status = await db.sync_status.find_one({'type': 'agent_sync'}, {'_id': 0})
+                    progress = await db.sync_status.find_one({'type': 'sync_progress'}, {'_id': 0})
+                    await websocket.send_json({
+                        'event': 'status_response',
+                        'data': {
+                            'sync_status': sync_status,
+                            'last_progress': progress
+                        }
+                    })
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
 
 @api_router.get("/sync/status")
 async def get_sync_status():

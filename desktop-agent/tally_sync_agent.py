@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """
-Tally Desktop Sync Agent v3
-Fetches stock items with groups, customers with groups, and FY-based sales.
+FLOWRA Tally Sync Agent v4
+Non-blocking batch sync with WebSocket progress reporting.
+
+Key improvements over v3:
+- Monthly batch fetching for sales (prevents Tally from freezing)
+- Configurable sleep between batches to let Tally breathe
+- Real-time progress reporting to cloud backend via HTTP
+- Optional local WebSocket server for monitoring
 
 Setup:
-1. pip install requests xmltodict python-dotenv schedule
+1. pip install requests xmltodict python-dotenv schedule websockets
 2. Create .env:
-   BACKEND_URL=http://localhost:8001
+   BACKEND_URL=https://your-flowra-app.com
    FINANCIAL_YEAR=2025-26
    TALLY_HOST=localhost
    TALLY_PORT=9000
    SYNC_INTERVAL_MINUTES=10
+   BATCH_SLEEP_SECONDS=3
+   ENABLE_WEBSOCKET=true
+   WEBSOCKET_PORT=8765
    DEBUG_MODE=true
 3. Run: python tally_sync_agent.py
 """
@@ -22,12 +31,20 @@ import re
 import time
 import json
 import logging
+import asyncio
+import threading
 import requests
 import xmltodict
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Any, Optional
 import schedule
 from dotenv import load_dotenv
+
+try:
+    import websockets
+    HAS_WEBSOCKETS = True
+except ImportError:
+    HAS_WEBSOCKETS = False
 
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -55,20 +72,113 @@ def get_fy_dates(fy_str: str):
     return f"{start_year}0401", f"{end_year}0331"
 
 
+def get_monthly_ranges(fy_from: str, fy_to: str):
+    """Break FY date range into monthly chunks.
+    Returns list of (from_date, to_date, label) tuples in YYYYMMDD format."""
+    start = date(int(fy_from[:4]), int(fy_from[4:6]), int(fy_from[6:8]))
+    end = date(int(fy_to[:4]), int(fy_to[4:6]), int(fy_to[6:8]))
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    ranges = []
+    current = start
+    while current <= end:
+        if current.month == 12:
+            month_end = date(current.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            month_end = date(current.year, current.month + 1, 1) - timedelta(days=1)
+        if month_end > end:
+            month_end = end
+        label = f"{month_names[current.month - 1]} {current.year}"
+        ranges.append((current.strftime('%Y%m%d'), month_end.strftime('%Y%m%d'), label))
+        if current.month == 12:
+            current = date(current.year + 1, 1, 1)
+        else:
+            current = date(current.year, current.month + 1, 1)
+
+    return ranges
+
+
 SYNC_STATE_FILE = 'sync_state.json'
 
+
 def load_sync_state():
-    """Load last sync state from local file."""
     if os.path.exists(SYNC_STATE_FILE):
         with open(SYNC_STATE_FILE, 'r') as f:
             return json.load(f)
     return {}
 
+
 def save_sync_state(state):
-    """Save sync state to local file."""
     with open(SYNC_STATE_FILE, 'w') as f:
         json.dump(state, f, indent=2)
 
+
+# ---- WebSocket Server (optional, for local monitoring) ----
+
+class WebSocketServer:
+    """Local WebSocket server that broadcasts sync progress events."""
+
+    def __init__(self, port=8765):
+        self.port = port
+        self.clients = set()
+        self.loop = None
+        self.thread = None
+
+    def start(self):
+        if not HAS_WEBSOCKETS:
+            logger.warning("websockets package not installed. Local WebSocket disabled.")
+            logger.warning("Install with: pip install websockets")
+            return
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        logger.info(f"Local WebSocket server on ws://localhost:{self.port}")
+
+    def _run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self._serve())
+
+    async def _serve(self):
+        async with websockets.serve(self._handler, "0.0.0.0", self.port):
+            await asyncio.Future()
+
+    async def _handler(self, websocket, path=None):
+        self.clients.add(websocket)
+        logger.info(f"WebSocket client connected ({len(self.clients)} total)")
+        try:
+            async for message in websocket:
+                try:
+                    cmd = json.loads(message)
+                    if cmd.get('action') == 'status':
+                        await websocket.send(json.dumps({'type': 'status', 'clients': len(self.clients)}))
+                except Exception:
+                    pass
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            self.clients.discard(websocket)
+            logger.info(f"WebSocket client disconnected ({len(self.clients)} total)")
+
+    def broadcast(self, data: dict):
+        if not self.loop or not self.clients:
+            return
+        asyncio.run_coroutine_threadsafe(self._broadcast(data), self.loop)
+
+    async def _broadcast(self, data: dict):
+        if not self.clients:
+            return
+        message = json.dumps(data)
+        dead = set()
+        for client in self.clients:
+            try:
+                await client.send(message)
+            except Exception:
+                dead.add(client)
+        self.clients -= dead
+
+
+# ---- Main Sync Agent ----
 
 class TallySyncAgent:
 
@@ -82,20 +192,56 @@ class TallySyncAgent:
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
         self.financial_year = os.getenv('FINANCIAL_YEAR', '2025-26')
         self.fy_from, self.fy_to = get_fy_dates(self.financial_year)
+        self.batch_sleep = int(os.getenv('BATCH_SLEEP_SECONDS', '3'))
+        self.enable_ws = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
+        self.ws_port = int(os.getenv('WEBSOCKET_PORT', '8765'))
         self.last_sync_time = None
         self.sync_running = False
         self.company_name = None
+        self.ws_server = None
 
-        logger.info("Tally Sync Agent v3 initialized")
-        logger.info(f"  Tally: {self.tally_url}")
-        logger.info(f"  Backend: {self.backend_url}")
-        logger.info(f"  FY: {self.financial_year} ({self.fy_from} - {self.fy_to})")
-        logger.info(f"  Sync every {self.sync_interval} min | Debug: {self.debug_mode}")
+        logger.info("=" * 55)
+        logger.info("  FLOWRA TALLY SYNC AGENT v4 (Batch Mode)")
+        logger.info("=" * 55)
+        logger.info(f"  Tally Server  : {self.tally_url}")
+        logger.info(f"  Cloud Backend : {self.backend_url}")
+        logger.info(f"  Financial Year: {self.financial_year} ({self.fy_from} - {self.fy_to})")
+        logger.info(f"  Batch Sleep   : {self.batch_sleep}s between Tally requests")
+        logger.info(f"  Sync Interval : every {self.sync_interval} min")
+        logger.info(f"  WebSocket     : {'enabled' if self.enable_ws else 'disabled'}")
+        logger.info(f"  Debug Mode    : {self.debug_mode}")
+        logger.info("=" * 55)
+
+    # ---- Progress Reporting ----
+
+    def report_progress(self, event_type, **kwargs):
+        """Send sync progress to cloud backend and local WebSocket clients."""
+        progress = {
+            'type': event_type,
+            'timestamp': datetime.now().isoformat(),
+            'financial_year': self.financial_year,
+            'company_name': self.company_name or '',
+            **kwargs
+        }
+
+        # Local WebSocket broadcast
+        if self.ws_server:
+            self.ws_server.broadcast(progress)
+
+        # Cloud backend notification (fire-and-forget, don't block sync)
+        try:
+            requests.post(
+                f"{self.backend_url}/api/agent/sync-progress",
+                json=progress,
+                headers={'Content-Type': 'application/json', 'X-Agent-Key': self.api_key},
+                timeout=5
+            )
+        except Exception:
+            pass
 
     # ---- XML request builders ----
 
     def _stock_items_xml(self):
-        """TDL Collection request to fetch ALL stock items with group info."""
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
@@ -127,7 +273,6 @@ class TallySyncAgent:
 </ENVELOPE>"""
 
     def _stock_summary_xml(self):
-        """Fallback: Stock Summary report (fast, returns groups)."""
         return f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
@@ -140,9 +285,8 @@ class TallySyncAgent:
 </REQUESTDESC></EXPORTDATA></BODY>
 </ENVELOPE>"""
 
-    def _sales_vouchers_xml(self, from_date=None):
-        """Structured VOUCHER export. from_date overrides SVFROMDATE for incremental sync."""
-        start = from_date or self.fy_from
+    def _sales_vouchers_xml(self, from_date, to_date):
+        """Sales voucher XML for a specific date range (monthly batch)."""
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
@@ -154,8 +298,8 @@ class TallySyncAgent:
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{start}</SVFROMDATE>
-<SVTODATE>{self.fy_to}</SVTODATE>
+<SVFROMDATE>{from_date}</SVFROMDATE>
+<SVTODATE>{to_date}</SVTODATE>
 </STATICVARIABLES>
 <TDL><TDLMESSAGE>
 <COLLECTION NAME="SalesCollection" ISMODIFY="No">
@@ -171,7 +315,6 @@ $$IsSales:$VoucherTypeName
 </ENVELOPE>"""
 
     def _ledger_list_xml(self):
-        """Fetch all customer ledgers with parent group using TDL Collection."""
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
@@ -206,7 +349,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
     # ---- HTTP + XML helpers ----
 
-    def _send(self, xml_body, timeout=120):
+    def _send(self, xml_body, timeout=30):
         try:
             resp = requests.post(
                 self.tally_url,
@@ -269,7 +412,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         return qty, unit
 
     def _find_deep(self, d, key):
-        """Recursively find a key in nested dict/list."""
         if isinstance(d, dict):
             if key in d:
                 return d[key]
@@ -298,14 +440,13 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 logger.info("[OK] Connected to TallyPrime")
                 return True
             return False
-        except:
+        except Exception:
             logger.error("Cannot connect to TallyPrime")
             return False
 
     # ---- INVENTORY ----
 
     def fetch_inventory(self):
-        """Try TDL object export first, fallback to Stock Summary display format."""
         items = self._fetch_inventory_tdl()
         if items:
             return items
@@ -313,7 +454,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         return self._fetch_inventory_summary()
 
     def _fetch_inventory_tdl(self):
-        """Fetch stock items as TDL collection objects (30s timeout, fail fast)."""
         logger.info("Fetching stock items via TDL collection...")
         raw = self._send(self._stock_items_xml(), timeout=30)
         if not raw:
@@ -324,7 +464,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
         items = []
         try:
-            # Handle multi-envelope response (wrap in root)
             if raw.count('<ENVELOPE') > 1:
                 raw = f"<ROOT>{raw}</ROOT>"
                 data = xmltodict.parse(raw)
@@ -338,8 +477,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             for envelope in envelopes:
                 if not isinstance(envelope, dict):
                     continue
-
-                # Try: BODY > DATA > TALLYMESSAGE > STOCKITEM
                 stock_items = None
                 body = envelope.get('BODY', {})
                 if isinstance(body, dict):
@@ -359,18 +496,12 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                                             stock_items.extend(si)
                                         else:
                                             stock_items.append(si)
-
-                # Fallback: deep search
                 if not stock_items:
                     stock_items = self._find_deep(envelope, 'STOCKITEM')
-
-                # Also try COLLECTION format
                 if not stock_items:
                     stock_items = self._find_deep(envelope, 'COLLECTION')
-
                 if not stock_items:
                     continue
-
                 if not isinstance(stock_items, list):
                     stock_items = [stock_items]
 
@@ -383,7 +514,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     name = str(name).strip()
                     parent = str(si.get('PARENT', si.get('STOCKGROUP', 'General')) or 'General').strip()
                     category = str(si.get('CATEGORY', parent) or parent).strip()
-
                     cb = si.get('CLOSINGBALANCE', si.get('BASEUNITS', 0))
                     qty, unit = self._qty_unit(cb)
                     cr = si.get('CLOSINGRATE', si.get('RATE', 0))
@@ -392,7 +522,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     cv = self._num(si.get('CLOSINGVALUE', 0))
                     if rate == 0 and qty > 0 and cv > 0:
                         rate = round(cv / qty, 2)
-
                     items.append({
                         'item_id': name,
                         'item_name': name,
@@ -411,9 +540,8 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
         return items
 
     def _fetch_inventory_summary(self):
-        """Fallback: parse Stock Summary display format."""
         logger.info("Fetching Stock Summary report...")
-        raw = self._send(self._stock_summary_xml(), timeout=120)
+        raw = self._send(self._stock_summary_xml(), timeout=60)
         if not raw:
             return []
         self._dump('stock_summary', raw)
@@ -425,7 +553,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             envelope = data.get('ENVELOPE', {})
             if not isinstance(envelope, dict):
                 return []
-
             names_raw = envelope.get('DSPACCNAME', [])
             infos_raw = envelope.get('DSPSTKINFO', [])
             if isinstance(names_raw, dict):
@@ -439,19 +566,16 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 item_name = str(name_el.get('DSPDISPNAME', '')).strip()
                 if not item_name:
                     continue
-
                 stk_info = {}
                 if i < len(infos_raw) and isinstance(infos_raw[i], dict):
                     stk_cl = infos_raw[i].get('DSPSTKCL', {})
                     if isinstance(stk_cl, dict):
                         stk_info = stk_cl
-
                 qty, unit = self._qty_unit(stk_info.get('DSPCLQTY'))
                 rate = self._num(stk_info.get('DSPCLRATE'))
                 amount = self._num(stk_info.get('DSPCLAMTA'))
                 if rate == 0 and qty > 0 and amount > 0:
                     rate = round(amount / qty, 2)
-
                 items.append({
                     'item_id': item_name,
                     'item_name': item_name,
@@ -469,18 +593,88 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
         return items
 
-    # ---- SALES ----
+    # ---- SALES (MONTHLY BATCH) ----
 
-    def fetch_sales(self, from_date=None):
-        logger.info("Fetching Sales Vouchers...")
-        raw = self._send(self._sales_vouchers_xml(from_date=from_date), timeout=180)
-        if not raw:
+    def fetch_sales_batched(self, incremental_from=None):
+        """Fetch sales vouchers in monthly batches to avoid overwhelming Tally.
+        If incremental_from is set (YYYYMMDD), only fetch from that date onward."""
+        monthly_ranges = get_monthly_ranges(self.fy_from, self.fy_to)
+
+        # For incremental sync, skip months before the incremental_from date
+        if incremental_from:
+            monthly_ranges = [
+                (f, t, label) for f, t, label in monthly_ranges
+                if t >= incremental_from
+            ]
+            # Adjust the first batch's start date
+            if monthly_ranges:
+                f, t, label = monthly_ranges[0]
+                if f < incremental_from:
+                    monthly_ranges[0] = (incremental_from, t, label)
+
+        total_months = len(monthly_ranges)
+        if total_months == 0:
+            logger.info("No date ranges to fetch for sales")
             return []
-        self._dump('sales_vouchers', raw)
-        raw = self._sanitize(raw)
-        logger.info(f"Sales response: {len(raw)} chars")
-        vouchers = []
 
+        logger.info(f"Fetching sales in {total_months} monthly batches...")
+        self.report_progress('sales_batch_start', total_batches=total_months)
+
+        all_vouchers = []
+        failed_months = []
+
+        for idx, (from_date, to_date, label) in enumerate(monthly_ranges):
+            batch_num = idx + 1
+            logger.info(f"  Batch {batch_num}/{total_months}: {label} ({from_date} - {to_date})")
+
+            self.report_progress(
+                'sales_batch_progress',
+                batch=batch_num,
+                total_batches=total_months,
+                month=label,
+                from_date=from_date,
+                to_date=to_date,
+                vouchers_so_far=len(all_vouchers)
+            )
+
+            raw = self._send(self._sales_vouchers_xml(from_date, to_date), timeout=45)
+            if not raw:
+                logger.warning(f"  Batch {batch_num} failed (timeout or no response) - skipping {label}")
+                failed_months.append(label)
+                # Still sleep before next request
+                if batch_num < total_months:
+                    logger.info(f"  Sleeping {self.batch_sleep}s before next batch...")
+                    time.sleep(self.batch_sleep)
+                continue
+
+            self._dump(f'sales_{from_date}_{to_date}', raw)
+            raw = self._sanitize(raw)
+            batch_vouchers = self._parse_sales_xml(raw)
+            logger.info(f"  Batch {batch_num}: {len(batch_vouchers)} vouchers from {label}")
+            all_vouchers.extend(batch_vouchers)
+
+            # Sleep between batches to let Tally breathe
+            if batch_num < total_months:
+                logger.info(f"  Sleeping {self.batch_sleep}s before next batch...")
+                time.sleep(self.batch_sleep)
+
+        if failed_months:
+            logger.warning(f"Failed months: {', '.join(failed_months)}")
+            self.report_progress('sales_batch_warning', failed_months=failed_months)
+
+        logger.info(f"Total: {len(all_vouchers)} sales vouchers across {total_months} batches")
+        self.report_progress(
+            'sales_batch_complete',
+            total_vouchers=len(all_vouchers),
+            total_batches=total_months,
+            failed_batches=len(failed_months)
+        )
+
+        return all_vouchers
+
+    def _parse_sales_xml(self, raw):
+        """Parse sales voucher XML into list of voucher dicts."""
+        vouchers = []
         try:
             data = xmltodict.parse(raw)
             envelope = data.get('ENVELOPE', {})
@@ -492,7 +686,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     sv = desc.get('STATICVARIABLES', {})
                     if isinstance(sv, dict) and sv.get('SVCURRENTCOMPANY'):
                         self.company_name = str(sv['SVCURRENTCOMPANY'])
-                        logger.info(f"Company: {self.company_name}")
 
             data_section = body.get('DATA', {}) if isinstance(body, dict) else {}
             tally_msgs = data_section.get('TALLYMESSAGE', []) if isinstance(data_section, dict) else []
@@ -510,17 +703,14 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     parsed = self._parse_voucher(v)
                     if parsed:
                         vouchers.append(parsed)
-
-            logger.info(f"Parsed {len(vouchers)} sales vouchers")
         except Exception as e:
-            logger.error(f"Error parsing sales: {e}")
+            logger.error(f"Error parsing sales batch: {e}")
 
         return vouchers
 
     def _parse_voucher(self, v):
         if not isinstance(v, dict):
             return None
-
         v_number = v.get('VOUCHERNUMBER') or v.get('NUMBER') or v.get('@REMOTEID', '')[:20] or f"V-{id(v)}"
         raw_date = v.get('DATE', '')
         if raw_date and len(str(raw_date)) == 8 and str(raw_date).isdigit():
@@ -588,7 +778,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
     # ---- CUSTOMERS ----
 
     def fetch_customers(self):
-        """Fetch customer ledgers with groups via TDL, fallback to extracting from sales."""
         customers = self._fetch_ledgers_tdl()
         if customers:
             return customers
@@ -597,7 +786,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
     def _fetch_ledgers_tdl(self):
         logger.info("Fetching customer ledgers via TDL...")
-        raw = self._send(self._ledger_list_xml(), timeout=120)
+        raw = self._send(self._ledger_list_xml(), timeout=30)
         if not raw:
             return []
         self._dump('customer_ledgers', raw)
@@ -623,7 +812,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     continue
                 if not isinstance(ledgers, list):
                     ledgers = [ledgers]
-
                 for l in ledgers:
                     if not isinstance(l, dict):
                         continue
@@ -635,7 +823,6 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                     phone = str(l.get('LEDGERPHONE', '') or '').strip()
                     contact = str(l.get('LEDGERCONTACT', '') or '').strip()
                     state = str(l.get('LEDSTATENAME', '') or '').strip()
-
                     customers.append({
                         'customer_name': name,
                         'ledger_group': parent,
@@ -672,7 +859,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             seen[key]['transaction_count'] += 1
         return list(seen.values())
 
-    # ---- SYNC ----
+    # ---- SYNC TO BACKEND ----
 
     def sync_to_backend(self, data_type, data):
         if not data:
@@ -683,7 +870,7 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '3.0.0',
+                'agent_version': '4.0.0',
                 'company_name': self.company_name or '',
                 'financial_year': self.financial_year
             }
@@ -703,8 +890,11 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             logger.error(f"Sync error ({data_type}): {e}")
             return False
 
+    # ---- MAIN SYNC CYCLE ----
+
     def run_sync_cycle(self):
         if self.sync_running:
+            logger.info("Sync already in progress, skipping...")
             return
         try:
             self.sync_running = True
@@ -712,41 +902,61 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
             is_first_sync = not state.get('full_sync_done')
             last_sales_date = state.get('last_sales_date')
 
+            logger.info("")
+            logger.info("=" * 55)
             if is_first_sync:
-                logger.info("=" * 50)
-                logger.info("FIRST RUN - Full sync...")
+                logger.info("FIRST RUN - Full batch sync...")
             else:
-                logger.info("=" * 50)
                 logger.info(f"Incremental sync (changes since {last_sales_date})...")
+            logger.info("=" * 55)
+
+            self.report_progress(
+                'sync_started',
+                is_first_sync=is_first_sync,
+                last_sales_date=last_sales_date
+            )
 
             if not self.test_connection():
+                self.report_progress('sync_error', error='Cannot connect to TallyPrime')
                 return
 
-            # Inventory: always refresh (it's fast ~1 second)
+            # --- Inventory (fast, single request) ---
             logger.info("--- Inventory ---")
+            self.report_progress('phase_start', phase='inventory')
             inventory = self.fetch_inventory()
             if inventory:
                 self.sync_to_backend('inventory', inventory)
+                self.report_progress('phase_complete', phase='inventory', count=len(inventory))
             else:
                 logger.warning("No inventory data fetched")
+                self.report_progress('phase_warning', phase='inventory', message='No data')
 
-            # Sales: full on first run, incremental after
-            logger.info("--- Sales ---")
-            sales_from_date = None
+            # Brief pause between data types
+            time.sleep(self.batch_sleep)
+
+            # --- Sales (monthly batches) ---
+            logger.info("--- Sales (Batch Mode) ---")
+            self.report_progress('phase_start', phase='sales')
+
+            incremental_from = None
             if not is_first_sync and last_sales_date:
-                sales_from_date = last_sales_date.replace('-', '')
-                logger.info(f"Fetching sales from {last_sales_date} onwards...")
+                incremental_from = last_sales_date.replace('-', '')
+                logger.info(f"Incremental: fetching from {last_sales_date} onwards...")
 
-            sales = self.fetch_sales(from_date=sales_from_date)
+            sales = self.fetch_sales_batched(incremental_from=incremental_from)
             if sales:
                 self.sync_to_backend('sales', sales)
+                self.report_progress('phase_complete', phase='sales', count=len(sales))
 
-                # Track latest voucher date for next incremental
                 latest_date = max(v.get('voucher_date', '') for v in sales)
                 state['last_sales_date'] = latest_date
 
-                # Customers: extract from sales
+                # Brief pause before customers
+                time.sleep(self.batch_sleep)
+
+                # --- Customers ---
                 logger.info("--- Customers ---")
+                self.report_progress('phase_start', phase='customers')
                 customers = self.fetch_customers()
                 sales_customers = self.extract_customers_from_sales(sales)
                 cust_map = {c['customer_name'].lower(): c for c in customers}
@@ -759,8 +969,10 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
                         customers.append(sc)
                 if customers:
                     self.sync_to_backend('customers', customers)
+                    self.report_progress('phase_complete', phase='customers', count=len(customers))
             elif is_first_sync:
-                logger.warning("No sales data fetched")
+                logger.warning("No sales data fetched on first sync")
+                self.report_progress('phase_warning', phase='sales', message='No data on first sync')
 
             state['full_sync_done'] = True
             state['last_sync_time'] = datetime.now().isoformat()
@@ -768,26 +980,35 @@ $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 
             self.last_sync_time = datetime.now()
             logger.info(f"[OK] Sync completed at {self.last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            logger.info("=" * 50)
+            logger.info("=" * 55)
+
+            self.report_progress(
+                'sync_complete',
+                inventory_count=len(inventory) if inventory else 0,
+                sales_count=len(sales) if sales else 0,
+                customer_count=len(customers) if 'customers' in dir() else 0
+            )
+
         except Exception as e:
             logger.error(f"Sync cycle error: {e}")
+            self.report_progress('sync_error', error=str(e))
         finally:
             self.sync_running = False
 
     def start(self):
-        logger.info("")
-        logger.info("=" * 50)
-        logger.info("  FLOWRA TALLY SYNC AGENT v3")
-        logger.info(f"  Financial Year: {self.financial_year}")
-        logger.info("=" * 50)
+        # Start local WebSocket server if enabled
+        if self.enable_ws:
+            self.ws_server = WebSocketServer(port=self.ws_port)
+            self.ws_server.start()
 
         state = load_sync_state()
         if state.get('full_sync_done'):
             logger.info(f"Previous sync found. Last: {state.get('last_sync_time', 'unknown')}")
             logger.info("Will do incremental sync (new data only)")
         else:
-            logger.info("First run - will do full sync")
+            logger.info("First run - will do full batch sync")
 
+        logger.info("")
         self.run_sync_cycle()
         schedule.every(self.sync_interval).minutes.do(self.run_sync_cycle)
         logger.info(f"Scheduled: every {self.sync_interval} min. Ctrl+C to stop.")

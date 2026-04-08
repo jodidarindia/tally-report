@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Package, TrendingUp, AlertCircle, Activity, RefreshCw, Bell, Calendar, Clock } from 'lucide-react';
+import { useSyncWebSocket } from '../hooks/useSyncWebSocket';
+import SyncStatusBar from '../components/SyncStatusBar';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -12,6 +14,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const { isConnected: wsConnected, syncProgress } = useSyncWebSocket();
 
   useEffect(() => {
     fetchData();
@@ -126,6 +129,13 @@ const Dashboard = () => {
           </button>
         </div>
       </div>
+
+      {/* Live Sync Status Bar */}
+      {(syncProgress?.isSyncing || syncProgress?.phase) && (
+        <div className="mb-6" data-testid="live-sync-status">
+          <SyncStatusBar wsConnected={wsConnected} syncProgress={syncProgress} />
+        </div>
+      )}
 
       {/* Follow-up Reminders Banner */}
       {hasReminders && (

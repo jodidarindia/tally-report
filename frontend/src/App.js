@@ -6,6 +6,9 @@ import { toast } from 'sonner';
 import '@/App.css';
 import '@/index.css';
 
+import { useSyncWebSocket } from './hooks/useSyncWebSocket';
+import { SyncConnectionBadge } from './components/SyncStatusBar';
+
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -198,6 +201,7 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
   const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const location = useLocation();
+  const { isConnected: wsConnected } = useSyncWebSocket();
 
   useEffect(() => {
     const check = async () => {
@@ -264,6 +268,7 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
                 <span className={`w-2 h-2 rounded-full mr-1.5 ${isConnected ? 'bg-blue-600' : 'bg-red-600'}`} />
                 {isConnected ? 'Synced' : 'Not Synced'}
               </div>
+              <SyncConnectionBadge wsConnected={wsConnected} />
               <div className="relative ml-2 pl-2 border-l border-slate-200">
                 <button onClick={() => setShowUserMenu(!showUserMenu)}
                   className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
