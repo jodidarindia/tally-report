@@ -80,13 +80,13 @@ class TallySyncAgent:
     # ---- XML request builders ----
 
     def _stock_items_xml(self):
-        """TDL request to fetch ALL stock items as objects with group info."""
+        """TDL Collection request to fetch ALL stock items with group info."""
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Data</TYPE>
-<ID>StockItemsList</ID>
+<TYPE>Collection</TYPE>
+<ID>StockItemColl</ID>
 </HEADER>
 <BODY><DESC>
 <STATICVARIABLES>
@@ -95,7 +95,7 @@ class TallySyncAgent:
 <SVTODATE>{self.fy_to}</SVTODATE>
 </STATICVARIABLES>
 <TDL><TDLMESSAGE>
-<COLLECTION NAME="StockItemsList" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
+<COLLECTION NAME="StockItemColl" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
 <TYPE>Stock Item</TYPE>
 <NATIVEMETHOD>Name</NATIVEMETHOD>
 <NATIVEMETHOD>Parent</NATIVEMETHOD>
@@ -112,13 +112,14 @@ class TallySyncAgent:
 </ENVELOPE>"""
 
     def _stock_summary_xml(self):
-        """Fallback: Stock Summary report (display format)."""
+        """Fallback: Stock Summary report with EXPLODEFLAG to get individual items."""
         return f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Stock Summary</REPORTNAME>
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{self.fy_from}</SVFROMDATE>
 <SVTODATE>{self.fy_to}</SVTODATE>
 </STATICVARIABLES>
@@ -155,13 +156,13 @@ $$IsSales:$VoucherTypeName
 </ENVELOPE>"""
 
     def _ledger_list_xml(self):
-        """Fetch all ledgers as objects with parent group."""
+        """Fetch all customer ledgers with parent group using TDL Collection."""
         return f"""<ENVELOPE>
 <HEADER>
 <VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Data</TYPE>
-<ID>CustomerLedgers</ID>
+<TYPE>Collection</TYPE>
+<ID>CustLedgerColl</ID>
 </HEADER>
 <BODY><DESC>
 <STATICVARIABLES>
@@ -170,7 +171,7 @@ $$IsSales:$VoucherTypeName
 <SVTODATE>{self.fy_to}</SVTODATE>
 </STATICVARIABLES>
 <TDL><TDLMESSAGE>
-<COLLECTION NAME="CustomerLedgers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
+<COLLECTION NAME="CustLedgerColl" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
 <TYPE>Ledger</TYPE>
 <NATIVEMETHOD>Name</NATIVEMETHOD>
 <NATIVEMETHOD>Parent</NATIVEMETHOD>
@@ -179,10 +180,10 @@ $$IsSales:$VoucherTypeName
 <NATIVEMETHOD>LedStateName</NATIVEMETHOD>
 <NATIVEMETHOD>LedgerPhone</NATIVEMETHOD>
 <NATIVEMETHOD>LedgerContact</NATIVEMETHOD>
-<FILTER>CustomerGroupFilter</FILTER>
+<FILTER>CustGroupFilter</FILTER>
 </COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="CustomerGroupFilter">
-$$IsSundryDebtor:$Parent OR $$IsSundryCreditor:$Parent OR $Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
+<SYSTEM TYPE="Formulae" NAME="CustGroupFilter">
+$Parent = "Sundry Debtors" OR $Parent = "Sundry Creditors"
 </SYSTEM>
 </TDLMESSAGE></TDL>
 </DESC></BODY>
