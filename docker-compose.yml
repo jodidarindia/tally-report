@@ -1,18 +1,18 @@
 services:
   mongodb:
     image: mongo:7
-    container_name: tally-mongodb
+    container_name: flowra-mongodb
     restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
     networks:
-      - tally-network
+      - flowra-network
 
   backend:
     build: ./backend
-    container_name: tally-backend
+    container_name: flowra-backend
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -20,31 +20,30 @@ services:
       - MONGO_URL=mongodb://mongodb:27017
       - DB_NAME=tally_reports
       - CORS_ORIGINS=*
+      - JWT_SECRET=${JWT_SECRET:-flowra_secret_key_change_me}
       - EMERGENT_LLM_KEY=${EMERGENT_LLM_KEY}
-      - RESEND_API_KEY=${RESEND_API_KEY:-re_placeholder}
-      - SENDER_EMAIL=${SENDER_EMAIL:-onboarding@resend.dev}
     depends_on:
       - mongodb
     networks:
-      - tally-network
+      - flowra-network
 
   frontend:
     build:
       context: ./frontend
       args:
         REACT_APP_BACKEND_URL: ${APP_URL:-http://localhost}
-    container_name: tally-frontend
+    container_name: flowra-frontend
     restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
       - backend
     networks:
-      - tally-network
+      - flowra-network
 
 volumes:
   mongo_data:
 
 networks:
-  tally-network:
+  flowra-network:
     driver: bridge
