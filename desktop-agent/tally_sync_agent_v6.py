@@ -73,7 +73,7 @@ EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', r'C:\FlowraExport')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
 API_KEY = os.getenv('AGENT_API_KEY', '')
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
-SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '5'))
+SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
 DEBUG_MODE = os.getenv('DEBUG_MODE', 'false').lower() == 'true'

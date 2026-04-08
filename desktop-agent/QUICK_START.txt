@@ -66,23 +66,34 @@ WHAT'S NEW IN v6:
      Or double-click: run_agent.bat
 
 ============================================
- STEP 4: AUTOMATE (OPTIONAL)
+ STEP 4: AUTOMATE EVERY 20 MINUTES
 ============================================
 
-  Option A: File Watcher (Recommended)
-    The agent automatically detects when Tally writes new export files
-    and syncs immediately. Just keep the agent running.
+  The recommended setup runs exports automatically every 20 minutes.
 
-  Option B: Windows Task Scheduler
-    1. Open Task Scheduler (taskschd.msc)
-    2. Create Basic Task: "FLOWRA Tally Export"
-    3. Trigger: Every 30 minutes (or your preferred interval)
-    4. Action: Start a program > Browse to schedule_export.bat
-    5. The agent picks up new files automatically
+  Windows Task Scheduler Setup:
+    1. Press Win+R, type "taskschd.msc", Enter
+    2. Click "Create Basic Task" on the right panel
+    3. Name: "FLOWRA Auto Export"
+    4. Trigger: Daily
+       - Start time: when you start work (e.g., 9:00 AM)
+       - Click "Repeat task every: 20 minutes" for "1 day"
+    5. Action: Start a program
+       - Browse to: schedule_export.bat (in this folder)
+    6. Finish, then check "Open Properties dialog"
+       - Check "Run whether user is logged on or not"
+       - OK
 
-  Option C: Manual
-    In Tally, press 'F' on Gateway whenever you want to export.
-    The agent syncs within seconds.
+  That's it! Every 20 minutes, Task Scheduler tells Tally to export,
+  and the sync agent picks up the new files automatically.
+
+  FILE BEHAVIOR:
+    - Same files are OVERWRITTEN every export (not new files)
+    - stock_items.xml, sales_vouchers.xml, etc. are updated in-place
+    - The agent detects changes via file timestamp
+    - Only changed data gets synced to cloud
+
+  You can also manually export anytime by pressing 'F' in Tally Gateway.
 
 ============================================
  HOW IT WORKS
