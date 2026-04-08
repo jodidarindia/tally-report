@@ -1,141 +1,114 @@
 ============================================
  FLOWRA Desktop Sync Agent v6 — QUICK START
- (File-Based — Zero Tally Freeze)
+ Lightweight Collection Requests (No Freeze)
 ============================================
 
-WHAT'S NEW IN v6:
-  Instead of making HTTP requests to Tally (which freezes the UI),
-  Tally now exports data to files on disk. The agent reads those files
-  and syncs to your FLOWRA cloud dashboard.
+WHY IT WON'T FREEZE TALLY:
+  Previous versions used heavy Day Book / Report requests that locked
+  Tally's UI for 30-120 seconds.
 
-  Result: ZERO freezing of Tally. You can work normally while sync runs.
-
-============================================
- STEP 1: LOAD THE TDL IN TALLYPRIME
-============================================
-
-  1. Copy "flowra_export.tdl" to your TallyPrime folder
-     (e.g., C:\TallyPrime\flowra_export.tdl)
-
-  2. Open TallyPrime
-
-  3. Go to: Gateway > F1 (Help) > TDL & Add-On > F4 (Manage Local TDLs)
-
-  4. Add the full path: C:\TallyPrime\flowra_export.tdl
-     Set it to "Yes" (Active)
-
-  5. Press Ctrl+A to save, then restart TallyPrime
-
-  6. You should now see "FLOWRA Auto Export" option on the Gateway menu
-     (Press 'F' to trigger it)
+  v6 uses lightweight COLLECTION requests:
+    - Stock Items    → 1-2 sec (master data only)
+    - Customer Ledgers → 1-2 sec (just balances)
+    - Sales per month → 2-5 sec each
+    - Receipts per month → 2-5 sec each
+  
+  Each request: 1-5 seconds with 2-second gaps.
+  Tally stays fully responsive.
 
 ============================================
- STEP 2: RUN THE FIRST EXPORT
+ STEP 1: PREREQUISITES
 ============================================
 
-  1. In TallyPrime Gateway, press 'F' (or click "FLOWRA Auto Export")
+  1. TallyPrime must be running with ODBC port enabled:
+     Gateway > F12 (Configure) > Connectivity:
+       - "Enable ODBC Server" → Yes (port 9000)
 
-  2. Tally will silently export data to: C:\FlowraExport\
-     You'll see these files:
-       - stock_items.xml      (Inventory)
-       - sales_vouchers.xml   (Sales)
-       - receipt_vouchers.xml  (Receipts/Payments)
-       - customers.xml        (Customer Ledgers)
-       - _export_complete.txt  (Completion marker)
-
-  3. This export runs in the background — Tally stays responsive!
-
-============================================
- STEP 3: SETUP THE SYNC AGENT
-============================================
-
-  1. Install Python 3.8+ from https://python.org
+  2. Install Python 3.8+ from https://python.org
      (Check "Add to PATH" during installation)
 
-  2. Open Command Prompt in this folder
-
-  3. Install dependencies:
-     pip install requests xmltodict python-dotenv schedule watchdog websockets
-
-  4. Copy .env.example to .env and edit:
-     - BACKEND_URL = your FLOWRA cloud URL (e.g., https://your-app.com)
-     - FINANCIAL_YEAR = your FY (e.g., 2025-26)
-     - TALLY_EXPORT_DIR = C:\FlowraExport (default, change if needed)
-
-  5. Run: python tally_sync_agent_v6.py
-     Or double-click: run_agent.bat
-
 ============================================
- STEP 4: AUTOMATE EVERY 20 MINUTES
+ STEP 2: CONFIGURE
 ============================================
 
-  The recommended setup runs exports automatically every 20 minutes.
+  1. Open Command Prompt in this folder
 
-  Windows Task Scheduler Setup:
-    1. Press Win+R, type "taskschd.msc", Enter
-    2. Click "Create Basic Task" on the right panel
-    3. Name: "FLOWRA Auto Export"
-    4. Trigger: Daily
-       - Start time: when you start work (e.g., 9:00 AM)
-       - Click "Repeat task every: 20 minutes" for "1 day"
-    5. Action: Start a program
-       - Browse to: schedule_export.bat (in this folder)
-    6. Finish, then check "Open Properties dialog"
-       - Check "Run whether user is logged on or not"
-       - OK
+  2. Copy the config template:
+     copy .env.example .env
 
-  That's it! Every 20 minutes, Task Scheduler tells Tally to export,
-  and the sync agent picks up the new files automatically.
+  3. Edit .env with Notepad:
+     BACKEND_URL=https://tally-report-ai.preview.emergentagent.com
+     FINANCIAL_YEAR=2025-26
+     TALLY_HOST=localhost
+     TALLY_PORT=9000
+     TALLY_COMPANY=           (leave empty for auto-detect)
+     SYNC_INTERVAL_MINUTES=20
 
-  FILE BEHAVIOR:
-    - Same files are OVERWRITTEN every export (not new files)
-    - stock_items.xml, sales_vouchers.xml, etc. are updated in-place
-    - The agent detects changes via file timestamp
-    - Only changed data gets synced to cloud
+============================================
+ STEP 3: RUN
+============================================
 
-  You can also manually export anytime by pressing 'F' in Tally Gateway.
+  Option A: Double-click run_agent.bat
+
+  Option B: Command line:
+     pip install -r requirements.txt
+     python tally_sync_agent_v6.py
+
+  You'll see:
+     FLOWRA TALLY SYNC AGENT v6
+     Tally company: Your Company Name
+     --- Phase 1: Stock Items ---
+       Got 150 stock items
+       [OK] Synced 150 inventory to cloud
+     --- Phase 2: Sales Vouchers ---
+       Requesting sales: 01-Apr-2025 to 30-Apr-2025
+       ...
+     [DONE] Sync completed
 
 ============================================
  HOW IT WORKS
 ============================================
 
-  [TallyPrime] --TDL Export--> [C:\FlowraExport\*.xml]
-                                        |
-  [Sync Agent] --reads files--> [Parse XML]
-                                        |
-  [Cloud Backend] <--HTTP POST-- [Sync data]
-                                        |
-  [Dashboard] <--WebSocket-- [Live updates]
+  Every 20 minutes:
 
-  Zero HTTP requests to Tally = Zero freezing!
+  [Agent] --(Collection request, 1-5 sec)--> [Tally Port 9000]
+     ↓
+  [Parse XML response]
+     ↓
+  [Save to local JSON cache]
+     ↓
+  [POST to cloud backend]
+     ↓
+  [Dashboard updated via WebSocket]
+
+  Each request is small and fast.
+  2-second gap between requests.
+  Tally stays responsive throughout.
+
+============================================
+ FILES
+============================================
+
+  tally_sync_agent_v6.py  - Sync agent (this version)
+  tally_sync_agent.py     - Old HTTP agent (v5, backup)
+  run_agent.bat           - Double-click to start
+  .env.example            - Config template
+  requirements.txt        - Python dependencies
+  export_cache/           - Local JSON cache (auto-created)
+  QUICK_START.txt         - This file
 
 ============================================
  TROUBLESHOOTING
 ============================================
 
-  Q: "Export directory not found"
-  A: Run the export from Tally first (press 'F' on Gateway).
-     Or manually create C:\FlowraExport\
+  "Cannot connect to Tally"
+  → Is TallyPrime running? Is port 9000 enabled?
+  → Check: Gateway > F12 > Connectivity > Enable ODBC Server = Yes
 
-  Q: "No new data to sync"
-  A: The agent only syncs when files change. Run export in Tally again.
+  "Tally request timed out"
+  → Increase REQUEST_TIMEOUT in .env (default: 15 sec)
+  → Try: REQUEST_TIMEOUT=30
 
-  Q: "TDL not loading"
-  A: Make sure the path in Manage Local TDLs is correct and set to "Yes".
-     Restart TallyPrime after adding the TDL.
-
-  Q: "Can I use both v5 (HTTP) and v6 (file-based)?"
-  A: Yes! v5 (tally_sync_agent.py) still works if you prefer HTTP mode.
-     v6 (tally_sync_agent_v6.py) is recommended for zero-freeze operation.
-
-============================================
- FILES IN THIS FOLDER
-============================================
-
-  flowra_export.tdl       - TDL file to load in TallyPrime
-  tally_sync_agent_v6.py  - New file-based sync agent (recommended)
-  tally_sync_agent.py     - Old HTTP-based agent (v5, still works)
-  run_agent.bat           - Double-click to start v6 agent
-  schedule_export.bat     - For Windows Task Scheduler automation
-  .env.example            - Configuration template
-  QUICK_START.txt         - This file
+  "No stock items / vouchers found"
+  → Check FINANCIAL_YEAR matches your Tally company FY
+  → Check TALLY_COMPANY matches exactly (or leave empty)

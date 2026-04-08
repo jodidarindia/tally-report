@@ -1,7 +1,8 @@
 @echo off
-title FLOWRA Sync Agent v6 (File-Based)
+title FLOWRA Sync Agent v6 (Lightweight Collections)
 echo =============================================
-echo   FLOWRA Tally Sync Agent v6 - Zero Freeze
+echo   FLOWRA Tally Sync Agent v6
+echo   Lightweight Collection Requests - No Freeze
 echo =============================================
 echo.
 
@@ -16,7 +17,7 @@ if %errorlevel% neq 0 (
 
 REM Install dependencies
 echo Installing dependencies...
-pip install requests xmltodict python-dotenv schedule watchdog websockets -q
+pip install requests xmltodict python-dotenv schedule websockets -q
 
 REM Check .env
 if not exist .env (
@@ -26,12 +27,9 @@ if not exist .env (
     exit /b 1
 )
 
-REM Create export directory
-if not exist "C:\FlowraExport" mkdir "C:\FlowraExport"
-
 echo.
-echo Starting FLOWRA File-Based Sync Agent...
-echo (Reads exported files from C:\FlowraExport)
+echo Starting FLOWRA Sync Agent...
+echo (Uses lightweight collection requests - Tally stays responsive)
 echo.
 python tally_sync_agent_v6.py
 pause
