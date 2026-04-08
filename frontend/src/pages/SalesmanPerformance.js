@@ -277,7 +277,7 @@ const SalesmanPerformance = ({ selectedFY }) => {
       {/* Item-wise Sales Tab */}
       {activeTab === 'items' && (
         <div className="space-y-4">
-          {performance.map((person, idx) => (
+          {performance.length > 0 ? performance.map((person, idx) => (
             <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <button
                 onClick={() => setExpandedSalesman(expandedSalesman === idx ? null : idx)}
@@ -286,11 +286,13 @@ const SalesmanPerformance = ({ selectedFY }) => {
               >
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 bg-[#2563EB] rounded-full flex items-center justify-center text-white font-bold">
-                    {person.salesman_name.charAt(0)}
+                    {(person.salesman_name || '?').charAt(0)}
                   </div>
                   <div className="text-left">
-                    <div className="font-semibold text-slate-900">{person.salesman_name}</div>
-                    <div className="text-sm text-slate-500">{person.items_sold?.length || 0} items sold | Rs.{person.achieved_amount.toLocaleString('en-IN')} total</div>
+                    <div className="font-semibold text-slate-900">{person.salesman_name || 'Unknown'}</div>
+                    <div className="text-sm text-slate-500">
+                      {(person.items_sold || []).length} items sold | Rs.{(person.achieved_amount || 0).toLocaleString('en-IN')} total
+                    </div>
                   </div>
                 </div>
                 {expandedSalesman === idx ? <ChevronUp size={20} className="text-slate-400" /> : <ChevronDown size={20} className="text-slate-400" />}
@@ -310,17 +312,16 @@ const SalesmanPerformance = ({ selectedFY }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {(person.items_sold || []).map((item, itemIdx) => (
+                        {(person.items_sold || []).length > 0 ? (person.items_sold || []).map((item, itemIdx) => (
                           <tr key={itemIdx}>
-                            <td className="font-medium text-slate-900">{item.item_name}</td>
-                            <td className="numeric font-semibold">{item.total_quantity}</td>
-                            <td className="numeric text-[#2563EB] font-semibold">Rs.{item.total_revenue.toLocaleString('en-IN')}</td>
-                            <td className="numeric">{item.transaction_count}</td>
-                            <td className="numeric">{(item.total_quantity / item.transaction_count).toFixed(1)}</td>
+                            <td className="font-medium text-slate-900">{item.item_name || '-'}</td>
+                            <td className="numeric font-semibold">{(item.total_quantity || 0).toFixed(1)}</td>
+                            <td className="numeric text-[#2563EB] font-semibold">Rs.{(item.total_revenue || 0).toLocaleString('en-IN')}</td>
+                            <td className="numeric">{item.transaction_count || 0}</td>
+                            <td className="numeric">{item.transaction_count > 0 ? ((item.total_quantity || 0) / item.transaction_count).toFixed(1) : '0'}</td>
                           </tr>
-                        ))}
-                        {(!person.items_sold || person.items_sold.length === 0) && (
-                          <tr><td colSpan="5" className="text-center py-4 text-slate-500">No items sold</td></tr>
+                        )) : (
+                          <tr><td colSpan="5" className="text-center py-4 text-slate-500">No item-wise data available. Voucher line items needed.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -328,7 +329,11 @@ const SalesmanPerformance = ({ selectedFY }) => {
                 </div>
               )}
             </div>
-          ))}
+          )) : (
+            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-500">
+              No salesman data. Create salesmen in the Manage tab and map customers.
+            </div>
+          )}
         </div>
       )}
 

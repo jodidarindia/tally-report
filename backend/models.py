@@ -167,21 +167,22 @@ class ResetPasswordRequest(BaseModel):
 
 # New Purchase Order Models
 class PurchaseOrderItem(BaseModel):
-    item_name: str
-    current_stock: float
-    reorder_level: float
-    recommended_quantity: float
-    priority: str  # 'urgent', 'high', 'medium', 'low'
-    reason: str
-    estimated_cost: float
+    model_config = ConfigDict(extra="ignore")
+    item_name: str = ""
+    current_stock: float = 0
+    reorder_level: float = 0
+    recommended_quantity: float = 0
+    priority: str = "medium"
+    reason: str = ""
+    estimated_cost: float = 0
 
 class PurchaseOrder(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     po_number: str
-    items: List[PurchaseOrderItem]
-    total_items: int
-    total_cost: float
+    items: List[PurchaseOrderItem] = []
+    total_items: int = 0
+    total_cost: float = 0
     ai_analysis: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    status: str = "draft"  # draft, approved, sent, received
+    status: str = "draft"

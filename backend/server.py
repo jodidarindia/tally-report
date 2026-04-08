@@ -251,10 +251,11 @@ async def get_inventory_items(category: Optional[str] = None, stock_group: Optio
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/inventory/summary")
-async def get_inventory_summary():
-    """Get inventory summary statistics"""
+async def get_inventory_summary(fy: Optional[str] = None):
+    """Get inventory summary statistics. Inventory is a point-in-time snapshot,
+    but value context changes with FY (shows items relevant to FY sales)."""
     try:
-        items = await db.inventory_items.find({}, {"_id": 0}).to_list(1000)
+        items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
         
         if not items:
             return APIResponse(
@@ -272,13 +273,21 @@ async def get_inventory_summary():
         low_stock_items = sum(1 for item in items if item.get("quantity", 0) < item.get("reorder_level", 0))
         categories = list(set(item.get("category") for item in items if item.get("category")))
         
+        # If FY is provided, also calculate FY-specific sales value
+        fy_sales_value = 0
+        if fy:
+            all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+            fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+            fy_sales_value = sum(v.get("total_amount", 0) for v in fy_vouchers)
+        
         return APIResponse(
             success=True,
             data={
                 "total_items": total_items,
                 "total_value": round(total_value, 2),
                 "low_stock_items": low_stock_items,
-                "categories": categories
+                "categories": categories,
+                "fy_sales_value": round(fy_sales_value, 2)
             }
         )
     
@@ -288,8 +297,8 @@ async def get_inventory_summary():
 
 # Sales Endpoints
 @api_router.get("/sales/vouchers")
-async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None):
-    """Fetch sales vouchers filtered by FY"""
+async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None):
+    """Fetch sales vouchers with multiple filters: FY, party, month"""
     try:
         query = {}
         if party_name:
@@ -300,6 +309,13 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
         # Apply FY filter
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)
+        
+        # Apply month filter (format: "2025-04" or "04")
+        if month:
+            if len(month) <= 2:
+                vouchers = [v for v in vouchers if v.get("voucher_date", "")[5:7] == month.zfill(2)]
+            else:
+                vouchers = [v for v in vouchers if v.get("voucher_date", "").startswith(month)]
         
         # Apply date filters
         if vouchers and (start_date or end_date):
@@ -313,8 +329,16 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
                 filtered.append(v)
             vouchers = filtered
         
+        # Collect unique parties and months for dropdowns
+        all_vouchers_for_meta = await db.sales_vouchers.find({}, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(10000)
+        if fy:
+            all_vouchers_for_meta = filter_vouchers_by_fy(all_vouchers_for_meta, fy)
+        
+        unique_parties = sorted(list(set(v.get("party_name", "") for v in all_vouchers_for_meta if v.get("party_name"))))
+        unique_months = sorted(list(set(v.get("voucher_date", "")[:7] for v in all_vouchers_for_meta if v.get("voucher_date", "")[:7])))
+        
         # If no data in DB, use TallyClient (demo/mock data)
-        if not vouchers and not party_name and not fy:
+        if not vouchers and not party_name and not fy and not month:
             global tally_client_instance
             if not tally_client_instance:
                 tally_client_instance = TallyClient(connection_type="xml")
@@ -340,7 +364,12 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
         
         return APIResponse(
             success=True,
-            data={"vouchers": vouchers, "count": len(vouchers)}
+            data={
+                "vouchers": vouchers,
+                "count": len(vouchers),
+                "unique_parties": unique_parties,
+                "unique_months": unique_months
+            }
         )
     
     except Exception as e:
@@ -350,14 +379,13 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
 
 @api_router.get("/sales/vouchers/{voucher_id:path}")
 async def get_voucher_detail(voucher_id: str):
-    """Get full details of a single sales voucher (invoice view)"""
+    """Get full details of a single sales voucher (invoice view) including discount, GST, dispatch"""
     try:
         from urllib.parse import unquote
         decoded_id = unquote(voucher_id)
         
         voucher = await db.sales_vouchers.find_one({"voucher_id": decoded_id}, {"_id": 0})
         if not voucher:
-            # Try partial match
             voucher = await db.sales_vouchers.find_one(
                 {"voucher_id": {"$regex": f"^{decoded_id}$", "$options": "i"}},
                 {"_id": 0}
@@ -369,8 +397,42 @@ async def get_voucher_detail(voucher_id: str):
         subtotal = sum(item.get("amount", item.get("quantity", 0) * item.get("rate", 0)) for item in items)
         total = voucher.get("total_amount", subtotal)
 
-        voucher["subtotal"] = subtotal
-        voucher["computed_total"] = total
+        # Extract discount info from ledger entries
+        discount_amount = 0
+        gst_details = []
+        dispatch_details = {}
+        
+        ledger_entries = voucher.get("ledger_entries", [])
+        for entry in ledger_entries:
+            if isinstance(entry, dict):
+                ledger_name = str(entry.get("ledger_name", "")).lower()
+                amount = entry.get("amount", 0)
+                if "discount" in ledger_name:
+                    discount_amount += abs(float(amount)) if amount else 0
+                elif "gst" in ledger_name or "cgst" in ledger_name or "sgst" in ledger_name or "igst" in ledger_name or "tax" in ledger_name:
+                    gst_details.append({
+                        "tax_name": entry.get("ledger_name", ""),
+                        "amount": abs(float(amount)) if amount else 0
+                    })
+
+        # Dispatch details from voucher
+        dispatch_details = {
+            "delivery_note": voucher.get("delivery_note", voucher.get("reference_number", "")),
+            "dispatch_through": voucher.get("dispatch_through", ""),
+            "destination": voucher.get("destination", ""),
+            "carrier_name": voucher.get("carrier_name", ""),
+            "bill_of_lading": voucher.get("bill_of_lading", ""),
+            "dispatch_date": voucher.get("dispatch_date", voucher.get("voucher_date", ""))
+        }
+
+        gst_total = sum(g.get("amount", 0) for g in gst_details)
+
+        voucher["subtotal"] = round(subtotal, 2)
+        voucher["discount_amount"] = round(discount_amount, 2)
+        voucher["gst_details"] = gst_details
+        voucher["gst_total"] = round(gst_total, 2)
+        voucher["dispatch_details"] = dispatch_details
+        voucher["computed_total"] = round(total, 2)
         voucher["item_count"] = len(items)
 
         return APIResponse(success=True, data=voucher)
@@ -400,24 +462,24 @@ async def get_sales_summary(fy: Optional[str] = None):
         total_vouchers = len(vouchers)
         total_sales = sum(v.get("total_amount", 0) for v in vouchers)
         
-        # Top customers
+        # Top customers — from ALL vouchers in the FY
         customer_sales = {}
         for v in vouchers:
             party = v.get("party_name", "Unknown")
             customer_sales[party] = customer_sales.get(party, 0) + v.get("total_amount", 0)
         
         top_customers = sorted(
-            [{"name": k, "total": v} for k, v in customer_sales.items()],
+            [{"name": k, "total": round(v, 2)} for k, v in customer_sales.items()],
             key=lambda x: x["total"],
             reverse=True
-        )[:5]
+        )[:10]
         
-        # Recent vouchers
+        # Recent 10 vouchers sorted by date descending
         recent_vouchers = sorted(
             vouchers,
             key=lambda x: x.get("voucher_date", ""),
             reverse=True
-        )[:5]
+        )[:10]
         
         return APIResponse(
             success=True,
@@ -434,11 +496,21 @@ async def get_sales_summary(fy: Optional[str] = None):
         return APIResponse(success=False, error=str(e))
 
 @api_router.get("/sales/analytics")
-async def get_sales_analytics(fy: Optional[str] = None):
-    """Get sales analytics data for charts, filtered by FY"""
+async def get_sales_analytics(fy: Optional[str] = None, party_name: Optional[str] = None, month: Optional[str] = None):
+    """Get sales analytics data for charts, filtered by FY/party/month"""
     try:
-        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        query = {}
+        if party_name:
+            query["party_name"] = {"$regex": party_name, "$options": "i"}
+        
+        vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(vouchers, fy)
+        
+        if month:
+            if len(month) <= 2:
+                vouchers = [v for v in vouchers if v.get("voucher_date", "")[5:7] == month.zfill(2)]
+            else:
+                vouchers = [v for v in vouchers if v.get("voucher_date", "").startswith(month)]
         
         if not vouchers:
             return APIResponse(success=True, data={"daily_sales": [], "category_sales": []})
@@ -958,15 +1030,29 @@ async def generate_purchase_order():
         result = await po_ai.generate_purchase_order(inventory_items, sales_vouchers)
         
         if result.get("success"):
-            # Save PO to database
             po_number = f"PO-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             po_data = result.get("purchase_order", {})
             
+            # Parse items safely — AI response may have slightly different fields
+            po_items = []
+            for item in po_data.get("urgent_items", po_data.get("items", [])):
+                try:
+                    po_items.append(PurchaseOrderItem(**item))
+                except Exception:
+                    po_items.append(PurchaseOrderItem(
+                        item_name=str(item.get("item_name", item.get("name", "Unknown"))),
+                        current_stock=float(item.get("current_stock", 0)),
+                        recommended_quantity=float(item.get("recommended_quantity", item.get("quantity", 0))),
+                        priority=str(item.get("priority", "medium")),
+                        reason=str(item.get("reason", "")),
+                        estimated_cost=float(item.get("estimated_cost", item.get("cost", 0)))
+                    ))
+            
             purchase_order = PurchaseOrder(
                 po_number=po_number,
-                items=[PurchaseOrderItem(**item) for item in po_data.get("urgent_items", [])],
-                total_items=len(po_data.get("urgent_items", [])),
-                total_cost=po_data.get("total_estimated_cost", 0),
+                items=po_items,
+                total_items=len(po_items),
+                total_cost=po_data.get("total_estimated_cost", sum(i.estimated_cost for i in po_items)),
                 ai_analysis=po_data.get("analysis", ""),
                 status="draft"
             )
@@ -1459,24 +1545,36 @@ async def get_customer_targets(fy: Optional[str] = None):
 
 @api_router.post("/customers/targets/set")
 async def set_customer_target(request: dict):
-    """Set target for a customer based on last FY sales"""
+    """Set target for a customer. Cannot set targets for completed FYs."""
     try:
+        from datetime import date as date_type
         customer_name = request.get("customer_name", "").strip()
         target_amount = request.get("target_amount", 0)
         last_fy_sales = request.get("last_fy_sales", 0)
+        target_fy = request.get("fy", "")
         
         if not customer_name:
             return APIResponse(success=False, error="Customer name is required")
+        
+        # Check if FY is completed (past March 31)
+        if target_fy:
+            fy_start, fy_end = fy_to_date_range(target_fy)
+            if fy_end:
+                end_parts = fy_end.split('-')
+                fy_end_date = date_type(int(end_parts[0]), int(end_parts[1]), int(end_parts[2]))
+                if date_type.today() > fy_end_date:
+                    return APIResponse(success=False, error=f"FY {target_fy} has ended. Targets cannot be modified for completed financial years.")
         
         doc = {
             "customer_name": customer_name,
             "target_amount": float(target_amount),
             "last_fy_sales": float(last_fy_sales),
+            "fy": target_fy,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
         await db.customer_targets.update_one(
-            {"customer_name": customer_name},
+            {"customer_name": customer_name, "fy": target_fy},
             {"$set": doc},
             upsert=True
         )
@@ -1654,6 +1752,26 @@ async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str]
                         behavior_map[party]["oldest_invoice_days"] = days_old
             except (ValueError, TypeError):
                 pass
+
+        # Add synced customers with closing balance but no FY sales
+        for sc in synced_customers:
+            name = sc["customer_name"]
+            if name not in behavior_map and sc.get("outstanding_amount", 0) > 0:
+                behavior_map[name] = {
+                    "customer_name": name,
+                    "total_transactions": 0,
+                    "total_amount": 0,
+                    "average_transaction": 0,
+                    "outstanding_amount": sc.get("outstanding_amount", 0),
+                    "paid_amount": customer_payments.get(name, 0),
+                    "receipt_count": len(customer_receipt_dates.get(name, [])),
+                    "payment_ratio": 0,
+                    "payment_pattern": "no_transactions",
+                    "average_payment_delay": 0,
+                    "credit_score": 0,
+                    "oldest_invoice_days": 0,
+                    "invoices": []
+                }
 
         # Calculate real metrics
         for party, data in behavior_map.items():

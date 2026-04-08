@@ -16,6 +16,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
   const [loading, setLoading] = useState(true);
   const [customerNames, setCustomerNames] = useState([]);
   const [customerGroups, setCustomerGroups] = useState([]);
+  const [customerStates, setCustomerStates] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState('all');
   const [showAddFollowup, setShowAddFollowup] = useState(false);
   const [showSetTarget, setShowSetTarget] = useState(null);
@@ -47,8 +48,10 @@ const CustomerCRM = ({ user, selectedFY }) => {
       const res = await axios.get(`${API}/customers/outstanding${fyParam}`);
       const custs = res.data?.data?.customers || [];
       setCustomerNames(custs.map(c => c.customer_name));
-      const groups = res.data?.data?.groups || [...new Set(custs.map(c => c.ledger_group).filter(Boolean))];
+      const groups = res.data?.data?.groups || [];
+      const states = res.data?.data?.states || [];
       setCustomerGroups(groups);
+      setCustomerStates(states);
     } catch (error) {
       console.error('Error fetching customer names:', error);
     }
@@ -111,25 +114,43 @@ const CustomerCRM = ({ user, selectedFY }) => {
     }
   };
 
+  // Check if selected FY has ended
+  const isFYCompleted = () => {
+    if (!selectedFY) return false;
+    const parts = selectedFY.split('-');
+    const endShort = parseInt(parts[1]);
+    const startYear = parseInt(parts[0]);
+    const endYear = startYear + 1;
+    const fyEndDate = new Date(endYear, 2, 31); // March 31
+    return new Date() > fyEndDate;
+  };
+
   const handleSetTarget = async () => {
     if (!targetForm.customer_name || !targetForm.target_amount) {
       toast.error('Customer name and target are required');
+      return;
+    }
+    if (isFYCompleted()) {
+      toast.error(`FY ${selectedFY} has ended. Targets cannot be modified for completed financial years.`);
       return;
     }
     try {
       const res = await axios.post(`${API}/customers/targets/set`, {
         customer_name: targetForm.customer_name,
         target_amount: parseFloat(targetForm.target_amount),
-        last_fy_sales: parseFloat(targetForm.last_fy_sales) || 0
+        last_fy_sales: parseFloat(targetForm.last_fy_sales) || 0,
+        fy: selectedFY || ''
       });
       if (res.data?.success) {
         toast.success(`Target set for ${targetForm.customer_name}`);
         setShowSetTarget(null);
         setTargetForm({ customer_name: '', last_fy_sales: '', target_amount: '' });
         fetchData();
+      } else {
+        toast.error(res.data?.error || 'Failed to set target');
       }
     } catch (error) {
-      toast.error('Failed to set target');
+      toast.error(error.response?.data?.error || 'Failed to set target');
     }
   };
 
@@ -211,8 +232,8 @@ const CustomerCRM = ({ user, selectedFY }) => {
         })}
       </div>
 
-      {/* Customer Group Filter */}
-      {customerGroups.length > 0 && (activeTab === 'outstanding' || activeTab === 'targets') && (
+      {/* Customer Group / State Filter */}
+      {(customerGroups.length > 0 || customerStates.length > 0) && (activeTab === 'outstanding' || activeTab === 'targets') && (
         <div className="mb-4">
           <select
             value={selectedGroup}
@@ -220,8 +241,17 @@ const CustomerCRM = ({ user, selectedFY }) => {
             className="px-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
             data-testid="customer-group-filter"
           >
-            <option value="all">All Customer Groups</option>
-            {customerGroups.map(g => <option key={g} value={g}>{g}</option>)}
+            <option value="all">All Customers</option>
+            {customerGroups.length > 1 && (
+              <optgroup label="Ledger Group">
+                {customerGroups.map(g => <option key={`grp-${g}`} value={`group:${g}`}>{g}</option>)}
+              </optgroup>
+            )}
+            {customerStates.length > 0 && (
+              <optgroup label="State / Region">
+                {customerStates.map(s => <option key={`st-${s}`} value={`state:${s}`}>{s}</option>)}
+              </optgroup>
+            )}
           </select>
         </div>
       )}
@@ -252,7 +282,12 @@ const CustomerCRM = ({ user, selectedFY }) => {
                   </thead>
                   <tbody>
                     {outstanding
-                      .filter(c => selectedGroup === 'all' || c.ledger_group === selectedGroup)
+                      .filter(c => {
+                        if (selectedGroup === 'all') return true;
+                        if (selectedGroup.startsWith('group:')) return c.ledger_group === selectedGroup.slice(6);
+                        if (selectedGroup.startsWith('state:')) return c.state === selectedGroup.slice(6);
+                        return c.ledger_group === selectedGroup;
+                      })
                       .map((customer, idx) => {
                         const statusColors = {
                           normal: 'bg-green-100 text-green-700',
@@ -483,10 +518,12 @@ const CustomerCRM = ({ user, selectedFY }) => {
                               <div className="flex gap-1">
                                 <button
                                   onClick={() => openTargetForm(target)}
-                                  className="px-2 py-1 text-xs rounded bg-[#2563EB] text-white hover:bg-[#1D4ED8]"
+                                  className={`px-2 py-1 text-xs rounded ${isFYCompleted() ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-[#2563EB] text-white hover:bg-[#1D4ED8]'}`}
+                                  disabled={isFYCompleted()}
                                   data-testid={`set-target-${idx}`}
+                                  title={isFYCompleted() ? `FY ${selectedFY} has ended` : 'Set Target'}
                                 >
-                                  <Target size={12} className="inline mr-1" />Set Target
+                                  <Target size={12} className="inline mr-1" />{isFYCompleted() ? 'Locked' : 'Set Target'}
                                 </button>
                                 <button
                                   onClick={() => setExpandedTarget(expandedTarget === idx ? null : idx)}

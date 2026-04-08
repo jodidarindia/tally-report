@@ -724,13 +724,42 @@ class TallySyncAgent:
 
         ref = v.get('REFERENCE', v.get('NARRATION', ''))
 
+        # Extract ledger entries for discount/GST breakdown
+        ledger_entries = []
+        le = v.get('ALLLEDGERENTRIES.LIST', v.get('LEDGERENTRIES.LIST', []))
+        if isinstance(le, dict):
+            le = [le]
+        if isinstance(le, list):
+            for entry in le:
+                if isinstance(entry, dict):
+                    lname = str(entry.get('LEDGERNAME', '')).strip()
+                    lamt = entry.get('AMOUNT', 0)
+                    if lname:
+                        ledger_entries.append({
+                            'ledger_name': lname,
+                            'amount': self._num(lamt) if lamt else 0
+                        })
+
+        # Dispatch details from Tally voucher fields
+        dispatch_through = str(v.get('BASICSHIPDISPATCHTHROUGH', v.get('DISPATCHTHROUGH', '')) or '').strip()
+        destination = str(v.get('BASICFINALDESTINATION', v.get('DESTINATION', '')) or '').strip()
+        carrier = str(v.get('BASICSHIPDELIVERYNOTE', '') or '').strip()
+        bill_of_lading = str(v.get('BASICSHIPPEDBY', '') or '').strip()
+        delivery_note = str(v.get('BASICORDERREF', v.get('DELIVERYNOTE', '')) or '').strip()
+
         return {
             'voucher_id': str(v_number),
             'voucher_date': formatted_date,
             'party_name': str(party),
             'total_amount': amount,
             'items': line_items,
-            'reference_number': str(ref) if ref else ''
+            'reference_number': str(ref) if ref else '',
+            'ledger_entries': ledger_entries,
+            'dispatch_through': dispatch_through,
+            'destination': destination,
+            'carrier_name': carrier,
+            'bill_of_lading': bill_of_lading,
+            'delivery_note': delivery_note
         }
 
     def _parse_receipt(self, v, vtype):
