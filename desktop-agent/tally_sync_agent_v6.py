@@ -181,23 +181,58 @@ class TallyCollectionClient:
         })
 
     def _sanitize(self, xml_text):
+        """Clean XML to handle Tally's encoding quirks."""
+        # Remove control characters
+        xml_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', xml_text)
+        # Fix unescaped & (#1 cause of Tally XML parse failures — addresses & party names)
+        xml_text = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', xml_text)
+        return xml_text
+
+    def _aggressive_sanitize(self, xml_text):
+        """Nuclear cleanup for stubborn Tally XML responses."""
+        xml_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', xml_text)
         xml_text = re.sub(r'&#x[0-9a-fA-F]+;?', ' ', xml_text)
         xml_text = re.sub(r'&#[0-9]+;?', ' ', xml_text)
-        xml_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', xml_text)
+        xml_text = re.sub(r'&(?!(?:amp|lt|gt|apos|quot);)', '&amp;', xml_text)
+        # Strip CDATA wrappers if malformed
+        xml_text = re.sub(r'<!\[CDATA\[.*?\]\]>', '', xml_text, flags=re.DOTALL)
+        # Remove any stray < or > inside attribute values by finding broken tags
+        # Replace non-XML chars in attribute values
+        xml_text = re.sub(r'[\x80-\xff]', '', xml_text)
         return xml_text
 
     def _post(self, xml_payload: str, debug_name: str = '') -> Optional[dict]:
         try:
             resp = self.session.post(self.url, data=xml_payload, timeout=self.timeout)
             if resp.status_code == 200:
-                clean = self._sanitize(resp.text)
-                # Always save raw response for debugging
+                raw = resp.text
+                # Save raw response BEFORE sanitization for debugging
                 if debug_name and self.debug_dir:
                     debug_path = os.path.join(self.debug_dir, f"{debug_name}_raw.xml")
                     with open(debug_path, 'w', encoding='utf-8') as f:
-                        f.write(clean[:50000])  # First 50KB
-                    logger.info(f"  [DEBUG] Saved raw XML → {debug_path}")
-                return xmltodict.parse(clean)
+                        f.write(raw[:100000])
+                    logger.info(f"  [DEBUG] Saved raw XML -> {debug_path}")
+
+                # Check for Tally error responses first
+                if '<LINEERROR>' in raw:
+                    err = re.search(r'<LINEERROR>(.*?)</LINEERROR>', raw)
+                    if err:
+                        logger.error(f"  Tally error: {err.group(1)}")
+                    return None
+
+                # Try parsing with standard sanitization
+                clean = self._sanitize(raw)
+                try:
+                    return xmltodict.parse(clean)
+                except Exception as parse_err:
+                    logger.warning(f"  XML parse error (attempt 1): {parse_err}")
+                    # Fallback: aggressive sanitization
+                    aggressive = self._aggressive_sanitize(raw)
+                    try:
+                        return xmltodict.parse(aggressive)
+                    except Exception as e2:
+                        logger.error(f"  XML parse failed after aggressive cleanup: {e2}")
+                        return None
             else:
                 logger.error(f"Tally HTTP {resp.status_code}")
                 return None
@@ -287,21 +322,29 @@ class TallyCollectionClient:
             return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
         return str(raw) if raw else ''
 
-    # ---- STOCK ITEMS (lightweight: just master data) ----
+    # ---- STOCK ITEMS (Collection request — lightweight) ----
 
     def fetch_stock_items(self) -> List[Dict]:
-        """Fetch stock items with closing balance. ~1-3 seconds."""
-        logger.info("  Requesting stock items...")
+        """Fetch stock items using TDL Collection request. ~1-3 seconds."""
+        logger.info("  Requesting stock items (Collection)...")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
         xml = f"""<ENVELOPE>
-<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-<BODY><EXPORTDATA><REQUESTDESC>
-<REPORTNAME>List of Stock Items</REPORTNAME>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraStockItems</ID></HEADER>
+<BODY><DESC>
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 {company_tag}
 </STATICVARIABLES>
-</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraStockItems" ISINITIALIZE="Yes">
+<TYPE>Stock Item</TYPE>
+<FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, CLOSINGVALUE, BASEUNITS</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
 
         data = self._post(xml, debug_name='stock_items')
         if not data:
@@ -310,15 +353,13 @@ class TallyCollectionClient:
         items = []
         stock_list = self._find_deep(data, 'STOCKITEM')
         if not stock_list:
-            logger.warning(f"  [DEBUG] Stock items: no STOCKITEM found in XML response")
+            logger.warning(f"  [DEBUG] Stock items: no STOCKITEM found in response")
             if isinstance(data, dict):
-                envelope = data.get('ENVELOPE', data)
-                if isinstance(envelope, dict):
-                    body = envelope.get('BODY', {})
-                    if isinstance(body, dict):
-                        exp_data = body.get('DATA', body.get('EXPORTDATA', {}))
-                        if isinstance(exp_data, dict):
-                            logger.warning(f"  [DEBUG] DATA keys: {list(exp_data.keys())}")
+                body = self._find_deep(data, 'DATA')
+                if isinstance(body, dict):
+                    logger.warning(f"  [DEBUG] DATA keys: {list(body.keys())}")
+                elif isinstance(body, str):
+                    logger.warning(f"  [DEBUG] DATA is string: {body[:200]}")
             return []
         if not isinstance(stock_list, list):
             stock_list = [stock_list]
@@ -332,6 +373,9 @@ class TallyCollectionClient:
             parent = str(si.get('PARENT', 'General') or 'General').strip()
             cb = si.get('CLOSINGBALANCE', 0)
             qty, unit = self._qty_unit(cb)
+            bu = si.get('BASEUNITS', '')
+            if bu and unit == 'Pcs':
+                unit = str(bu).strip()
             cr = si.get('CLOSINGRATE', 0)
             rate = self._num(str(cr).split('/')[0]) if cr else 0
             cv = self._num(si.get('CLOSINGVALUE', 0))
@@ -347,58 +391,44 @@ class TallyCollectionClient:
         logger.info(f"  Got {len(items)} stock items")
         return items
 
-    # ---- LEDGERS / CUSTOMERS (lightweight: just balances) ----
+    # ---- LEDGERS / CUSTOMERS (Collection request — lightweight) ----
 
     def fetch_customers(self) -> List[Dict]:
-        """Fetch Sundry Debtors/Creditors ledgers with closing balance. ~1-3 seconds."""
-        logger.info("  Requesting customer ledgers...")
+        """Fetch Sundry Debtors using TDL Collection request. ~1-3 seconds."""
+        logger.info("  Requesting customer ledgers (Collection)...")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
         xml = f"""<ENVELOPE>
-<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-<BODY><EXPORTDATA><REQUESTDESC>
-<REPORTNAME>List of Accounts</REPORTNAME>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraDebtors</ID></HEADER>
+<BODY><DESC>
 <STATICVARIABLES>
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 {company_tag}
-<ACCOUNTTYPE>Sundry Debtors</ACCOUNTTYPE>
 </STATICVARIABLES>
-</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraDebtors" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<CHILDOF>Sundry Debtors</CHILDOF>
+<FETCH>NAME, PARENT, CLOSINGBALANCE, LEDGERPHONE, LEDGERCONTACT, LEDSTATENAME</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
 
         data = self._post(xml, debug_name='customers')
         if not data:
             return []
 
         customers = []
-        # Try LEDGER first, then DSPACCNAME or other keys
         ledgers = self._find_deep(data, 'LEDGER')
         if not ledgers:
-            # Tally might return ledgers under DSPACCNAME or TALLYMESSAGE
-            tallymsg = self._find_deep(data, 'TALLYMESSAGE')
-            if tallymsg:
-                if isinstance(tallymsg, dict):
-                    ledgers = tallymsg.get('LEDGER', [])
-                elif isinstance(tallymsg, list):
-                    ledgers = []
-                    for msg in tallymsg:
-                        if isinstance(msg, dict) and 'LEDGER' in msg:
-                            l = msg['LEDGER']
-                            if isinstance(l, list):
-                                ledgers.extend(l)
-                            else:
-                                ledgers.append(l)
-
-        if not ledgers:
-            logger.warning(f"  [DEBUG] Customers: no LEDGER found")
+            logger.warning(f"  [DEBUG] Customers: no LEDGER found in response")
             if isinstance(data, dict):
-                envelope = data.get('ENVELOPE', data)
-                if isinstance(envelope, dict):
-                    body = envelope.get('BODY', {})
-                    if isinstance(body, dict):
-                        exp_data = body.get('DATA', body.get('EXPORTDATA', {}))
-                        if isinstance(exp_data, dict):
-                            logger.warning(f"  [DEBUG] DATA keys: {list(exp_data.keys())}")
+                body = self._find_deep(data, 'DATA')
+                if isinstance(body, dict):
+                    logger.warning(f"  [DEBUG] DATA keys: {list(body.keys())}")
             return []
-
         if not isinstance(ledgers, list):
             ledgers = [ledgers]
 
@@ -408,17 +438,13 @@ class TallyCollectionClient:
             name = str(l.get('NAME', l.get('@NAME', '')) or '').strip()
             if not name:
                 continue
-            parent = str(l.get('PARENT', '') or '').strip()
-            # Filter to only Sundry Debtors and Sundry Creditors
-            if parent and parent not in ('Sundry Debtors', 'Sundry Creditors'):
-                continue
             customers.append({
                 'customer_name': name,
-                'ledger_group': parent or 'Sundry Debtors',
+                'ledger_group': str(l.get('PARENT', 'Sundry Debtors') or 'Sundry Debtors').strip(),
                 'outstanding_amount': self._num(l.get('CLOSINGBALANCE', 0)),
-                'phone': str(l.get('LEDGERPHONE', l.get('PHONENUMBER', '')) or '').strip(),
-                'contact_person': str(l.get('LEDGERCONTACT', l.get('CONTACTPERSON', '')) or '').strip(),
-                'state': str(l.get('LEDSTATENAME', l.get('STATENAME', '')) or '').strip(),
+                'phone': str(l.get('LEDGERPHONE', '') or '').strip(),
+                'contact_person': str(l.get('LEDGERCONTACT', '') or '').strip(),
+                'state': str(l.get('LEDSTATENAME', '') or '').strip(),
                 'total_purchases': 0.0,
                 'transaction_count': 0
             })
@@ -426,16 +452,52 @@ class TallyCollectionClient:
         logger.info(f"  Got {len(customers)} customer ledgers")
         return customers
 
-    # ---- SALES VOUCHERS (monthly batches) ----
+    # ---- SALES VOUCHERS (Collection request with date filter) ----
 
     def fetch_sales_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch sales vouchers for one month using Voucher Register. ~3-8 seconds."""
-        fd = from_date.strftime("%d-%b-%Y")
-        td = to_date.strftime("%d-%b-%Y")
-        logger.info(f"  Requesting sales: {fd} to {td}")
+        """Fetch sales vouchers for one month. Tries Collection first, Export Data as fallback."""
+        fd_tally = from_date.strftime("%Y%m%d")
+        td_tally = to_date.strftime("%Y%m%d")
+        logger.info(f"  Requesting sales: {from_date} to {to_date}")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
 
+        # Primary: TDL Collection request (returns only fetched fields — cleaner XML)
         xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraSalesVch</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<SVFROMDATE TYPE="Date">{fd_tally}</SVFROMDATE>
+<SVTODATE TYPE="Date">{td_tally}</SVTODATE>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraSalesVch" ISINITIALIZE="Yes">
+<TYPE>Voucher</TYPE>
+<FETCH>DATE, VOUCHERNUMBER, PARTYLEDGERNAME, AMOUNT, NARRATION, VOUCHERTYPENAME</FETCH>
+<FETCH>BASICSHIPDISPATCHTHROUGH, BASICFINALDESTINATION, REFERENCE</FETCH>
+<FETCH>ALLINVENTORYENTRIES.LIST</FETCH>
+<FETCH>ALLLEDGERENTRIES.LIST</FETCH>
+<FILTER>FlowraSalesFilter</FILTER>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="FlowraSalesFilter">$VoucherTypeName = "Sales"</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
+        if data:
+            vouchers = self._parse_vouchers(data, 'sales')
+            if vouchers:
+                return vouchers
+            logger.info("  Collection returned 0 vouchers, trying Export Data fallback...")
+
+        # Fallback: Export Data with Voucher Register (returns more data, heavier XML)
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        xml_fallback = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -443,25 +505,63 @@ class TallyCollectionClient:
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 {company_tag}
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{fd}</SVFROMDATE>
-<SVTODATE>{td}</SVTODATE>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
 <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
-        if not data:
+        data2 = self._post(xml_fallback, debug_name=f'sales_fb_{from_date.strftime("%Y%m")}')
+        if not data2:
             return []
-        return self._parse_vouchers(data, 'sales')
+        return self._parse_vouchers(data2, 'sales')
 
     def fetch_receipts_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch receipt/payment vouchers for one month. ~3-8 seconds."""
-        fd = from_date.strftime("%d-%b-%Y")
-        td = to_date.strftime("%d-%b-%Y")
-        logger.info(f"  Requesting receipts: {fd} to {td}")
+        """Fetch receipt/payment vouchers for one month. Collection first, Export Data fallback."""
+        fd_tally = from_date.strftime("%Y%m%d")
+        td_tally = to_date.strftime("%Y%m%d")
+        logger.info(f"  Requesting receipts: {from_date} to {to_date}")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
 
-        xml = f"""<ENVELOPE>
+        all_receipts = []
+        for vtype_name in ("Receipt", "Payment"):
+            xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>Flowra{vtype_name}Vch</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<SVFROMDATE TYPE="Date">{fd_tally}</SVFROMDATE>
+<SVTODATE TYPE="Date">{td_tally}</SVTODATE>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="Flowra{vtype_name}Vch" ISINITIALIZE="Yes">
+<TYPE>Voucher</TYPE>
+<FETCH>DATE, VOUCHERNUMBER, PARTYLEDGERNAME, AMOUNT, NARRATION, VOUCHERTYPENAME</FETCH>
+<FETCH>ALLLEDGERENTRIES.LIST</FETCH>
+<FILTER>Flowra{vtype_name}Filter</FILTER>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="Flowra{vtype_name}Filter">$VoucherTypeName = "{vtype_name}"</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+
+            slug = vtype_name.lower()
+            data = self._post(xml, debug_name=f'{slug}s_{from_date.strftime("%Y%m")}')
+            if data:
+                parsed = self._parse_vouchers(data, 'receipt')
+                if parsed:
+                    all_receipts.extend(parsed)
+                    time.sleep(1)
+                    continue
+
+            # Fallback: Export Data
+            logger.info(f"  Collection returned 0 {slug}s, trying Export Data fallback...")
+            fd_disp = from_date.strftime("%d-%b-%Y")
+            td_disp = to_date.strftime("%d-%b-%Y")
+            xml_fb = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -469,38 +569,18 @@ class TallyCollectionClient:
 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
 {company_tag}
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{fd}</SVFROMDATE>
-<SVTODATE>{td}</SVTODATE>
-<VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>{vtype_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-        data = self._post(xml, debug_name=f'receipts_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
+            data2 = self._post(xml_fb, debug_name=f'{slug}s_fb_{from_date.strftime("%Y%m")}')
+            if data2:
+                all_receipts.extend(self._parse_vouchers(data2, 'receipt'))
+            time.sleep(1)
 
-        # Also fetch Payment vouchers
-        xml_pay = f"""<ENVELOPE>
-<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-<BODY><EXPORTDATA><REQUESTDESC>
-<REPORTNAME>Voucher Register</REPORTNAME>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-{company_tag}
-<EXPLODEFLAG>Yes</EXPLODEFLAG>
-<SVFROMDATE>{fd}</SVFROMDATE>
-<SVTODATE>{td}</SVTODATE>
-<VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
-</STATICVARIABLES>
-</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        time.sleep(1)
-        data_pay = self._post(xml_pay, debug_name=f'payments_{from_date.strftime("%Y%m")}')
-
-        receipts = self._parse_vouchers(data, 'receipt')
-        if data_pay:
-            receipts.extend(self._parse_vouchers(data_pay, 'receipt'))
-        return receipts
+        return all_receipts
 
     def _parse_vouchers(self, data: dict, vtype: str) -> List[Dict]:
         """Parse voucher XML response into clean dicts."""

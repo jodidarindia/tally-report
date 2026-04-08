@@ -112,3 +112,11 @@ WHY IT WON'T FREEZE TALLY:
   "No stock items / vouchers found"
   → Check FINANCIAL_YEAR matches your Tally company FY
   → Check TALLY_COMPANY matches exactly (or leave empty)
+  → Check export_cache/ for raw XML files:
+    stock_items_raw.xml, customers_raw.xml, sales_YYYYMM_raw.xml
+    Share first 50 lines with the developer for debugging
+
+  "XML parse error" in logs
+  → Usually caused by special characters in party names/addresses
+  → Agent auto-retries with aggressive cleanup
+  → If it persists, share the *_raw.xml file from export_cache/
