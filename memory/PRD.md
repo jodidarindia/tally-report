@@ -2,69 +2,60 @@
 
 ## Overview
 **FLOWRA** — Organize. Automate. Accelerate.
-SaaS-based web application connecting to TallyPrime for inventory and sales reports with AI-powered analytics.
+SaaS web application connecting to TallyPrime for inventory and sales reports with AI analytics.
 
-## Architecture
-- Frontend: React + Shadcn UI + Tailwind (port 3000)
-- Backend: FastAPI + Motor (Async MongoDB) (port 8001)
-- Desktop Agent: Python (connects to TallyPrime ODBC port 9000)
-- Docker Compose for self-hosting
+## Architecture (Refactored Apr 8, 2026)
+```
+/app/backend/
+  server.py          (66 lines - app entrypoint, CORS, router inclusion)
+  db.py              (shared MongoDB connection)
+  utils.py           (safe_num, safe_str, FY utilities, compute_overdue_digest, SyncWebSocketManager)
+  models.py          (Pydantic models)
+  routes/
+    auth.py          (8 endpoints: login, logout, me, change-password, reset-password, users CRUD)
+    tally.py         (2 endpoints: connect, status)
+    inventory.py     (8 endpoints: items, summary, PO generation, PO list, sales-frequency, movement, below-cost, pivot)
+    sales.py         (4 endpoints: vouchers, voucher detail, summary, analytics)
+    customers.py     (8 endpoints: outstanding, followups CRUD, targets, target-set, ledger export, payment-behavior)
+    dashboard.py     (2 endpoints: reminders, overdue-digest)
+    salesman.py      (5 endpoints: performance, performance-detailed, master CRUD)
+    sync.py          (4 endpoints: agent/sync, sync-progress, ws/sync-status, sync/status)
+    ai_reports.py    (5 endpoints: ai/query, ai/advanced-query, reports/export, reports/history, sales-frequency/export)
+  services/          (tally_client, ai_service, enhanced_ai_service, export_service, auth_service, purchase_order_ai)
+/app/frontend/       (React + Shadcn UI + Tailwind)
+/app/desktop-agent/  (Python sync agent for TallyPrime)
+```
 
-## Desktop Sync Agent v5 (Apr 2026)
-- **Standard Tally report exports** (Day Book) instead of heavy TDL collections
-- **HTTP keep-alive session** with connection pooling
-- **120s timeout** with 2 retries per request (configurable via .env)
-- **Receipt/Payment voucher sync** — captures Receipt, Payment, Contra, Journal from Day Book
-- Monthly batch fetching with configurable sleep (BATCH_SLEEP_SECONDS)
-- Real-time progress via WebSocket + HTTP to cloud backend
-- Auto-start scripts: `run_agent.bat`, `start_with_tally.bat`
+## Stack
+- Frontend: React, Shadcn UI, Tailwind, WebSockets
+- Backend: FastAPI, Motor (Async MongoDB), PyJWT
+- Desktop Agent: Python, HTTP sessions, 120s timeouts
+- AI: GPT-5.2 via Emergent LLM Key
 
-## Backend Receipt Handling
-- POST /api/agent/sync accepts `data_type: "receipts"` -> stores in `receipt_vouchers` collection
-- Outstanding calculation uses receipt data: `paid_amount` from actual receipts
-- Payment behavior analysis uses receipt amounts + receipt dates
-- Bill allocations from receipts tracked for per-invoice matching
-
-## FY Filtering (Apr 2026)
-- All data endpoints accept `?fy=` parameter
-- `fy_to_date_range()`, `filter_vouchers_by_fy()`, `get_previous_fy()` utilities
-- Frontend re-fetches on FY dropdown change
-- safe_num() / safe_str() utilities handle None values from MongoDB
-
-## Overdue Digest (Apr 8, 2026)
-- **55-day overdue threshold**: Invoices older than 55 days from invoice date are flagged
-- **Receipt payment matching**: Uses bill_allocations from receipt vouchers; FIFO fallback when no bill-level data
-- **Auto-recompute on sync**: `compute_overdue_digest()` runs after every sales/receipts/customers sync
-- **Cached in MongoDB**: `overdue_digest` collection stores latest digest for fast dashboard reads
-- **Dashboard widget**: Expandable card showing total overdue, customer-wise breakdown, and invoice detail table
-- **GET /api/dashboard/overdue-digest**: Returns cached digest (pass `?recompute=true` to force refresh)
-- **WebSocket notification**: `overdue_digest_updated` event broadcast to connected clients after sync
-
-## Key API Endpoints
-- POST /api/agent/sync (inventory, sales, customers, receipts) — triggers overdue digest recomputation
-- POST /api/agent/sync-progress, WebSocket /api/ws/sync-status
-- GET /api/dashboard/overdue-digest, GET /api/dashboard/overdue-digest?recompute=true
-- GET /api/sales/vouchers?fy=, GET /api/sales/vouchers/{id:path}
-- GET /api/customers/outstanding?fy= (with receipt-based paid_amount)
-- GET /api/customers/targets?fy=, /api/customers/payment-behavior?fy=
-- GET /api/salesman/performance-detailed?fy=
-- GET /api/inventory/movement-analysis?fy=, /api/inventory/below-cost-sales?fy=
-- POST /api/ai/advanced-query (GPT-5.2 via Emergent LLM Key)
+## Key Features
+- JWT Role-Based Auth (admin/employee)
+- Financial Year filtering across all endpoints
+- Real-time sync via WebSocket + desktop agent
+- Receipt/Payment voucher tracking
+- Overdue Digest (55-day threshold, auto-recompute on sync)
+- AI Purchase Orders, Advanced AI Queries
+- Customer CRM (outstanding, aging FIFO, targets, payment behavior, followups)
+- Salesman Performance (master mapping, item-wise breakdown)
+- Export (Excel, PDF, CSV)
 
 ## DB Collections
-- users, sales_vouchers, inventory_items, customers
-- receipt_vouchers, customer_targets, salesman_master
-- customer_followups, sync_status, report_history
-- overdue_digest (NEW - stores latest computed overdue data)
+users, sales_vouchers, inventory_items, customers, receipt_vouchers,
+customer_targets, salesman_master, customer_followups, sync_status,
+report_history, ai_queries, purchase_orders, overdue_digest, tally_connections
 
 ## Completed
-- Apr 2026: WebSocket Real-Time Sync (Desktop + Backend + Frontend SyncStatusBar.js)
-- Apr 2026: Desktop script tally_sync_agent.py overhauled (standard XML, receipts, batching)
-- Apr 2026: Fixed 9 initial CRM/outstanding/voucher bugs
-- Apr 2026: Docker Compose configuration updated
-- Apr 8: Fixed backend TypeError (safe_num/safe_str utilities) for None MongoDB values
-- Apr 8: All 12 user-reported FY/filter/UI fixes verified (18/18 backend, 100% frontend)
-- Apr 8: Overdue Digest feature (55-day threshold, receipt matching, auto-sync, dashboard widget)
+- WebSocket Real-Time Sync
+- Desktop agent overhaul (standard XML, receipts, batching)
+- Fixed 9+12 CRM/outstanding/FY/filter bugs
+- Docker Compose configuration
+- Backend TypeError fix (safe_num/safe_str)
+- Overdue Digest feature (55-day, receipt matching, dashboard widget)
+- **P3 Refactor: server.py 2609 -> 66 lines, 9 route modules, 2 shared modules**
 
 ## Backlog
-- P3: Refactor server.py (2500+ lines) into /routes and /controllers
+- (None currently — all priorities completed)
