@@ -239,11 +239,6 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <img src="/flowra-logo.png" alt="FLOWRA" className="h-10 object-contain" />
-              {companyName && (
-                <span className="text-sm font-bold text-slate-800 hidden md:block border-l border-slate-200 pl-3 ml-1 max-w-[280px] truncate" title={companyName}>
-                  {companyName}
-                </span>
-              )}
             </div>
             <button data-testid="mobile-menu-button" className="md:hidden text-slate-700" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
               {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -310,6 +305,11 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
               </div>
             </div>
           </div>
+          {companyName && (
+            <div className="text-center py-1 -mb-2">
+              <span className="text-sm font-bold text-slate-700" data-testid="company-name-display">{companyName}</span>
+            </div>
+          )}
           {mobileMenuOpen && (
             <div className="md:hidden mt-4 pb-4 space-y-2">
               <select value={selectedFY} onChange={e => onFYChange(e.target.value)}
@@ -405,7 +405,7 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <Navigation user={user} onLogout={handleLogout} selectedFY={selectedFY} onFYChange={setSelectedFY} />
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-7xl mx-auto px-6 py-8 min-h-[calc(100vh-140px)]">
           <Routes>
             <Route path="/" element={isAdmin ? <Dashboard selectedFY={selectedFY} /> : <Inventory selectedFY={selectedFY} />} />
             <Route path="/inventory" element={<Inventory selectedFY={selectedFY} />} />
@@ -422,6 +422,9 @@ function App() {
             </>}
           </Routes>
         </div>
+        <footer className="text-center py-3 text-xs text-slate-400 border-t border-slate-100 bg-white">
+          Copyright: Jodidar India
+        </footer>
       </BrowserRouter>
     </div>
   );

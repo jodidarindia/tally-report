@@ -358,8 +358,11 @@ class TallyCollectionClient:
     def _num(self, val):
         if val is None:
             return 0.0
+        # Handle xmltodict dict format: {'#text': '14', '@TYPE': 'Number'}
+        if isinstance(val, dict):
+            val = val.get('#text', val.get('$', '0'))
         s = str(val).replace(',', '').strip()
-        if not s:
+        if not s or s in ('None', 'null'):
             return 0.0
         try:
             return abs(float(s.split()[0]))
@@ -367,9 +370,15 @@ class TallyCollectionClient:
             return 0.0
 
     def _qty_unit(self, val):
-        if val is None or str(val).strip() == '':
+        if val is None:
             return 0.0, 'Pcs'
-        parts = str(val).strip().split()
+        # Handle dict format
+        if isinstance(val, dict):
+            val = val.get('#text', val.get('$', ''))
+        s = str(val).strip()
+        if not s or s in ('None', 'null', '0'):
+            return 0.0, 'Pcs'
+        parts = s.split()
         try:
             qty = abs(float(parts[0].replace(',', '')))
         except:
@@ -558,9 +567,13 @@ class TallyCollectionClient:
             parent = l.get('PARENT', 'Sundry Debtors')
             if isinstance(parent, dict):
                 parent = parent.get('#text', 'Sundry Debtors')
+            parent_str = str(parent or 'Sundry Debtors').strip()
+            # Skip Branch / Divisions — these don't have receipts
+            if 'branch' in parent_str.lower() or 'division' in parent_str.lower():
+                continue
             customers.append({
                 'customer_name': name,
-                'ledger_group': str(parent or 'Sundry Debtors').strip(),
+                'ledger_group': parent_str,
                 'outstanding_amount': self._num(l.get('CLBAL', l.get('CLOSINGBALANCE', 0))),
                 'phone': str(l.get('LEDGERPHONE', '') or '').strip(),
                 'contact_person': str(l.get('LEDGERCONTACT', '') or '').strip(),

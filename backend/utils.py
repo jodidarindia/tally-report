@@ -59,26 +59,29 @@ OVERDUE_THRESHOLD_DAYS = 55
 
 
 async def compute_overdue_digest(db_ref):
-    """Compute overdue invoices (>55 days from invoice date) considering receipt payments.
-    Stores result in overdue_digest collection for quick dashboard retrieval."""
+    """Compute overdue invoices (>55 days from invoice date) considering receipts,
+    credit notes, and journal vouchers. Stores result in overdue_digest collection."""
     from datetime import date as date_type
 
     today = date_type.today()
 
     sales = await db_ref.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
     receipts = await db_ref.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
+    credit_notes = await db_ref.credit_notes.find({}, {"_id": 0}).to_list(20000)
+    journals = await db_ref.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
     synced_customers = await db_ref.customers.find({}, {"_id": 0}).to_list(5000)
     synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
-    customer_receipt_total = {}
+    # Build per-customer credit totals (receipts + credit notes + journal credits)
+    customer_credits = {}
     receipt_bill_allocs = {}
+
     for r in receipts:
         party = safe_str(r.get("party_name")).strip()
         if not party:
             continue
         amt = safe_num(r.get("amount"))
-        customer_receipt_total[party] = customer_receipt_total.get(party, 0) + amt
-
+        customer_credits[party] = customer_credits.get(party, 0) + amt
         for alloc in r.get("bill_allocations", []):
             bill_ref = safe_str(alloc.get("bill_ref", alloc.get("name", ""))).strip()
             alloc_amt = safe_num(alloc.get("amount"))
@@ -86,6 +89,20 @@ async def compute_overdue_digest(db_ref):
             if key not in receipt_bill_allocs:
                 receipt_bill_allocs[key] = {}
             receipt_bill_allocs[key][bill_ref] = receipt_bill_allocs[key].get(bill_ref, 0) + alloc_amt
+
+    for cn in credit_notes:
+        party = safe_str(cn.get("party_name")).strip()
+        if not party:
+            continue
+        customer_credits[party] = customer_credits.get(party, 0) + safe_num(cn.get("total_amount"))
+
+    for jv in journals:
+        party = safe_str(jv.get("party_name")).strip()
+        if not party:
+            continue
+        credit_amt = safe_num(jv.get("credit_amount"))
+        if credit_amt > 0:
+            customer_credits[party] = customer_credits.get(party, 0) + credit_amt
 
     overdue_invoices = []
     customer_overdue = {}
@@ -111,6 +128,7 @@ async def compute_overdue_digest(db_ref):
         voucher_id = v.get("voucher_id", "")
         ref_number = v.get("reference_number", voucher_id)
 
+        # Check bill-level allocation first
         paid_for_invoice = 0
         allocs = receipt_bill_allocs.get(party.lower(), {})
         if ref_number and ref_number in allocs:
@@ -147,43 +165,46 @@ async def compute_overdue_digest(db_ref):
         if days_old > customer_overdue[party]["oldest_days"]:
             customer_overdue[party]["oldest_days"] = days_old
 
-    if not receipt_bill_allocs:
-        customer_invoices_map = {}
-        for inv in overdue_invoices:
-            p = inv["party_name"]
-            customer_invoices_map.setdefault(p, []).append(inv)
+    # Apply remaining credits (not bill-allocated) — FIFO by oldest invoice
+    customer_invoices_map = {}
+    for inv in overdue_invoices:
+        customer_invoices_map.setdefault(inv["party_name"], []).append(inv)
 
-        for party, invoices in customer_invoices_map.items():
-            total_receipts = customer_receipt_total.get(party, 0)
-            if total_receipts <= 0:
-                continue
-            invoices.sort(key=lambda x: x["days_overdue"], reverse=True)
-            remaining_receipts = total_receipts
-            for inv in invoices:
-                if remaining_receipts <= 0:
-                    break
-                payoff = min(inv["overdue_amount"], remaining_receipts)
-                inv["paid_amount"] += payoff
-                inv["overdue_amount"] -= payoff
-                remaining_receipts -= payoff
+    for party, invoices in customer_invoices_map.items():
+        total_credits = customer_credits.get(party, 0)
+        # Subtract already-allocated bill amounts
+        already_allocated = sum(inv["paid_amount"] for inv in invoices)
+        remaining_credits = total_credits - already_allocated
+        if remaining_credits <= 0:
+            continue
+        invoices.sort(key=lambda x: x["days_overdue"], reverse=True)
+        for inv in invoices:
+            if remaining_credits <= 0:
+                break
+            payoff = min(inv["overdue_amount"], remaining_credits)
+            inv["paid_amount"] += payoff
+            inv["overdue_amount"] -= payoff
+            remaining_credits -= payoff
 
-        overdue_invoices = [inv for inv in overdue_invoices if inv["overdue_amount"] > 0.5]
-        customer_overdue = {}
-        for inv in overdue_invoices:
-            party = inv["party_name"]
-            if party not in customer_overdue:
-                synced = synced_map.get(party.lower(), {})
-                customer_overdue[party] = {
-                    "customer_name": party,
-                    "phone": synced.get("phone", ""),
-                    "total_overdue": 0,
-                    "invoice_count": 0,
-                    "oldest_days": 0,
-                }
-            customer_overdue[party]["total_overdue"] += inv["overdue_amount"]
-            customer_overdue[party]["invoice_count"] += 1
-            if inv["days_overdue"] > customer_overdue[party]["oldest_days"]:
-                customer_overdue[party]["oldest_days"] = inv["days_overdue"]
+    overdue_invoices = [inv for inv in overdue_invoices if inv["overdue_amount"] > 0.5]
+
+    # Rebuild customer summary after credit adjustments
+    customer_overdue = {}
+    for inv in overdue_invoices:
+        party = inv["party_name"]
+        if party not in customer_overdue:
+            synced = synced_map.get(party.lower(), {})
+            customer_overdue[party] = {
+                "customer_name": party,
+                "phone": synced.get("phone", ""),
+                "total_overdue": 0,
+                "invoice_count": 0,
+                "oldest_days": 0,
+            }
+        customer_overdue[party]["total_overdue"] += inv["overdue_amount"]
+        customer_overdue[party]["invoice_count"] += 1
+        if inv["days_overdue"] > customer_overdue[party]["oldest_days"]:
+            customer_overdue[party]["oldest_days"] = inv["days_overdue"]
 
     for c in customer_overdue.values():
         c["total_overdue"] = round(c["total_overdue"], 2)

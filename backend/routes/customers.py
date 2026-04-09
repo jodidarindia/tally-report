@@ -18,47 +18,112 @@ router = APIRouter()
 
 @router.get("/customers/outstanding")
 async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[str] = None):
-    """Get outstanding payments by customer with proper aging."""
+    """Get outstanding payments by customer with proper aging, opening balance, credit notes, and journals."""
     try:
         from datetime import date as date_type
         today = date_type.today()
 
         synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+        # Filter out Branch/Divisions
+        synced_customers = [c for c in synced_customers if 'branch' not in (c.get('ledger_group', '') or '').lower() and 'division' not in (c.get('ledger_group', '') or '').lower()]
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
-        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = filter_vouchers_by_fy(all_sales, fy)
+        # Fetch ALL vouchers (not FY filtered) for opening balance calculation
+        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_credit_notes = await db.credit_notes.find({}, {"_id": 0}).to_list(20000)
+        all_journals = await db.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
 
-        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(10000)
-        receipt_vouchers = filter_vouchers_by_fy(
-            [{"voucher_date": r.get("voucher_date", ""), **r} for r in all_receipts], fy
-        )
+        # Compute FY boundaries
+        fy_start_str = None
+        if fy:
+            try:
+                parts = fy.split('-')
+                start_year = int(parts[0])
+                fy_start_str = f"{start_year}-04-01"
+            except:
+                pass
 
-        customer_payments = {}
-        for r in receipt_vouchers:
-            party = safe_str(r.get("party_name")).strip()
-            if not party or party == "Unknown":
-                continue
-            amt = safe_num(r.get("amount"))
-            customer_payments[party] = customer_payments.get(party, 0) + amt
+        # Split vouchers into pre-FY (opening) and current FY
+        def split_by_fy(vouchers, date_field='voucher_date'):
+            pre_fy = []
+            current_fy = []
+            for v in vouchers:
+                d = v.get(date_field, '')
+                if fy_start_str and d < fy_start_str:
+                    pre_fy.append(v)
+                else:
+                    current_fy.append(v)
+            return pre_fy, current_fy
+
+        pre_sales, fy_sales = split_by_fy(all_sales)
+        pre_receipts, fy_receipts = split_by_fy(all_receipts)
+        pre_cns, fy_cns = split_by_fy(all_credit_notes)
+        pre_jvs, fy_jvs = split_by_fy(all_journals)
+
+        # FY-filter the current period
+        if fy:
+            fy_sales = filter_vouchers_by_fy(fy_sales, fy)
+            fy_receipts = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date','')} for r in fy_receipts], fy)
+            fy_cns = filter_vouchers_by_fy(fy_cns, fy)
+            fy_jvs = filter_vouchers_by_fy(fy_jvs, fy)
+
+        # Compute opening balance per customer (pre-FY: sales - receipts - credit notes - journal credits)
+        opening_balance = {}
+        if fy_start_str:
+            for v in pre_sales:
+                p = v.get('party_name', '')
+                if p:
+                    opening_balance[p] = opening_balance.get(p, 0) + safe_num(v.get('total_amount'))
+            for r in pre_receipts:
+                p = r.get('party_name', '')
+                if p:
+                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(r.get('amount'))
+            for cn in pre_cns:
+                p = cn.get('party_name', '')
+                if p:
+                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(cn.get('total_amount'))
+            for jv in pre_jvs:
+                p = jv.get('party_name', '')
+                if p:
+                    opening_balance[p] = opening_balance.get(p, 0) + safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+
+        # Compute current FY credits per customer
+        customer_receipts = {}
+        customer_cn_total = {}
+        customer_jv_credit = {}
+        for r in fy_receipts:
+            p = safe_str(r.get("party_name")).strip()
+            if p:
+                customer_receipts[p] = customer_receipts.get(p, 0) + safe_num(r.get("amount"))
+        for cn in fy_cns:
+            p = safe_str(cn.get("party_name")).strip()
+            if p:
+                customer_cn_total[p] = customer_cn_total.get(p, 0) + safe_num(cn.get("total_amount"))
+        for jv in fy_jvs:
+            p = safe_str(jv.get("party_name")).strip()
+            if p:
+                customer_jv_credit[p] = customer_jv_credit.get(p, 0) + safe_num(jv.get("credit_amount"))
 
         customer_map = {}
         customer_vouchers = {}
 
-        for voucher in sales_vouchers:
+        for voucher in fy_sales:
             party = voucher.get("party_name", "Unknown")
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
 
             if party not in customer_map:
                 synced = synced_map.get(party.lower(), {})
+                ob = round(opening_balance.get(party, 0), 2)
                 customer_map[party] = {
                     "customer_name": party,
                     "ledger_group": synced.get("ledger_group", "Sundry Debtors"),
                     "phone": synced.get("phone", ""),
                     "contact_person": synced.get("contact_person", ""),
                     "state": synced.get("state", ""),
-                    "outstanding_amount": safe_num(synced.get("outstanding_amount")),
+                    "opening_balance": ob,
+                    "outstanding_amount": 0,
                     "total_sales": 0,
                     "voucher_count": 0,
                     "last_transaction": v_date_str,
@@ -78,27 +143,25 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
                 if len(parts) == 3:
                     v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
                     days_old = (today - v_date).days
-                    customer_vouchers.setdefault(party, []).append({
-                        "amount": amount, "days_old": days_old
-                    })
+                    customer_vouchers.setdefault(party, []).append({"amount": amount, "days_old": days_old})
                     if days_old > customer_map[party]["oldest_invoice_days"]:
                         customer_map[party]["oldest_invoice_days"] = days_old
             except (ValueError, TypeError):
-                customer_vouchers.setdefault(party, []).append({
-                    "amount": amount, "days_old": 0
-                })
+                customer_vouchers.setdefault(party, []).append({"amount": amount, "days_old": 0})
 
-        # Add synced customers not in sales
+        # Add synced customers not in FY sales
         for sc in synced_customers:
             name = sc.get("customer_name")
             if not name or name in customer_map:
                 continue
+            ob = round(opening_balance.get(name, 0), 2)
             customer_map[name] = {
                 "customer_name": name,
                 "ledger_group": sc.get("ledger_group", "Sundry Debtors"),
                 "phone": sc.get("phone", ""),
                 "contact_person": sc.get("contact_person", ""),
                 "state": sc.get("state", ""),
+                "opening_balance": ob,
                 "outstanding_amount": safe_num(sc.get("outstanding_amount")),
                 "total_sales": 0,
                 "voucher_count": 0,
@@ -113,15 +176,29 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
 
-        # FIFO aging
+        # Calculate outstanding, paid, aging for each customer
         for cust in customers:
-            outstanding = safe_num(cust.get("outstanding_amount"))
             party = cust["customer_name"]
-            voucher_list = customer_vouchers.get(party, [])
+            ob = cust.get("opening_balance", 0)
+            total_sales = cust["total_sales"]
+            receipt_paid = customer_receipts.get(party, 0)
+            cn_credit = customer_cn_total.get(party, 0)
+            jv_credit = customer_jv_credit.get(party, 0)
+            total_credits = receipt_paid + cn_credit + jv_credit
 
-            if outstanding > 0 and voucher_list:
+            # Outstanding = Opening + Sales - Receipts - Credit Notes - Journal Credits
+            outstanding = ob + total_sales - total_credits
+            cust["outstanding_amount"] = round(max(0, outstanding), 2)
+            cust["paid_amount"] = round(total_credits, 2)
+            cust["receipt_count"] = len([r for r in fy_receipts if r.get("party_name") == party])
+            cust["credit_note_total"] = round(cn_credit, 2)
+            cust["journal_credit"] = round(jv_credit, 2)
+
+            # FIFO aging on outstanding
+            voucher_list = customer_vouchers.get(party, [])
+            if cust["outstanding_amount"] > 0 and voucher_list:
                 voucher_list.sort(key=lambda x: x["days_old"], reverse=True)
-                remaining = outstanding
+                remaining = cust["outstanding_amount"]
                 for v in voucher_list:
                     if remaining <= 0:
                         break
@@ -139,18 +216,10 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
                 if remaining > 0:
                     cust["aging_0_30"] += remaining
 
-            cust["overdue_amount"] = cust["aging_60_90"] + cust["aging_90_plus"]
-
-            receipt_paid = customer_payments.get(cust["customer_name"], 0)
-            if receipt_paid > 0:
-                cust["paid_amount"] = receipt_paid
-                cust["receipt_count"] = len([r for r in receipt_vouchers if r.get("party_name") == cust["customer_name"]])
-            else:
-                cust["paid_amount"] = max(0, cust["total_sales"] - outstanding)
-                cust["receipt_count"] = 0
+            cust["overdue_amount"] = round(cust["aging_60_90"] + cust["aging_90_plus"], 2)
 
             oldest = cust["oldest_invoice_days"]
-            if outstanding <= 0:
+            if cust["outstanding_amount"] <= 0:
                 cust["status"] = "normal"
                 cust["status_label"] = "Normal"
             elif oldest > 90:
@@ -175,7 +244,8 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
             success=True,
             data={
                 "customers": customers,
-                "total_outstanding": sum(c["outstanding_amount"] for c in customers),
+                "total_outstanding": round(sum(c["outstanding_amount"] for c in customers), 2),
+                "total_paid": round(sum(c.get("paid_amount", 0) for c in customers), 2),
                 "groups": sorted(all_groups),
                 "states": sorted(all_states)
             }
@@ -440,8 +510,37 @@ async def export_customer_ledger(request: dict):
                 'narration': jv.get('narration', '')
             })
 
-        if not entries:
+        if not entries and not fy:
             return APIResponse(success=False, error=f"No transactions found for {customer_name}")
+
+        # Compute opening balance for this customer if FY is specified
+        opening_balance = 0.0
+        if fy:
+            try:
+                fy_parts = fy.split('-')
+                start_year = int(fy_parts[0])
+                fy_start = f"{start_year}-04-01"
+
+                all_sales_pre = await db.sales_vouchers.find(
+                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
+                ).to_list(10000)
+                all_receipts_pre = await db.receipt_vouchers.find(
+                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "amount": 1}
+                ).to_list(10000)
+                all_cn_pre = await db.credit_notes.find(
+                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
+                ).to_list(10000)
+                all_jv_pre = await db.journal_vouchers.find(
+                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1}
+                ).to_list(10000)
+
+                opening_balance += sum(safe_num(v.get('total_amount')) for v in all_sales_pre)
+                opening_balance -= sum(safe_num(r.get('amount')) for r in all_receipts_pre)
+                opening_balance -= sum(safe_num(cn.get('total_amount')) for cn in all_cn_pre)
+                for jv in all_jv_pre:
+                    opening_balance += safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+            except Exception:
+                pass
 
         # Sort by date
         entries.sort(key=lambda e: e['date'])
