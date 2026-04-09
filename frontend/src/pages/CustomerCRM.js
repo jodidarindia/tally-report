@@ -154,23 +154,22 @@ const CustomerCRM = ({ user, selectedFY }) => {
     }
   };
 
-  const exportLedger = async (customerName, format) => {
+  const exportLedger = async (customerName) => {
     setExportingLedger(customerName);
     try {
       const response = await axios.post(
         `${API}/customers/ledger/export`,
-        { customer_name: customerName, format },
+        { customer_name: customerName, fy: selectedFY || '' },
         { responseType: 'blob' }
       );
-      const ext = format === 'excel' ? 'xlsx' : 'pdf';
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `ledger_${customerName.replace(/\s/g, '_')}.${ext}`);
+      link.setAttribute('download', `ledger_${customerName.replace(/\s/g, '_')}_${selectedFY || 'all'}.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
-      toast.success(`Ledger exported for ${customerName}`);
+      toast.success(`Tally-format ledger exported for ${customerName}`);
     } catch (error) {
       toast.error('Failed to export ledger');
     } finally {
@@ -318,24 +317,14 @@ const CustomerCRM = ({ user, selectedFY }) => {
                           </span>
                         </td>
                         <td>
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => exportLedger(customer.customer_name, 'excel')}
-                              disabled={exportingLedger === customer.customer_name}
-                              className="px-2 py-1 text-xs rounded bg-[#2563EB] text-white hover:bg-[#1D4ED8] disabled:opacity-50"
-                              data-testid={`export-ledger-excel-${idx}`}
-                            >
-                              XLS
-                            </button>
-                            <button
-                              onClick={() => exportLedger(customer.customer_name, 'pdf')}
-                              disabled={exportingLedger === customer.customer_name}
-                              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                              data-testid={`export-ledger-pdf-${idx}`}
-                            >
-                              PDF
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => exportLedger(customer.customer_name)}
+                            disabled={exportingLedger === customer.customer_name}
+                            className="px-3 py-1.5 text-xs rounded-lg bg-[#2563EB] text-white hover:bg-[#1D4ED8] disabled:opacity-50 flex items-center gap-1.5"
+                            data-testid={`export-ledger-pdf-${idx}`}
+                          >
+                            {exportingLedger === customer.customer_name ? 'Exporting...' : 'Ledger PDF'}
+                          </button>
                         </td>
                       </tr>
                         );

@@ -125,13 +125,98 @@ async def receive_agent_sync(request: dict):
                     await db.receipt_vouchers.bulk_write(operations)
             logger.info(f"Synced {len(data)} receipt/payment vouchers to database")
 
+        elif data_type == 'credit_notes':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for cn in data:
+                    v_id = cn.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": "credit_note",
+                                "voucher_date": cn.get('voucher_date', ''),
+                                "party_name": cn.get('party_name', ''),
+                                "total_amount": cn.get('total_amount', 0),
+                                "items": cn.get('items', []),
+                                "narration": cn.get('narration', ''),
+                                "reference_number": cn.get('reference_number', ''),
+                                "last_synced": sync_time
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.credit_notes.bulk_write(operations)
+            logger.info(f"Synced {len(data)} credit notes to database")
+
+        elif data_type == 'journal_vouchers':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for jv in data:
+                    v_id = jv.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": "journal",
+                                "voucher_date": jv.get('voucher_date', ''),
+                                "party_name": jv.get('party_name', ''),
+                                "debit_amount": jv.get('debit_amount', 0),
+                                "credit_amount": jv.get('credit_amount', 0),
+                                "narration": jv.get('narration', ''),
+                                "ledger_entries": jv.get('ledger_entries', []),
+                                "last_synced": sync_time
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.journal_vouchers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} journal vouchers to database")
+
+        elif data_type == 'stock_journals':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for sj in data:
+                    v_id = sj.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": "stock_journal",
+                                "voucher_date": sj.get('voucher_date', ''),
+                                "items": sj.get('items', []),
+                                "narration": sj.get('narration', ''),
+                                "last_synced": sync_time
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.stock_journals.bulk_write(operations)
+            logger.info(f"Synced {len(data)} stock journals to database")
+
         # Update last sync time
         company_name = request.get('company_name', '')
         financial_year = request.get('financial_year', '')
+        sync_time_val = sync_time or datetime.now(timezone.utc).isoformat()
         await db.sync_status.update_one(
             {'type': 'agent_sync'},
             {'$set': {
-                'last_sync': sync_time,
+                'last_sync': sync_time_val,
                 'data_type': data_type,
                 'count': len(data),
                 'agent_version': request.get('agent_version', ''),
@@ -141,8 +226,19 @@ async def receive_agent_sync(request: dict):
             upsert=True
         )
 
-        # Recompute overdue digest after every sync (sales or receipts affect it)
-        if data_type in ('sales', 'receipts', 'customers'):
+        # Store sync history entry
+        await db.sync_history.insert_one({
+            'timestamp': sync_time_val,
+            'data_type': data_type,
+            'count': len(data),
+            'financial_year': financial_year,
+            'company_name': company_name,
+            'agent_version': request.get('agent_version', ''),
+            'sync_mode': request.get('sync_mode', 'full')
+        })
+
+        # Recompute overdue digest after sync of relevant data types
+        if data_type in ('sales', 'receipts', 'customers', 'credit_notes', 'journal_vouchers'):
             try:
                 digest = await compute_overdue_digest(db)
                 logger.info(f"Overdue digest recomputed after {data_type} sync: {digest['total_overdue_invoices']} overdue invoices")
@@ -244,3 +340,51 @@ async def get_sync_status():
     except Exception as e:
         logger.error(f"Error getting sync status: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+
+@router.get("/sync/history")
+async def get_sync_history(limit: int = 100):
+    """Get sync history timeline."""
+    try:
+        history = await db.sync_history.find(
+            {}, {"_id": 0}
+        ).sort("timestamp", -1).to_list(limit)
+
+        # Group by sync cycle (entries within 5 min of each other)
+        cycles = []
+        current_cycle = None
+        for entry in history:
+            ts = entry.get('timestamp', '')
+            if not current_cycle or _time_diff_minutes(current_cycle['timestamp'], ts) > 5:
+                if current_cycle:
+                    cycles.append(current_cycle)
+                current_cycle = {
+                    'timestamp': ts,
+                    'company_name': entry.get('company_name', ''),
+                    'financial_year': entry.get('financial_year', ''),
+                    'sync_mode': entry.get('sync_mode', 'full'),
+                    'agent_version': entry.get('agent_version', ''),
+                    'data_types': {}
+                }
+            dtype = entry.get('data_type', 'unknown')
+            current_cycle['data_types'][dtype] = entry.get('count', 0)
+
+        if current_cycle:
+            cycles.append(current_cycle)
+
+        return APIResponse(success=True, data={"cycles": cycles, "total": len(cycles)})
+    except Exception as e:
+        logger.error(f"Error fetching sync history: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+def _time_diff_minutes(ts1: str, ts2: str) -> float:
+    """Calculate minute difference between two ISO timestamps."""
+    try:
+        from dateutil.parser import parse as parse_dt
+        d1 = parse_dt(ts1)
+        d2 = parse_dt(ts2)
+        return abs((d1 - d2).total_seconds()) / 60
+    except Exception:
+        return 999

@@ -365,50 +365,105 @@ async def set_customer_target(request: dict):
 
 @router.post("/customers/ledger/export")
 async def export_customer_ledger(request: dict):
+    """Export complete customer ledger in Tally-style PDF format.
+    Includes: Sales, Receipts, Credit Notes, and Journal entries."""
     try:
         customer_name = request.get("customer_name", "")
-        export_format = request.get("format", "excel")
+        fy = request.get("fy", "")
 
         if not customer_name:
             return APIResponse(success=False, error="Customer name is required")
 
-        sales_vouchers = await db.sales_vouchers.find(
-            {"party_name": customer_name},
-            {"_id": 0}
+        # Fetch all voucher types for this customer
+        sales = await db.sales_vouchers.find(
+            {"party_name": customer_name}, {"_id": 0}
+        ).to_list(10000)
+        receipts = await db.receipt_vouchers.find(
+            {"party_name": customer_name}, {"_id": 0}
+        ).to_list(10000)
+        credit_notes = await db.credit_notes.find(
+            {"party_name": customer_name}, {"_id": 0}
+        ).to_list(10000)
+        journals = await db.journal_vouchers.find(
+            {"party_name": customer_name}, {"_id": 0}
         ).to_list(10000)
 
-        rows = []
-        running_total = 0
-        for v in sorted(sales_vouchers, key=lambda x: x.get("voucher_date", "")):
-            amount = safe_num(v.get("total_amount"))
-            running_total += amount
-            items_str = ", ".join([f"{i.get('item', '')} x{i.get('quantity', 0)}" for i in v.get("items", [])])
-            rows.append({
-                "Date": v.get("voucher_date", ""),
-                "Voucher No": v.get("reference_number", v.get("voucher_id", "")),
-                "Items": items_str,
-                "Amount": amount,
-                "Running Total": running_total,
-                "Salesman": v.get("salesman", "")
+        # FY filter if provided
+        if fy:
+            sales = filter_vouchers_by_fy(sales, fy)
+            receipts = filter_vouchers_by_fy(
+                [{"voucher_date": r.get("voucher_date", ""), **r} for r in receipts], fy
+            )
+            credit_notes = filter_vouchers_by_fy(credit_notes, fy)
+            journals = filter_vouchers_by_fy(journals, fy)
+
+        # Build unified ledger entries (Tally format: Date | Particulars | Vch Type | Vch No. | Debit | Credit)
+        entries = []
+        for v in sales:
+            entries.append({
+                'date': v.get('voucher_date', ''),
+                'particulars': f"Sales - {v.get('reference_number', v.get('voucher_id', ''))}",
+                'vch_type': 'Sales',
+                'vch_no': v.get('reference_number', v.get('voucher_id', '')),
+                'debit': safe_num(v.get('total_amount')),
+                'credit': 0.0,
+                'narration': v.get('narration', '')
+            })
+        for r in receipts:
+            entries.append({
+                'date': r.get('voucher_date', ''),
+                'particulars': f"Receipt - {r.get('voucher_id', '')}",
+                'vch_type': r.get('voucher_type', 'Receipt').capitalize(),
+                'vch_no': r.get('voucher_id', ''),
+                'debit': 0.0,
+                'credit': safe_num(r.get('amount')),
+                'narration': r.get('narration', '')
+            })
+        for cn in credit_notes:
+            entries.append({
+                'date': cn.get('voucher_date', ''),
+                'particulars': f"Credit Note - {cn.get('reference_number', cn.get('voucher_id', ''))}",
+                'vch_type': 'Credit Note',
+                'vch_no': cn.get('reference_number', cn.get('voucher_id', '')),
+                'debit': 0.0,
+                'credit': safe_num(cn.get('total_amount')),
+                'narration': cn.get('narration', '')
+            })
+        for jv in journals:
+            entries.append({
+                'date': jv.get('voucher_date', ''),
+                'particulars': f"Journal - {jv.get('voucher_id', '')}",
+                'vch_type': 'Journal',
+                'vch_no': jv.get('voucher_id', ''),
+                'debit': safe_num(jv.get('debit_amount')),
+                'credit': safe_num(jv.get('credit_amount')),
+                'narration': jv.get('narration', '')
             })
 
-        if not rows:
+        if not entries:
             return APIResponse(success=False, error=f"No transactions found for {customer_name}")
 
-        export_service = ExportService()
+        # Sort by date
+        entries.sort(key=lambda e: e['date'])
 
-        if export_format == "excel":
-            output = export_service.export_to_excel(rows, f"Ledger - {customer_name}")
-            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            filename = f"ledger_{customer_name.replace(' ', '_')}.xlsx"
-        else:
-            output = export_service.export_to_pdf(rows, f"Ledger - {customer_name}", f"Customer Ledger: {customer_name}")
-            media_type = "application/pdf"
-            filename = f"ledger_{customer_name.replace(' ', '_')}.pdf"
+        # Get customer info
+        cust_info = await db.customers.find_one({"customer_name": customer_name}, {"_id": 0})
+        company_info = await db.sync_status.find_one({"type": "agent_sync"}, {"_id": 0})
+        company_name_str = company_info.get('company_name', 'FLOWRA') if company_info else 'FLOWRA'
 
+        from services.ledger_pdf_service import generate_tally_ledger_pdf
+        output = generate_tally_ledger_pdf(
+            customer_name=customer_name,
+            company_name=company_name_str,
+            entries=entries,
+            fy=fy,
+            customer_info=cust_info or {}
+        )
+
+        filename = f"ledger_{customer_name.replace(' ', '_')}_{fy or 'all'}.pdf"
         return StreamingResponse(
             output,
-            media_type=media_type,
+            media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:

@@ -631,6 +631,92 @@ class TallyCollectionClient:
 
         return all_receipts
 
+    # ---- CREDIT NOTES (monthly batches) ----
+
+    def fetch_credit_notes_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch Credit Note vouchers for one month."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting credit notes: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Credit Note</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'credit_notes_{from_date.strftime("%Y%m")}')
+        if not data:
+            return []
+        return self._parse_vouchers(data, 'sales')  # Same structure as sales
+
+    # ---- JOURNAL VOUCHERS (Sundry Debtors only, monthly) ----
+
+    def fetch_journals_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch Journal vouchers involving Sundry Debtors for one month."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting journals: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'journals_{from_date.strftime("%Y%m")}')
+        if not data:
+            return []
+        raw = self._parse_vouchers(data, 'journal')
+        # Filter: only journals involving Sundry Debtors
+        return [j for j in raw if j.get('party_name', '')]
+
+    # ---- STOCK JOURNALS (monthly) ----
+
+    def fetch_stock_journals_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch Stock Journal vouchers for one month (inventory adjustments)."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting stock journals: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Stock Journal</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'stock_journals_{from_date.strftime("%Y%m")}')
+        if not data:
+            return []
+        return self._parse_vouchers(data, 'sales')  # Parse items like sales
+
     def _parse_vouchers(self, data: dict, vtype: str) -> List[Dict]:
         """Parse voucher XML response into clean dicts.
         
@@ -733,6 +819,27 @@ class TallyCollectionClient:
                     'amount': amount,
                     'bill_allocations': bill_refs,
                     'narration': str(v.get('NARRATION', '') or '')
+                })
+            elif vtype == 'journal':
+                # Journals: compute debit and credit per ledger entry
+                debit_total = 0.0
+                credit_total = 0.0
+                for entry in ledger_entries:
+                    amt = entry.get('amount', 0)
+                    if amt < 0:
+                        debit_total += abs(amt)
+                    else:
+                        credit_total += amt
+
+                results.append({
+                    'voucher_id': str(v_number),
+                    'voucher_type': 'journal',
+                    'voucher_date': formatted_date,
+                    'party_name': party,
+                    'debit_amount': debit_total,
+                    'credit_amount': credit_total,
+                    'narration': str(v.get('NARRATION', '') or ''),
+                    'ledger_entries': ledger_entries
                 })
             else:
                 # Sales: line items
@@ -901,24 +1008,24 @@ class FlowraSyncAgent:
             self.report_progress('phase_complete', phase='inventory', count=len(items))
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-            # --- Phase 2 & 3: Sales + Receipts (per FY) ---
+            # --- Phase 2-5: Sales, Receipts, Credit Notes, Journals (per FY) ---
             all_sales_combined = []
             all_receipts_combined = []
+            all_credit_notes_combined = []
+            all_journals_combined = []
+            all_stock_journals_combined = []
 
             for fy in fys_to_sync:
                 self.financial_year = fy
 
                 if sync_mode == 'incremental':
-                    # Only sync current month + last month for updates
                     today = date.today()
                     months = []
-                    # Current month
                     m_start = today.replace(day=1)
                     m_end = min((m_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), today)
                     fy_start, fy_end = fy_to_dates(fy)
                     if m_start >= fy_start and m_start <= fy_end:
                         months.append((m_start, m_end))
-                    # Previous month
                     prev_end = m_start - timedelta(days=1)
                     prev_start = prev_end.replace(day=1)
                     if prev_start >= fy_start and prev_start <= fy_end:
@@ -930,13 +1037,12 @@ class FlowraSyncAgent:
                     months = list(months_in_fy(fy))
                     logger.info(f"--- Full sync FY {fy}: {len(months)} months ---")
 
-                # Sales
+                # Phase 2: Sales
                 logger.info(f"  Phase 2: Sales Vouchers (FY {fy})")
                 self.report_progress('phase_start', phase='sales')
                 fy_sales = []
                 for m_start, m_end in months:
-                    month_sales = self.tally.fetch_sales_month(m_start, m_end)
-                    fy_sales.extend(month_sales)
+                    fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_sales:
                     self.save_cache(f'sales_{fy}', fy_sales)
@@ -945,13 +1051,12 @@ class FlowraSyncAgent:
                 logger.info(f"  FY {fy}: {len(fy_sales)} sales vouchers")
                 self.report_progress('phase_complete', phase='sales', count=len(fy_sales))
 
-                # Receipts
+                # Phase 3: Receipts
                 logger.info(f"  Phase 3: Receipts/Payments (FY {fy})")
                 self.report_progress('phase_start', phase='receipts')
                 fy_receipts = []
                 for m_start, m_end in months:
-                    month_receipts = self.tally.fetch_receipts_month(m_start, m_end)
-                    fy_receipts.extend(month_receipts)
+                    fy_receipts.extend(self.tally.fetch_receipts_month(m_start, m_end))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_receipts:
                     self.save_cache(f'receipts_{fy}', fy_receipts)
@@ -960,7 +1065,49 @@ class FlowraSyncAgent:
                 logger.info(f"  FY {fy}: {len(fy_receipts)} receipt vouchers")
                 self.report_progress('phase_complete', phase='receipts', count=len(fy_receipts))
 
-            # --- Phase 4: Customer Ledgers (always full — just current balances) ---
+                # Phase 4: Credit Notes
+                logger.info(f"  Phase 4: Credit Notes (FY {fy})")
+                self.report_progress('phase_start', phase='credit_notes')
+                fy_cn = []
+                for m_start, m_end in months:
+                    fy_cn.extend(self.tally.fetch_credit_notes_month(m_start, m_end))
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
+                if fy_cn:
+                    self.save_cache(f'credit_notes_{fy}', fy_cn)
+                    self.sync_to_backend('credit_notes', fy_cn)
+                    all_credit_notes_combined.extend(fy_cn)
+                logger.info(f"  FY {fy}: {len(fy_cn)} credit notes")
+                self.report_progress('phase_complete', phase='credit_notes', count=len(fy_cn))
+
+                # Phase 5a: Journal Vouchers (Sundry Debtors)
+                logger.info(f"  Phase 5a: Journal Vouchers (FY {fy})")
+                self.report_progress('phase_start', phase='journals')
+                fy_jv = []
+                for m_start, m_end in months:
+                    fy_jv.extend(self.tally.fetch_journals_month(m_start, m_end))
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
+                if fy_jv:
+                    self.save_cache(f'journals_{fy}', fy_jv)
+                    self.sync_to_backend('journal_vouchers', fy_jv)
+                    all_journals_combined.extend(fy_jv)
+                logger.info(f"  FY {fy}: {len(fy_jv)} journal vouchers")
+                self.report_progress('phase_complete', phase='journals', count=len(fy_jv))
+
+                # Phase 5b: Stock Journals
+                logger.info(f"  Phase 5b: Stock Journals (FY {fy})")
+                self.report_progress('phase_start', phase='stock_journals')
+                fy_sj = []
+                for m_start, m_end in months:
+                    fy_sj.extend(self.tally.fetch_stock_journals_month(m_start, m_end))
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
+                if fy_sj:
+                    self.save_cache(f'stock_journals_{fy}', fy_sj)
+                    self.sync_to_backend('stock_journals', fy_sj)
+                    all_stock_journals_combined.extend(fy_sj)
+                logger.info(f"  FY {fy}: {len(fy_sj)} stock journals")
+                self.report_progress('phase_complete', phase='stock_journals', count=len(fy_sj))
+
+            # --- Phase 6: Customer Ledgers (always full — just current balances) ---
             self.financial_year = fys_to_sync[0]
             logger.info("--- Phase 4: Customer Ledgers ---")
             self.report_progress('phase_start', phase='customers')
@@ -990,20 +1137,28 @@ class FlowraSyncAgent:
             # Summary
             total_sales = len(all_sales_combined)
             total_receipts = len(all_receipts_combined)
+            total_cn = len(all_credit_notes_combined)
+            total_jv = len(all_journals_combined)
+            total_sj = len(all_stock_journals_combined)
             logger.info("")
             logger.info(f"[DONE] {sync_mode.capitalize()} sync completed at {datetime.now().strftime('%H:%M:%S')}")
-            logger.info(f"  FYs synced:  {', '.join(fys_to_sync)}")
-            logger.info(f"  Inventory:   {len(items)} items")
-            logger.info(f"  Sales:       {total_sales} vouchers")
-            logger.info(f"  Receipts:    {total_receipts} vouchers")
-            logger.info(f"  Customers:   {len(customers)} ledgers")
+            logger.info(f"  FYs synced:     {', '.join(fys_to_sync)}")
+            logger.info(f"  Inventory:      {len(items)} items")
+            logger.info(f"  Sales:          {total_sales} vouchers")
+            logger.info(f"  Receipts:       {total_receipts} vouchers")
+            logger.info(f"  Credit Notes:   {total_cn} vouchers")
+            logger.info(f"  Journals:       {total_jv} vouchers")
+            logger.info(f"  Stock Journals: {total_sj} vouchers")
+            logger.info(f"  Customers:      {len(customers)} ledgers")
             logger.info("=" * 60)
 
             state = load_sync_state()
             state['last_sync_time'] = datetime.now().isoformat()
             state['last_results'] = {
                 'inventory': len(items), 'sales': total_sales,
-                'receipts': total_receipts, 'customers': len(customers)
+                'receipts': total_receipts, 'credit_notes': total_cn,
+                'journals': total_jv, 'stock_journals': total_sj,
+                'customers': len(customers)
             }
             state['company'] = self.tally.company
             state['fys_synced'] = fys_to_sync
@@ -1012,7 +1167,9 @@ class FlowraSyncAgent:
 
             self.report_progress('sync_complete',
                                  inventory=len(items), sales=total_sales,
-                                 receipts=total_receipts, customers=len(customers),
+                                 receipts=total_receipts, credit_notes=total_cn,
+                                 journals=total_jv, stock_journals=total_sj,
+                                 customers=len(customers),
                                  fys_synced=fys_to_sync, sync_mode=sync_mode)
 
         except Exception as e:

@@ -1,0 +1,117 @@
+{
+  "summary": "Iteration 14: All new features tested and working. 16/16 backend tests passed (100%). Frontend Sync History page and Ledger PDF export working correctly.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Console",
+        "issues": ["React hydration warning about span inside option element in FY selector - cosmetic only, known from iteration 12"]
+      },
+      {
+        "screen": "WebSocket",
+        "issues": ["WebSocket connection to sync-status fails on initial load - reconnects automatically, known from iteration 11"]
+      },
+      {
+        "screen": "Dashboard Reminders",
+        "issues": ["GET /api/customers/followups/reminders returns 405 - known issue from iteration 11"]
+      }
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/sync/history returns 200 with success=True",
+    "Backend: GET /api/sync/history returns cycles array and total count",
+    "Backend: GET /api/sync/history?limit=5 respects limit parameter",
+    "Backend: POST /api/agent/sync with credit_notes (empty) returns success",
+    "Backend: POST /api/agent/sync with credit_notes (1 item) returns success",
+    "Backend: POST /api/agent/sync with journal_vouchers (empty) returns success",
+    "Backend: POST /api/agent/sync with journal_vouchers (1 item) returns success",
+    "Backend: POST /api/agent/sync with stock_journals (empty) returns success",
+    "Backend: POST /api/agent/sync with stock_journals (1 item) returns success",
+    "Backend: POST /api/customers/ledger/export with empty customer returns error",
+    "Backend: POST /api/customers/ledger/export with nonexistent customer returns error",
+    "Backend: POST /api/customers/ledger/export generates PDF for customer with transactions",
+    "Backend: Sync operations create history entries",
+    "Backend: POST /api/auth/login with admin/admin123 works",
+    "Backend: GET /api/sync/status works",
+    "Backend: GET /api/customers/outstanding works",
+    "Frontend: Login with admin/admin123 works",
+    "Frontend: Navigation shows company name in bold (Test Company)",
+    "Frontend: Sync History page loads at /sync-history",
+    "Frontend: Sync History shows current sync status card",
+    "Frontend: Sync History shows timeline with sync cycles",
+    "Frontend: Sync History refresh button works",
+    "Frontend: Sync cycle expands to show data type breakdown",
+    "Frontend: CRM page shows Ledger PDF button for each customer",
+    "Frontend: Ledger PDF export downloads PDF file successfully",
+    "Frontend: Toast notification shows on successful PDF export"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_new_features.py",
+    "/app/test_reports/pytest/iteration14_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "New sync.py handlers for credit_notes, journal_vouchers, stock_journals properly implemented with upsert logic",
+    "Sync history endpoint correctly groups entries by sync cycle (5-minute window)",
+    "Ledger PDF service generates Tally-format PDF with proper columns (Date, Particulars, Vch Type, Vch No, Debit, Credit, Balance)",
+    "PDF includes running balance calculation and Dr/Cr suffix",
+    "SyncHistory.js properly displays data type badges with color coding",
+    "CustomerCRM.js correctly integrates ledger export with blob download"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_new_features.py (created 16 tests for new features)"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (16/16 tests passing)",
+    "frontend": "100% (all new features working)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123"}
+  },
+  
+  "seed_data_creation": "Created test data: 1 credit note (CN-TEST-001), 1 journal voucher (JV-TEST-001), 1 stock journal (SJ-TEST-001), 1 sales voucher for PDF Test Customer",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 14 validated new features: (1) GET /api/sync/history returns sync cycle timeline grouped by 5-minute windows, (2) POST /api/customers/ledger/export generates Tally-format PDF with Sales, Receipts, Credit Notes, Journals, (3) POST /api/agent/sync handles credit_notes, journal_vouchers, stock_journals data types. Known minor issues persist: WebSocket reconnection on load, /api/customers/followups/reminders returns 405, React hydration warning in FY selector.",
+  
+  "new_features_validated": {
+    "sync_history": {
+      "endpoint": "GET /api/sync/history",
+      "status": "WORKING",
+      "features": ["Timeline view", "Cycle grouping", "Data type breakdown", "Expandable details"]
+    },
+    "ledger_pdf_export": {
+      "endpoint": "POST /api/customers/ledger/export",
+      "status": "WORKING",
+      "features": ["Tally-format PDF", "Running balance", "Sales/Receipts/Credit Notes/Journals", "FY filtering"]
+    },
+    "credit_notes_sync": {
+      "endpoint": "POST /api/agent/sync (data_type=credit_notes)",
+      "status": "WORKING"
+    },
+    "journal_vouchers_sync": {
+      "endpoint": "POST /api/agent/sync (data_type=journal_vouchers)",
+      "status": "WORKING"
+    },
+    "stock_journals_sync": {
+      "endpoint": "POST /api/agent/sync (data_type=stock_journals)",
+      "status": "WORKING"
+    }
+  }
+}

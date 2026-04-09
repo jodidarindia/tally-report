@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import { BarChart3, Package, TrendingUp, Bot, Settings, Menu, X, Users, Activity, Zap, LogOut, KeyRound, UserPlus, ChevronDown } from 'lucide-react';
+import { BarChart3, Package, TrendingUp, Bot, Settings, Menu, X, Users, Activity, Zap, LogOut, KeyRound, UserPlus, ChevronDown, History } from 'lucide-react';
 import { toast } from 'sonner';
 import '@/App.css';
 import '@/index.css';
@@ -20,6 +20,7 @@ import CustomerCRM from './pages/CustomerCRM';
 import EnhancedAIReports from './pages/EnhancedAIReports';
 import InventoryAnalytics from './pages/InventoryAnalytics';
 import SalesmanPerformance from './pages/SalesmanPerformance';
+import SyncHistory from './pages/SyncHistory';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -226,6 +227,7 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
     { path: '/analytics', icon: Activity, label: 'Analytics', roles: ['admin'] },
     { path: '/ai-reports', icon: Zap, label: 'AI Reports', roles: ['admin'] },
     { path: '/salesman', icon: Users, label: 'Salesman', roles: ['admin'] },
+    { path: '/sync-history', icon: History, label: 'Sync History', roles: ['admin'] },
     { path: '/setup', icon: Settings, label: 'Setup', roles: ['admin'] }
   ];
   const navItems = allNavItems.filter(item => item.roles.includes(user?.role));
@@ -415,6 +417,7 @@ function App() {
               <Route path="/ai-query" element={<AIQueryBuilder />} />
               <Route path="/salesman" element={<SalesmanPerformance selectedFY={selectedFY} />} />
               <Route path="/history" element={<ReportHistory />} />
+              <Route path="/sync-history" element={<SyncHistory />} />
               <Route path="/setup" element={<TallySetup />} />
             </>}
           </Routes>
