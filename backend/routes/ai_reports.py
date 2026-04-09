@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from datetime import datetime, timezone
@@ -12,20 +12,38 @@ from utils import safe_num
 from services.ai_service import AIReportService
 from services.enhanced_ai_service import EnhancedAIReportService
 from services.export_service import ExportService
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_query(ctx, company_id=None, extra=None):
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
+
+
 @router.post("/ai/query")
-async def ai_query(request: AIQueryRequest):
+async def ai_query(request: Request):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(1000)
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, body.get("company_id"))
+        query_text = body.get("query", "")
+
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(1000)
+        sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(1000)
 
         ai_service = AIReportService()
         result = await ai_service.generate_report(
-            query=request.query,
+            query=query_text,
             inventory_data=inventory_items,
             sales_data=sales_vouchers
         )
@@ -50,17 +68,21 @@ async def ai_query(request: AIQueryRequest):
 
 
 @router.post("/ai/advanced-query")
-async def ai_advanced_query(request: AIQueryRequest):
+async def ai_advanced_query(request: Request):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        customer_data = await db.customers.find({}, {"_id": 0}).to_list(1000)
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, body.get("company_id"))
+
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        customer_data = await db.customers.find(q, {"_id": 0}).to_list(1000)
 
         ai_service = EnhancedAIReportService()
         result = await ai_service.generate_advanced_report(
-            query=request.query,
-            report_type=request.report_type or 'general',
-            filters=request.filters or {},
+            query=body.get("query", ""),
+            report_type=body.get("report_type", "general"),
+            filters=body.get("filters", {}),
             inventory_data=inventory_items,
             sales_data=sales_vouchers,
             customer_data=customer_data
@@ -68,13 +90,15 @@ async def ai_advanced_query(request: AIQueryRequest):
 
         if result.get("success"):
             ai_query_obj = AIQuery(
-                query_text=request.query,
+                query_text=body.get("query", ""),
                 response=result.get("raw_response"),
                 report_data=result.get("report"),
-                filters=request.filters
+                filters=body.get("filters")
             )
             doc = ai_query_obj.model_dump()
             doc['created_at'] = doc['created_at'].isoformat()
+            if ctx and ctx.get("tenant_id"):
+                doc["tenant_id"] = ctx["tenant_id"]
             await db.ai_queries.insert_one(doc)
 
         return APIResponse(
@@ -88,13 +112,19 @@ async def ai_advanced_query(request: AIQueryRequest):
 
 
 @router.post("/reports/export")
-async def export_report(request: ExportRequest):
+async def export_report(request: Request):
     try:
-        if request.report_type == "inventory":
-            data = await db.inventory_items.find({}, {"_id": 0}).to_list(1000)
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, body.get("company_id"))
+        report_type = body.get("report_type", "")
+        export_format = body.get("format", "pdf")
+
+        if report_type == "inventory":
+            data = await db.inventory_items.find(q, {"_id": 0}).to_list(1000)
             report_title = "Inventory Report"
-        elif request.report_type == "sales":
-            data = await db.sales_vouchers.find({}, {"_id": 0}).to_list(1000)
+        elif report_type == "sales":
+            data = await db.sales_vouchers.find(q, {"_id": 0}).to_list(1000)
             report_title = "Sales Report"
         else:
             return APIResponse(success=False, error="Invalid report type")
@@ -109,18 +139,18 @@ async def export_report(request: ExportRequest):
 
         export_service = ExportService()
 
-        if request.format == "csv":
+        if export_format == "csv":
             output = export_service.export_to_csv(clean_data)
             media_type = "text/csv"
-            filename = f"{request.report_type}_report.csv"
-        elif request.format == "excel":
-            output = export_service.export_to_excel(clean_data, request.report_type.title())
+            filename = f"{report_type}_report.csv"
+        elif export_format == "excel":
+            output = export_service.export_to_excel(clean_data, report_type.title())
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            filename = f"{request.report_type}_report.xlsx"
-        elif request.format == "pdf":
-            output = export_service.export_to_pdf(clean_data, request.report_type.title(), report_title)
+            filename = f"{report_type}_report.xlsx"
+        elif export_format == "pdf":
+            output = export_service.export_to_pdf(clean_data, report_type.title(), report_title)
             media_type = "application/pdf"
-            filename = f"{request.report_type}_report.pdf"
+            filename = f"{report_type}_report.pdf"
         else:
             return APIResponse(success=False, error="Invalid export format")
 
@@ -135,9 +165,11 @@ async def export_report(request: ExportRequest):
 
 
 @router.get("/reports/history")
-async def get_report_history():
+async def get_report_history(request: Request):
     try:
-        queries = await db.ai_queries.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx)
+        queries = await db.ai_queries.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
         return APIResponse(success=True, data={"queries": queries, "count": len(queries)})
     except Exception as e:
         logger.error(f"Error fetching report history: {e}")

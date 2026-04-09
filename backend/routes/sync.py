@@ -7,6 +7,8 @@ import logging
 from db import db
 from models import InventoryItem, SalesVoucher, APIResponse
 from utils import safe_num, compute_overdue_digest, ws_manager
+from services.auth_service import verify_sync_token, get_current_user
+from services.tenant_context import get_tenant_context, tenant_filter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -14,36 +16,71 @@ router = APIRouter()
 
 @router.post("/agent/sync")
 async def receive_agent_sync(request: dict):
-    """Receive synced data from desktop agent"""
+    """Receive synced data from desktop agent.
+    Requires tenant_id and sync_token for authentication + data isolation."""
     try:
         data_type = request.get('data_type')
         data = request.get('data', [])
         sync_time = request.get('sync_time')
+        req_tenant_id = request.get('tenant_id', '')
+        req_company_id = request.get('company_id', '')
+        sync_token = request.get('sync_token', '')
 
-        logger.info(f"Received {data_type} sync from agent: {len(data)} items")
+        # Verify sync token if provided
+        if req_tenant_id and sync_token:
+            if not verify_sync_token(req_tenant_id, sync_token):
+                return APIResponse(success=False, error="Invalid sync token")
+        elif req_tenant_id:
+            # Legacy: allow sync without token but log warning
+            logger.warning(f"Sync without token for tenant {req_tenant_id}")
+
+        # Fallback: if no tenant_id, use default (for backward compat)
+        if not req_tenant_id:
+            # Try to find the default admin tenant
+            admin = await db.users.find_one({"role": "admin"}, {"_id": 0, "tenant_id": 1})
+            req_tenant_id = admin.get("tenant_id", "tenant_admin") if admin else "tenant_admin"
+            logger.info(f"No tenant_id in sync request, using default: {req_tenant_id}")
+
+        # Add company to admin's company list if new
+        if req_company_id and req_tenant_id:
+            await db.users.update_one(
+                {"tenant_id": req_tenant_id, "role": "admin"},
+                {"$addToSet": {"companies": req_company_id}}
+            )
+
+        logger.info(f"Received {data_type} sync: {len(data)} items [tenant={req_tenant_id}, company={req_company_id}]")
 
         await ws_manager.broadcast({
             'event': 'data_synced',
             'data': {
                 'data_type': data_type,
                 'count': len(data),
-                'sync_time': sync_time
+                'sync_time': sync_time,
+                'tenant_id': req_tenant_id,
+                'company_id': req_company_id
             },
             'timestamp': datetime.now(timezone.utc).isoformat()
         })
 
+        # Build the tenant+company filter for deletions and upserts
+        t_filter = {"tenant_id": req_tenant_id}
+        if req_company_id:
+            t_filter["company_id"] = req_company_id
+
         if data_type == 'inventory':
-            await db.inventory_items.delete_many({})
+            await db.inventory_items.delete_many(t_filter)
             if data:
                 docs = []
                 for item in data:
                     inventory_obj = InventoryItem(**item)
                     doc = inventory_obj.model_dump()
                     doc['last_updated'] = doc['last_updated'].isoformat()
+                    doc['tenant_id'] = req_tenant_id
+                    doc['company_id'] = req_company_id
                     docs.append(doc)
                 if docs:
                     await db.inventory_items.insert_many(docs)
-            logger.info(f"Synced {len(data)} inventory items to database")
+            logger.info(f"Synced {len(data)} inventory items")
 
         elif data_type == 'sales':
             if data:
@@ -57,16 +94,18 @@ async def receive_agent_sync(request: dict):
                     doc = sales_obj.model_dump()
                     doc['last_updated'] = doc['last_updated'].isoformat()
                     doc.pop('id', None)
+                    doc['tenant_id'] = req_tenant_id
+                    doc['company_id'] = req_company_id
                     operations.append(
                         UpdateOne(
-                            {"voucher_id": v_id},
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": doc},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.sales_vouchers.bulk_write(operations)
-            logger.info(f"Synced {len(data)} sales vouchers to database")
+            logger.info(f"Synced {len(data)} sales vouchers")
 
         elif data_type == 'customers':
             if data:
@@ -78,7 +117,7 @@ async def receive_agent_sync(request: dict):
                         continue
                     operations.append(
                         UpdateOne(
-                            {"customer_name": customer_name},
+                            {"customer_name": customer_name, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "customer_name": customer_name,
                                 "ledger_group": cust.get('ledger_group', 'Sundry Debtors'),
@@ -88,14 +127,16 @@ async def receive_agent_sync(request: dict):
                                 "phone": cust.get('phone', ''),
                                 "contact_person": cust.get('contact_person', ''),
                                 "state": cust.get('state', ''),
-                                "last_synced": sync_time
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.customers.bulk_write(operations)
-            logger.info(f"Synced {len(data)} customers to database")
+            logger.info(f"Synced {len(data)} customers")
 
         elif data_type == 'receipts':
             if data:
@@ -107,7 +148,7 @@ async def receive_agent_sync(request: dict):
                         continue
                     operations.append(
                         UpdateOne(
-                            {"voucher_id": v_id},
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "voucher_id": v_id,
                                 "voucher_type": receipt.get('voucher_type', 'receipt'),
@@ -116,14 +157,16 @@ async def receive_agent_sync(request: dict):
                                 "amount": receipt.get('amount', 0),
                                 "bill_allocations": receipt.get('bill_allocations', []),
                                 "narration": receipt.get('narration', ''),
-                                "last_synced": sync_time
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.receipt_vouchers.bulk_write(operations)
-            logger.info(f"Synced {len(data)} receipt/payment vouchers to database")
+            logger.info(f"Synced {len(data)} receipt/payment vouchers")
 
         elif data_type == 'credit_notes':
             if data:
@@ -135,7 +178,7 @@ async def receive_agent_sync(request: dict):
                         continue
                     operations.append(
                         UpdateOne(
-                            {"voucher_id": v_id},
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "voucher_id": v_id,
                                 "voucher_type": "credit_note",
@@ -145,14 +188,16 @@ async def receive_agent_sync(request: dict):
                                 "items": cn.get('items', []),
                                 "narration": cn.get('narration', ''),
                                 "reference_number": cn.get('reference_number', ''),
-                                "last_synced": sync_time
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.credit_notes.bulk_write(operations)
-            logger.info(f"Synced {len(data)} credit notes to database")
+            logger.info(f"Synced {len(data)} credit notes")
 
         elif data_type == 'journal_vouchers':
             if data:
@@ -164,7 +209,7 @@ async def receive_agent_sync(request: dict):
                         continue
                     operations.append(
                         UpdateOne(
-                            {"voucher_id": v_id},
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "voucher_id": v_id,
                                 "voucher_type": "journal",
@@ -174,14 +219,16 @@ async def receive_agent_sync(request: dict):
                                 "credit_amount": jv.get('credit_amount', 0),
                                 "narration": jv.get('narration', ''),
                                 "ledger_entries": jv.get('ledger_entries', []),
-                                "last_synced": sync_time
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.journal_vouchers.bulk_write(operations)
-            logger.info(f"Synced {len(data)} journal vouchers to database")
+            logger.info(f"Synced {len(data)} journal vouchers")
 
         elif data_type == 'stock_journals':
             if data:
@@ -193,35 +240,39 @@ async def receive_agent_sync(request: dict):
                         continue
                     operations.append(
                         UpdateOne(
-                            {"voucher_id": v_id},
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "voucher_id": v_id,
                                 "voucher_type": "stock_journal",
                                 "voucher_date": sj.get('voucher_date', ''),
                                 "items": sj.get('items', []),
                                 "narration": sj.get('narration', ''),
-                                "last_synced": sync_time
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.stock_journals.bulk_write(operations)
-            logger.info(f"Synced {len(data)} stock journals to database")
+            logger.info(f"Synced {len(data)} stock journals")
 
         # Update last sync time
-        company_name = request.get('company_name', '')
+        company_name = request.get('company_name', '') or req_company_id
         financial_year = request.get('financial_year', '')
         sync_time_val = sync_time or datetime.now(timezone.utc).isoformat()
         await db.sync_status.update_one(
-            {'type': 'agent_sync'},
+            {'type': 'agent_sync', 'tenant_id': req_tenant_id, 'company_id': req_company_id},
             {'$set': {
                 'last_sync': sync_time_val,
                 'data_type': data_type,
                 'count': len(data),
                 'agent_version': request.get('agent_version', ''),
                 'company_name': company_name,
-                'financial_year': financial_year
+                'financial_year': financial_year,
+                'tenant_id': req_tenant_id,
+                'company_id': req_company_id
             }},
             upsert=True
         )
@@ -234,14 +285,16 @@ async def receive_agent_sync(request: dict):
             'financial_year': financial_year,
             'company_name': company_name,
             'agent_version': request.get('agent_version', ''),
-            'sync_mode': request.get('sync_mode', 'full')
+            'sync_mode': request.get('sync_mode', 'full'),
+            'tenant_id': req_tenant_id,
+            'company_id': req_company_id
         })
 
         # Recompute overdue digest after sync of relevant data types
         if data_type in ('sales', 'receipts', 'customers', 'credit_notes', 'journal_vouchers'):
             try:
-                digest = await compute_overdue_digest(db)
-                logger.info(f"Overdue digest recomputed after {data_type} sync: {digest['total_overdue_invoices']} overdue invoices")
+                digest = await compute_overdue_digest(db, req_tenant_id, req_company_id)
+                logger.info(f"Overdue digest recomputed: {digest['total_overdue_invoices']} overdue invoices")
                 await ws_manager.broadcast({
                     'event': 'overdue_digest_updated',
                     'data': {
@@ -265,17 +318,21 @@ async def receive_agent_sync(request: dict):
 
 @router.post("/agent/sync-progress")
 async def receive_sync_progress(request: dict):
-    """Receive real-time sync progress from desktop agent and broadcast to WebSocket clients."""
+    """Receive real-time sync progress from desktop agent."""
     try:
         event_type = request.get('type', 'unknown')
-        logger.info(f"Sync progress: {event_type} - {json.dumps({k: v for k, v in request.items() if k != 'type'}, default=str)[:200]}")
+        req_tenant_id = request.get('tenant_id', '')
+        req_company_id = request.get('company_id', '')
+        logger.info(f"Sync progress: {event_type}")
 
         await db.sync_status.update_one(
-            {'type': 'sync_progress'},
+            {'type': 'sync_progress', 'tenant_id': req_tenant_id},
             {'$set': {
                 'event': event_type,
                 'details': request,
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+                'tenant_id': req_tenant_id,
+                'company_id': req_company_id
             }},
             upsert=True
         )
@@ -302,8 +359,18 @@ async def websocket_sync_status(websocket: WebSocket):
             try:
                 msg = json.loads(data)
                 if msg.get('action') == 'get_status':
-                    sync_status = await db.sync_status.find_one({'type': 'agent_sync'}, {'_id': 0})
-                    progress = await db.sync_status.find_one({'type': 'sync_progress'}, {'_id': 0})
+                    t_id = msg.get('tenant_id', '')
+                    c_id = msg.get('company_id', '')
+                    q = {'type': 'agent_sync'}
+                    if t_id:
+                        q['tenant_id'] = t_id
+                    if c_id:
+                        q['company_id'] = c_id
+                    sync_status = await db.sync_status.find_one(q, {'_id': 0})
+                    progress = await db.sync_status.find_one(
+                        {'type': 'sync_progress', **({} if not t_id else {'tenant_id': t_id})},
+                        {'_id': 0}
+                    )
                     await websocket.send_json({
                         'event': 'status_response',
                         'data': {
@@ -320,10 +387,19 @@ async def websocket_sync_status(websocket: WebSocket):
 
 
 @router.get("/sync/status")
-async def get_sync_status():
-    """Get last sync status from desktop agent"""
+async def get_sync_status(request: Request, company_id: Optional[str] = None):
+    """Get last sync status from desktop agent."""
     try:
-        sync_status = await db.sync_status.find_one({'type': 'agent_sync'}, {'_id': 0})
+        ctx = await get_tenant_context(request)
+        q = {'type': 'agent_sync'}
+        if ctx and ctx.get("tenant_id"):
+            q['tenant_id'] = ctx["tenant_id"]
+        if company_id:
+            q['company_id'] = company_id
+        elif ctx and ctx.get("company_id"):
+            q['company_id'] = ctx["company_id"]
+
+        sync_status = await db.sync_status.find_one(q, {'_id': 0})
 
         if not sync_status:
             return APIResponse(
@@ -336,22 +412,26 @@ async def get_sync_status():
             )
 
         return APIResponse(success=True, data=sync_status)
-
     except Exception as e:
         logger.error(f"Error getting sync status: {e}")
         return APIResponse(success=False, error=str(e))
 
 
-
 @router.get("/sync/history")
-async def get_sync_history(limit: int = 100):
+async def get_sync_history(request: Request, limit: int = 100, company_id: Optional[str] = None):
     """Get sync history timeline."""
     try:
-        history = await db.sync_history.find(
-            {}, {"_id": 0}
-        ).sort("timestamp", -1).to_list(limit)
+        ctx = await get_tenant_context(request)
+        q = {}
+        if ctx and ctx.get("tenant_id"):
+            q["tenant_id"] = ctx["tenant_id"]
+        if company_id:
+            q["company_id"] = company_id
+        elif ctx and ctx.get("company_id"):
+            q["company_id"] = ctx["company_id"]
 
-        # Group by sync cycle (entries within 5 min of each other)
+        history = await db.sync_history.find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
+
         cycles = []
         current_cycle = None
         for entry in history:
@@ -380,7 +460,6 @@ async def get_sync_history(limit: int = 100):
 
 
 def _time_diff_minutes(ts1: str, ts2: str) -> float:
-    """Calculate minute difference between two ISO timestamps."""
     try:
         from dateutil.parser import parse as parse_dt
         d1 = parse_dt(ts1)

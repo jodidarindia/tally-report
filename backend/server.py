@@ -1,7 +1,9 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
+import time
+from collections import defaultdict
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -18,6 +20,7 @@ from routes.ai_reports import router as ai_reports_router
 from routes.customers import router as customers_router
 from routes.dashboard import router as dashboard_router
 from routes.salesman import router as salesman_router
+from routes.super_admin import router as super_admin_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -41,6 +44,7 @@ api_router.include_router(ai_reports_router)
 api_router.include_router(customers_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(salesman_router)
+api_router.include_router(super_admin_router)
 
 # Include the combined router in the main app
 app.include_router(api_router)
@@ -51,7 +55,43 @@ app.add_middleware(
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+# Rate limiting store
+_rate_limit_store = defaultdict(list)
+RATE_LIMIT_AUTH = 20  # max attempts per window
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # Rate limiting on auth endpoints
+    if request.url.path.startswith("/api/auth/login"):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        # Clean old entries
+        _rate_limit_store[client_ip] = [
+            t for t in _rate_limit_store[client_ip] if now - t < RATE_LIMIT_WINDOW
+        ]
+        if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_AUTH:
+            return Response(
+                content='{"success":false,"error":"Too many login attempts. Please wait."}',
+                status_code=429,
+                media_type="application/json"
+            )
+        _rate_limit_store[client_ip].append(now)
+
+    response = await call_next(request)
+
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+    return response
 
 
 @app.on_event("startup")

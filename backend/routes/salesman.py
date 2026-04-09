@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from typing import Optional
 from datetime import datetime, timezone
 import uuid
@@ -7,15 +7,30 @@ import logging
 from db import db
 from models import APIResponse
 from utils import safe_num, filter_vouchers_by_fy
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_query(ctx, company_id=None, extra=None):
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
+
+
 @router.get("/salesman/performance")
-async def get_salesman_performance(fy: Optional[str] = None):
+async def get_salesman_performance(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}

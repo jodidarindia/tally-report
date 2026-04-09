@@ -1,22 +1,37 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from typing import Optional
 import logging
 
 from db import db
 from models import SalesVoucher, APIResponse
 from utils import safe_num, filter_vouchers_by_fy
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/sales/vouchers")
-async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None):
-    try:
-        query = {}
-        if party_name:
-            query["party_name"] = {"$regex": party_name, "$options": "i"}
+def _build_query(ctx, company_id=None, extra=None):
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
 
+
+@router.get("/sales/vouchers")
+async def get_sales_vouchers(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None):
+    try:
+        ctx = await get_tenant_context(request)
+        extra = {}
+        if party_name:
+            extra["party_name"] = {"$regex": party_name, "$options": "i"}
+
+        query = _build_query(ctx, company_id, extra)
         vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
 
         if fy:
@@ -39,7 +54,8 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
                 filtered.append(v)
             vouchers = filtered
 
-        all_vouchers_for_meta = await db.sales_vouchers.find({}, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(10000)
+        base_q = _build_query(ctx, company_id)
+        all_vouchers_for_meta = await db.sales_vouchers.find(base_q, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(10000)
         if fy:
             all_vouchers_for_meta = filter_vouchers_by_fy(all_vouchers_for_meta, fy)
 
@@ -122,9 +138,11 @@ async def get_voucher_detail(voucher_id: str):
 
 
 @router.get("/sales/summary")
-async def get_sales_summary(fy: Optional[str] = None):
+async def get_sales_summary(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(vouchers, fy)
 
         if not vouchers:
@@ -168,13 +186,14 @@ async def get_sales_summary(fy: Optional[str] = None):
 
 
 @router.get("/sales/analytics")
-async def get_sales_analytics(fy: Optional[str] = None, party_name: Optional[str] = None, month: Optional[str] = None):
+async def get_sales_analytics(request: Request, fy: Optional[str] = None, party_name: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        query = {}
+        ctx = await get_tenant_context(request)
+        extra = {}
         if party_name:
-            query["party_name"] = {"$regex": party_name, "$options": "i"}
-
-        vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
+            extra["party_name"] = {"$regex": party_name, "$options": "i"}
+        q = _build_query(ctx, company_id, extra)
+        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(vouchers, fy)
 
         if month:

@@ -11,28 +11,43 @@ from models import (
 from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, get_previous_fy
 from services.auth_service import get_current_user
 from services.export_service import ExportService
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_query(ctx, company_id=None, extra=None):
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
+
+
 @router.get("/customers/outstanding")
-async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[str] = None):
+async def get_customer_outstanding(request: Request, customer: Optional[str] = None, fy: Optional[str] = None, company_id: Optional[str] = None):
     """Get outstanding payments by customer with proper aging, opening balance, credit notes, and journals."""
     try:
         from datetime import date as date_type
         today = date_type.today()
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
 
-        synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+        synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
         # Filter out Branch/Divisions
         synced_customers = [c for c in synced_customers if 'branch' not in (c.get('ledger_group', '') or '').lower() and 'division' not in (c.get('ledger_group', '') or '').lower()]
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # Fetch ALL vouchers (not FY filtered) for opening balance calculation
-        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
-        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
-        all_credit_notes = await db.credit_notes.find({}, {"_id": 0}).to_list(20000)
-        all_journals = await db.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
         # Compute FY boundaries
         fy_start_str = None
@@ -257,11 +272,13 @@ async def get_customer_outstanding(customer: Optional[str] = None, fy: Optional[
 
 
 @router.get("/customers/followups")
-async def get_followups(status: Optional[str] = None):
+async def get_followups(request: Request, status: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        query = {}
+        ctx = await get_tenant_context(request)
+        extra = {}
         if status:
-            query["status"] = status
+            extra["status"] = status
+        query = _build_query(ctx, company_id, extra)
         followups = await db.customer_followups.find(query, {"_id": 0}).sort("followup_date", -1).to_list(100)
         return APIResponse(success=True, data={"followups": followups, "count": len(followups)})
     except Exception as e:
@@ -273,6 +290,7 @@ async def get_followups(status: Optional[str] = None):
 async def create_followup(followup: CustomerFollowupCreate, request: Request):
     try:
         user = await get_current_user(request, db)
+        ctx = await get_tenant_context(request)
         followup_obj = CustomerFollowup(
             customer_name=followup.customer_name,
             followup_date=datetime.fromisoformat(followup.followup_date),
@@ -286,6 +304,10 @@ async def create_followup(followup: CustomerFollowupCreate, request: Request):
         doc = followup_obj.model_dump()
         doc['followup_date'] = doc['followup_date'].isoformat()
         doc['created_at'] = doc['created_at'].isoformat()
+        if ctx and ctx.get("tenant_id"):
+            doc['tenant_id'] = ctx["tenant_id"]
+        if ctx and ctx.get("company_id"):
+            doc['company_id'] = ctx["company_id"]
 
         await db.customer_followups.insert_one(doc)
 
@@ -316,10 +338,12 @@ async def update_followup_status(followup_id: str, status: str):
 
 
 @router.get("/customers/targets")
-async def get_customer_targets(fy: Optional[str] = None):
+async def get_customer_targets(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        custom_targets = await db.customer_targets.find({}, {"_id": 0}).to_list(100)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        custom_targets = await db.customer_targets.find(q, {"_id": 0}).to_list(100)
         custom_target_map = {t["customer_name"]: t for t in custom_targets}
 
         current_fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
@@ -434,29 +458,26 @@ async def set_customer_target(request: dict):
 
 
 @router.post("/customers/ledger/export")
-async def export_customer_ledger(request: dict):
+async def export_customer_ledger(request: Request):
     """Export complete customer ledger in Tally-style PDF format.
     Includes: Sales, Receipts, Credit Notes, and Journal entries."""
     try:
-        customer_name = request.get("customer_name", "")
-        fy = request.get("fy", "")
+        body = await request.json()
+        customer_name = body.get("customer_name", "")
+        fy = body.get("fy", "")
 
         if not customer_name:
             return APIResponse(success=False, error="Customer name is required")
 
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx, body.get("company_id"))
+
         # Fetch all voucher types for this customer
-        sales = await db.sales_vouchers.find(
-            {"party_name": customer_name}, {"_id": 0}
-        ).to_list(10000)
-        receipts = await db.receipt_vouchers.find(
-            {"party_name": customer_name}, {"_id": 0}
-        ).to_list(10000)
-        credit_notes = await db.credit_notes.find(
-            {"party_name": customer_name}, {"_id": 0}
-        ).to_list(10000)
-        journals = await db.journal_vouchers.find(
-            {"party_name": customer_name}, {"_id": 0}
-        ).to_list(10000)
+        cust_q = {**tq, "party_name": customer_name}
+        sales = await db.sales_vouchers.find(cust_q, {"_id": 0}).to_list(10000)
+        receipts = await db.receipt_vouchers.find(cust_q, {"_id": 0}).to_list(10000)
+        credit_notes = await db.credit_notes.find(cust_q, {"_id": 0}).to_list(10000)
+        journals = await db.journal_vouchers.find(cust_q, {"_id": 0}).to_list(10000)
 
         # FY filter if provided
         if fy:
@@ -522,16 +543,16 @@ async def export_customer_ledger(request: dict):
                 fy_start = f"{start_year}-04-01"
 
                 all_sales_pre = await db.sales_vouchers.find(
-                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
+                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
                 ).to_list(10000)
                 all_receipts_pre = await db.receipt_vouchers.find(
-                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "amount": 1}
+                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "amount": 1}
                 ).to_list(10000)
                 all_cn_pre = await db.credit_notes.find(
-                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
+                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
                 ).to_list(10000)
                 all_jv_pre = await db.journal_vouchers.find(
-                    {"party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1}
+                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1}
                 ).to_list(10000)
 
                 opening_balance += sum(safe_num(v.get('total_amount')) for v in all_sales_pre)
@@ -546,8 +567,8 @@ async def export_customer_ledger(request: dict):
         entries.sort(key=lambda e: e['date'])
 
         # Get customer info
-        cust_info = await db.customers.find_one({"customer_name": customer_name}, {"_id": 0})
-        company_info = await db.sync_status.find_one({"type": "agent_sync"}, {"_id": 0})
+        cust_info = await db.customers.find_one({**tq, "customer_name": customer_name}, {"_id": 0})
+        company_info = await db.sync_status.find_one({**tq, "type": "agent_sync"}, {"_id": 0})
         company_name_str = company_info.get('company_name', 'FLOWRA') if company_info else 'FLOWRA'
 
         from services.ledger_pdf_service import generate_tally_ledger_pdf
@@ -572,20 +593,22 @@ async def export_customer_ledger(request: dict):
 
 
 @router.get("/customers/payment-behavior")
-async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str] = None):
+async def get_payment_behavior(request: Request, customer: Optional[str] = None, fy: Optional[str] = None, company_id: Optional[str] = None):
     """Payment behavior analysis — always uses ALL historical data regardless of FY.
     The FY param is accepted but ignored to maintain API compatibility."""
     try:
         from datetime import date as date_type
         today = date_type.today()
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
 
         # Always use ALL data for payment behavior (FY-independent)
-        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
-        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
-        all_credit_notes = await db.credit_notes.find({}, {"_id": 0}).to_list(20000)
-        all_journals = await db.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
-        synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+        synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # Build per-customer receipt totals

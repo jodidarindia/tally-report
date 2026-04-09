@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from typing import Optional
 from datetime import datetime
 import logging
@@ -10,25 +10,42 @@ from models import (
 )
 from utils import safe_num, filter_vouchers_by_fy
 from services.purchase_order_ai import PurchaseOrderAI
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/inventory/items")
-async def get_inventory_items(category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None):
-    try:
-        query = {}
-        if category and category != 'all':
-            query["category"] = category
-        if stock_group and stock_group != 'all':
-            query["stock_group"] = stock_group
-        if min_quantity is not None:
-            query["quantity"] = {"$gte": min_quantity}
+def _build_query(ctx, company_id=None, extra=None):
+    """Build a tenant-filtered query dict."""
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
 
+
+@router.get("/inventory/items")
+async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None):
+    try:
+        ctx = await get_tenant_context(request)
+        extra = {}
+        if category and category != 'all':
+            extra["category"] = category
+        if stock_group and stock_group != 'all':
+            extra["stock_group"] = stock_group
+        if min_quantity is not None:
+            extra["quantity"] = {"$gte": min_quantity}
+
+        query = _build_query(ctx, company_id, extra)
         items = await db.inventory_items.find(query, {"_id": 0}).to_list(5000)
 
-        all_items = await db.inventory_items.find({}, {"_id": 0, "stock_group": 1}).to_list(5000)
+        base_q = _build_query(ctx, company_id)
+        all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1}).to_list(5000)
         stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))
 
         return APIResponse(
@@ -41,9 +58,12 @@ async def get_inventory_items(category: Optional[str] = None, stock_group: Optio
 
 
 @router.get("/inventory/summary")
-async def get_inventory_summary(fy: Optional[str] = None):
+async def get_inventory_summary(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+
+        items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
 
         if not items:
             return APIResponse(
@@ -65,7 +85,7 @@ async def get_inventory_summary(fy: Optional[str] = None):
         # Low stock: use movement-based analysis
         # Items with qty=0 but that had sales activity are out-of-stock (genuinely low)
         # Items with qty=0 and no sales data: skip (master data only)
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
 
         # Build set of items that had sales (i.e. actively traded)
@@ -107,10 +127,12 @@ async def get_inventory_summary(fy: Optional[str] = None):
 
 
 @router.post("/inventory/generate-purchase-order")
-async def generate_purchase_order():
+async def generate_purchase_order(request: Request, company_id: Optional[str] = None):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
 
         po_ai = PurchaseOrderAI()
         result = await po_ai.generate_purchase_order(inventory_items, sales_vouchers)
@@ -159,11 +181,13 @@ async def generate_purchase_order():
 
 
 @router.get("/inventory/purchase-orders")
-async def get_purchase_orders(status: Optional[str] = None):
+async def get_purchase_orders(request: Request, status: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        query = {}
+        ctx = await get_tenant_context(request)
+        extra = {}
         if status:
-            query["status"] = status
+            extra["status"] = status
+        query = _build_query(ctx, company_id, extra)
         pos = await db.purchase_orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
         return APIResponse(success=True, data={"purchase_orders": pos, "count": len(pos)})
     except Exception as e:
@@ -232,10 +256,12 @@ async def get_sales_frequency(start_date: Optional[str] = None, end_date: Option
 
 
 @router.get("/inventory/movement-analysis")
-async def get_inventory_movement(fy: Optional[str] = None):
+async def get_inventory_movement(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         item_sales = {}
@@ -304,10 +330,12 @@ async def get_inventory_movement(fy: Optional[str] = None):
 
 
 @router.get("/inventory/below-cost-sales")
-async def get_below_cost_sales(fy: Optional[str] = None):
+async def get_below_cost_sales(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         item_costs = {}
@@ -360,9 +388,11 @@ async def get_below_cost_sales(fy: Optional[str] = None):
 
 
 @router.get("/inventory/pivot-data")
-async def get_pivot_data(group_by: str = "category", metric: str = "value"):
+async def get_pivot_data(request: Request, group_by: str = "category", metric: str = "value", company_id: Optional[str] = None):
     try:
-        inventory_items = await db.inventory_items.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
 
         pivot_data = {}
         for item in inventory_items:

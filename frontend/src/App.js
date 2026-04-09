@@ -1,303 +1,471 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { BarChart3, Package, TrendingUp, Bot, Settings, Menu, X, Users, Activity, Zap, LogOut, KeyRound, UserPlus, ChevronDown, History } from 'lucide-react';
-import { toast } from 'sonner';
-import '@/App.css';
-import '@/index.css';
-
-import { useSyncWebSocket } from './hooks/useSyncWebSocket';
-import { SyncConnectionBadge } from './components/SyncStatusBar';
-
-import Login from './pages/Login';
+import { toast, Toaster } from 'sonner';
+import {
+  LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
+  Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
+  X, Building2, Shield, User, Lock, ChevronDown
+} from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
 import Sales from './pages/Sales';
-import AIQueryBuilder from './pages/AIQueryBuilder';
-import ReportHistory from './pages/ReportHistory';
-import TallySetup from './pages/TallySetup';
 import CustomerCRM from './pages/CustomerCRM';
-import EnhancedAIReports from './pages/EnhancedAIReports';
 import InventoryAnalytics from './pages/InventoryAnalytics';
+import EnhancedAIReports from './pages/EnhancedAIReports';
 import SalesmanPerformance from './pages/SalesmanPerformance';
 import SyncHistory from './pages/SyncHistory';
+import TallySetup from './pages/TallySetup';
+import SuperAdminDashboard from './pages/SuperAdminDashboard';
+import CompanySelector from './pages/CompanySelector';
+import ProfileModal from './pages/ProfileModal';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
 
-const generateFYOptions = () => {
-  const now = new Date();
-  const currentYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-  const options = [];
-  for (let i = 0; i < 5; i++) {
-    const startYear = currentYear - i;
-    const endYear = (startYear + 1) % 100;
-    options.push(`${startYear}-${endYear.toString().padStart(2, '0')}`);
-  }
-  return options;
-};
-const FY_OPTIONS = generateFYOptions();
-
-const ChangePasswordModal = ({ onClose }) => {
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (newPw !== confirmPw) { toast.error('Passwords do not match'); return; }
-    if (newPw.length < 4) { toast.error('Password must be at least 4 characters'); return; }
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('auth_token');
-      const res = await axios.post(`${API}/auth/change-password`,
-        { current_password: currentPw, new_password: newPw },
-        { headers: { Authorization: `Bearer ${token}` }, withCredentials: true }
-      );
-      if (res.data?.success) { toast.success('Password changed!'); onClose(); }
-      else { toast.error(res.data?.error || 'Failed'); }
-    } catch { toast.error('Error changing password'); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="change-password-modal">
-      <div className="bg-white rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
-        <h3 className="text-lg font-semibold text-slate-900 mb-4">Change Password</h3>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <input type="password" placeholder="Current Password" value={currentPw} onChange={e => setCurrentPw(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" data-testid="current-password-input" required />
-          <input type="password" placeholder="New Password" value={newPw} onChange={e => setNewPw(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" data-testid="new-password-input" required />
-          <input type="password" placeholder="Confirm New Password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" data-testid="confirm-password-input" required />
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm hover:bg-slate-50">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 btn-primary py-2 text-sm" data-testid="change-password-submit">
-              {loading ? 'Saving...' : 'Change'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+// Feature to nav mapping
+const FEATURE_NAV_MAP = {
+  dashboard: { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  inventory: { id: 'inventory', label: 'Inventory', icon: Package },
+  sales: { id: 'sales', label: 'Sales', icon: ShoppingCart },
+  crm: { id: 'crm', label: 'CRM', icon: Users },
+  analytics: { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
+  salesman: { id: 'salesman', label: 'Salesman', icon: Truck },
+  sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
+  setup: { id: 'setup', label: 'Setup', icon: Settings },
 };
 
-const UserManagementModal = ({ onClose }) => {
-  const [users, setUsers] = useState([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ username: '', password: '', name: '', role: 'employee' });
-  const [resetForm, setResetForm] = useState({ username: '', new_password: '' });
-  const [showReset, setShowReset] = useState(null);
-  const token = localStorage.getItem('auth_token');
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [selectedFY, setSelectedFY] = useState('2025-26');
+  const [selectedCompany, setSelectedCompany] = useState('');
+  const [showCompanySelector, setShowCompanySelector] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const wsRef = useRef(null);
+  const userMenuRef = useRef(null);
 
-  const fetchUsers = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/auth/users`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.data?.success) setUsers(res.data.data.users || []);
-    } catch { /* ignore */ }
+  // Login states
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Set auth header
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    }
   }, [token]);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  // Set company header
+  useEffect(() => {
+    if (selectedCompany) {
+      axios.defaults.headers.common['X-Company-ID'] = selectedCompany;
+    } else {
+      delete axios.defaults.headers.common['X-Company-ID'];
+    }
+  }, [selectedCompany]);
 
-  const createUser = async (e) => {
+  // Check auth on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem('flowra_token');
+    if (savedToken) {
+      setToken(savedToken);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
+      axios.get(`${API}/auth/me`).then(res => {
+        if (res.data?.success && res.data?.data) {
+          const userData = res.data.data;
+          setUser(userData);
+          setIsAuthenticated(true);
+          if (userData.role === 'super_admin') {
+            setCurrentPage('super-admin');
+          } else {
+            const savedCompany = localStorage.getItem('flowra_company');
+            if (savedCompany && (userData.companies || []).includes(savedCompany)) {
+              setSelectedCompany(savedCompany);
+            } else if ((userData.companies || []).length > 1) {
+              setShowCompanySelector(true);
+            } else if ((userData.companies || []).length === 1) {
+              setSelectedCompany(userData.companies[0]);
+              localStorage.setItem('flowra_company', userData.companies[0]);
+            }
+          }
+        } else {
+          localStorage.removeItem('flowra_token');
+        }
+      }).catch(() => {
+        localStorage.removeItem('flowra_token');
+      });
+    }
+  }, []);
+
+  // WebSocket connection
+  useEffect(() => {
+    if (!isAuthenticated || user?.role === 'super_admin') return;
+    const connectWs = () => {
+      try {
+        wsRef.current = new WebSocket(WS_URL);
+        wsRef.current.onopen = () => {
+          wsRef.current?.send(JSON.stringify({
+            action: 'get_status',
+            tenant_id: user?.tenant_id || '',
+            company_id: selectedCompany || ''
+          }));
+        };
+        wsRef.current.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.event === 'status_response') {
+              setSyncStatus(msg.data?.sync_status);
+            }
+            if (msg.event === 'data_synced') {
+              toast.success(`${msg.data?.data_type}: ${msg.data?.count} items synced`);
+            }
+          } catch {}
+        };
+        wsRef.current.onclose = () => {
+          setTimeout(connectWs, 5000);
+        };
+      } catch {}
+    };
+    connectWs();
+    return () => { wsRef.current?.close(); };
+  }, [isAuthenticated, user?.role, selectedCompany]);
+
+  // Close user menu on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
+    if (!username.trim()) { toast.error('Please enter your User ID'); return; }
+    if (!password.trim()) { toast.error('Please enter your Password'); return; }
+    setLoginLoading(true);
     try {
-      const res = await axios.post(`${API}/auth/users`, form, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.data?.success) { toast.success('User created'); setShowCreate(false); setForm({ username: '', password: '', name: '', role: 'employee' }); fetchUsers(); }
-      else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Error creating user'); }
+      const res = await axios.post(`${API}/auth/login`, { username, password });
+      if (res.data?.success) {
+        const data = res.data.data;
+        setToken(data.token);
+        localStorage.setItem('flowra_token', data.token);
+        setUser(data);
+        setIsAuthenticated(true);
+        toast.success(`Welcome, ${data.name || data.username}!`);
+
+        if (data.role === 'super_admin') {
+          setCurrentPage('super-admin');
+        } else {
+          // Check companies
+          if ((data.companies || []).length > 1) {
+            setShowCompanySelector(true);
+          } else if ((data.companies || []).length === 1) {
+            setSelectedCompany(data.companies[0]);
+            localStorage.setItem('flowra_company', data.companies[0]);
+          }
+        }
+      } else {
+        toast.error(res.data?.error || 'Login failed');
+      }
+    } catch (err) {
+      toast.error('Login failed');
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
-  const deleteUser = async (username) => {
-    if (!window.confirm(`Delete user "${username}"?`)) return;
-    try {
-      const res = await axios.delete(`${API}/auth/users/${username}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.data?.success) { toast.success('User deleted'); fetchUsers(); }
-      else toast.error(res.data?.error);
-    } catch { toast.error('Error deleting user'); }
+  const handleLogout = async () => {
+    try { await axios.post(`${API}/auth/logout`); } catch {}
+    setIsAuthenticated(false);
+    setUser(null);
+    setToken(null);
+    setSelectedCompany('');
+    setShowUserMenu(false);
+    localStorage.removeItem('flowra_token');
+    localStorage.removeItem('flowra_company');
+    delete axios.defaults.headers.common['Authorization'];
+    delete axios.defaults.headers.common['X-Company-ID'];
+    setCurrentPage('dashboard');
+    setUsername('');
+    setPassword('');
   };
 
-  const resetPassword = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await axios.post(`${API}/auth/reset-password`, resetForm, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.data?.success) { toast.success('Password reset'); setShowReset(null); }
-      else toast.error(res.data?.error);
-    } catch { toast.error('Error resetting password'); }
+  const handleCompanySelect = (company) => {
+    setSelectedCompany(company);
+    localStorage.setItem('flowra_company', company);
+    setShowCompanySelector(false);
+  };
+
+  const isFeatureActive = useCallback((featureId) => {
+    if (!user) return false;
+    if (user.role === 'super_admin') return false;
+    const features = user.features || [];
+    return features.includes(featureId);
+  }, [user]);
+
+  const getNavItems = useCallback(() => {
+    if (!user) return [];
+    if (user.role === 'super_admin') return [];
+    const features = user.features || [];
+    return features
+      .map(f => FEATURE_NAV_MAP[f])
+      .filter(Boolean);
+  }, [user]);
+
+  // Generate FY options
+  const fyOptions = [];
+  const currentYear = new Date().getFullYear();
+  for (let i = currentYear; i >= currentYear - 5; i--) {
+    fyOptions.push(`${i}-${String(i + 1).slice(2)}`);
+  }
+
+  // Login page
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Toaster position="top-right" richColors />
+        <div className="w-full max-w-md p-8">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">FLOWRA</h1>
+            <p className="text-slate-500 mt-1 text-sm">Organize. Automate. Accelerate.</p>
+          </div>
+          <form onSubmit={handleLogin} className="bg-white rounded-2xl border border-slate-200 p-8 space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">User ID</label>
+              <input
+                type="text" value={username} onChange={e => setUsername(e.target.value)}
+                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                placeholder="Enter your User ID"
+                data-testid="username-input"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+              <input
+                type="password" value={password} onChange={e => setPassword(e.target.value)}
+                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                placeholder="Enter your password"
+                data-testid="password-input"
+              />
+            </div>
+            <button
+              type="submit" disabled={loginLoading}
+              className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8] disabled:opacity-50 transition-colors"
+              data-testid="login-button"
+            >
+              {loginLoading ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+          <p className="text-center text-xs text-slate-400 mt-6">FLOWRA by Jodidar India</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Company selector
+  if (showCompanySelector && user?.role !== 'super_admin') {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Toaster position="top-right" richColors />
+        <CompanySelector companies={user?.companies || []} onSelect={handleCompanySelect} />
+      </div>
+    );
+  }
+
+  // Super Admin view
+  if (user?.role === 'super_admin') {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Toaster position="top-right" richColors />
+        {/* Super Admin Navbar */}
+        <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center gap-3">
+                <Shield size={22} className="text-[#2563EB]" />
+                <span className="text-lg font-bold text-slate-900">FLOWRA</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 text-xs font-semibold">Super Admin</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="relative" ref={userMenuRef}>
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-50 text-sm"
+                    data-testid="user-menu-btn"
+                  >
+                    <div className="w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center text-xs font-bold">SA</div>
+                    <span className="text-slate-700 font-medium hidden sm:inline">{user?.name || 'Super Admin'}</span>
+                    <ChevronDown size={14} className="text-slate-400" />
+                  </button>
+                  {showUserMenu && (
+                    <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 w-48 z-50">
+                      <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="profile-btn">
+                        <User size={14} className="text-slate-400" /> Profile
+                      </button>
+                      <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2">
+                        <Lock size={14} className="text-slate-400" /> Change Password
+                      </button>
+                      <hr className="my-1 border-slate-100" />
+                      <button onClick={handleLogout} className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2" data-testid="logout-btn">
+                        <LogOut size={14} /> Logout
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        <main className="p-4 sm:p-6">
+          <SuperAdminDashboard token={token} />
+        </main>
+
+        <footer className="text-center py-4 text-xs text-slate-400">
+          copyright: Jodidar India
+        </footer>
+
+        {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
+      </div>
+    );
+  }
+
+  // Normal admin/employee view
+  const navItems = getNavItems();
+
+  const renderFeatureGated = (featureId, component) => {
+    if (isFeatureActive(featureId)) return component;
+    return (
+      <div className="flex items-center justify-center h-[60vh]" data-testid="feature-locked">
+        <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 max-w-md">
+          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Lock size={28} className="text-slate-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Feature Not Activated</h3>
+          <p className="text-slate-500 text-sm">Subscribe for this feature. Contact your FLOWRA administrator to activate <strong className="capitalize">{featureId.replace('_', ' ')}</strong>.</p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'dashboard': return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'inventory': return renderFeatureGated('inventory', <Inventory selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'sales': return renderFeatureGated('sales', <Sales selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'crm': return renderFeatureGated('crm', <CustomerCRM selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'analytics': return renderFeatureGated('analytics', <InventoryAnalytics selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'ai-reports': return renderFeatureGated('ai_reports', <EnhancedAIReports selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'salesman': return renderFeatureGated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
+      case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
+      default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
+    }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="user-management-modal">
-      <div className="bg-white rounded-xl p-6 w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">User Management</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
-        </div>
-        <button onClick={() => setShowCreate(!showCreate)} className="btn-primary text-sm px-3 py-2 mb-4 flex items-center gap-1" data-testid="create-user-btn">
-          <UserPlus size={16} /> Add User
-        </button>
-        {showCreate && (
-          <form onSubmit={createUser} className="bg-blue-50/50 border border-blue-100 p-4 rounded-lg mb-4 space-y-2">
-            <input type="text" placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-user-username" required />
-            <input type="text" placeholder="Full Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-user-name" required />
-            <input type="password" placeholder="Password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-user-password" required />
-            <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-user-role">
-              <option value="employee">Employee</option>
-              <option value="admin">Admin</option>
-            </select>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowCreate(false)} className="px-3 py-2 border border-slate-200 rounded-lg text-sm">Cancel</button>
-              <button type="submit" className="btn-primary px-3 py-2 text-sm" data-testid="submit-create-user">Create</button>
-            </div>
-          </form>
-        )}
-        <div className="space-y-2">
-          {users.map(u => (
-            <div key={u.username} className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
-              <div>
-                <span className="font-medium text-sm text-slate-900">{u.name || u.username}</span>
-                <span className="text-xs text-slate-500 ml-2">@{u.username}</span>
-                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                  {u.role}
-                </span>
-              </div>
-              <div className="flex gap-1">
-                <button onClick={() => { setShowReset(u.username); setResetForm({ username: u.username, new_password: '' }); }}
-                  className="text-xs text-slate-500 hover:text-blue-600 px-2 py-1" data-testid={`reset-pw-${u.username}`}>Reset PW</button>
-                {u.role !== 'admin' && (
-                  <button onClick={() => deleteUser(u.username)}
-                    className="text-xs text-red-500 hover:text-red-700 px-2 py-1" data-testid={`delete-user-${u.username}`}>Delete</button>
+    <div className="min-h-screen bg-slate-50">
+      <Toaster position="top-right" richColors />
+
+      {/* Navbar */}
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
+        <div className="max-w-full mx-auto px-3 sm:px-6">
+          <div className="flex items-center justify-between h-14">
+            {/* Left: Logo + Company */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden p-1.5 hover:bg-slate-100 rounded-lg">
+                {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+              <div className="flex flex-col">
+                <span className="text-sm sm:text-base font-bold text-slate-900 leading-tight">FLOWRA</span>
+                {selectedCompany && (
+                  <button
+                    onClick={() => (user?.companies || []).length > 1 && setShowCompanySelector(true)}
+                    className="text-[10px] sm:text-xs text-slate-500 hover:text-[#2563EB] flex items-center gap-1 leading-tight"
+                    data-testid="company-switch-btn"
+                  >
+                    <Building2 size={10} />
+                    <span className="truncate max-w-[120px] sm:max-w-[200px]">{selectedCompany}</span>
+                  </button>
                 )}
               </div>
             </div>
-          ))}
-        </div>
-        {showReset && (
-          <form onSubmit={resetPassword} className="mt-4 bg-amber-50 border border-amber-200 p-4 rounded-lg space-y-2">
-            <p className="text-sm font-medium">Reset password for: <span className="text-blue-600">{showReset}</span></p>
-            <input type="password" placeholder="New Password" value={resetForm.new_password} onChange={e => setResetForm({ ...resetForm, new_password: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="reset-password-input" required />
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowReset(null)} className="px-3 py-2 border border-slate-200 rounded-lg text-sm">Cancel</button>
-              <button type="submit" className="btn-primary px-3 py-2 text-sm" data-testid="submit-reset-password">Reset</button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-};
 
-const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [companyName, setCompanyName] = useState('');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [showUserMgmt, setShowUserMgmt] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const location = useLocation();
-  const { isConnected: wsConnected } = useSyncWebSocket();
-
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const res = await axios.get(`${API}/tally/status`);
-        setIsConnected(res.data?.data?.is_connected || false);
-        setCompanyName(res.data?.data?.company_name || '');
-      } catch { /* ignore */ }
-    };
-    check();
-    const interval = setInterval(check, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const isAdmin = user?.role === 'admin';
-
-  const allNavItems = [
-    { path: '/', icon: BarChart3, label: 'Dashboard', roles: ['admin'] },
-    { path: '/inventory', icon: Package, label: 'Inventory', roles: ['admin', 'employee'] },
-    { path: '/sales', icon: TrendingUp, label: 'Sales', roles: ['admin', 'employee'] },
-    { path: '/crm', icon: Users, label: 'CRM', roles: ['admin', 'employee'] },
-    { path: '/analytics', icon: Activity, label: 'Analytics', roles: ['admin'] },
-    { path: '/ai-reports', icon: Zap, label: 'AI Reports', roles: ['admin'] },
-    { path: '/salesman', icon: Users, label: 'Salesman', roles: ['admin'] },
-    { path: '/sync-history', icon: History, label: 'Sync History', roles: ['admin'] },
-    { path: '/setup', icon: Settings, label: 'Setup', roles: ['admin'] }
-  ];
-  const navItems = allNavItems.filter(item => item.roles.includes(user?.role));
-
-  return (
-    <>
-      <nav className="nav-header" data-testid="main-navigation">
-        <div className="max-w-7xl mx-auto px-6 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img src="/flowra-logo.png" alt="FLOWRA" className="h-10 object-contain" />
-            </div>
-            <button data-testid="mobile-menu-button" className="md:hidden text-slate-700" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
-              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
-            <div className="hidden md:flex items-center gap-1">
-              {navItems.map((item) => {
+            {/* Center: Nav Items */}
+            <div className="hidden md:flex items-center gap-0.5 overflow-x-auto">
+              {navItems.map(item => {
                 const Icon = item.icon;
-                const isActive = location.pathname === item.path;
+                const isActive = currentPage === item.id;
                 return (
-                  <Link key={item.path} to={item.path}
-                    data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all text-sm ${
-                      isActive
-                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md shadow-blue-200'
-                        : 'text-slate-600 hover:text-blue-600 hover:bg-blue-50'
-                    }`}>
-                    <Icon size={16} />
-                    <span className="font-medium">{item.label}</span>
-                  </Link>
+                  <button
+                    key={item.id}
+                    onClick={() => setCurrentPage(item.id)}
+                    data-testid={`nav-${item.id}`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 transition-colors ${
+                      isActive ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Icon size={14} />
+                    {item.label}
+                  </button>
                 );
               })}
-              <select value={selectedFY} onChange={e => onFYChange(e.target.value)}
-                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:ring-1 focus:ring-blue-500 ml-2"
-                data-testid="fy-selector">
-                {FY_OPTIONS.map(fy => <option key={fy} value={fy}>FY {fy}</option>)}
+            </div>
+
+            {/* Right: FY + Sync + User */}
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedFY}
+                onChange={(e) => setSelectedFY(e.target.value)}
+                className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                data-testid="fy-selector"
+              >
+                {fyOptions.map(fy => <option key={fy} value={fy}>FY {fy}</option>)}
               </select>
-              <div className={`status-badge ml-2 ${isConnected ? 'connected' : 'disconnected'}`} data-testid="connection-status">
-                <span className={`w-2 h-2 rounded-full mr-1.5 ${isConnected ? 'bg-blue-600' : 'bg-red-600'}`} />
-                {isConnected ? 'Synced' : 'Not Synced'}
+
+              <div className="flex items-center gap-1.5" data-testid="sync-indicator">
+                <RefreshCw size={12} className={`${syncStatus ? 'text-green-500' : 'text-slate-300'}`} />
+                <span className="text-[10px] text-slate-400 hidden sm:inline">{syncStatus?.last_sync ? 'Synced' : 'No sync'}</span>
               </div>
-              <SyncConnectionBadge wsConnected={wsConnected} />
-              <div className="relative ml-2 pl-2 border-l border-slate-200">
-                <button onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
-                  data-testid="user-menu-button">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${isAdmin ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {user?.role}
-                  </span>
-                  <span className="font-medium">{user?.name || user?.username}</span>
-                  <ChevronDown size={14} />
+
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-slate-50"
+                  data-testid="user-menu-btn"
+                >
+                  <div className="w-6 h-6 rounded-full bg-[#2563EB] text-white flex items-center justify-center text-[10px] font-bold">
+                    {(user?.name || user?.username || 'U')[0].toUpperCase()}
+                  </div>
+                  <span className="text-xs text-slate-700 font-medium hidden sm:inline">{user?.name || user?.username}</span>
+                  <ChevronDown size={12} className="text-slate-400" />
                 </button>
                 {showUserMenu && (
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
-                    <button onClick={() => { setShowChangePassword(true); setShowUserMenu(false); }}
-                      className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 flex items-center gap-2"
-                      data-testid="change-password-btn">
-                      <KeyRound size={14} /> Change Password
+                  <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 w-48 z-50">
+                    <div className="px-4 py-2 border-b border-slate-100">
+                      <div className="text-sm font-medium text-slate-900">{user?.name || user?.username}</div>
+                      <div className="text-xs text-slate-500 capitalize">{user?.role?.replace('_', ' ')}</div>
+                    </div>
+                    <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="profile-btn">
+                      <User size={14} className="text-slate-400" /> Profile & Security
                     </button>
-                    {isAdmin && (
-                      <button onClick={() => { setShowUserMgmt(true); setShowUserMenu(false); }}
-                        className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 flex items-center gap-2"
-                        data-testid="manage-users-btn">
-                        <UserPlus size={14} /> Manage Users
+                    {(user?.companies || []).length > 1 && (
+                      <button onClick={() => { setShowCompanySelector(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="switch-company-btn">
+                        <Building2 size={14} className="text-slate-400" /> Switch Company
                       </button>
                     )}
                     <hr className="my-1 border-slate-100" />
-                    <button onClick={onLogout}
-                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                      data-testid="logout-button">
+                    <button onClick={handleLogout} className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2" data-testid="logout-btn">
                       <LogOut size={14} /> Logout
                     </button>
                   </div>
@@ -305,127 +473,47 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
               </div>
             </div>
           </div>
-          {companyName && (
-            <div className="text-center py-1 -mb-2">
-              <span className="text-sm font-bold text-slate-700" data-testid="company-name-display">{companyName}</span>
-            </div>
-          )}
-          {mobileMenuOpen && (
-            <div className="md:hidden mt-4 pb-4 space-y-2">
-              <select value={selectedFY} onChange={e => onFYChange(e.target.value)}
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mb-2">
-                {FY_OPTIONS.map(fy => <option key={fy} value={fy}>FY {fy}</option>)}
-              </select>
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path;
-                return (
-                  <Link key={item.path} to={item.path} onClick={() => setMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                      isActive ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white' : 'text-slate-600 hover:bg-blue-50'
-                    }`}>
-                    <Icon size={20} />
-                    <span className="text-sm font-medium">{item.label}</span>
-                  </Link>
-                );
-              })}
-              <div className="flex gap-2 pt-2">
-                <button onClick={() => setShowChangePassword(true)} className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2">Change Password</button>
-                <button onClick={onLogout} className="flex-1 text-sm text-red-600 border border-red-200 rounded-lg px-3 py-2">Logout</button>
-              </div>
-            </div>
-          )}
         </div>
       </nav>
-      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
-      {showUserMgmt && <UserManagementModal onClose={() => setShowUserMgmt(false)} />}
-    </>
-  );
-};
 
-function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedFY, setSelectedFY] = useState(FY_OPTIONS[0]);
-
-  // Auto-detect last synced FY and default to it
-  useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      axios.get(`${API}/sync/status`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => {
-          const syncedFY = res.data?.data?.financial_year;
-          if (syncedFY && FY_OPTIONS.includes(syncedFY)) {
-            setSelectedFY(syncedFY);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    const savedUser = localStorage.getItem('user_data');
-    if (token && savedUser) {
-      axios.get(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` }, withCredentials: true })
-        .then(response => {
-          if (response.data?.success) {
-            const userData = response.data.data;
-            setIsAuthenticated(true);
-            setUser(userData);
-            localStorage.setItem('user_data', JSON.stringify(userData));
-          } else { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); }
-        })
-        .catch(() => { localStorage.removeItem('auth_token'); localStorage.removeItem('user_data'); })
-        .finally(() => setLoading(false));
-    } else { setLoading(false); }
-  }, []);
-
-  const handleLoginSuccess = (userData) => { setIsAuthenticated(true); setUser(userData); };
-
-  const handleLogout = async () => {
-    const token = localStorage.getItem('auth_token');
-    try { await axios.post(`${API}/auth/logout`, {}, { headers: { Authorization: `Bearer ${token}` }, withCredentials: true }); } catch { /* ignore */ }
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user_data');
-    setIsAuthenticated(false);
-    setUser(null);
-  };
-
-  if (loading) return (
-    <div className="min-h-screen bg-[#F0F4FF] flex items-center justify-center"><div className="loading-spinner" /></div>
-  );
-
-  if (!isAuthenticated) return <Login onLoginSuccess={handleLoginSuccess} />;
-
-  const isAdmin = user?.role === 'admin';
-
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Navigation user={user} onLogout={handleLogout} selectedFY={selectedFY} onFYChange={setSelectedFY} />
-        <div className="max-w-7xl mx-auto px-6 py-8 min-h-[calc(100vh-140px)]">
-          <Routes>
-            <Route path="/" element={isAdmin ? <Dashboard selectedFY={selectedFY} /> : <Inventory selectedFY={selectedFY} />} />
-            <Route path="/inventory" element={<Inventory selectedFY={selectedFY} />} />
-            <Route path="/sales" element={<Sales selectedFY={selectedFY} />} />
-            <Route path="/crm" element={<CustomerCRM user={user} selectedFY={selectedFY} />} />
-            {isAdmin && <>
-              <Route path="/analytics" element={<InventoryAnalytics selectedFY={selectedFY} />} />
-              <Route path="/ai-reports" element={<EnhancedAIReports selectedFY={selectedFY} />} />
-              <Route path="/ai-query" element={<AIQueryBuilder />} />
-              <Route path="/salesman" element={<SalesmanPerformance selectedFY={selectedFY} />} />
-              <Route path="/history" element={<ReportHistory />} />
-              <Route path="/sync-history" element={<SyncHistory />} />
-              <Route path="/setup" element={<TallySetup />} />
-            </>}
-          </Routes>
+      {/* Mobile Menu */}
+      {mobileMenuOpen && (
+        <div className="md:hidden bg-white border-b border-slate-200 px-3 py-2 space-y-1">
+          {navItems.map(item => {
+            const Icon = item.icon;
+            const isActive = currentPage === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => { setCurrentPage(item.id); setMobileMenuOpen(false); }}
+                data-testid={`mobile-nav-${item.id}`}
+                className={`w-full px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${
+                  isActive ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Icon size={16} />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
-        <footer className="text-center py-3 text-xs text-slate-400 border-t border-slate-100 bg-white">
-          Copyright: Jodidar India
-        </footer>
-      </BrowserRouter>
+      )}
+
+      {/* Main Content */}
+      <main className="p-3 sm:p-6 max-w-full">
+        {renderPage()}
+      </main>
+
+      {/* Footer */}
+      <footer className="text-center py-4 text-xs text-slate-400">
+        copyright: Jodidar India
+      </footer>
+
+      {/* Modals */}
+      {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
+      {showCompanySelector && (
+        <CompanySelector companies={user?.companies || []} onSelect={handleCompanySelect} />
+      )}
     </div>
   );
 }

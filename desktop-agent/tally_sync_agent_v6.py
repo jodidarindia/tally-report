@@ -67,15 +67,18 @@ TALLY_URL = f"http://{TALLY_HOST}:{TALLY_PORT}/"
 COMPANY_NAME = os.getenv('TALLY_COMPANY', '')  # Leave empty for current company
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
 API_KEY = os.getenv('AGENT_API_KEY', '')
+TENANT_ID = os.getenv('TENANT_ID', '')  # Multi-tenant: assigned by FLOWRA super admin
+SYNC_TOKEN = os.getenv('SYNC_TOKEN', '')  # Multi-tenant: auth token for sync
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
-SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'  # Sync current FY + configured FY
+SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'
 SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
-INCREMENTAL_SYNC = os.getenv('INCREMENTAL_SYNC', 'true').lower() == 'true'  # Only sync recent months after first full sync
+INCREMENTAL_SYNC = os.getenv('INCREMENTAL_SYNC', 'true').lower() == 'true'
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
-REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))  # 30 sec per request
-SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))  # 2 sec gap
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
+SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))
+SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
 SYNC_STATE_FILE = 'sync_state_v6.json'
 
@@ -906,6 +909,8 @@ class FlowraSyncAgent:
         self.export_dir = EXPORT_DIR
         self.sync_running = False
         self.ws_server = None
+        self._active_company = COMPANY_NAME  # Currently syncing company
+        self._companies_to_sync = []  # List of companies to sync
         self.tally = TallyCollectionClient(
             url=TALLY_URL,
             company=COMPANY_NAME,
@@ -916,25 +921,101 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v6")
+        logger.info("  FLOWRA TALLY SYNC AGENT v6.1 (Multi-Tenant)")
         logger.info("  Lightweight Collection Requests (No Freeze)")
         logger.info("=" * 60)
         logger.info(f"  Tally URL     : {TALLY_URL}")
         logger.info(f"  Cloud Backend : {self.backend_url}")
+        logger.info(f"  Tenant ID     : {TENANT_ID or '(auto-detect)'}")
         logger.info(f"  Financial Year: {self.financial_year}")
         logger.info(f"  Auto Multi-FY : {SYNC_ALL_FY} (also syncs current FY: {current_fy()})")
-        logger.info(f"  Incremental   : {INCREMENTAL_SYNC} (after first full sync, only recent months)")
+        logger.info(f"  Incremental   : {INCREMENTAL_SYNC}")
         logger.info(f"  Sync Interval : every {self.sync_interval} min")
         logger.info(f"  Timeout/req   : {REQUEST_TIMEOUT} sec")
         logger.info(f"  Cache Dir     : {self.export_dir}")
+        logger.info(f"  Multi-Company : {'Sync all' if SYNC_ALL_COMPANIES else 'Selected only'}")
         logger.info("=" * 60)
+
+    def detect_companies(self):
+        """Detect available companies in Tally."""
+        try:
+            xml_req = '<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Companies</REPORTNAME></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>'
+            resp = requests.post(TALLY_URL, data=xml_req.encode('utf-8'),
+                                 headers={'Content-Type': 'application/xml'},
+                                 timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                text = resp.text
+                parsed = xmltodict.parse(text)
+                companies = []
+                collection = parsed.get('ENVELOPE', {}).get('BODY', {}).get('DATA', {}).get('COLLECTION', {})
+                if collection:
+                    items = collection.get('COMPANY', [])
+                    if isinstance(items, dict):
+                        items = [items]
+                    for item in items:
+                        name = item.get('NAME', {}).get('#text', '') if isinstance(item.get('NAME'), dict) else item.get('NAME', '')
+                        if name:
+                            companies.append(name)
+                return companies
+        except Exception as e:
+            logger.warning(f"Could not detect companies: {e}")
+        return []
+
+    def select_companies(self):
+        """Interactive company selection for multi-company Tally instances."""
+        if COMPANY_NAME:
+            self._companies_to_sync = [COMPANY_NAME]
+            return
+
+        companies = self.detect_companies()
+        if not companies:
+            # Fallback: use current company from Tally
+            self._companies_to_sync = [self.tally.company or 'Default']
+            return
+
+        if len(companies) == 1:
+            self._companies_to_sync = companies
+            logger.info(f"Single company detected: {companies[0]}")
+            return
+
+        if SYNC_ALL_COMPANIES:
+            self._companies_to_sync = companies
+            logger.info(f"Syncing ALL {len(companies)} companies: {', '.join(companies)}")
+            return
+
+        # Interactive selection
+        print("\n" + "=" * 50)
+        print("  Multiple Tally companies detected:")
+        print("=" * 50)
+        for i, c in enumerate(companies, 1):
+            print(f"  {i}. {c}")
+        print(f"  A. Sync ALL companies")
+        print("=" * 50)
+
+        while True:
+            choice = input("  Select company number (or A for all): ").strip()
+            if choice.upper() == 'A':
+                self._companies_to_sync = companies
+                break
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(companies):
+                    self._companies_to_sync = [companies[idx]]
+                    break
+            except ValueError:
+                pass
+            print("  Invalid choice, try again.")
+
+        logger.info(f"Selected companies: {', '.join(self._companies_to_sync)}")
 
     def report_progress(self, event_type, **kwargs):
         progress = {
             'type': event_type,
             'timestamp': datetime.now().isoformat(),
             'financial_year': self.financial_year,
-            'company_name': self.tally.company or '',
+            'company_name': self._active_company or self.tally.company or '',
+            'tenant_id': TENANT_ID,
+            'company_id': self._active_company or '',
             **kwargs
         }
         if self.ws_server:
@@ -957,9 +1038,12 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '6.0.0-collection',
-                'company_name': self.tally.company or '',
-                'financial_year': self.financial_year
+                'agent_version': '6.1.0-multitenant',
+                'company_name': self._active_company or self.tally.company or '',
+                'financial_year': self.financial_year,
+                'tenant_id': TENANT_ID,
+                'company_id': self._active_company or '',
+                'sync_token': SYNC_TOKEN
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/sync",
@@ -978,8 +1062,13 @@ class FlowraSyncAgent:
             return False
 
     def save_cache(self, data_type, data):
-        """Save fetched data to local JSON file for caching."""
-        filepath = os.path.join(self.export_dir, f"{data_type}.json")
+        """Save fetched data to local JSON file for caching.
+        Uses company-specific subfolder for data isolation."""
+        company_dir = self.export_dir
+        if self._active_company:
+            company_dir = os.path.join(self.export_dir, self._active_company.replace(' ', '_').replace('/', '_'))
+        os.makedirs(company_dir, exist_ok=True)
+        filepath = os.path.join(company_dir, f"{data_type}.json")
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
         logger.info(f"  Cached {len(data)} {data_type} to {filepath}")
@@ -988,16 +1077,31 @@ class FlowraSyncAgent:
         if self.sync_running:
             logger.info("Sync already running, skipping...")
             return
-
         try:
             self.sync_running = True
-            is_first_sync = not hasattr(self, '_full_sync_done')
+            if not self._companies_to_sync:
+                self.select_companies()
+            for company in self._companies_to_sync:
+                self._active_company = company
+                self.tally.company = company
+                logger.info("")
+                logger.info(f"{'=' * 60}")
+                logger.info(f"Syncing company: {company}")
+                logger.info(f"{'=' * 60}")
+                self._sync_single_company(company)
+        except Exception as e:
+            logger.error(f"Sync cycle error: {e}")
+            self.report_progress('sync_error', error=str(e))
+        finally:
+            self.sync_running = False
+
+    def _sync_single_company(self, company_name):
+        """Run sync for a single company."""
+        try:
+            is_first_sync = not hasattr(self, '_full_sync_done') or company_name not in (self._full_sync_done or set())
             sync_mode = 'full' if is_first_sync else ('incremental' if INCREMENTAL_SYNC else 'full')
 
-            logger.info("")
-            logger.info("=" * 60)
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
-            logger.info("=" * 60)
 
             # Test connection
             if not self.tally.test_connection():
@@ -1144,8 +1248,10 @@ class FlowraSyncAgent:
                 self.sync_to_backend('customers', customers)
             self.report_progress('phase_complete', phase='customers', count=len(customers))
 
-            # Mark first full sync as done
-            self._full_sync_done = True
+            # Mark first full sync as done for this company
+            if not hasattr(self, '_full_sync_done') or self._full_sync_done is None:
+                self._full_sync_done = set()
+            self._full_sync_done.add(company_name)
 
             # Summary
             total_sales = len(all_sales_combined)
@@ -1185,16 +1291,22 @@ class FlowraSyncAgent:
                                  customers=len(customers),
                                  fys_synced=fys_to_sync, sync_mode=sync_mode)
 
+            # Mark first sync done for this company
+            if not hasattr(self, '_full_sync_done') or self._full_sync_done is None:
+                self._full_sync_done = set()
+            self._full_sync_done.add(company_name)
+
         except Exception as e:
-            logger.error(f"Sync cycle error: {e}")
+            logger.error(f"Sync error for {company_name}: {e}")
             self.report_progress('sync_error', error=str(e))
-        finally:
-            self.sync_running = False
 
     def start(self):
         if ENABLE_WS:
             self.ws_server = WebSocketServer(port=WS_PORT)
             self.ws_server.start()
+
+        # Select companies to sync
+        self.select_companies()
 
         # Initial sync
         self.run_sync_cycle()

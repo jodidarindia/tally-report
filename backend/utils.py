@@ -58,18 +58,24 @@ def get_previous_fy(fy: str):
 OVERDUE_THRESHOLD_DAYS = 55
 
 
-async def compute_overdue_digest(db_ref):
+async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None):
     """Compute overdue invoices (>55 days from invoice date) considering receipts,
     credit notes, and journal vouchers. Stores result in overdue_digest collection."""
     from datetime import date as date_type
 
     today = date_type.today()
 
-    sales = await db_ref.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
-    receipts = await db_ref.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
-    credit_notes = await db_ref.credit_notes.find({}, {"_id": 0}).to_list(20000)
-    journals = await db_ref.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
-    synced_customers = await db_ref.customers.find({}, {"_id": 0}).to_list(5000)
+    q = {}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    if company_id:
+        q["company_id"] = company_id
+
+    sales = await db_ref.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+    receipts = await db_ref.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+    credit_notes = await db_ref.credit_notes.find(q, {"_id": 0}).to_list(20000)
+    journals = await db_ref.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+    synced_customers = await db_ref.customers.find(q, {"_id": 0}).to_list(5000)
     synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
     # Build per-customer credit totals (receipts + credit notes + journal credits)
@@ -224,8 +230,16 @@ async def compute_overdue_digest(db_ref):
         "overdue_invoices": overdue_invoices[:50],
     }
 
+    digest_filter = {"_type": "latest"}
+    if tenant_id:
+        digest["tenant_id"] = tenant_id
+        digest_filter["tenant_id"] = tenant_id
+    if company_id:
+        digest["company_id"] = company_id
+        digest_filter["company_id"] = company_id
+
     await db_ref.overdue_digest.update_one(
-        {"_type": "latest"},
+        digest_filter,
         {"$set": {**digest, "_type": "latest"}},
         upsert=True
     )

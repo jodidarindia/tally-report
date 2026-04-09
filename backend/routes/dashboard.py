@@ -1,71 +1,91 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from typing import Optional
-from datetime import datetime, timezone
 import logging
 
 from db import db
 from models import APIResponse
-from utils import safe_num, compute_overdue_digest
+from utils import safe_num, compute_overdue_digest, filter_vouchers_by_fy
+from services.tenant_context import get_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/dashboard/reminders")
-async def get_dashboard_reminders():
-    try:
-        followups = await db.customer_followups.find(
-            {"status": "pending"},
-            {"_id": 0}
-        ).sort("followup_date", 1).to_list(50)
-
-        overdue = []
-        today_list = []
-        upcoming = []
-        now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        for f in followups:
-            f_date = f.get("followup_date", "")[:10]
-            if f_date < now_date:
-                f["reminder_type"] = "overdue"
-                overdue.append(f)
-            elif f_date == now_date:
-                f["reminder_type"] = "today"
-                today_list.append(f)
-            else:
-                f["reminder_type"] = "upcoming"
-                upcoming.append(f)
-
-        return APIResponse(
-            success=True,
-            data={
-                "overdue": overdue,
-                "today": today_list,
-                "upcoming": upcoming[:5],
-                "total_pending": len(followups),
-                "overdue_count": len(overdue),
-                "today_count": len(today_list)
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error fetching reminders: {e}")
-        return APIResponse(success=False, error=str(e))
+def _build_query(ctx, company_id=None, extra=None):
+    q = {}
+    if ctx and ctx.get("tenant_id"):
+        q["tenant_id"] = ctx["tenant_id"]
+    cid = company_id or (ctx.get("company_id") if ctx else None)
+    if cid:
+        q["company_id"] = cid
+    if extra:
+        q.update(extra)
+    return q
 
 
 @router.get("/dashboard/overdue-digest")
-async def get_overdue_digest(recompute: Optional[str] = None):
+async def get_overdue_digest(request: Request, company_id: Optional[str] = None):
     try:
-        if recompute == "true":
-            digest = await compute_overdue_digest(db)
-            return APIResponse(success=True, data=digest)
+        ctx = await get_tenant_context(request)
+        tid = ctx.get("tenant_id") if ctx else None
+        cid = company_id or (ctx.get("company_id") if ctx else None)
 
-        cached = await db.overdue_digest.find_one({"_type": "latest"}, {"_id": 0, "_type": 0})
-        if cached:
-            return APIResponse(success=True, data=cached)
+        q = {"_type": "latest"}
+        if tid:
+            q["tenant_id"] = tid
+        if cid:
+            q["company_id"] = cid
 
-        digest = await compute_overdue_digest(db)
+        digest = await db.overdue_digest.find_one(q, {"_id": 0})
+
+        if not digest:
+            digest = await compute_overdue_digest(db, tid, cid)
+
         return APIResponse(success=True, data=digest)
-
     except Exception as e:
-        logger.error(f"Error fetching overdue digest: {e}")
+        logger.error(f"Error getting overdue digest: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/dashboard/top-customers")
+async def get_top_customers(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    try:
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        vouchers = filter_vouchers_by_fy(vouchers, fy) if fy else vouchers
+
+        customer_sales = {}
+        for v in vouchers:
+            party = v.get("party_name", "Unknown")
+            customer_sales[party] = customer_sales.get(party, 0) + safe_num(v.get("total_amount"))
+
+        top = sorted(
+            [{"name": k, "total": round(v, 2)} for k, v in customer_sales.items()],
+            key=lambda x: x["total"],
+            reverse=True
+        )[:10]
+
+        return APIResponse(success=True, data={"customers": top})
+    except Exception as e:
+        logger.error(f"Error getting top customers: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/dashboard/reminders")
+async def get_reminders(request: Request, company_id: Optional[str] = None):
+    try:
+        from datetime import datetime, timezone, timedelta
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id, {"status": "pending"})
+        next_week = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
+
+        followups = await db.customer_followups.find(
+            {**q, "followup_date": {"$lte": next_week}},
+            {"_id": 0}
+        ).sort("followup_date", 1).to_list(50)
+
+        return APIResponse(success=True, data={"reminders": followups, "count": len(followups)})
+    except Exception as e:
+        logger.error(f"Error getting reminders: {e}")
         return APIResponse(success=False, error=str(e))
