@@ -27,7 +27,8 @@ def generate_tally_ledger_pdf(
     company_name: str,
     entries: List[Dict],
     fy: str = '',
-    customer_info: Dict = {}
+    customer_info: Dict = {},
+    opening_balance: float = 0.0
 ) -> io.BytesIO:
     """Generate a Tally-style ledger PDF with running balance."""
     output = io.BytesIO()
@@ -87,8 +88,9 @@ def generate_tally_ledger_pdf(
     table_data = [header_row]
 
     # -- Opening Balance --
-    running_balance = 0.0
-    table_data.append(['', 'Opening Balance', '', '', '', '', _fmt_amount(running_balance)])
+    running_balance = opening_balance
+    ob_display = _fmt_balance(running_balance) if running_balance != 0 else '0.00'
+    table_data.append(['', 'Opening Balance', '', '', '', '', ob_display])
 
     # -- Entries --
     total_debit = 0.0

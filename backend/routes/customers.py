@@ -556,7 +556,8 @@ async def export_customer_ledger(request: dict):
             company_name=company_name_str,
             entries=entries,
             fy=fy,
-            customer_info=cust_info or {}
+            customer_info=cust_info or {},
+            opening_balance=opening_balance
         )
 
         filename = f"ledger_{customer_name.replace(' ', '_')}_{fy or 'all'}.pdf"
@@ -572,33 +573,47 @@ async def export_customer_ledger(request: dict):
 
 @router.get("/customers/payment-behavior")
 async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str] = None):
+    """Payment behavior analysis — always uses ALL historical data regardless of FY.
+    The FY param is accepted but ignored to maintain API compatibility."""
     try:
         from datetime import date as date_type
         today = date_type.today()
 
-        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-        sales_vouchers = filter_vouchers_by_fy(all_sales, fy)
+        # Always use ALL data for payment behavior (FY-independent)
+        all_sales = await db.sales_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(20000)
+        all_credit_notes = await db.credit_notes.find({}, {"_id": 0}).to_list(20000)
+        all_journals = await db.journal_vouchers.find({}, {"_id": 0}).to_list(20000)
 
         synced_customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
-        all_receipts = await db.receipt_vouchers.find({}, {"_id": 0}).to_list(10000)
-        receipt_vouchers = filter_vouchers_by_fy(
-            [{"voucher_date": r.get("voucher_date", ""), **r} for r in all_receipts], fy
-        )
+        # Build per-customer receipt totals
         customer_payments = {}
         customer_receipt_dates = {}
-        for r in receipt_vouchers:
+        for r in all_receipts:
             party = safe_str(r.get("party_name")).strip()
             if not party or party == "Unknown":
                 continue
             customer_payments[party] = customer_payments.get(party, 0) + safe_num(r.get("amount"))
-            if party not in customer_receipt_dates:
-                customer_receipt_dates[party] = []
-            customer_receipt_dates[party].append(r.get("voucher_date", ""))
+            customer_receipt_dates.setdefault(party, []).append(r.get("voucher_date", ""))
+
+        # Build per-customer credit note totals
+        customer_cn = {}
+        for cn in all_credit_notes:
+            party = safe_str(cn.get("party_name")).strip()
+            if party:
+                customer_cn[party] = customer_cn.get(party, 0) + safe_num(cn.get("total_amount"))
+
+        # Build per-customer journal credit totals
+        customer_jv = {}
+        for jv in all_journals:
+            party = safe_str(jv.get("party_name")).strip()
+            if party:
+                customer_jv[party] = customer_jv.get(party, 0) + safe_num(jv.get("credit_amount"))
 
         behavior_map = {}
-        for voucher in sales_vouchers:
+        for voucher in all_sales:
             party = voucher.get("party_name", "Unknown")
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
@@ -607,95 +622,155 @@ async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str]
                 synced = synced_map.get(party.lower(), {})
                 behavior_map[party] = {
                     "customer_name": party,
+                    "phone": synced.get("phone", ""),
+                    "state": synced.get("state", ""),
                     "total_transactions": 0,
                     "total_amount": 0,
                     "average_transaction": 0,
-                    "outstanding_amount": safe_num(synced.get("outstanding_amount")),
+                    "outstanding_amount": 0,
                     "paid_amount": 0,
+                    "credit_note_total": 0,
+                    "journal_credit": 0,
+                    "receipt_count": 0,
                     "payment_ratio": 0,
                     "payment_pattern": "regular",
                     "average_payment_delay": 0,
                     "credit_score": 0,
                     "oldest_invoice_days": 0,
+                    "first_transaction": v_date_str,
+                    "last_transaction": v_date_str,
                     "invoices": []
                 }
 
             behavior_map[party]["total_transactions"] += 1
             behavior_map[party]["total_amount"] += amount
 
+            if v_date_str:
+                if v_date_str < (behavior_map[party].get("first_transaction") or "9999"):
+                    behavior_map[party]["first_transaction"] = v_date_str
+                if v_date_str > (behavior_map[party].get("last_transaction") or ""):
+                    behavior_map[party]["last_transaction"] = v_date_str
+
             try:
                 parts = v_date_str.split("-")
                 if len(parts) == 3:
                     v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
                     days_old = (today - v_date).days
-                    behavior_map[party]["invoices"].append({"amount": amount, "days_old": days_old})
+                    behavior_map[party]["invoices"].append({"amount": amount, "days_old": days_old, "date": v_date_str})
                     if days_old > behavior_map[party]["oldest_invoice_days"]:
                         behavior_map[party]["oldest_invoice_days"] = days_old
             except (ValueError, TypeError):
                 pass
 
+        # Also add customers with only receipt activity (no sales in data)
         for sc in synced_customers:
             name = sc.get("customer_name")
-            if not name:
+            if not name or name in behavior_map:
                 continue
-            if name not in behavior_map and safe_num(sc.get("outstanding_amount")) > 0:
+            if customer_payments.get(name, 0) > 0 or safe_num(sc.get("outstanding_amount")) > 0:
                 behavior_map[name] = {
                     "customer_name": name,
+                    "phone": sc.get("phone", ""),
+                    "state": sc.get("state", ""),
                     "total_transactions": 0,
                     "total_amount": 0,
                     "average_transaction": 0,
                     "outstanding_amount": safe_num(sc.get("outstanding_amount")),
-                    "paid_amount": customer_payments.get(name, 0),
-                    "receipt_count": len(customer_receipt_dates.get(name, [])),
+                    "paid_amount": 0,
+                    "credit_note_total": 0,
+                    "journal_credit": 0,
+                    "receipt_count": 0,
                     "payment_ratio": 0,
                     "payment_pattern": "no_transactions",
                     "average_payment_delay": 0,
                     "credit_score": 0,
                     "oldest_invoice_days": 0,
+                    "first_transaction": None,
+                    "last_transaction": None,
                     "invoices": []
                 }
 
         for party, data in behavior_map.items():
             total = data["total_amount"]
-            outstanding = data["outstanding_amount"]
             receipt_paid = customer_payments.get(party, 0)
+            cn_credit = customer_cn.get(party, 0)
+            jv_credit = customer_jv.get(party, 0)
+            total_credits = receipt_paid + cn_credit + jv_credit
 
-            if receipt_paid > 0:
-                data["paid_amount"] = receipt_paid
-                data["receipt_count"] = len(customer_receipt_dates.get(party, []))
-            else:
-                data["paid_amount"] = max(0, total - outstanding)
-                data["receipt_count"] = 0
+            data["paid_amount"] = round(receipt_paid, 2)
+            data["credit_note_total"] = round(cn_credit, 2)
+            data["journal_credit"] = round(jv_credit, 2)
+            data["receipt_count"] = len(customer_receipt_dates.get(party, []))
+            data["outstanding_amount"] = round(max(0, total - total_credits), 2)
 
             data["average_transaction"] = round(total / data["total_transactions"], 2) if data["total_transactions"] > 0 else 0
-            data["payment_ratio"] = round((data["paid_amount"] / total * 100), 1) if total > 0 else 100
+            data["payment_ratio"] = round((total_credits / total * 100), 1) if total > 0 else 100
 
+            # Compute average payment delay using receipt-to-invoice matching
             if receipt_paid > 0 and data["invoices"]:
-                invoice_dates = sorted([i["days_old"] for i in data["invoices"]])
-                if outstanding > 0:
-                    data["average_payment_delay"] = round(sum(invoice_dates) / len(invoice_dates) * (outstanding / total), 0) if invoice_dates else 0
+                receipt_dates = sorted([d for d in customer_receipt_dates.get(party, []) if d])
+                invoice_dates = sorted([i["date"] for i in data["invoices"] if i.get("date")])
+                # Estimate delay: avg gap between invoice dates and receipt dates
+                if receipt_dates and invoice_dates:
+                    delays = []
+                    for rd in receipt_dates:
+                        # Find closest preceding invoice
+                        closest = None
+                        for inv_d in invoice_dates:
+                            if inv_d <= rd:
+                                closest = inv_d
+                        if closest:
+                            try:
+                                rd_parts = rd.split("-")
+                                ci_parts = closest.split("-")
+                                r_date = date_type(int(rd_parts[0]), int(rd_parts[1]), int(rd_parts[2]))
+                                i_date = date_type(int(ci_parts[0]), int(ci_parts[1]), int(ci_parts[2]))
+                                delays.append((r_date - i_date).days)
+                            except:
+                                pass
+                    data["average_payment_delay"] = round(sum(delays) / len(delays), 0) if delays else 0
                 else:
                     data["average_payment_delay"] = 0
-            elif total > 0 and outstanding > 0 and data["invoices"]:
-                outstanding_ratio = outstanding / total
+            elif total > 0 and data["outstanding_amount"] > 0 and data["invoices"]:
+                outstanding_ratio = data["outstanding_amount"] / total
                 avg_invoice_age = sum(i["days_old"] for i in data["invoices"]) / len(data["invoices"])
                 data["average_payment_delay"] = round(avg_invoice_age * outstanding_ratio, 0)
             else:
                 data["average_payment_delay"] = 0
 
-            payment_score = data["payment_ratio"]
+            # Credit score — cap payment_ratio input at 100
+            capped_ratio = min(data["payment_ratio"], 100)
+            payment_score = capped_ratio
             volume_score = min(20, data["total_transactions"] * 2)
-            delay_penalty = min(20, data["average_payment_delay"] / 3)
+            delay_penalty = min(20, data["average_payment_delay"] / 3) if data["outstanding_amount"] > 0 else 0
             data["credit_score"] = round(max(0, min(100, payment_score * 0.7 + volume_score - delay_penalty)), 1)
 
-            if data["payment_ratio"] >= 90 and data["average_payment_delay"] < 15:
+            # Pattern classification
+            if data["payment_ratio"] >= 100:
+                data["payment_pattern"] = "excellent"
+            elif data["payment_ratio"] >= 90 and data["average_payment_delay"] < 15:
                 data["payment_pattern"] = "excellent"
             elif data["payment_ratio"] >= 70 and data["average_payment_delay"] < 30:
                 data["payment_pattern"] = "regular"
             elif data["payment_ratio"] >= 50:
                 data["payment_pattern"] = "irregular"
+            elif data["total_transactions"] == 0:
+                data["payment_pattern"] = "no_transactions"
             else:
                 data["payment_pattern"] = "risky"
+
+            # Relationship duration
+            if data.get("first_transaction") and data.get("last_transaction"):
+                try:
+                    ft = data["first_transaction"].split("-")
+                    lt = data["last_transaction"].split("-")
+                    f_date = date_type(int(ft[0]), int(ft[1]), int(ft[2]))
+                    l_date = date_type(int(lt[0]), int(lt[1]), int(lt[2]))
+                    data["relationship_months"] = max(1, round((l_date - f_date).days / 30))
+                except:
+                    data["relationship_months"] = 0
+            else:
+                data["relationship_months"] = 0
 
             del data["invoices"]
 
@@ -706,7 +781,17 @@ async def get_payment_behavior(customer: Optional[str] = None, fy: Optional[str]
 
         customers.sort(key=lambda c: c["credit_score"], reverse=True)
 
-        return APIResponse(success=True, data={"customers": customers})
+        return APIResponse(success=True, data={
+            "customers": customers,
+            "summary": {
+                "total_customers": len(customers),
+                "excellent": len([c for c in customers if c["payment_pattern"] == "excellent"]),
+                "regular": len([c for c in customers if c["payment_pattern"] == "regular"]),
+                "irregular": len([c for c in customers if c["payment_pattern"] == "irregular"]),
+                "risky": len([c for c in customers if c["payment_pattern"] == "risky"]),
+                "avg_credit_score": round(sum(c["credit_score"] for c in customers) / len(customers), 1) if customers else 0
+            }
+        })
 
     except Exception as e:
         logger.error(f"Error analyzing payment behavior: {e}")

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Download, Search, Filter, Sparkles } from 'lucide-react';
+import { Download, Search, Filter, Sparkles, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -11,22 +11,26 @@ const Inventory = ({ selectedFY }) => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedGroup, setSelectedGroup] = useState('all');
+  const [selectedGroups, setSelectedGroups] = useState([]);
+  const [showGroupDropdown, setShowGroupDropdown] = useState(false);
   const [categories, setCategories] = useState([]);
   const [stockGroups, setStockGroups] = useState([]);
   const [showPOModal, setShowPOModal] = useState(false);
   const [purchaseOrder, setPurchaseOrder] = useState(null);
   const [generatingPO, setGeneratingPO] = useState(false);
+  const [sortField, setSortField] = useState('item_name');
+  const [sortDir, setSortDir] = useState('asc');
 
   useEffect(() => {
     fetchInventory();
-  }, [selectedGroup]);
+  }, [selectedGroups]);
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
       const params = {};
-      if (selectedGroup && selectedGroup !== 'all') params.stock_group = selectedGroup;
+      // Multi-select: send first selected group for API filtering (client-side handles multi-filter)
+      if (selectedGroups.length > 0) params.stock_group = selectedGroups[0];
       const response = await axios.get(`${API}/inventory/items`, { params });
       const itemsData = response.data?.data?.items || [];
       setItems(itemsData);
@@ -86,8 +90,28 @@ const Inventory = ({ selectedFY }) => {
   const filteredItems = items.filter(item => {
     const matchesSearch = item.item_name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
+    return matchesSearch && matchesCategory && matchesGroup;
+  }).sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
+    if (sortField === 'quantity') return dir * ((a.quantity || 0) - (b.quantity || 0));
+    if (sortField === 'price') return dir * ((a.price || 0) - (b.price || 0));
+    if (sortField === 'value') return dir * (((a.quantity || 0) * (a.price || 0)) - ((b.quantity || 0) * (b.price || 0)));
+    if (sortField === 'stock_group') return dir * (a.stock_group || '').localeCompare(b.stock_group || '');
+    return 0;
   });
+
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+
+  const SortHeader = ({ field, label, className = '' }) => (
+    <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-${field}`}>
+      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+    </th>
+  );
 
   if (loading) {
     return (
@@ -158,18 +182,37 @@ const Inventory = ({ selectedFY }) => {
             />
           </div>
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
-            <select
+            <button
+              onClick={() => setShowGroupDropdown(!showGroupDropdown)}
+              className="flex items-center gap-2 pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] bg-white text-sm min-w-[180px]"
               data-testid="stock-group-filter"
-              value={selectedGroup}
-              onChange={(e) => setSelectedGroup(e.target.value)}
-              className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white"
             >
-              <option value="all">All Stock Groups</option>
-              {stockGroups.map(g => (
-                <option key={g} value={g}>{g}</option>
-              ))}
-            </select>
+              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
+              {selectedGroups.length === 0 ? 'All Stock Groups' : `${selectedGroups.length} group${selectedGroups.length > 1 ? 's' : ''}`}
+              <ChevronDown size={14} className="ml-auto text-slate-400" />
+            </button>
+            {showGroupDropdown && (
+              <div className="absolute z-20 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto w-64" data-testid="stock-group-dropdown">
+                <div className="p-2 border-b border-slate-100">
+                  <button onClick={() => setSelectedGroups([])} className="text-xs text-[#2563EB] hover:underline">Clear all</button>
+                </div>
+                {stockGroups.map(g => (
+                  <label key={g} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedGroups.includes(g)}
+                      onChange={() => {
+                        setSelectedGroups(prev =>
+                          prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]
+                        );
+                      }}
+                      className="rounded border-slate-300"
+                    />
+                    {g}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
@@ -193,13 +236,13 @@ const Inventory = ({ selectedFY }) => {
           <table className="data-table" data-testid="inventory-table">
             <thead>
               <tr>
-                <th>Item Name</th>
-                <th>Stock Group</th>
+                <SortHeader field="item_name" label="Item Name" />
+                <SortHeader field="stock_group" label="Stock Group" />
                 <th>Category</th>
-                <th className="numeric">Quantity</th>
+                <SortHeader field="quantity" label="Quantity" className="numeric" />
                 <th>Unit</th>
-                <th className="numeric">Price</th>
-                <th className="numeric">Value</th>
+                <SortHeader field="price" label="Price" className="numeric" />
+                <SortHeader field="value" label="Value" className="numeric" />
                 <th className="numeric">Reorder Level</th>
                 <th>Status</th>
               </tr>

@@ -172,7 +172,7 @@ const Dashboard = ({ selectedFY }) => {
           <StatCard
             title="Low Stock"
             value={inventorySummary?.low_stock_items || 0}
-            subtitle="Items below reorder level"
+            subtitle="Out-of-stock or below reorder"
             icon={AlertCircle}
             color="bg-red-50 text-red-600"
           />

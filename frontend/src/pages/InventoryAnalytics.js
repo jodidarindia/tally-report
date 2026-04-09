@@ -10,13 +10,11 @@ const InventoryAnalytics = ({ selectedFY }) => {
   const [activeTab, setActiveTab] = useState('movement');
   const [movementData, setMovementData] = useState([]);
   const [belowCostSales, setBelowCostSales] = useState([]);
-  const [pivotData, setPivotData] = useState([]);
   const [salesFrequency, setSalesFrequency] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [pivotGroupBy, setPivotGroupBy] = useState('category');
-  const [pivotMetric, setPivotMetric] = useState('value');
-  const [expandedGroups, setExpandedGroups] = useState({});
+  const [sortField, setSortField] = useState('movement_rate');
+  const [sortDir, setSortDir] = useState('desc');
   const [dateFilter, setDateFilter] = useState({
     start_date: '',
     end_date: ''
@@ -24,7 +22,7 @@ const InventoryAnalytics = ({ selectedFY }) => {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, pivotGroupBy, pivotMetric, dateFilter, selectedFY]);
+  }, [activeTab, dateFilter, selectedFY]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -36,9 +34,6 @@ const InventoryAnalytics = ({ selectedFY }) => {
       } else if (activeTab === 'below-cost') {
         const res = await axios.get(`${API}/inventory/below-cost-sales?${fyParam}`);
         setBelowCostSales(res.data?.data?.below_cost_sales || []);
-      } else if (activeTab === 'pivot') {
-        const res = await axios.get(`${API}/inventory/pivot-data?group_by=${pivotGroupBy}&metric=${pivotMetric}`);
-        setPivotData(res.data?.data?.pivot_table || []);
       } else if (activeTab === 'sales-frequency') {
         const params = new URLSearchParams();
         if (dateFilter.start_date) params.append('start_date', dateFilter.start_date);
@@ -47,7 +42,7 @@ const InventoryAnalytics = ({ selectedFY }) => {
         
         const url = params.toString() ? `${API}/inventory/sales-frequency?${params.toString()}` : `${API}/inventory/sales-frequency`;
         const res = await axios.get(url);
-        setSalesFrequency(res.data?.data?.sales_frequency || []);
+        setSalesFrequency(res.data?.data?.frequency || []);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -57,9 +52,16 @@ const InventoryAnalytics = ({ selectedFY }) => {
     }
   };
 
-  const toggleGroup = (group) => {
-    setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('desc'); }
   };
+
+  const SortTh = ({ field, label, className = '' }) => (
+    <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-analytics-${field}`}>
+      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+    </th>
+  );
 
   const exportSalesFrequency = async (format) => {
     setExporting(true);
@@ -91,31 +93,10 @@ const InventoryAnalytics = ({ selectedFY }) => {
     }
   };
 
-  const exportPivot = () => {
-    // Convert pivot data to CSV
-    const headers = ['Group', 'Total Items', 'Total Quantity', 'Total Value'];
-    const rows = pivotData.map(item => [
-      item.group,
-      item.total_items,
-      item.total_quantity,
-      item.total_value.toFixed(2)
-    ]);
-    
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pivot_${pivotGroupBy}_${pivotMetric}.csv`;
-    a.click();
-    toast.success('Pivot table exported!');
-  };
-
   const tabs = [
     { id: 'movement', label: 'Movement Analysis', icon: TrendingUp },
     { id: 'below-cost', label: 'Below Cost Sales', icon: AlertTriangle },
-    { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 },
-    { id: 'pivot', label: 'Pivot Table', icon: BarChart3 }
+    { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 }
   ];
 
   return (
@@ -193,18 +174,22 @@ const InventoryAnalytics = ({ selectedFY }) => {
                   <table className="data-table" data-testid="movement-table">
                     <thead>
                       <tr>
-                        <th>Item Name</th>
+                        <SortTh field="item_name" label="Item Name" />
                         <th>Category</th>
-                        <th className="numeric">Opening Stock</th>
-                        <th className="numeric">Sales</th>
-                        <th className="numeric">Closing Stock</th>
-                        <th className="numeric">Movement Rate %</th>
-                        <th className="numeric">Days to Sell</th>
+                        <SortTh field="opening_stock" label="Opening Stock" className="numeric" />
+                        <SortTh field="sales" label="Sales" className="numeric" />
+                        <SortTh field="closing_stock" label="Closing Stock" className="numeric" />
+                        <SortTh field="movement_rate" label="Movement Rate %" className="numeric" />
+                        <SortTh field="days_to_sell" label="Days to Sell" className="numeric" />
                         <th>Classification</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {movementData.map((item, idx) => (
+                      {[...movementData].sort((a, b) => {
+                        const dir = sortDir === 'asc' ? 1 : -1;
+                        if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
+                        return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+                      }).map((item, idx) => (
                         <tr key={idx}>
                           <td className="font-medium">{item.item_name}</td>
                           <td>{item.category}</td>
@@ -401,8 +386,8 @@ const InventoryAnalytics = ({ selectedFY }) => {
                             <td className="numeric">{item.avg_quantity_per_transaction.toFixed(1)}</td>
                             <td>
                               <div className="text-xs text-slate-600">
-                                {item.customer_names.slice(0, 2).join(', ')}
-                                {item.customer_names.length > 2 && ` +${item.customer_names.length - 2} more`}
+                                {(item.customer_list || []).slice(0, 2).join(', ')}
+                                {(item.customer_list || []).length > 2 && ` +${(item.customer_list || []).length - 2} more`}
                               </div>
                             </td>
                           </tr>
@@ -442,101 +427,6 @@ const InventoryAnalytics = ({ selectedFY }) => {
             </div>
           )}
 
-          {/* Pivot Table */}
-          {activeTab === 'pivot' && (
-            <div>
-              <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium text-slate-900">Pivot Configuration</h3>
-                  <button
-                    onClick={exportPivot}
-                    className="btn-primary flex items-center gap-2"
-                    data-testid="export-pivot-button"
-                  >
-                    <Download size={16} />
-                    Export CSV
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Group By</label>
-                    <select
-                      value={pivotGroupBy}
-                      onChange={(e) => setPivotGroupBy(e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                      data-testid="pivot-group-by"
-                    >
-                      <option value="category">Category</option>
-                      <option value="unit">Unit</option>
-                      <option value="item_name">Item Name</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Sort By</label>
-                    <select
-                      value={pivotMetric}
-                      onChange={(e) => setPivotMetric(e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg"
-                      data-testid="pivot-metric"
-                    >
-                      <option value="value">Total Value</option>
-                      <option value="quantity">Total Quantity</option>
-                      <option value="count">Item Count</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="pivot-table">
-                    <thead>
-                      <tr>
-                        <th>Group</th>
-                        <th className="numeric">Total Items</th>
-                        <th className="numeric">Total Quantity</th>
-                        <th className="numeric">Total Value</th>
-                        <th>Details</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pivotData.map((group, idx) => (
-                        <React.Fragment key={idx}>
-                          <tr className="bg-slate-50 font-semibold">
-                            <td>{group.group}</td>
-                            <td className="numeric">{group.total_items}</td>
-                            <td className="numeric">{group.total_quantity}</td>
-                            <td className="numeric text-[#2563EB]">
-                              ₹{group.total_value.toLocaleString('en-IN')}
-                            </td>
-                            <td>
-                              <button
-                                onClick={() => toggleGroup(group.group)}
-                                className="text-sm text-[#2563EB] font-medium"
-                              >
-                                {expandedGroups[group.group] ? '− Collapse' : '+ Expand'}
-                              </button>
-                            </td>
-                          </tr>
-                          {expandedGroups[group.group] && group.items.map((item, itemIdx) => (
-                            <tr key={`${idx}-${itemIdx}`} className="bg-white">
-                              <td className="pl-8 text-sm text-slate-600">{item.item_name}</td>
-                              <td className="numeric text-sm">1</td>
-                              <td className="numeric text-sm">{item.quantity}</td>
-                              <td className="numeric text-sm">
-                                ₹{(item.quantity * item.price).toLocaleString('en-IN')}
-                              </td>
-                              <td></td>
-                            </tr>
-                          ))}
-                        </React.Fragment>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>

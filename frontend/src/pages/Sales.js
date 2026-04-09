@@ -162,6 +162,8 @@ const Sales = ({ selectedFY }) => {
   // Filters
   const [filterParty, setFilterParty] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
+  const [sortField, setSortField] = useState('voucher_date');
+  const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => {
     fetchSalesData();
@@ -201,6 +203,26 @@ const Sales = ({ selectedFY }) => {
   };
 
   const totalAmount = vouchers.reduce((s, v) => s + (v.total_amount || 0), 0);
+
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('desc'); }
+  };
+
+  const SortTh = ({ field, label, className = '' }) => (
+    <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-sales-${field}`}>
+      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+    </th>
+  );
+
+  const sortedVouchers = [...vouchers].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortField === 'party_name') return dir * (a.party_name || '').localeCompare(b.party_name || '');
+    if (sortField === 'voucher_date') return dir * (a.voucher_date || '').localeCompare(b.voucher_date || '');
+    if (sortField === 'voucher_id') return dir * (a.voucher_id || '').localeCompare(b.voucher_id || '');
+    if (sortField === 'total_amount') return dir * ((a.total_amount || 0) - (b.total_amount || 0));
+    return 0;
+  });
 
   const handleExport = async (format) => {
     try {
@@ -305,17 +327,17 @@ const Sales = ({ selectedFY }) => {
           <table className="data-table" data-testid="sales-table">
             <thead>
               <tr>
-                <th>Voucher No.</th>
-                <th>Date</th>
-                <th>Customer</th>
+                <SortTh field="voucher_id" label="Voucher No." />
+                <SortTh field="voucher_date" label="Date" />
+                <SortTh field="party_name" label="Customer" />
                 <th>Items</th>
                 <th>Reference</th>
-                <th className="numeric">Amount</th>
+                <SortTh field="total_amount" label="Amount" className="numeric" />
               </tr>
             </thead>
             <tbody>
-              {vouchers.length > 0 ? (
-                vouchers.map((voucher) => (
+              {sortedVouchers.length > 0 ? (
+                sortedVouchers.map((voucher) => (
                   <tr key={voucher.voucher_id} data-testid={`sales-row-${voucher.voucher_id}`}>
                     <td>
                       <button

@@ -52,15 +52,44 @@ async def get_inventory_summary(fy: Optional[str] = None):
             )
 
         total_items = len(items)
-        total_value = sum(safe_num(item.get("quantity")) * safe_num(item.get("price")) for item in items)
-        low_stock_items = sum(1 for item in items if safe_num(item.get("quantity")) < safe_num(item.get("reorder_level")))
+
+        # Compute total value: prefer closing_value, then qty*price
+        total_value = 0.0
+        for item in items:
+            cv = safe_num(item.get("closing_value"))
+            if cv > 0:
+                total_value += cv
+            else:
+                total_value += safe_num(item.get("quantity")) * safe_num(item.get("price"))
+
+        # Low stock: use movement-based analysis
+        # Items with qty=0 but that had sales activity are out-of-stock (genuinely low)
+        # Items with qty=0 and no sales data: skip (master data only)
+        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
+
+        # Build set of items that had sales (i.e. actively traded)
+        active_items = set()
+        for v in fy_vouchers:
+            for vi in v.get("items", []):
+                iname = vi.get("item", "").strip()
+                if iname:
+                    active_items.add(iname.lower())
+
+        low_stock_items = 0
+        for item in items:
+            qty = safe_num(item.get("quantity"))
+            name = (item.get("item_name") or "").lower()
+            reorder = safe_num(item.get("reorder_level"))
+            if qty > 0 and reorder > 0 and qty < reorder:
+                low_stock_items += 1
+            elif qty == 0 and name in active_items:
+                # Out of stock but actively sold — flag as low stock
+                low_stock_items += 1
+
         categories = list(set(item.get("category") for item in items if item.get("category")))
 
-        fy_sales_value = 0
-        if fy:
-            all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
-            fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
-            fy_sales_value = sum(safe_num(v.get("total_amount")) for v in fy_vouchers)
+        fy_sales_value = sum(safe_num(v.get("total_amount")) for v in fy_vouchers)
 
         return APIResponse(
             success=True,

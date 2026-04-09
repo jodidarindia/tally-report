@@ -22,6 +22,8 @@ const CustomerCRM = ({ user, selectedFY }) => {
   const [showSetTarget, setShowSetTarget] = useState(null);
   const [expandedTarget, setExpandedTarget] = useState(null);
   const [exportingLedger, setExportingLedger] = useState(null);
+  const [sortField, setSortField] = useState('outstanding_amount');
+  const [sortDir, setSortDir] = useState('desc');
   const [newFollowup, setNewFollowup] = useState({
     customer_name: '',
     followup_date: '',
@@ -260,34 +262,50 @@ const CustomerCRM = ({ user, selectedFY }) => {
       ) : (
         <>
           {/* Outstanding Payments - Proper Aging */}
-          {activeTab === 'outstanding' && (
+          {activeTab === 'outstanding' && (() => {
+            const handleSort = (field) => {
+              if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+              else { setSortField(field); setSortDir('desc'); }
+            };
+            const SortTh = ({ field, label, className = '' }) => (
+              <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-crm-${field}`}>
+                <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              </th>
+            );
+            const sorted = outstanding
+              .filter(c => {
+                if (selectedGroup === 'all') return true;
+                if (selectedGroup.startsWith('group:')) return c.ledger_group === selectedGroup.slice(6);
+                if (selectedGroup.startsWith('state:')) return c.state === selectedGroup.slice(6);
+                return c.ledger_group === selectedGroup;
+              })
+              .sort((a, b) => {
+                const dir = sortDir === 'asc' ? 1 : -1;
+                if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
+                return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+              });
+            return (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="data-table" data-testid="outstanding-table">
                   <thead>
                     <tr>
-                      <th>Customer Name</th>
+                      <SortTh field="customer_name" label="Customer Name" />
                       <th>Group</th>
-                      <th className="numeric">Total Sales</th>
-                      <th className="numeric">Paid</th>
-                      <th className="numeric">Outstanding</th>
-                      <th className="numeric">0-30 Days</th>
-                      <th className="numeric">30-60 Days</th>
-                      <th className="numeric">60-90 Days</th>
-                      <th className="numeric">90+ Days</th>
+                      <SortTh field="opening_balance" label="Opening Bal" className="numeric" />
+                      <SortTh field="total_sales" label="Total Sales" className="numeric" />
+                      <SortTh field="paid_amount" label="Paid" className="numeric" />
+                      <SortTh field="outstanding_amount" label="Outstanding" className="numeric" />
+                      <th className="numeric">0-30d</th>
+                      <th className="numeric">30-60d</th>
+                      <th className="numeric">60-90d</th>
+                      <th className="numeric">90+d</th>
                       <th>Status</th>
-                      <th>Export Ledger</th>
+                      <th>Ledger</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {outstanding
-                      .filter(c => {
-                        if (selectedGroup === 'all') return true;
-                        if (selectedGroup.startsWith('group:')) return c.ledger_group === selectedGroup.slice(6);
-                        if (selectedGroup.startsWith('state:')) return c.state === selectedGroup.slice(6);
-                        return c.ledger_group === selectedGroup;
-                      })
-                      .map((customer, idx) => {
+                    {sorted.map((customer, idx) => {
                         const statusColors = {
                           normal: 'bg-green-100 text-green-700',
                           at_risk: 'bg-amber-100 text-amber-700',
@@ -298,6 +316,9 @@ const CustomerCRM = ({ user, selectedFY }) => {
                       <tr key={idx}>
                         <td className="font-medium text-slate-900">{customer.customer_name}</td>
                         <td className="text-slate-500 text-xs">{customer.ledger_group || '-'}</td>
+                        <td className="numeric text-slate-500">
+                          {(customer.opening_balance || 0) !== 0 ? `Rs.${(customer.opening_balance || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '-'}
+                        </td>
                         <td className="numeric text-slate-600">
                           Rs.{(customer.total_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                         </td>
@@ -333,7 +354,8 @@ const CustomerCRM = ({ user, selectedFY }) => {
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* Follow-ups with Customer Dropdown */}
           {activeTab === 'followups' && (
@@ -615,57 +637,91 @@ const CustomerCRM = ({ user, selectedFY }) => {
 
           {/* Payment Behavior */}
           {activeTab === 'behavior' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {paymentBehavior.map((customer, idx) => (
-                <div key={idx} className="bg-white border border-slate-200 rounded-xl p-6" data-testid={`payment-card-${idx}`}>
-                  <h3 className="text-lg font-medium text-slate-900 mb-4">{customer.customer_name}</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Total Sales</span>
-                      <span className="font-semibold">Rs.{(customer.total_amount || 0).toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Paid Amount</span>
-                      <span className="font-semibold text-emerald-600">Rs.{(customer.paid_amount || 0).toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Outstanding</span>
-                      <span className="font-semibold text-red-600">Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Payment Ratio</span>
-                      <span className="font-semibold">{customer.payment_ratio || 0}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Transactions</span>
-                      <span className="font-semibold">{customer.total_transactions}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Avg Transaction</span>
-                      <span className="font-semibold">Rs.{(customer.average_transaction || 0).toLocaleString('en-IN')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Est. Avg Payment Delay</span>
-                      <span className="font-semibold">{customer.average_payment_delay || 0} days</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-600">Credit Score</span>
-                      <span className="font-semibold text-[#2563EB]">{(customer.credit_score || 0).toFixed(0)}/100</span>
-                    </div>
-                    <div className="pt-3 border-t">
-                      <span className="text-sm text-slate-600">Payment Pattern:</span>
-                      <span className={`ml-2 px-3 py-1 rounded-full text-xs font-medium ${
-                        customer.payment_pattern === 'excellent' ? 'bg-green-100 text-green-700' :
-                        customer.payment_pattern === 'regular' ? 'bg-blue-100 text-blue-700' :
-                        customer.payment_pattern === 'irregular' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-red-100 text-red-700'
-                      }`}>
-                        {customer.payment_pattern}
-                      </span>
-                    </div>
+            <div>
+              {/* Summary Bar */}
+              {paymentBehavior.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 text-center">
+                    <div className="text-xs text-slate-500 mb-1">Total Customers</div>
+                    <div className="text-xl font-bold text-slate-900">{paymentBehavior.length}</div>
+                  </div>
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                    <div className="text-xs text-green-700 mb-1">Excellent</div>
+                    <div className="text-xl font-bold text-green-700">{paymentBehavior.filter(c => c.payment_pattern === 'excellent').length}</div>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                    <div className="text-xs text-blue-700 mb-1">Regular</div>
+                    <div className="text-xl font-bold text-blue-700">{paymentBehavior.filter(c => c.payment_pattern === 'regular').length}</div>
+                  </div>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center">
+                    <div className="text-xs text-yellow-700 mb-1">Irregular</div>
+                    <div className="text-xl font-bold text-yellow-700">{paymentBehavior.filter(c => c.payment_pattern === 'irregular').length}</div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
+                    <div className="text-xs text-red-700 mb-1">Risky</div>
+                    <div className="text-xl font-bold text-red-700">{paymentBehavior.filter(c => c.payment_pattern === 'risky').length}</div>
                   </div>
                 </div>
-              ))}
+              )}
+              <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated across all financial years for accurate historical analysis.</p>
+              
+              {/* Table View */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-6">
+                <div className="overflow-x-auto">
+                  <table className="data-table" data-testid="payment-behavior-table">
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th className="numeric">Total Sales</th>
+                        <th className="numeric">Receipts</th>
+                        <th className="numeric">Credit Notes</th>
+                        <th className="numeric">Outstanding</th>
+                        <th className="numeric">Pay Ratio</th>
+                        <th className="numeric">Avg Delay</th>
+                        <th className="numeric">Score</th>
+                        <th>Pattern</th>
+                        <th className="numeric">Months</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paymentBehavior.map((customer, idx) => (
+                        <tr key={idx} data-testid={`behavior-row-${idx}`}>
+                          <td className="font-medium text-slate-900">
+                            <div>{customer.customer_name}</div>
+                            <div className="text-xs text-slate-400">{customer.total_transactions} txns</div>
+                          </td>
+                          <td className="numeric">Rs.{(customer.total_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                          <td className="numeric text-emerald-600">Rs.{(customer.paid_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                          <td className="numeric text-purple-600">Rs.{(customer.credit_note_total || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                          <td className="numeric text-red-600 font-medium">Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
+                          <td className="numeric">
+                            <div className="flex items-center gap-1">
+                              <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                <div className={`h-full ${customer.payment_ratio >= 80 ? 'bg-green-500' : customer.payment_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                  style={{ width: `${Math.min(customer.payment_ratio, 100)}%` }} />
+                              </div>
+                              <span className="text-xs">{customer.payment_ratio}%</span>
+                            </div>
+                          </td>
+                          <td className="numeric">{customer.average_payment_delay || 0}d</td>
+                          <td className="numeric font-semibold text-[#2563EB]">{(customer.credit_score || 0).toFixed(0)}</td>
+                          <td>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              customer.payment_pattern === 'excellent' ? 'bg-green-100 text-green-700' :
+                              customer.payment_pattern === 'regular' ? 'bg-blue-100 text-blue-700' :
+                              customer.payment_pattern === 'irregular' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {customer.payment_pattern}
+                            </span>
+                          </td>
+                          <td className="numeric text-xs text-slate-500">{customer.relationship_months || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
         </>
