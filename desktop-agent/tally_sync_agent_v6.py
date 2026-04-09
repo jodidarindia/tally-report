@@ -252,30 +252,49 @@ class TallyCollectionClient:
         return ""
 
     def test_connection(self) -> bool:
-        """Quick ping to check Tally is responding."""
+        """Quick ping to check Tally is responding — uses Collection request."""
         xml = f"""<ENVELOPE>
-            <HEADER><VERSION>1</VERSION>
-            <TALLYREQUEST>Export</TALLYREQUEST>
-            <TYPE>Data</TYPE><ID>List of Companies</ID></HEADER>
-            <BODY><DESC><STATICVARIABLES>
-            <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-            </STATICVARIABLES></DESC></BODY></ENVELOPE>"""
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraCompanyList</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraCompanyList" ISINITIALIZE="Yes">
+<TYPE>Company</TYPE>
+<FETCH>NAME</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
         data = self._post(xml, debug_name='companies')
         if data:
-            # Try to extract company name
+            # Try to extract company name from COMPANY tag
             companies = self._find_deep(data, 'COMPANY')
             if companies:
                 if isinstance(companies, list):
                     names = [c.get('NAME', c.get('@NAME', str(c))) for c in companies if isinstance(c, dict)]
+                    if not names:
+                        names = [str(c) for c in companies if isinstance(c, str)]
                     if names:
                         self.company = self.company or str(names[0])
-                        logger.info(f"  Tally company: {self.company}")
                 elif isinstance(companies, dict):
                     name = companies.get('NAME', companies.get('@NAME', ''))
                     if name:
                         self.company = self.company or str(name)
                 elif isinstance(companies, str):
                     self.company = self.company or companies
+            if not self.company:
+                # Fallback: look for NAME tag anywhere in response
+                name_val = self._find_deep(data, 'NAME')
+                if name_val and isinstance(name_val, str):
+                    self.company = name_val
+            if self.company:
+                logger.info(f"  Tally company: {self.company}")
+            else:
+                logger.info("  Tally connected (company name not detected)")
             return True
         return False
 
