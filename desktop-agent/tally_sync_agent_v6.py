@@ -68,6 +68,7 @@ COMPANY_NAME = os.getenv('TALLY_COMPANY', '')  # Leave empty for current company
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
 API_KEY = os.getenv('AGENT_API_KEY', '')
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
+SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'  # Sync current FY + configured FY
 SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
@@ -109,6 +110,23 @@ def months_in_fy(fy: str):
         month_end = min(month_end, fy_end, today)
         yield current, month_end
         current = (month_end + timedelta(days=1))
+
+
+def current_fy() -> str:
+    """Get the current financial year string (e.g. '2026-27' if today is April 2026)."""
+    today = date.today()
+    start_year = today.year if today.month >= 4 else today.year - 1
+    end_short = (start_year + 1) % 100
+    return f"{start_year}-{end_short:02d}"
+
+
+def get_sync_fys() -> list:
+    """Return list of FYs to sync: configured FY + current FY (if different)."""
+    fys = [FINANCIAL_YEAR]
+    cur = current_fy()
+    if SYNC_ALL_FY and cur != FINANCIAL_YEAR and cur not in fys:
+        fys.append(cur)
+    return fys
 
 
 # ==================== WEBSOCKET SERVER ====================
@@ -583,35 +601,45 @@ class TallyCollectionClient:
         return all_receipts
 
     def _parse_vouchers(self, data: dict, vtype: str) -> List[Dict]:
-        """Parse voucher XML response into clean dicts."""
-        vouchers_raw = self._find_deep(data, 'VOUCHER')
+        """Parse voucher XML response into clean dicts.
+        
+        Tally Export Data wraps each voucher in a separate TALLYMESSAGE:
+          <TALLYMESSAGE><VOUCHER>...</VOUCHER></TALLYMESSAGE>
+          <TALLYMESSAGE><VOUCHER>...</VOUCHER></TALLYMESSAGE>
+        So we must collect VOUCHERs from ALL TALLYMESSAGE elements.
+        """
+        vouchers_raw = []
+
+        # Strategy 1: Find TALLYMESSAGE and collect all VOUCHERs
+        tally_msgs = self._find_deep(data, 'TALLYMESSAGE')
+        if tally_msgs:
+            if isinstance(tally_msgs, list):
+                for msg in tally_msgs:
+                    if isinstance(msg, dict) and 'VOUCHER' in msg:
+                        v = msg['VOUCHER']
+                        if isinstance(v, list):
+                            vouchers_raw.extend(v)
+                        elif isinstance(v, dict):
+                            vouchers_raw.append(v)
+            elif isinstance(tally_msgs, dict) and 'VOUCHER' in tally_msgs:
+                v = tally_msgs['VOUCHER']
+                if isinstance(v, list):
+                    vouchers_raw = v
+                elif isinstance(v, dict):
+                    vouchers_raw = [v]
+
+        # Strategy 2: Fallback — direct VOUCHER search (Collection responses)
         if not vouchers_raw:
-            # Debug: try to find what Tally actually returned
-            logger.warning(f"  [DEBUG] {vtype}: no VOUCHER key found.")
-            envelope = data.get('ENVELOPE', data)
-            if isinstance(envelope, dict):
-                body = envelope.get('BODY', {})
-                if isinstance(body, dict):
-                    desc_data = body.get('DATA', body.get('DESC', {}))
-                    if isinstance(desc_data, dict):
-                        logger.warning(f"  [DEBUG] DATA keys: {list(desc_data.keys())}")
-                        # Try TALLYMESSAGE wrapper
-                        tally_msg = desc_data.get('TALLYMESSAGE', {})
-                        if isinstance(tally_msg, dict) and 'VOUCHER' in tally_msg:
-                            vouchers_raw = tally_msg['VOUCHER']
-                        elif isinstance(tally_msg, list):
-                            vouchers_raw = []
-                            for msg in tally_msg:
-                                if isinstance(msg, dict) and 'VOUCHER' in msg:
-                                    v = msg['VOUCHER']
-                                    if isinstance(v, list):
-                                        vouchers_raw.extend(v)
-                                    else:
-                                        vouchers_raw.append(v)
-            if not vouchers_raw:
-                return []
-        if not isinstance(vouchers_raw, list):
-            vouchers_raw = [vouchers_raw]
+            direct = self._find_deep(data, 'VOUCHER')
+            if direct:
+                if isinstance(direct, list):
+                    vouchers_raw = direct
+                elif isinstance(direct, dict):
+                    vouchers_raw = [direct]
+
+        if not vouchers_raw:
+            logger.warning(f"  [DEBUG] {vtype}: no vouchers found in response")
+            return []
 
         results = []
         for v in vouchers_raw:
@@ -743,6 +771,7 @@ class FlowraSyncAgent:
         logger.info(f"  Tally URL     : {TALLY_URL}")
         logger.info(f"  Cloud Backend : {self.backend_url}")
         logger.info(f"  Financial Year: {self.financial_year}")
+        logger.info(f"  Auto Multi-FY : {SYNC_ALL_FY} (also syncs current FY: {current_fy()})")
         logger.info(f"  Sync Interval : every {self.sync_interval} min")
         logger.info(f"  Timeout/req   : {REQUEST_TIMEOUT} sec")
         logger.info(f"  Cache Dir     : {self.export_dir}")
@@ -821,56 +850,68 @@ class FlowraSyncAgent:
                 self.report_progress('sync_error', error='Tally not responding')
                 return
 
-            self.report_progress('sync_started', mode='collection-v6')
-            results = {'inventory': 0, 'sales': 0, 'receipts': 0, 'customers': 0}
+            # Determine which FYs to sync
+            fys_to_sync = get_sync_fys()
+            logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)}")
 
-            # --- Phase 1: Stock Items (~1-2 sec) ---
+            # --- Phase 1: Stock Items (FY-independent, just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")
+            self.financial_year = fys_to_sync[0]  # Use primary FY for progress
+            self.report_progress('sync_started', mode='collection-v6', fys=fys_to_sync)
             self.report_progress('phase_start', phase='inventory')
             items = self.tally.fetch_stock_items()
             if items:
                 self.save_cache('inventory', items)
                 self.sync_to_backend('inventory', items)
-                results['inventory'] = len(items)
             self.report_progress('phase_complete', phase='inventory', count=len(items))
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
-            # --- Phase 2: Sales Vouchers (monthly, ~2-5 sec each) ---
-            logger.info("--- Phase 2: Sales Vouchers ---")
-            self.report_progress('phase_start', phase='sales')
-            all_sales = []
-            for m_start, m_end in months_in_fy(self.financial_year):
-                month_sales = self.tally.fetch_sales_month(m_start, m_end)
-                all_sales.extend(month_sales)
-                time.sleep(SLEEP_BETWEEN_REQUESTS)
-            if all_sales:
-                self.save_cache('sales', all_sales)
-                self.sync_to_backend('sales', all_sales)
-                results['sales'] = len(all_sales)
-            self.report_progress('phase_complete', phase='sales', count=len(all_sales))
+            # --- Phase 2 & 3: Sales + Receipts (per FY) ---
+            all_sales_combined = []
+            all_receipts_combined = []
 
-            # --- Phase 3: Receipt/Payment Vouchers (monthly, ~2-5 sec each) ---
-            logger.info("--- Phase 3: Receipts/Payments ---")
-            self.report_progress('phase_start', phase='receipts')
-            all_receipts = []
-            for m_start, m_end in months_in_fy(self.financial_year):
-                month_receipts = self.tally.fetch_receipts_month(m_start, m_end)
-                all_receipts.extend(month_receipts)
-                time.sleep(SLEEP_BETWEEN_REQUESTS)
-            if all_receipts:
-                self.save_cache('receipts', all_receipts)
-                self.sync_to_backend('receipts', all_receipts)
-                results['receipts'] = len(all_receipts)
-            self.report_progress('phase_complete', phase='receipts', count=len(all_receipts))
+            for fy in fys_to_sync:
+                self.financial_year = fy
+                logger.info(f"--- Syncing FY {fy} ---")
 
-            # --- Phase 4: Customer Ledgers (~1-2 sec) ---
+                # Sales
+                logger.info(f"  Phase 2: Sales Vouchers (FY {fy})")
+                self.report_progress('phase_start', phase='sales')
+                fy_sales = []
+                for m_start, m_end in months_in_fy(fy):
+                    month_sales = self.tally.fetch_sales_month(m_start, m_end)
+                    fy_sales.extend(month_sales)
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
+                if fy_sales:
+                    self.save_cache(f'sales_{fy}', fy_sales)
+                    self.sync_to_backend('sales', fy_sales)
+                    all_sales_combined.extend(fy_sales)
+                logger.info(f"  FY {fy}: {len(fy_sales)} sales vouchers")
+                self.report_progress('phase_complete', phase='sales', count=len(fy_sales))
+
+                # Receipts
+                logger.info(f"  Phase 3: Receipts/Payments (FY {fy})")
+                self.report_progress('phase_start', phase='receipts')
+                fy_receipts = []
+                for m_start, m_end in months_in_fy(fy):
+                    month_receipts = self.tally.fetch_receipts_month(m_start, m_end)
+                    fy_receipts.extend(month_receipts)
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
+                if fy_receipts:
+                    self.save_cache(f'receipts_{fy}', fy_receipts)
+                    self.sync_to_backend('receipts', fy_receipts)
+                    all_receipts_combined.extend(fy_receipts)
+                logger.info(f"  FY {fy}: {len(fy_receipts)} receipt vouchers")
+                self.report_progress('phase_complete', phase='receipts', count=len(fy_receipts))
+
+            # --- Phase 4: Customer Ledgers (~1-2 sec, FY-independent) ---
+            self.financial_year = fys_to_sync[0]
             logger.info("--- Phase 4: Customer Ledgers ---")
             self.report_progress('phase_start', phase='customers')
             customers = self.tally.fetch_customers()
             if customers:
-                # Enrich with sales totals
                 cust_sales = {}
-                for v in all_sales:
+                for v in all_sales_combined:
                     p = v.get('party_name', '')
                     if p:
                         k = p.lower()
@@ -885,25 +926,34 @@ class FlowraSyncAgent:
                         c['transaction_count'] = cust_sales[k]['count']
                 self.save_cache('customers', customers)
                 self.sync_to_backend('customers', customers)
-                results['customers'] = len(customers)
             self.report_progress('phase_complete', phase='customers', count=len(customers))
 
             # Summary
+            total_sales = len(all_sales_combined)
+            total_receipts = len(all_receipts_combined)
             logger.info("")
             logger.info(f"[DONE] Sync completed at {datetime.now().strftime('%H:%M:%S')}")
-            logger.info(f"  Inventory: {results['inventory']} items")
-            logger.info(f"  Sales:     {results['sales']} vouchers")
-            logger.info(f"  Receipts:  {results['receipts']} vouchers")
-            logger.info(f"  Customers: {results['customers']} ledgers")
+            logger.info(f"  FYs synced:  {', '.join(fys_to_sync)}")
+            logger.info(f"  Inventory:   {len(items)} items")
+            logger.info(f"  Sales:       {total_sales} vouchers")
+            logger.info(f"  Receipts:    {total_receipts} vouchers")
+            logger.info(f"  Customers:   {len(customers)} ledgers")
             logger.info("=" * 60)
 
             state = load_sync_state()
             state['last_sync_time'] = datetime.now().isoformat()
-            state['last_results'] = results
+            state['last_results'] = {
+                'inventory': len(items), 'sales': total_sales,
+                'receipts': total_receipts, 'customers': len(customers)
+            }
             state['company'] = self.tally.company
+            state['fys_synced'] = fys_to_sync
             save_sync_state(state)
 
-            self.report_progress('sync_complete', **results)
+            self.report_progress('sync_complete',
+                                 inventory=len(items), sales=total_sales,
+                                 receipts=total_receipts, customers=len(customers),
+                                 fys_synced=fys_to_sync)
 
         except Exception as e:
             logger.error(f"Sync cycle error: {e}")

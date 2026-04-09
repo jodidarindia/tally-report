@@ -343,6 +343,21 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [selectedFY, setSelectedFY] = useState(FY_OPTIONS[0]);
 
+  // Auto-detect last synced FY and default to it
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      axios.get(`${API}/sync/status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => {
+          const syncedFY = res.data?.data?.financial_year;
+          if (syncedFY && FY_OPTIONS.includes(syncedFY)) {
+            setSelectedFY(syncedFY);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
     const savedUser = localStorage.getItem('user_data');

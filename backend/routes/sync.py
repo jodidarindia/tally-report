@@ -46,16 +46,26 @@ async def receive_agent_sync(request: dict):
             logger.info(f"Synced {len(data)} inventory items to database")
 
         elif data_type == 'sales':
-            await db.sales_vouchers.delete_many({})
             if data:
-                docs = []
+                from pymongo import UpdateOne
+                operations = []
                 for voucher in data:
+                    v_id = voucher.get('voucher_id', '')
+                    if not v_id:
+                        continue
                     sales_obj = SalesVoucher(**voucher)
                     doc = sales_obj.model_dump()
                     doc['last_updated'] = doc['last_updated'].isoformat()
-                    docs.append(doc)
-                if docs:
-                    await db.sales_vouchers.insert_many(docs)
+                    doc.pop('id', None)
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id},
+                            {"$set": doc},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.sales_vouchers.bulk_write(operations)
             logger.info(f"Synced {len(data)} sales vouchers to database")
 
         elif data_type == 'customers':
