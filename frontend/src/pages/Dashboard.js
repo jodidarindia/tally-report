@@ -78,7 +78,7 @@ const Dashboard = ({ selectedFY }) => {
 
   const fetchReminders = async () => {
     try {
-      const response = await axios.get(`${API}/customers/followups/reminders`);
+      const response = await axios.get(`${API}/dashboard/reminders`);
       setReminders(response.data?.data || null);
     } catch (error) {
       console.error('Error fetching reminders:', error);
