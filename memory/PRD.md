@@ -16,26 +16,39 @@ Build a SaaS-based web application (FLOWRA) connecting to a local Tally Prime da
 - Dashboard with Overdue Digest (>55 days)
 - Inventory management with stock groups
 - Sales vouchers with party/month filters, Sales Trend chart
-- Customer CRM with outstanding tracking
+- Customer CRM with outstanding tracking + **Tally-format Ledger PDF export**
 - Receipt/Payment voucher tracking
+- **Credit Note sync** (Credit Note voucher type from Tally)
+- **Journal Voucher sync** (Sundry Debtors journals from Tally)
+- **Stock Journal sync** (inventory adjustments from Tally)
 - Salesman Performance reports
 - AI Purchase Order generation
 - WebSocket live sync updates
 - PDF/Excel export
+- **Sync History page** (timeline of all sync cycles with data type breakdown)
 - Desktop Sync Agent v6 with:
   - Lightweight TDL Collection requests (no Tally freeze)
   - COMPUTE directives for closing balances
-  - TALLYMESSAGE multi-voucher parsing
+  - TALLYMESSAGE multi-voucher parsing (1257+ vouchers)
   - XML sanitization (& escaping, invalid character references)
   - Multi-FY sync (configured + current FY)
   - Incremental sync (after first full sync, only recent 2 months)
   - Upsert-based data sync (no data loss on re-sync)
   - BELONGSTO recursive customer fetch (sub-groups under Sundry Debtors)
+  - Credit Notes, Journals, Stock Journals phases
   - FY auto-detect on frontend
 
 ## Pending/User Verification
-- Desktop Agent v6: Stock item COMPUTE fields (CLBAL, CLRATE, CLVAL) — awaiting user test
-- Desktop Agent v6: Incremental sync mode — awaiting user test
+- Desktop Agent: Stock item COMPUTE fields (CLBAL, CLRATE, CLVAL, CLQTY)
+- Desktop Agent: Credit Notes, Journals, Stock Journals fetching
+- Desktop Agent: Incremental sync mode
+
+## Upcoming Tasks
+- P1: Compiled Desktop Application (.exe)
+  - PyInstaller-based Windows executable with tkinter GUI
+  - Auto-detects multiple companies open in Tally
+  - User selects company + starting FY
+  - One-click installer (Inno Setup or NSIS)
 
 ## Backlog
 - P2: Multi-tenant support
