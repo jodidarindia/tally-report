@@ -9,13 +9,10 @@ from models import (
     PurchaseOrder, PurchaseOrderItem
 )
 from utils import safe_num, filter_vouchers_by_fy
-from services.tally_client import TallyClient
 from services.purchase_order_ai import PurchaseOrderAI
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-tally_client_instance = None
 
 
 @router.get("/inventory/items")
@@ -30,17 +27,6 @@ async def get_inventory_items(category: Optional[str] = None, stock_group: Optio
             query["quantity"] = {"$gte": min_quantity}
 
         items = await db.inventory_items.find(query, {"_id": 0}).to_list(5000)
-
-        if not items:
-            global tally_client_instance
-            if not tally_client_instance:
-                tally_client_instance = TallyClient(connection_type="xml")
-            filters = {}
-            if category:
-                filters["category"] = category
-            if min_quantity is not None:
-                filters["min_quantity"] = min_quantity
-            items = tally_client_instance.fetch_inventory(filters)
 
         all_items = await db.inventory_items.find({}, {"_id": 0, "stock_group": 1}).to_list(5000)
         stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))

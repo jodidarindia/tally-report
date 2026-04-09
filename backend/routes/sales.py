@@ -5,12 +5,9 @@ import logging
 from db import db
 from models import SalesVoucher, APIResponse
 from utils import safe_num, filter_vouchers_by_fy
-from services.tally_client import TallyClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-tally_client_instance = None
 
 
 @router.get("/sales/vouchers")
@@ -48,30 +45,6 @@ async def get_sales_vouchers(start_date: Optional[str] = None, end_date: Optiona
 
         unique_parties = sorted(list(set(v.get("party_name", "") for v in all_vouchers_for_meta if v.get("party_name"))))
         unique_months = sorted(list(set(v.get("voucher_date", "")[:7] for v in all_vouchers_for_meta if v.get("voucher_date", "")[:7])))
-
-        if not vouchers and not party_name and not fy and not month:
-            global tally_client_instance
-            if not tally_client_instance:
-                tally_client_instance = TallyClient(connection_type="xml")
-
-            vouchers = tally_client_instance.fetch_sales_vouchers(start_date, end_date)
-
-            if vouchers:
-                from pymongo import UpdateOne
-                operations = []
-                for voucher in vouchers:
-                    sales_obj = SalesVoucher(**voucher)
-                    doc = sales_obj.model_dump()
-                    doc['last_updated'] = doc['last_updated'].isoformat()
-                    operations.append(
-                        UpdateOne(
-                            {"voucher_id": voucher["voucher_id"]},
-                            {"$set": doc},
-                            upsert=True
-                        )
-                    )
-                if operations:
-                    await db.sales_vouchers.bulk_write(operations)
 
         return APIResponse(
             success=True,

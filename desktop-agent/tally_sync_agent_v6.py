@@ -70,6 +70,7 @@ API_KEY = os.getenv('AGENT_API_KEY', '')
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
 SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'  # Sync current FY + configured FY
 SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
+INCREMENTAL_SYNC = os.getenv('INCREMENTAL_SYNC', 'true').lower() == 'true'  # Only sync recent months after first full sync
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
@@ -382,10 +383,10 @@ class TallyCollectionClient:
             return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
         return str(raw) if raw else ''
 
-    # ---- STOCK ITEMS (Collection request — lightweight) ----
+    # ---- STOCK ITEMS (Collection with COMPUTE for closing balances) ----
 
     def fetch_stock_items(self) -> List[Dict]:
-        """Fetch stock items using TDL Collection request. ~1-3 seconds."""
+        """Fetch stock items with closing balances using TDL Collection + COMPUTE."""
         logger.info("  Requesting stock items (Collection)...")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
         xml = f"""<ENVELOPE>
@@ -404,23 +405,23 @@ class TallyCollectionClient:
 <FETCH>NAME</FETCH>
 <FETCH>PARENT</FETCH>
 <FETCH>BASEUNITS</FETCH>
-<FETCH>CLOSINGBALANCE</FETCH>
-<FETCH>CLOSINGRATE</FETCH>
-<FETCH>CLOSINGVALUE</FETCH>
+<COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
+<COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
+<COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
+<COMPUTE>CLQTY : $$String:$ClosingBalance:"TailUnits"</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
 
         data = self._post(xml, debug_name='stock_items')
-        if not data:
-            return []
-
         items = []
-        # Navigate directly to DATA > COLLECTION > STOCKITEM (skip CMPINFO)
-        stock_list = self._get_collection_items(data, 'STOCKITEM')
+        stock_list = []
+        if data:
+            stock_list = self._get_collection_items(data, 'STOCKITEM')
+
+        # Fallback: Export Data with Stock Summary
         if not stock_list:
-            logger.warning("  Collection returned 0 stock items, trying Export Data fallback...")
-            # Fallback: Export Data with Stock Summary report
+            logger.info("  Collection returned 0 stock items, trying Stock Summary fallback...")
             xml2 = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
@@ -432,12 +433,13 @@ class TallyCollectionClient:
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
             data2 = self._post(xml2, debug_name='stock_items_fb')
             if data2:
-                stock_list = self._find_deep(data2, 'STOCKITEM')
-                if stock_list and not isinstance(stock_list, list):
-                    stock_list = [stock_list]
-            if not stock_list:
-                logger.warning("  Both Collection and Export Data returned 0 stock items")
-                return []
+                raw = self._find_deep(data2, 'STOCKITEM')
+                if raw:
+                    stock_list = raw if isinstance(raw, list) else [raw]
+
+        if not stock_list:
+            logger.warning("  No stock items found from any method")
+            return []
 
         for si in stock_list:
             if not isinstance(si, dict):
@@ -452,18 +454,46 @@ class TallyCollectionClient:
             if isinstance(parent, dict):
                 parent = parent.get('#text', 'General')
             parent = str(parent or 'General').strip()
-            cb = si.get('CLOSINGBALANCE', 0)
-            qty, unit = self._qty_unit(cb)
+
+            # Try COMPUTE fields first (CLBAL, CLRATE, CLVAL)
+            qty = self._num(si.get('CLBAL', 0))
+            rate = self._num(si.get('CLRATE', 0))
+            value = self._num(si.get('CLVAL', 0))
+
+            # Fallback to standard fields (for Export Data response)
+            if qty == 0 and rate == 0:
+                cb = si.get('CLOSINGBALANCE', 0)
+                if cb:
+                    qty_parsed, unit_parsed = self._qty_unit(cb)
+                    qty = qty_parsed
+                cr = si.get('CLOSINGRATE', 0)
+                if cr:
+                    rate = self._num(str(cr).split('/')[0])
+                cv = si.get('CLOSINGVALUE', 0)
+                if cv:
+                    value = self._num(cv)
+
+            # Determine unit from CLQTY string or BASEUNITS
+            unit = 'Pcs'
+            clqty = si.get('CLQTY', '')
+            if isinstance(clqty, str) and clqty:
+                # CLQTY format: "10.00 Nos" or "25.00 Lt."
+                parts = clqty.strip().split()
+                if len(parts) >= 2:
+                    unit = parts[-1]
+                    if qty == 0:
+                        qty = self._num(parts[0])
             bu = si.get('BASEUNITS', '')
             if isinstance(bu, dict):
                 bu = bu.get('#text', '')
             if bu and unit == 'Pcs':
-                unit = str(bu).strip()
-            cr = si.get('CLOSINGRATE', 0)
-            rate = self._num(str(cr).split('/')[0]) if cr else 0
-            cv = self._num(si.get('CLOSINGVALUE', 0))
-            if rate == 0 and qty > 0 and cv > 0:
-                rate = round(cv / qty, 2)
+                bu_str = str(bu).strip()
+                if bu_str and bu_str not in ('None', '0'):
+                    unit = bu_str
+
+            if rate == 0 and qty > 0 and value > 0:
+                rate = round(value / qty, 2)
+
             items.append({
                 'item_id': name, 'item_name': name,
                 'quantity': qty, 'unit': unit, 'price': rate,
@@ -497,10 +527,10 @@ class TallyCollectionClient:
 <BELONGSTO>Yes</BELONGSTO>
 <FETCH>NAME</FETCH>
 <FETCH>PARENT</FETCH>
-<FETCH>CLOSINGBALANCE</FETCH>
 <FETCH>LEDGERPHONE</FETCH>
 <FETCH>LEDGERCONTACT</FETCH>
 <FETCH>LEDSTATENAME</FETCH>
+<COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -531,7 +561,7 @@ class TallyCollectionClient:
             customers.append({
                 'customer_name': name,
                 'ledger_group': str(parent or 'Sundry Debtors').strip(),
-                'outstanding_amount': self._num(l.get('CLOSINGBALANCE', 0)),
+                'outstanding_amount': self._num(l.get('CLBAL', l.get('CLOSINGBALANCE', 0))),
                 'phone': str(l.get('LEDGERPHONE', '') or '').strip(),
                 'contact_person': str(l.get('LEDGERCONTACT', '') or '').strip(),
                 'state': str(l.get('LEDSTATENAME', '') or '').strip(),
@@ -773,6 +803,7 @@ class FlowraSyncAgent:
         logger.info(f"  Cloud Backend : {self.backend_url}")
         logger.info(f"  Financial Year: {self.financial_year}")
         logger.info(f"  Auto Multi-FY : {SYNC_ALL_FY} (also syncs current FY: {current_fy()})")
+        logger.info(f"  Incremental   : {INCREMENTAL_SYNC} (after first full sync, only recent months)")
         logger.info(f"  Sync Interval : every {self.sync_interval} min")
         logger.info(f"  Timeout/req   : {REQUEST_TIMEOUT} sec")
         logger.info(f"  Cache Dir     : {self.export_dir}")
@@ -840,9 +871,12 @@ class FlowraSyncAgent:
 
         try:
             self.sync_running = True
+            is_first_sync = not hasattr(self, '_full_sync_done')
+            sync_mode = 'full' if is_first_sync else ('incremental' if INCREMENTAL_SYNC else 'full')
+
             logger.info("")
             logger.info("=" * 60)
-            logger.info(f"Starting sync cycle at {datetime.now().strftime('%H:%M:%S')}")
+            logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
             logger.info("=" * 60)
 
             # Test connection
@@ -853,12 +887,12 @@ class FlowraSyncAgent:
 
             # Determine which FYs to sync
             fys_to_sync = get_sync_fys()
-            logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)}")
+            logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)} ({sync_mode} mode)")
 
-            # --- Phase 1: Stock Items (FY-independent, just current balances) ---
+            # --- Phase 1: Stock Items (always full — just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")
-            self.financial_year = fys_to_sync[0]  # Use primary FY for progress
-            self.report_progress('sync_started', mode='collection-v6', fys=fys_to_sync)
+            self.financial_year = fys_to_sync[0]
+            self.report_progress('sync_started', mode='collection-v6', fys=fys_to_sync, sync_mode=sync_mode)
             self.report_progress('phase_start', phase='inventory')
             items = self.tally.fetch_stock_items()
             if items:
@@ -873,13 +907,34 @@ class FlowraSyncAgent:
 
             for fy in fys_to_sync:
                 self.financial_year = fy
-                logger.info(f"--- Syncing FY {fy} ---")
+
+                if sync_mode == 'incremental':
+                    # Only sync current month + last month for updates
+                    today = date.today()
+                    months = []
+                    # Current month
+                    m_start = today.replace(day=1)
+                    m_end = min((m_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), today)
+                    fy_start, fy_end = fy_to_dates(fy)
+                    if m_start >= fy_start and m_start <= fy_end:
+                        months.append((m_start, m_end))
+                    # Previous month
+                    prev_end = m_start - timedelta(days=1)
+                    prev_start = prev_end.replace(day=1)
+                    if prev_start >= fy_start and prev_start <= fy_end:
+                        months.append((prev_start, prev_end))
+                    if not months:
+                        continue
+                    logger.info(f"--- Incremental sync FY {fy}: {len(months)} months ---")
+                else:
+                    months = list(months_in_fy(fy))
+                    logger.info(f"--- Full sync FY {fy}: {len(months)} months ---")
 
                 # Sales
                 logger.info(f"  Phase 2: Sales Vouchers (FY {fy})")
                 self.report_progress('phase_start', phase='sales')
                 fy_sales = []
-                for m_start, m_end in months_in_fy(fy):
+                for m_start, m_end in months:
                     month_sales = self.tally.fetch_sales_month(m_start, m_end)
                     fy_sales.extend(month_sales)
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
@@ -894,7 +949,7 @@ class FlowraSyncAgent:
                 logger.info(f"  Phase 3: Receipts/Payments (FY {fy})")
                 self.report_progress('phase_start', phase='receipts')
                 fy_receipts = []
-                for m_start, m_end in months_in_fy(fy):
+                for m_start, m_end in months:
                     month_receipts = self.tally.fetch_receipts_month(m_start, m_end)
                     fy_receipts.extend(month_receipts)
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
@@ -905,7 +960,7 @@ class FlowraSyncAgent:
                 logger.info(f"  FY {fy}: {len(fy_receipts)} receipt vouchers")
                 self.report_progress('phase_complete', phase='receipts', count=len(fy_receipts))
 
-            # --- Phase 4: Customer Ledgers (~1-2 sec, FY-independent) ---
+            # --- Phase 4: Customer Ledgers (always full — just current balances) ---
             self.financial_year = fys_to_sync[0]
             logger.info("--- Phase 4: Customer Ledgers ---")
             self.report_progress('phase_start', phase='customers')
@@ -929,11 +984,14 @@ class FlowraSyncAgent:
                 self.sync_to_backend('customers', customers)
             self.report_progress('phase_complete', phase='customers', count=len(customers))
 
+            # Mark first full sync as done
+            self._full_sync_done = True
+
             # Summary
             total_sales = len(all_sales_combined)
             total_receipts = len(all_receipts_combined)
             logger.info("")
-            logger.info(f"[DONE] Sync completed at {datetime.now().strftime('%H:%M:%S')}")
+            logger.info(f"[DONE] {sync_mode.capitalize()} sync completed at {datetime.now().strftime('%H:%M:%S')}")
             logger.info(f"  FYs synced:  {', '.join(fys_to_sync)}")
             logger.info(f"  Inventory:   {len(items)} items")
             logger.info(f"  Sales:       {total_sales} vouchers")
@@ -949,12 +1007,13 @@ class FlowraSyncAgent:
             }
             state['company'] = self.tally.company
             state['fys_synced'] = fys_to_sync
+            state['sync_mode'] = sync_mode
             save_sync_state(state)
 
             self.report_progress('sync_complete',
                                  inventory=len(items), sales=total_sales,
                                  receipts=total_receipts, customers=len(customers),
-                                 fys_synced=fys_to_sync)
+                                 fys_synced=fys_to_sync, sync_mode=sync_mode)
 
         except Exception as e:
             logger.error(f"Sync cycle error: {e}")

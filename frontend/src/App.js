@@ -237,7 +237,11 @@ const Navigation = ({ user, onLogout, selectedFY, onFYChange }) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <img src="/flowra-logo.png" alt="FLOWRA" className="h-10 object-contain" />
-              {companyName && <span className="text-xs text-slate-500 hidden md:block border-l border-slate-200 pl-3 ml-1">{companyName}</span>}
+              {companyName && (
+                <span className="text-sm font-bold text-slate-800 hidden md:block border-l border-slate-200 pl-3 ml-1 max-w-[280px] truncate" title={companyName}>
+                  {companyName}
+                </span>
+              )}
             </div>
             <button data-testid="mobile-menu-button" className="md:hidden text-slate-700" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
               {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}

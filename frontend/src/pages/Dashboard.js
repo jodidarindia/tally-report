@@ -56,8 +56,21 @@ const Dashboard = ({ selectedFY }) => {
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await axios.get(`${API}/sync/status`);
-      setSyncStatus(response.data?.data || null);
+      const [syncRes, tallyRes] = await Promise.all([
+        axios.get(`${API}/sync/status`).catch(() => null),
+        axios.get(`${API}/tally/status`).catch(() => null)
+      ]);
+      const syncData = syncRes?.data?.data || {};
+      const tallyData = tallyRes?.data?.data || {};
+      // Use the most recent sync time from either source
+      const syncTime = syncData.last_sync || '';
+      const tallyTime = tallyData.last_sync || '';
+      const latestSync = syncTime > tallyTime ? syncTime : tallyTime;
+      setSyncStatus({
+        ...syncData,
+        last_sync: latestSync || syncData.last_sync,
+        company_name: tallyData.company_name || syncData.company_name
+      });
     } catch (error) {
       console.error('Error fetching sync status:', error);
     }
