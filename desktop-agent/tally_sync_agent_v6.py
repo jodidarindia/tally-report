@@ -184,8 +184,11 @@ class TallyCollectionClient:
         """Clean XML to handle Tally's encoding quirks."""
         # Remove control characters
         xml_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', xml_text)
-        # Fix unescaped & (#1 cause of Tally XML parse failures — addresses & party names)
-        xml_text = re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#\d+|#x[0-9a-fA-F]+);)', '&amp;', xml_text)
+        # Remove ALL numeric character references (Tally generates invalid ones like &#1;)
+        xml_text = re.sub(r'&#x[0-9a-fA-F]+;?', ' ', xml_text)
+        xml_text = re.sub(r'&#[0-9]+;?', ' ', xml_text)
+        # Fix unescaped & (addresses, party names like "A & B Traders")
+        xml_text = re.sub(r'&(?!(?:amp|lt|gt|apos|quot);)', '&amp;', xml_text)
         return xml_text
 
     def _aggressive_sanitize(self, xml_text):
