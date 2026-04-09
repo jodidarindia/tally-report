@@ -72,7 +72,7 @@ SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
-REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '15'))  # 15 sec per request (lightweight!)
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))  # 30 sec per request
 SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))  # 2 sec gap
 
 SYNC_STATE_FILE = 'sync_state_v6.json'
@@ -471,52 +471,16 @@ class TallyCollectionClient:
         logger.info(f"  Got {len(customers)} customer ledgers")
         return customers
 
-    # ---- SALES VOUCHERS (Collection request with date filter) ----
+    # ---- SALES VOUCHERS (Export Data with enhanced sanitization) ----
 
     def fetch_sales_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch sales vouchers for one month. Tries Collection first, Export Data as fallback."""
-        fd_tally = from_date.strftime("%Y%m%d")
-        td_tally = to_date.strftime("%Y%m%d")
-        logger.info(f"  Requesting sales: {from_date} to {to_date}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
-
-        # Primary: TDL Collection request (returns only fetched fields — cleaner XML)
-        xml = f"""<ENVELOPE>
-<HEADER><VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Collection</TYPE>
-<ID>FlowraSalesVch</ID></HEADER>
-<BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-{company_tag}
-<SVFROMDATE TYPE="Date">{fd_tally}</SVFROMDATE>
-<SVTODATE TYPE="Date">{td_tally}</SVTODATE>
-</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="FlowraSalesVch" ISINITIALIZE="Yes">
-<TYPE>Voucher</TYPE>
-<FETCH>DATE, VOUCHERNUMBER, PARTYLEDGERNAME, AMOUNT, NARRATION, VOUCHERTYPENAME</FETCH>
-<FETCH>BASICSHIPDISPATCHTHROUGH, BASICFINALDESTINATION, REFERENCE</FETCH>
-<FETCH>ALLINVENTORYENTRIES.LIST</FETCH>
-<FETCH>ALLLEDGERENTRIES.LIST</FETCH>
-<FILTER>FlowraSalesFilter</FILTER>
-</COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="FlowraSalesFilter">$VoucherTypeName = "Sales"</SYSTEM>
-</TDLMESSAGE></TDL>
-</DESC></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
-        if data:
-            vouchers = self._parse_vouchers(data, 'sales')
-            if vouchers:
-                return vouchers
-            logger.info("  Collection returned 0 vouchers, trying Export Data fallback...")
-
-        # Fallback: Export Data with Voucher Register (returns more data, heavier XML)
+        """Fetch sales vouchers for one month using Export Data + Voucher Register."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
-        xml_fallback = f"""<ENVELOPE>
+        logger.info(f"  Requesting sales: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -530,57 +494,21 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-        data2 = self._post(xml_fallback, debug_name=f'sales_fb_{from_date.strftime("%Y%m")}')
-        if not data2:
+        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
+        if not data:
             return []
-        return self._parse_vouchers(data2, 'sales')
+        return self._parse_vouchers(data, 'sales')
 
     def fetch_receipts_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch receipt/payment vouchers for one month. Collection first, Export Data fallback."""
-        fd_tally = from_date.strftime("%Y%m%d")
-        td_tally = to_date.strftime("%Y%m%d")
-        logger.info(f"  Requesting receipts: {from_date} to {to_date}")
+        """Fetch receipt/payment vouchers for one month using Export Data."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting receipts: {fd_disp} to {td_disp}")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
 
         all_receipts = []
         for vtype_name in ("Receipt", "Payment"):
             xml = f"""<ENVELOPE>
-<HEADER><VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Collection</TYPE>
-<ID>Flowra{vtype_name}Vch</ID></HEADER>
-<BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-{company_tag}
-<SVFROMDATE TYPE="Date">{fd_tally}</SVFROMDATE>
-<SVTODATE TYPE="Date">{td_tally}</SVTODATE>
-</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="Flowra{vtype_name}Vch" ISINITIALIZE="Yes">
-<TYPE>Voucher</TYPE>
-<FETCH>DATE, VOUCHERNUMBER, PARTYLEDGERNAME, AMOUNT, NARRATION, VOUCHERTYPENAME</FETCH>
-<FETCH>ALLLEDGERENTRIES.LIST</FETCH>
-<FILTER>Flowra{vtype_name}Filter</FILTER>
-</COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="Flowra{vtype_name}Filter">$VoucherTypeName = "{vtype_name}"</SYSTEM>
-</TDLMESSAGE></TDL>
-</DESC></BODY></ENVELOPE>"""
-
-            slug = vtype_name.lower()
-            data = self._post(xml, debug_name=f'{slug}s_{from_date.strftime("%Y%m")}')
-            if data:
-                parsed = self._parse_vouchers(data, 'receipt')
-                if parsed:
-                    all_receipts.extend(parsed)
-                    time.sleep(1)
-                    continue
-
-            # Fallback: Export Data
-            logger.info(f"  Collection returned 0 {slug}s, trying Export Data fallback...")
-            fd_disp = from_date.strftime("%d-%b-%Y")
-            td_disp = to_date.strftime("%d-%b-%Y")
-            xml_fb = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -594,10 +522,11 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-            data2 = self._post(xml_fb, debug_name=f'{slug}s_fb_{from_date.strftime("%Y%m")}')
-            if data2:
-                all_receipts.extend(self._parse_vouchers(data2, 'receipt'))
-            time.sleep(1)
+            slug = vtype_name.lower()
+            data = self._post(xml, debug_name=f'{slug}s_{from_date.strftime("%Y%m")}')
+            if data:
+                all_receipts.extend(self._parse_vouchers(data, 'receipt'))
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
 
         return all_receipts
 
