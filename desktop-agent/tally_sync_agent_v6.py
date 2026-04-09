@@ -271,30 +271,21 @@ class TallyCollectionClient:
 </DESC></BODY></ENVELOPE>"""
         data = self._post(xml, debug_name='companies')
         if data:
-            # Try to extract company name from COMPANY tag
-            companies = self._find_deep(data, 'COMPANY')
-            if companies:
-                if isinstance(companies, list):
-                    names = [c.get('NAME', c.get('@NAME', str(c))) for c in companies if isinstance(c, dict)]
-                    if not names:
-                        names = [str(c) for c in companies if isinstance(c, str)]
-                    if names:
-                        self.company = self.company or str(names[0])
-                elif isinstance(companies, dict):
-                    name = companies.get('NAME', companies.get('@NAME', ''))
-                    if name:
-                        self.company = self.company or str(name)
-                elif isinstance(companies, str):
-                    self.company = self.company or companies
-            if not self.company:
-                # Fallback: look for NAME tag anywhere in response
-                name_val = self._find_deep(data, 'NAME')
-                if name_val and isinstance(name_val, str):
-                    self.company = name_val
+            # Navigate to DATA > COLLECTION > COMPANY (skip CMPINFO counts)
+            companies = self._get_collection_items(data, 'COMPANY')
+            for c in companies:
+                if isinstance(c, dict):
+                    name = c.get('NAME', c.get('@NAME', ''))
+                    # NAME might have TYPE attribute: {'#text': 'name', '@TYPE': 'String'}
+                    if isinstance(name, dict):
+                        name = name.get('#text', '')
+                    if name and str(name).strip():
+                        self.company = self.company or str(name).strip()
+                        break
             if self.company:
                 logger.info(f"  Tally company: {self.company}")
             else:
-                logger.info("  Tally connected (company name not detected)")
+                logger.info("  Tally connected (company auto-detect pending)")
             return True
         return False
 
@@ -312,6 +303,35 @@ class TallyCollectionClient:
                 if r is not None:
                     return r
         return None
+
+    def _get_collection_items(self, data, tag_name):
+        """Extract items from Collection response, navigating directly to
+        BODY > DATA > COLLECTION > tag_name (skips CMPINFO counts)."""
+        try:
+            envelope = data.get('ENVELOPE', data)
+            body = envelope.get('BODY', {}) if isinstance(envelope, dict) else {}
+            coll_data = body.get('DATA', {}) if isinstance(body, dict) else {}
+            collection = coll_data.get('COLLECTION', {}) if isinstance(coll_data, dict) else {}
+            if not isinstance(collection, dict):
+                return []
+            items = collection.get(tag_name)
+            if items is None:
+                # Try with @NAME attribute pattern
+                for k, v in collection.items():
+                    if k.upper() == tag_name.upper():
+                        items = v
+                        break
+            if items is None:
+                logger.warning(f"  [DEBUG] COLLECTION keys: {list(collection.keys())}")
+                return []
+            if isinstance(items, dict):
+                return [items]
+            if isinstance(items, list):
+                return items
+            return []
+        except Exception as e:
+            logger.warning(f"  [DEBUG] _get_collection_items error: {e}")
+            return []
 
     def _num(self, val):
         if val is None:
@@ -360,7 +380,12 @@ class TallyCollectionClient:
 <TDL><TDLMESSAGE>
 <COLLECTION NAME="FlowraStockItems" ISINITIALIZE="Yes">
 <TYPE>Stock Item</TYPE>
-<FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, CLOSINGVALUE, BASEUNITS</FETCH>
+<FETCH>NAME</FETCH>
+<FETCH>PARENT</FETCH>
+<FETCH>BASEUNITS</FETCH>
+<FETCH>CLOSINGBALANCE</FETCH>
+<FETCH>CLOSINGRATE</FETCH>
+<FETCH>CLOSINGVALUE</FETCH>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -370,29 +395,47 @@ class TallyCollectionClient:
             return []
 
         items = []
-        stock_list = self._find_deep(data, 'STOCKITEM')
+        # Navigate directly to DATA > COLLECTION > STOCKITEM (skip CMPINFO)
+        stock_list = self._get_collection_items(data, 'STOCKITEM')
         if not stock_list:
-            logger.warning(f"  [DEBUG] Stock items: no STOCKITEM found in response")
-            if isinstance(data, dict):
-                body = self._find_deep(data, 'DATA')
-                if isinstance(body, dict):
-                    logger.warning(f"  [DEBUG] DATA keys: {list(body.keys())}")
-                elif isinstance(body, str):
-                    logger.warning(f"  [DEBUG] DATA is string: {body[:200]}")
-            return []
-        if not isinstance(stock_list, list):
-            stock_list = [stock_list]
+            logger.warning("  Collection returned 0 stock items, trying Export Data fallback...")
+            # Fallback: Export Data with Stock Summary report
+            xml2 = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Stock Summary</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+            data2 = self._post(xml2, debug_name='stock_items_fb')
+            if data2:
+                stock_list = self._find_deep(data2, 'STOCKITEM')
+                if stock_list and not isinstance(stock_list, list):
+                    stock_list = [stock_list]
+            if not stock_list:
+                logger.warning("  Both Collection and Export Data returned 0 stock items")
+                return []
 
         for si in stock_list:
             if not isinstance(si, dict):
                 continue
-            name = str(si.get('NAME', si.get('@NAME', '')) or '').strip()
+            name = si.get('NAME', si.get('@NAME', ''))
+            if isinstance(name, dict):
+                name = name.get('#text', '')
+            name = str(name or '').strip()
             if not name:
                 continue
-            parent = str(si.get('PARENT', 'General') or 'General').strip()
+            parent = si.get('PARENT', 'General')
+            if isinstance(parent, dict):
+                parent = parent.get('#text', 'General')
+            parent = str(parent or 'General').strip()
             cb = si.get('CLOSINGBALANCE', 0)
             qty, unit = self._qty_unit(cb)
             bu = si.get('BASEUNITS', '')
+            if isinstance(bu, dict):
+                bu = bu.get('#text', '')
             if bu and unit == 'Pcs':
                 unit = str(bu).strip()
             cr = si.get('CLOSINGRATE', 0)
@@ -430,7 +473,12 @@ class TallyCollectionClient:
 <COLLECTION NAME="FlowraDebtors" ISINITIALIZE="Yes">
 <TYPE>Ledger</TYPE>
 <CHILDOF>Sundry Debtors</CHILDOF>
-<FETCH>NAME, PARENT, CLOSINGBALANCE, LEDGERPHONE, LEDGERCONTACT, LEDSTATENAME</FETCH>
+<FETCH>NAME</FETCH>
+<FETCH>PARENT</FETCH>
+<FETCH>CLOSINGBALANCE</FETCH>
+<FETCH>LEDGERPHONE</FETCH>
+<FETCH>LEDGERCONTACT</FETCH>
+<FETCH>LEDSTATENAME</FETCH>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -440,26 +488,27 @@ class TallyCollectionClient:
             return []
 
         customers = []
-        ledgers = self._find_deep(data, 'LEDGER')
+        # Navigate directly to DATA > COLLECTION > LEDGER (skip CMPINFO)
+        ledgers = self._get_collection_items(data, 'LEDGER')
         if not ledgers:
-            logger.warning(f"  [DEBUG] Customers: no LEDGER found in response")
-            if isinstance(data, dict):
-                body = self._find_deep(data, 'DATA')
-                if isinstance(body, dict):
-                    logger.warning(f"  [DEBUG] DATA keys: {list(body.keys())}")
+            logger.warning("  Collection returned 0 customer ledgers")
             return []
-        if not isinstance(ledgers, list):
-            ledgers = [ledgers]
 
         for l in ledgers:
             if not isinstance(l, dict):
                 continue
-            name = str(l.get('NAME', l.get('@NAME', '')) or '').strip()
+            name = l.get('NAME', l.get('@NAME', ''))
+            if isinstance(name, dict):
+                name = name.get('#text', '')
+            name = str(name or '').strip()
             if not name:
                 continue
+            parent = l.get('PARENT', 'Sundry Debtors')
+            if isinstance(parent, dict):
+                parent = parent.get('#text', 'Sundry Debtors')
             customers.append({
                 'customer_name': name,
-                'ledger_group': str(l.get('PARENT', 'Sundry Debtors') or 'Sundry Debtors').strip(),
+                'ledger_group': str(parent or 'Sundry Debtors').strip(),
                 'outstanding_amount': self._num(l.get('CLOSINGBALANCE', 0)),
                 'phone': str(l.get('LEDGERPHONE', '') or '').strip(),
                 'contact_person': str(l.get('LEDGERCONTACT', '') or '').strip(),
