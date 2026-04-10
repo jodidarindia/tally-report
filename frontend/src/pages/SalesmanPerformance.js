@@ -165,6 +165,7 @@ const SalesmanPerformance = ({ selectedFY }) => {
 
   const tabs = [
     { id: 'performance', label: 'Performance', icon: TrendingUp },
+    { id: 'items', label: 'Item-wise Sales', icon: Package },
     { id: 'manage', label: 'Manage Salesmen', icon: Users },
   ];
 
@@ -395,6 +396,75 @@ const SalesmanPerformance = ({ selectedFY }) => {
             </>
           )}
         </>
+      )}
+
+      {/* ========== ITEM-WISE SALES TAB ========== */}
+      {activeTab === 'items' && (
+        <div className="space-y-3">
+          {!hasData ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center" data-testid="no-items-message">
+              <Package size={48} className="mx-auto text-slate-300 mb-4" />
+              <h3 className="text-lg font-semibold text-slate-700 mb-2">No item-wise sales data for this FY</h3>
+              <p className="text-sm text-slate-500">Map salesmen to customers and ensure vouchers have line items to see item-wise breakdown.</p>
+            </div>
+          ) : (
+            performance.map((person, idx) => {
+              const isExpanded = expandedSalesman === idx;
+              const items = person.items_sold || [];
+              return (
+                <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`item-card-${idx}`}>
+                  <button
+                    onClick={() => setExpandedSalesman(isExpanded ? null : idx)}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-25 transition-colors"
+                    data-testid={`salesman-item-expand-${idx}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-[#2563EB] rounded-full flex items-center justify-center text-white text-sm font-bold">
+                        {(person.salesman_name || '?').charAt(0)}
+                      </div>
+                      <div className="text-left">
+                        <div className="text-sm font-semibold text-slate-900">{person.salesman_name}</div>
+                        <div className="text-xs text-slate-500">
+                          {items.length} items sold | Rs.{fmt(person.achieved_amount)} total
+                        </div>
+                      </div>
+                    </div>
+                    {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-slate-100 overflow-x-auto">
+                      <table className="w-full text-xs" data-testid={`item-table-${idx}`}>
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600">Item Name</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Qty Sold</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Revenue</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Transactions</th>
+                            <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Avg Qty/Txn</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.length > 0 ? items.map((item, itemIdx) => (
+                            <tr key={itemIdx} className="border-t border-slate-50 hover:bg-slate-25" data-testid={`item-row-${idx}-${itemIdx}`}>
+                              <td className="px-3 py-2.5 font-medium text-slate-800">{item.item_name || '-'}</td>
+                              <td className="px-3 py-2.5 text-right font-semibold text-slate-800">{(item.total_quantity || 0).toFixed(1)}</td>
+                              <td className="px-3 py-2.5 text-right font-semibold text-blue-700">Rs.{fmt(item.total_revenue)}</td>
+                              <td className="px-3 py-2.5 text-right text-slate-600">{item.transaction_count || 0}</td>
+                              <td className="px-3 py-2.5 text-right text-slate-600">{item.transaction_count > 0 ? ((item.total_quantity || 0) / item.transaction_count).toFixed(1) : '0'}</td>
+                            </tr>
+                          )) : (
+                            <tr><td colSpan="5" className="px-3 py-6 text-center text-slate-400">No item-wise data. Voucher line items needed.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       )}
 
       {/* ========== MANAGE TAB ========== */}

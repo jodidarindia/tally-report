@@ -41,14 +41,18 @@ def _get_fy_targets(master, fy):
 
 
 def _get_fy_customers(master, fy):
-    """Get customer mapping for a specific FY. Falls back to previous FY or legacy field."""
+    """Get customer mapping for a specific FY.
+    Falls back through: exact FY -> previous FYs (closest) -> legacy customers field.
+    For completed FYs, the mapping is frozen and must not change."""
     fy_customers = master.get("fy_customers", {})
     if fy and fy in fy_customers:
         return fy_customers[fy]
-    # Try previous FY
-    prev_fy = get_previous_fy(fy) if fy else None
-    if prev_fy and prev_fy in fy_customers:
-        return fy_customers[prev_fy]
+    # Try previous FYs in descending order (closest first)
+    if fy:
+        sorted_fys = sorted(fy_customers.keys(), reverse=True)
+        for prev in sorted_fys:
+            if prev < fy:
+                return fy_customers[prev]
     # Fallback to legacy flat customers field
     return master.get("customers", [])
 
@@ -157,16 +161,25 @@ async def create_salesman(request: Request):
             }
             fy_customers[fy] = customers
 
+            # Migrate legacy customers into the oldest known FY if not yet migrated
+            legacy_customers = existing.get("customers", [])
+            if legacy_customers and not any(v for v in fy_customers.values() if v == legacy_customers):
+                # Preserve legacy mapping under the earliest FY we know about
+                all_fys = sorted(fy_customers.keys())
+                if all_fys:
+                    earliest = all_fys[0]
+                    if earliest != fy and earliest not in fy_customers:
+                        fy_customers[earliest] = legacy_customers
+
             update_doc = {
                 "fy_targets": fy_targets,
                 "fy_customers": fy_customers,
                 "phone": phone,
                 "email": email,
-                "monthly_target": monthly_target,
-                "quarterly_target": quarterly_target,
-                "customers": customers,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+            # NOTE: Do NOT overwrite legacy 'customers' or 'monthly_target' fields
+            # to prevent cross-FY data corruption
             await db.salesman_master.update_one(
                 {**tq, "salesman_name": salesman_name},
                 {"$set": update_doc}
@@ -324,6 +337,7 @@ async def get_salesman_performance_detailed(
 
         # Group vouchers by salesman -> customer -> period
         salesman_data = {}
+        salesman_items = {}  # salesman -> item_name -> {qty, revenue, count}
         for voucher in vouchers:
             customer = voucher.get("party_name", "")
             salesman = customer_to_salesman.get(customer.lower()) or voucher.get("salesman") or None
@@ -337,6 +351,8 @@ async def get_salesman_performance_detailed(
 
             if salesman not in salesman_data:
                 salesman_data[salesman] = {}
+            if salesman not in salesman_items:
+                salesman_items[salesman] = {}
             if customer not in salesman_data[salesman]:
                 salesman_data[salesman][customer] = {
                     "monthly": defaultdict(lambda: {"amount": 0, "count": 0}),
@@ -351,6 +367,19 @@ async def get_salesman_performance_detailed(
             cust_data["quarterly"][quarter]["count"] += 1
             cust_data["annual"]["amount"] += amount
             cust_data["annual"]["count"] += 1
+
+            # Track item-wise sales from voucher line items
+            for item in voucher.get("inventory_entries", voucher.get("items", [])):
+                item_name = item.get("item", item.get("item_name", ""))
+                if not item_name:
+                    continue
+                qty = safe_num(item.get("quantity", item.get("qty", 0)))
+                item_amount = safe_num(item.get("amount", item.get("total_amount", 0)))
+                if item_name not in salesman_items[salesman]:
+                    salesman_items[salesman][item_name] = {"item_name": item_name, "total_quantity": 0, "total_revenue": 0, "transaction_count": 0}
+                salesman_items[salesman][item_name]["total_quantity"] += qty
+                salesman_items[salesman][item_name]["total_revenue"] += item_amount
+                salesman_items[salesman][item_name]["transaction_count"] += 1
 
         # Include registered salesmen with no sales
         for m in master_list:
@@ -412,6 +441,10 @@ async def get_salesman_performance_detailed(
             if annual_target > 0 and total_achieved > 0:
                 weighted_achievement = round(total_achieved / annual_target * 100, 1)
 
+            # Items sold by this salesman
+            items = salesman_items.get(salesman, {})
+            items_breakdown = sorted(items.values(), key=lambda x: x["total_revenue"], reverse=True)
+
             performance.append({
                 "salesman_name": salesman,
                 "phone": master.get("phone", ""),
@@ -425,6 +458,7 @@ async def get_salesman_performance_detailed(
                 "total_transactions": total_txns,
                 "mapped_customers": _get_fy_customers(master, target_fy),
                 "customers": customer_breakdown,
+                "items_sold": items_breakdown,
                 "has_master": salesman in master_map,
             })
 

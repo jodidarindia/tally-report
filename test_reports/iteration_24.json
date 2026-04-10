@@ -1,0 +1,141 @@
+{
+  "summary": "Iteration 24: FY Customer Mapping Isolation, Item-wise Sales Tab, Security Audit - All tests PASSED. Backend: 18/18 tests passed. Frontend: All 3 tabs verified (Performance, Item-wise Sales, Manage Salesmen), FY isolation working correctly, tenant security validated.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/salesman/performance-detailed returns items_sold array for each salesman",
+    "Backend: Ankit has ~32 items sold for FY 2025-26",
+    "Backend: items_sold has required fields (item_name, total_quantity, total_revenue, transaction_count)",
+    "Backend: FY 2025-26 is locked (fy_locked=true)",
+    "Backend: FY 2026-27 is NOT locked (fy_locked=false)",
+    "Backend: POST /api/salesman/master with fy=2025-26 fails with 'FY has ended' error",
+    "Backend: GET /api/salesman/master?fy=2025-26 returns Ankit with non-empty customers",
+    "Backend: FY ISOLATION - Saving empty customers for FY 2026-27 preserves FY 2025-26 customers",
+    "Backend: Security - test_admin sees 0 customers in customer-lifecycle (tenant isolation)",
+    "Backend: Security - test_admin sees 0 customers in concentration-risk (tenant isolation)",
+    "Backend: Security - test_admin sees 0 salesmen in performance-detailed (tenant isolation)",
+    "Backend: Security - test_admin sees 0 salesmen in master (tenant isolation)",
+    "Backend: Admin with ASA AUTOTECH company has data in insights endpoints",
+    "Backend: Admin with ASA AUTOTECH company has data in salesman endpoints",
+    "Backend: Duration toggle - monthly returns months in periods",
+    "Backend: Duration toggle - quarterly returns quarters in periods",
+    "Backend: Duration toggle - annual returns annual totals",
+    "Backend: Excel export returns valid xlsx file with correct headers",
+    "Frontend: Salesman page shows 3 tabs (Performance, Item-wise Sales, Manage Salesmen)",
+    "Frontend: Item-wise Sales tab shows Ankit with 32 items sold",
+    "Frontend: Item table has correct columns (Item Name, Qty Sold, Revenue, Transactions, Avg Qty/Txn)",
+    "Frontend: Duration toggle works (Monthly/Quarterly/Annual)",
+    "Frontend: FY 2025-26 shows 'Locked' indicator and locked banner in Manage tab",
+    "Frontend: FY 2026-27 does NOT show locked banner (current FY)",
+    "Frontend: FY 2025-26 Ankit shows 'Customers: 1' (preserved after FY 2026-27 update)",
+    "Frontend: FY 2026-27 Ankit shows 'Customers: 0' (correctly isolated)"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24_fy_isolation.py",
+    "/app/test_reports/pytest/iteration24_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "routes/salesman.py: create_salesman now only updates fy_customers[fy], NOT the legacy 'customers' field - this fixes the FY isolation bug",
+    "routes/salesman.py: _get_fy_customers() correctly falls back through: exact FY -> previous FYs (closest) -> legacy customers field",
+    "routes/salesman.py: performance-detailed endpoint correctly tracks items_sold from voucher inventory_entries",
+    "routes/insights.py: All 4 endpoints use _build_query() with tenant_id + company_id for proper isolation",
+    "SalesmanPerformance.js: Restored Item-wise Sales tab with expandable salesman cards showing item breakdown",
+    "SalesmanPerformance.js: items_sold table shows item_name, total_quantity, total_revenue, transaction_count, avg_qty/txn"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration24_fy_isolation.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "company": "ASA AUTOTECH INDIA PRIVATE LIMITED"},
+    "test_admin": {"username": "test_admin", "password": "test123", "tenant": "tenant_test_admin (different tenant, sees no data)"}
+  },
+  
+  "seed_data_creation": "No new seed data created. Test modified Ankit's FY 2026-27 customers to empty array to verify FY isolation.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 24 validated three critical fixes: 1) Item-wise Sales tab restored - shows expandable salesman cards with item breakdown (item_name, qty, revenue, transactions, avg qty/txn). Ankit has 32 items for FY 2025-26. 2) FY Customer Mapping Isolation FIXED - create_salesman no longer overwrites legacy 'customers' field, only updates fy_customers[fy]. Saving empty customers for FY 2026-27 correctly preserves FY 2025-26 data. 3) Security audit PASSED - test_admin (different tenant) sees 0 data from all Insights and Salesman endpoints. Admin with ASA AUTOTECH company sees full data.",
+  
+  "features_validated": {
+    "item_wise_sales_tab": {
+      "status": "WORKING",
+      "details": [
+        "3 tabs present: Performance, Item-wise Sales, Manage Salesmen",
+        "Item-wise Sales tab shows expandable salesman cards",
+        "Ankit has 32 items sold for FY 2025-26",
+        "Table columns: Item Name, Qty Sold, Revenue, Transactions, Avg Qty/Txn",
+        "items_sold field in performance-detailed endpoint has required fields"
+      ]
+    },
+    "fy_mapping_isolation": {
+      "status": "FIXED",
+      "details": [
+        "FY 2025-26 is locked (ended Mar 31, 2026)",
+        "FY 2026-27 is current (not locked)",
+        "POST to locked FY fails with 'FY has ended' error",
+        "Saving empty customers for FY 2026-27 preserves FY 2025-26 customers",
+        "create_salesman only updates fy_customers[fy], not legacy 'customers' field"
+      ]
+    },
+    "security_tenant_isolation": {
+      "status": "WORKING",
+      "details": [
+        "test_admin (tenant_test_admin) sees 0 customers in customer-lifecycle",
+        "test_admin sees 0 customers in concentration-risk",
+        "test_admin sees 0 salesmen in performance-detailed",
+        "test_admin sees 0 salesmen in master",
+        "Admin with ASA AUTOTECH company sees full data in all endpoints"
+      ]
+    },
+    "duration_toggle": {
+      "status": "WORKING",
+      "details": [
+        "Monthly view returns months in periods",
+        "Quarterly view returns quarters in periods",
+        "Annual view returns annual totals"
+      ]
+    },
+    "excel_export": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/salesman/export returns valid xlsx file",
+        "Correct content-type and content-disposition headers"
+      ]
+    }
+  },
+  
+  "fy_isolation_test_results": {
+    "before_test": {
+      "fy_2025_26_ankit_customers": ["Dinesh Automobiles, Indore"],
+      "fy_2026_27_ankit_customers": "inherited from 2025-26"
+    },
+    "test_action": "Saved Ankit with empty customers for FY 2026-27",
+    "after_test": {
+      "fy_2025_26_ankit_customers": ["Dinesh Automobiles, Indore"],
+      "fy_2026_27_ankit_customers": []
+    },
+    "result": "PASSED - FY 2025-26 customers preserved after FY 2026-27 update"
+  }
+}
