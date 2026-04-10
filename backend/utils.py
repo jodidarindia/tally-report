@@ -55,6 +55,32 @@ def get_previous_fy(fy: str):
     return f"{prev_start}-{str(prev_end).zfill(2)}"
 
 
+def get_current_fy():
+    """Return current FY string e.g. '2025-26'. FY runs Apr-Mar."""
+    from datetime import date as date_type
+    today = date_type.today()
+    if today.month >= 4:
+        return f"{today.year}-{str(today.year + 1)[-2:]}"
+    else:
+        return f"{today.year - 1}-{str(today.year)[-2:]}"
+
+
+def is_fy_completed(fy: str):
+    """Check if a given FY has ended (past Mar 31 of end year)."""
+    from datetime import date as date_type
+    if not fy or '-' not in fy:
+        return False
+    _, fy_end = fy_to_date_range(fy)
+    if not fy_end:
+        return False
+    try:
+        parts = fy_end.split('-')
+        end_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+        return date_type.today() > end_date
+    except (ValueError, IndexError):
+        return False
+
+
 OVERDUE_THRESHOLD_DAYS = 55
 
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { TrendingUp, Calendar, User, FileText, Download, X, Package, Truck, Receipt, Filter, ChevronDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import SearchableSelect from '../components/SearchableSelect';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -273,17 +274,14 @@ const Sales = ({ selectedFY }) => {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {/* Party Filter */}
-          <div className="relative">
-            <select
-              data-testid="filter-party-select"
+          <div>
+            <SearchableSelect
+              options={uniqueParties}
               value={filterParty}
-              onChange={(e) => setFilterParty(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[#2563EB] appearance-none bg-white"
-            >
-              <option value="">All Customers</option>
-              {uniqueParties.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              onChange={(val) => setFilterParty(val === filterParty ? '' : val)}
+              placeholder="All Customers"
+              testId="filter-party-select"
+            />
           </div>
 
           {/* Month Filter */}

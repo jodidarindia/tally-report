@@ -196,7 +196,7 @@ const Inventory = ({ selectedFY }) => {
                 <div className="p-2 border-b border-slate-100">
                   <button onClick={() => setSelectedGroups([])} className="text-xs text-[#2563EB] hover:underline">Clear all</button>
                 </div>
-                {stockGroups.map(g => (
+                {[...stockGroups].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })).map(g => (
                   <label key={g} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
                     <input
                       type="checkbox"
@@ -223,7 +223,7 @@ const Inventory = ({ selectedFY }) => {
               className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white"
             >
               <option value="all">All Categories</option>
-              {categories.map(cat => (
+              {[...categories].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })).map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
               ))}
             </select>

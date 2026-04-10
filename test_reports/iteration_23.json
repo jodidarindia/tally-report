@@ -1,0 +1,171 @@
+{
+  "summary": "Iteration 23: Salesman FY-Specific Targets & SearchableSelect - All tests PASSED. Backend: 18/18 tests passed. Frontend: All features verified including FY locking, duration toggle, customer breakdown tables, Excel export, and SearchableSelect in Sales/CRM/Salesman pages.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "App.js FY selector", "issues": ["Console warning: 'In HTML, span cannot be a child of option' - hydration error from React dev tools injection, not a real bug"]}
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/salesman/master?fy=2025-26 returns fy_locked=true",
+    "Backend: GET /api/salesman/master returns salesmen with FY-specific targets and customers",
+    "Backend: POST /api/salesman/master with fy=2025-26 fails with 'FY has ended' error",
+    "Backend: POST /api/salesman/master with fy=2026-27 succeeds",
+    "Backend: DELETE /api/salesman/master/{name} works",
+    "Backend: GET /api/salesman/performance-detailed?duration=monthly returns monthly breakdown with periods",
+    "Backend: GET /api/salesman/performance-detailed?duration=quarterly returns quarterly breakdown",
+    "Backend: GET /api/salesman/performance-detailed?duration=annual returns annual totals",
+    "Backend: Achievement percentage uses weighted average calculation",
+    "Backend: GET /api/salesman/export returns Excel file (monthly)",
+    "Backend: GET /api/salesman/export returns Excel file (quarterly)",
+    "Backend: GET /api/salesman/export returns Excel file (annual)",
+    "Backend: GET /api/customers/outstanding returns customer list for SearchableSelect",
+    "Backend: GET /api/sales/vouchers returns unique_parties for SearchableSelect",
+    "Backend: GET /api/inventory/items returns stock_groups list",
+    "Backend: Current FY is 2026-27",
+    "Backend: FY 2025-26 is completed/locked",
+    "Backend: FY 2026-27 is NOT locked",
+    "Frontend: Salesman page loads with Performance tab",
+    "Frontend: FY 2025-26 shows 'Locked' indicator",
+    "Frontend: FY 2026-27 does NOT show 'Locked' indicator",
+    "Frontend: Best Performer (Weighted Avg) card displays correctly",
+    "Frontend: Monthly/Quarterly/Annual duration toggle works",
+    "Frontend: Salesman cards expand to show customer-wise breakdown table",
+    "Frontend: Export Excel button visible on expanded cards",
+    "Frontend: Manage Salesmen tab shows FY locked banner for past FYs",
+    "Frontend: Manage Salesmen tab shows salesman cards with Edit/Delete buttons",
+    "Frontend: Add Salesman modal opens with all fields (name, phone, email, targets, customer mapping)",
+    "Frontend: Add Salesman modal shows 'FY Locked' disabled button for locked FYs",
+    "Frontend: Add Salesman modal shows enabled Save button for current FY",
+    "Frontend: SearchableSelect in Add Salesman modal has type-to-search functionality",
+    "Frontend: CRM Follow-ups tab has SearchableSelect for customer dropdown",
+    "Frontend: CRM SearchableSelect filters customers on type",
+    "Frontend: Inventory page has stock group filter dropdown",
+    "Frontend: Inventory stock groups are sorted alphabetically"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23_salesman.py",
+    "/app/test_reports/pytest/iteration23_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "routes/salesman.py: FY-specific targets stored in fy_targets nested dict, customers in fy_customers",
+    "routes/salesman.py: is_fy_completed() correctly blocks modifications to past FYs",
+    "routes/salesman.py: performance-detailed endpoint returns periods.months, periods.quarters for table headers",
+    "routes/salesman.py: Excel export uses openpyxl with proper styling and auto-width columns",
+    "utils.py: get_current_fy() returns '2026-27' (April 2026), is_fy_completed() returns true for '2025-26'",
+    "SalesmanPerformance.js: Performance tab shows Best Performer card with weighted average",
+    "SalesmanPerformance.js: Duration toggle (Monthly/Quarterly/Annual) reloads data correctly",
+    "SalesmanPerformance.js: Expandable salesman cards show customer-wise breakdown with period columns",
+    "SalesmanPerformance.js: Manage tab shows FY locked banner and disables Save button for locked FYs",
+    "SearchableSelect.js: Reusable component with type-to-search, sorted options, multiple selection support",
+    "CustomerCRM.js: Follow-up customer dropdown uses SearchableSelect",
+    "Sales.js: Party filter uses SearchableSelect",
+    "Inventory.js: Categories and stock groups sorted alphabetically in dropdowns"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration23_salesman.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "company": "ASA AUTOTECH INDIA PRIVATE LIMITED"}
+  },
+  
+  "seed_data_creation": "No new seed data created. Existing salesman 'Ankit' has FY-aware data migrated from legacy format.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 23 validated the major salesman feature rewrite with FY-specific targets and customer mappings. Key points: 1) FY 2025-26 is LOCKED (ended Mar 31, 2026), FY 2026-27 is current. 2) Backend stores targets in fy_targets dict and customers in fy_customers dict per FY. 3) performance-detailed endpoint returns monthly/quarterly/annual breakdown with periods for table headers. 4) Excel export works for all durations. 5) SearchableSelect component is used in Sales (party filter), CRM (followup customer), and Salesman (customer mapping) pages with type-to-search functionality. 6) Inventory categories and stock groups are sorted alphabetically.",
+  
+  "features_validated": {
+    "salesman_fy_targets": {
+      "status": "WORKING",
+      "details": [
+        "FY-specific targets stored in fy_targets nested dict",
+        "FY-specific customer mappings stored in fy_customers nested dict",
+        "FY 2025-26 is locked (cannot modify)",
+        "FY 2026-27 is current (can modify)"
+      ]
+    },
+    "salesman_performance_detailed": {
+      "status": "WORKING",
+      "details": [
+        "Monthly view shows month columns (May 2025, Jun 2025, etc.)",
+        "Quarterly view shows Q1-Q4 columns",
+        "Annual view shows total",
+        "Customer-wise breakdown table with period data",
+        "Weighted average for Best Performer calculation"
+      ]
+    },
+    "salesman_excel_export": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/salesman/export returns Excel file",
+        "Supports monthly, quarterly, annual durations",
+        "Proper content-type and content-disposition headers"
+      ]
+    },
+    "searchable_select": {
+      "status": "WORKING",
+      "pages": [
+        "Sales page - party filter dropdown",
+        "CRM page - followup customer dropdown",
+        "Salesman page - customer mapping dropdown"
+      ],
+      "features": [
+        "Type-to-search functionality",
+        "Sorted options alphabetically",
+        "Multiple selection support (for customer mapping)"
+      ]
+    },
+    "inventory_sorting": {
+      "status": "WORKING",
+      "details": [
+        "Categories sorted alphabetically in dropdown",
+        "Stock groups sorted alphabetically in dropdown"
+      ]
+    }
+  },
+  
+  "salesman_data_summary": {
+    "fy_2025_26": {
+      "locked": true,
+      "salesman_ankit": {
+        "monthly_target": 1000000,
+        "quarterly_target": 12500000,
+        "achieved_amount": 570818,
+        "achievement_percentage": 4.8,
+        "customers": 1,
+        "transactions": 40
+      }
+    },
+    "fy_2026_27": {
+      "locked": false,
+      "salesman_ankit": {
+        "monthly_target": 1000000,
+        "achieved_amount": 4200,
+        "achievement_percentage": 0.0,
+        "customers": 1,
+        "transactions": 1
+      }
+    }
+  }
+}

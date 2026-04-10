@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X, Phone, MapPin, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
+import SearchableSelect from '../components/SearchableSelect';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -245,12 +246,12 @@ const CustomerCRM = ({ user, selectedFY }) => {
             <option value="all">All Customers</option>
             {customerGroups.length > 1 && (
               <optgroup label="Ledger Group">
-                {customerGroups.map(g => <option key={`grp-${g}`} value={`group:${g}`}>{g}</option>)}
+                {[...customerGroups].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })).map(g => <option key={`grp-${g}`} value={`group:${g}`}>{g}</option>)}
               </optgroup>
             )}
             {customerStates.length > 0 && (
               <optgroup label="State / Region">
-                {customerStates.map(s => <option key={`st-${s}`} value={`state:${s}`}>{s}</option>)}
+                {[...customerStates].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })).map(s => <option key={`st-${s}`} value={`state:${s}`}>{s}</option>)}
               </optgroup>
             )}
           </select>
@@ -377,17 +378,13 @@ const CustomerCRM = ({ user, selectedFY }) => {
                     <button onClick={() => setShowAddFollowup(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <select
+                    <SearchableSelect
+                      options={customerNames}
                       value={newFollowup.customer_name}
-                      onChange={(e) => setNewFollowup({...newFollowup, customer_name: e.target.value})}
-                      className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                      data-testid="followup-customer-select"
-                    >
-                      <option value="">Select Customer</option>
-                      {customerNames.map((name, idx) => (
-                        <option key={idx} value={name}>{name}</option>
-                      ))}
-                    </select>
+                      onChange={(val) => setNewFollowup({...newFollowup, customer_name: val})}
+                      placeholder="Select Customer"
+                      testId="followup-customer-select"
+                    />
                     <input
                       type="datetime-local"
                       value={newFollowup.followup_date}
