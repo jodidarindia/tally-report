@@ -100,6 +100,29 @@ const InventoryAnalytics = ({ selectedFY }) => {
     finally { setExporting(false); }
   };
 
+  const exportSalesFrequency = async (format) => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (dateFilter.start_date) params.append('start_date', dateFilter.start_date);
+      if (dateFilter.end_date) params.append('end_date', dateFilter.end_date);
+      if (selectedFY) params.append('fy', selectedFY);
+      params.append('format', format);
+      const res = await axios.get(`${API}/inventory/sales-frequency-export?${params.toString()}`, { responseType: 'blob' });
+      const ext = format === 'pdf' ? 'pdf' : 'xlsx';
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `sales_frequency_${selectedFY || 'all'}.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Sales frequency exported as ${format.toUpperCase()}`);
+    } catch { toast.error('Export failed'); }
+    finally { setExporting(false); }
+  };
+
   const filteredMovement = classFilter === 'all' ? movementData : movementData.filter(m => m.classification === classFilter);
 
   const fmt = (n) => {

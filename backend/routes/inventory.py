@@ -781,3 +781,120 @@ async def export_below_cost_sales(request: Request, fy: Optional[str] = None, co
     except Exception as e:
         logger.error(f"Error exporting below-cost sales: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+# ==================== SALES FREQUENCY EXCEL/PDF EXPORT ====================
+
+@router.get("/inventory/sales-frequency-export")
+async def export_sales_frequency(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, fy: Optional[str] = None, format: str = "excel", company_id: Optional[str] = None):
+    """Export sales frequency data to Excel or PDF."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from fastapi.responses import StreamingResponse
+        import io
+
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+
+        if start_date or end_date:
+            filtered = []
+            for v in sales_vouchers:
+                vd = v.get("voucher_date", "")
+                if start_date and vd < start_date:
+                    continue
+                if end_date and vd > end_date:
+                    continue
+                filtered.append(v)
+            sales_vouchers = filtered
+
+        item_stats = {}
+        for voucher in sales_vouchers:
+            party = voucher.get("party_name", "Unknown")
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "")
+                qty = safe_num(item.get("quantity"))
+                if item_name not in item_stats:
+                    item_stats[item_name] = {"qty": 0, "txns": 0, "customers": set(), "revenue": 0}
+                item_stats[item_name]["qty"] += qty
+                item_stats[item_name]["txns"] += 1
+                item_stats[item_name]["customers"].add(party)
+                item_stats[item_name]["revenue"] += qty * safe_num(item.get("rate"))
+
+        rows = sorted(item_stats.items(), key=lambda x: x[1]["txns"], reverse=True)
+
+        if format == "pdf":
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib import colors
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet
+
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
+            styles = getSampleStyleSheet()
+            elements = [Paragraph(f"Sales Frequency Report | FY: {fy or 'All'}", styles['Title']), Spacer(1, 12)]
+
+            table_data = [["Item Name", "Transactions", "Total Qty", "Unique Customers", "Revenue", "Avg Qty/Txn"]]
+            for name, s in rows:
+                avg = round(s["qty"] / s["txns"], 1) if s["txns"] > 0 else 0
+                table_data.append([name, s["txns"], round(s["qty"], 1), len(s["customers"]), f"Rs.{round(s['revenue'], 2):,.2f}", avg])
+
+            t = Table(table_data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2563EB')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+            ]))
+            elements.append(t)
+            doc.build(elements)
+            buf.seek(0)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="sales_frequency_{fy or "all"}.pdf"'})
+
+        # Default: Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Sales Frequency FY {fy or 'All'}"
+
+        header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=10)
+
+        ws.merge_cells('A1:F1')
+        ws['A1'] = f"Sales Frequency Report | FY: {fy or 'All'}"
+        ws['A1'].font = Font(bold=True, size=12)
+        ws.append([])
+
+        headers = ["Item Name", "Transactions", "Total Qty Sold", "Unique Customers", "Revenue", "Avg Qty/Txn"]
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=3, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center')
+
+        for name, s in rows:
+            avg = round(s["qty"] / s["txns"], 1) if s["txns"] > 0 else 0
+            ws.append([name, s["txns"], round(s["qty"], 1), len(s["customers"]), round(s["revenue"], 2), avg])
+
+        for col_cells in ws.columns:
+            valid_cells = [c for c in col_cells if not isinstance(c, openpyxl.cell.cell.MergedCell)]
+            if not valid_cells:
+                continue
+            max_len = max((len(str(cell.value or "")) for cell in valid_cells), default=10)
+            ws.column_dimensions[valid_cells[0].column_letter].width = min(max_len + 4, 35)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="sales_frequency_{fy or "all"}.xlsx"'}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting sales frequency: {e}")
+        return APIResponse(success=False, error=str(e))
