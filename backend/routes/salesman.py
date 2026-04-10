@@ -46,7 +46,9 @@ async def get_salesman_performance(request: Request, fy: Optional[str] = None, c
         salesman_map = {}
         for voucher in vouchers:
             customer = voucher.get("party_name", "")
-            salesman = customer_to_salesman.get(customer.lower(), voucher.get("salesman", "Unassigned"))
+            salesman = customer_to_salesman.get(customer.lower()) or voucher.get("salesman") or None
+            if not salesman:
+                continue
             amount = safe_num(voucher.get("total_amount"))
 
             if salesman not in salesman_map:
@@ -190,7 +192,9 @@ async def get_salesman_performance_detailed(request: Request, fy: Optional[str] 
         salesman_map = {}
         for voucher in vouchers:
             customer = voucher.get("party_name", "")
-            salesman = customer_to_salesman.get(customer.lower(), voucher.get("salesman", "Unassigned"))
+            salesman = customer_to_salesman.get(customer.lower()) or voucher.get("salesman") or None
+            if not salesman:
+                continue
             amount = safe_num(voucher.get("total_amount"))
 
             if salesman not in salesman_map:

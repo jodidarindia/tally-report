@@ -128,6 +128,88 @@ const SalesmanPerformance = ({ selectedFY }) => {
     );
   }
 
+  if (performance.length === 0) {
+    return (
+      <div data-testid="salesman-page">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+              Salesman Performance
+            </h1>
+            <p className="mt-2 text-base text-slate-600">Track sales team, set targets, and manage customer mapping</p>
+          </div>
+          <button
+            onClick={() => { setShowAddForm(true); setFormData({ salesman_name: '', phone: '', email: '', monthly_target: '', quarterly_target: '', customers: [] }); }}
+            className="btn-primary flex items-center gap-2"
+            data-testid="add-salesman-button"
+          >
+            <Plus size={16} />
+            Add Salesman
+          </button>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center" data-testid="no-salesman-message">
+          <Users size={48} className="mx-auto text-slate-300 mb-4" />
+          <h3 className="text-lg font-semibold text-slate-700 mb-2">No salesman data for this FY</h3>
+          <p className="text-sm text-slate-500">No salesmen have been mapped or no sales data exists for the selected financial year. Add a salesman and map customers to get started.</p>
+        </div>
+
+        {showAddForm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowAddForm(false)}>
+            <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>Add Salesman</h2>
+                <button onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              </div>
+              <form onSubmit={handleSaveSalesman} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
+                  <input type="text" value={formData.salesman_name} onChange={(e) => setFormData({...formData, salesman_name: e.target.value})} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="Salesman name" data-testid="salesman-name-input" required />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                    <input type="text" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="Phone number" data-testid="salesman-phone-input" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                    <input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="Email" data-testid="salesman-email-input" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Monthly Target (Rs.)</label>
+                    <input type="number" value={formData.monthly_target} onChange={(e) => setFormData({...formData, monthly_target: e.target.value})} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="0" data-testid="salesman-monthly-target" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Quarterly Target (Rs.)</label>
+                    <input type="number" value={formData.quarterly_target} onChange={(e) => setFormData({...formData, quarterly_target: e.target.value})} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="0" data-testid="salesman-quarterly-target" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Map Customers</label>
+                  <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto p-2 space-y-1">
+                    {customers.length > 0 ? customers.map((cust, idx) => (
+                      <label key={idx} className="flex items-center gap-2 px-3 py-2 rounded hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" checked={formData.customers.includes(cust)} onChange={() => toggleCustomer(cust)} className="accent-[#2563EB]" />
+                        <span className="text-sm text-slate-700">{cust}</span>
+                      </label>
+                    )) : (
+                      <p className="text-sm text-slate-500 p-2">No customers available. Sync Tally data first.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="submit" className="flex-1 btn-primary py-3 flex items-center justify-center gap-2" data-testid="save-salesman-button"><Save size={16} />Save Salesman</button>
+                  <button type="button" onClick={() => setShowAddForm(false)} className="flex-1 btn-secondary py-3">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div data-testid="salesman-page">
       <div className="flex items-center justify-between mb-8">
@@ -345,10 +427,10 @@ const SalesmanPerformance = ({ selectedFY }) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 bg-[#2563EB] rounded-full flex items-center justify-center text-white font-bold">
-                    {person.salesman_name.charAt(0)}
+                    {(person.salesman_name || '?').charAt(0)}
                   </div>
                   <div>
-                    <div className="font-semibold text-slate-900">{person.salesman_name}</div>
+                    <div className="font-semibold text-slate-900">{person.salesman_name || 'Unknown'}</div>
                     <div className="text-sm text-slate-500">
                       {person.phone && <span className="mr-3">Phone: {person.phone}</span>}
                       {person.email && <span>Email: {person.email}</span>}
