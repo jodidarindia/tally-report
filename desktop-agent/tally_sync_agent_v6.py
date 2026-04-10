@@ -396,7 +396,7 @@ class TallyCollectionClient:
     # ---- STOCK ITEMS (Collection with COMPUTE for closing balances) ----
 
     def fetch_stock_items(self) -> List[Dict]:
-        """Fetch stock items with closing balances using TDL Collection + COMPUTE."""
+        """Fetch stock items with opening/closing balances using TDL Collection + COMPUTE."""
         logger.info("  Requesting stock items (Collection)...")
         company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
         xml = f"""<ENVELOPE>
@@ -415,10 +415,15 @@ class TallyCollectionClient:
 <FETCH>NAME</FETCH>
 <FETCH>PARENT</FETCH>
 <FETCH>BASEUNITS</FETCH>
+<FETCH>OPENINGBALANCE</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
 <COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
 <COMPUTE>CLQTY : $$String:$ClosingBalance:"TailUnits"</COMPUTE>
+<COMPUTE>OPBAL : $$NumValue:$OpeningBalance</COMPUTE>
+<COMPUTE>OPRATE : $$NumValue:$OpeningRate</COMPUTE>
+<COMPUTE>OPVAL : $$NumValue:$OpeningValue</COMPUTE>
+<COMPUTE>OPQTY : $$String:$OpeningBalance:"TailUnits"</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -470,6 +475,11 @@ class TallyCollectionClient:
             rate = self._num(si.get('CLRATE', 0))
             value = self._num(si.get('CLVAL', 0))
 
+            # Opening balance from COMPUTE fields
+            opening_qty = self._num(si.get('OPBAL', 0))
+            opening_rate = self._num(si.get('OPRATE', 0))
+            opening_value = self._num(si.get('OPVAL', 0))
+
             # Fallback to standard fields (for Export Data response)
             if qty == 0 and rate == 0:
                 cb = si.get('CLOSINGBALANCE', 0)
@@ -482,6 +492,18 @@ class TallyCollectionClient:
                 cv = si.get('CLOSINGVALUE', 0)
                 if cv:
                     value = self._num(cv)
+
+            if opening_qty == 0:
+                ob = si.get('OPENINGBALANCE', 0)
+                if ob:
+                    opening_qty, _ = self._qty_unit(ob) if isinstance(ob, str) else (self._num(ob), 'Pcs')
+
+            # Parse opening from OPQTY string
+            opqty_str = si.get('OPQTY', '')
+            if isinstance(opqty_str, str) and opqty_str.strip() and opening_qty == 0:
+                parts = opqty_str.strip().split()
+                if parts:
+                    opening_qty = self._num(parts[0])
 
             # Determine unit from CLQTY string or BASEUNITS
             unit = 'Pcs'
@@ -508,7 +530,11 @@ class TallyCollectionClient:
                 'item_id': name, 'item_name': name,
                 'quantity': qty, 'unit': unit, 'price': rate,
                 'category': parent, 'stock_group': parent,
-                'reorder_level': 10.0
+                'reorder_level': 10.0,
+                'opening_quantity': opening_qty,
+                'opening_rate': opening_rate,
+                'opening_value': opening_value,
+                'closing_value': value,
             })
 
         logger.info(f"  Got {len(items)} stock items")
@@ -731,6 +757,125 @@ class TallyCollectionClient:
             return []
         return self._parse_vouchers(data, 'sales')  # Parse items like sales
 
+    # ---- PURCHASE VOUCHERS (monthly) ----
+
+    def fetch_purchases_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch Purchase vouchers for one month."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting purchase vouchers: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'purchases_{from_date.strftime("%Y%m")}')
+        if not data:
+            return []
+        return self._parse_vouchers(data, 'purchase')
+
+    # ---- DEBIT NOTES (monthly) ----
+
+    def fetch_debit_notes_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch Debit Note vouchers for one month."""
+        fd_disp = from_date.strftime("%d-%b-%Y")
+        td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting debit notes: {fd_disp} to {td_disp}")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Debit Note</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name=f'debit_notes_{from_date.strftime("%Y%m")}')
+        if not data:
+            return []
+        return self._parse_vouchers(data, 'purchase')  # Same structure as purchases
+
+    # ---- SUNDRY CREDITORS (Collection) ----
+
+    def fetch_sundry_creditors(self) -> List[Dict]:
+        """Fetch Sundry Creditors (vendors/suppliers) using TDL Collection."""
+        logger.info("  Requesting Sundry Creditors (Collection)...")
+        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraSundryCreditors</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraSundryCreditors" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<FILTER>IsSundryCreditor</FILTER>
+<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE</FETCH>
+<FETCH>LEDGERPHONE, LEDGERFAX, LEDGERCONTACT, LEDGERMOBILE, STATENAME</FETCH>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="IsSundryCreditor">
+$$GroupIdx:$PARENT = $$GroupIdx:$$GroupSundryCreditors
+</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+
+        data = self._post(xml, debug_name='sundry_creditors')
+        if not data:
+            return []
+
+        ledgers = self._find_deep(data, 'LEDGER')
+        if not ledgers:
+            ledgers = self._find_deep(data, 'COLLECTION')
+            if isinstance(ledgers, dict):
+                ledgers = ledgers.get('LEDGER', [])
+        if isinstance(ledgers, dict):
+            ledgers = [ledgers]
+        if not isinstance(ledgers, list):
+            return []
+
+        creditors = []
+        for lg in ledgers:
+            if not isinstance(lg, dict):
+                continue
+            name = str(lg.get('NAME', lg.get('@NAME', ''))).strip()
+            if not name:
+                continue
+            creditors.append({
+                'creditor_name': name,
+                'ledger_group': str(lg.get('PARENT', 'Sundry Creditors')).strip(),
+                'outstanding_amount': self._num(lg.get('CLOSINGBALANCE', 0)),
+                'opening_balance': self._num(lg.get('OPENINGBALANCE', 0)),
+                'phone': str(lg.get('LEDGERPHONE', lg.get('LEDGERMOBILE', '')) or '').strip(),
+                'contact_person': str(lg.get('LEDGERCONTACT', '') or '').strip(),
+                'state': str(lg.get('STATENAME', '') or '').strip(),
+            })
+
+        logger.info(f"  Got {len(creditors)} sundry creditors")
+        return creditors
+
     def _parse_vouchers(self, data: dict, vtype: str) -> List[Dict]:
         """Parse voucher XML response into clean dicts.
         
@@ -856,7 +1001,7 @@ class TallyCollectionClient:
                     'ledger_entries': ledger_entries
                 })
             else:
-                # Sales: line items
+                # Sales / Purchase: line items
                 line_items = []
                 inv = v.get('ALLINVENTORYENTRIES.LIST', v.get('INVENTORYENTRIES.LIST', []))
                 if isinstance(inv, dict):
@@ -880,9 +1025,11 @@ class TallyCollectionClient:
                 dispatch_through = str(v.get('BASICSHIPDISPATCHTHROUGH', '') or '').strip()
                 destination = str(v.get('BASICFINALDESTINATION', '') or '').strip()
                 ref = v.get('REFERENCE', v.get('NARRATION', ''))
+                v_type_name = str(v.get('VOUCHERTYPENAME', '') or '').lower()
 
                 results.append({
                     'voucher_id': str(v_number),
+                    'voucher_type': v_type_name if v_type_name else vtype,
                     'voucher_date': formatted_date,
                     'party_name': party,
                     'total_amount': amount,
@@ -1348,6 +1495,8 @@ class FlowraSyncAgent:
             all_credit_notes_combined = []
             all_journals_combined = []
             all_stock_journals_combined = []
+            all_purchases_combined = []
+            all_debit_notes_combined = []
 
             for fy in fys_to_sync:
                 self.financial_year = fy
@@ -1441,6 +1590,46 @@ class FlowraSyncAgent:
                 logger.info(f"  FY {fy}: {len(fy_sj)} stock journals")
                 self.report_progress('phase_complete', phase='stock_journals', count=len(fy_sj))
 
+                # Phase 6: Purchase Vouchers
+                logger.info(f"  Phase 6: Purchase Vouchers (FY {fy})")
+                self.report_progress('phase_start', phase='purchases')
+                fy_purchases = []
+                m = fy_start
+                while m <= fy_end:
+                    m_end = min(date(m.year, m.month, 28) + timedelta(days=4), fy_end)
+                    m_end = m_end.replace(day=1) - timedelta(days=1) if m_end.month != m.month else m_end
+                    if m_end > fy_end:
+                        m_end = fy_end
+                    pvs = self.tally.fetch_purchases_month(m, m_end)
+                    fy_purchases.extend(pvs)
+                    m = (m_end + timedelta(days=1))
+                if fy_purchases:
+                    self.save_cache(f'purchase_vouchers_{fy}', fy_purchases)
+                    self.sync_to_backend('purchase_vouchers', fy_purchases)
+                    all_purchases_combined.extend(fy_purchases)
+                logger.info(f"  FY {fy}: {len(fy_purchases)} purchase vouchers")
+                self.report_progress('phase_complete', phase='purchases', count=len(fy_purchases))
+
+                # Phase 7: Debit Notes
+                logger.info(f"  Phase 7: Debit Notes (FY {fy})")
+                self.report_progress('phase_start', phase='debit_notes')
+                fy_dn = []
+                m = fy_start
+                while m <= fy_end:
+                    m_end = min(date(m.year, m.month, 28) + timedelta(days=4), fy_end)
+                    m_end = m_end.replace(day=1) - timedelta(days=1) if m_end.month != m.month else m_end
+                    if m_end > fy_end:
+                        m_end = fy_end
+                    dns = self.tally.fetch_debit_notes_month(m, m_end)
+                    fy_dn.extend(dns)
+                    m = (m_end + timedelta(days=1))
+                if fy_dn:
+                    self.save_cache(f'debit_notes_{fy}', fy_dn)
+                    self.sync_to_backend('debit_notes', fy_dn)
+                    all_debit_notes_combined.extend(fy_dn)
+                logger.info(f"  FY {fy}: {len(fy_dn)} debit notes")
+                self.report_progress('phase_complete', phase='debit_notes', count=len(fy_dn))
+
             # --- Phase 6: Customer Ledgers (always full — just current balances) ---
             self.financial_year = fys_to_sync[0]
             logger.info("--- Phase 4: Customer Ledgers ---")
@@ -1465,6 +1654,16 @@ class FlowraSyncAgent:
                 self.sync_to_backend('customers', customers)
             self.report_progress('phase_complete', phase='customers', count=len(customers))
 
+            # --- Phase 8: Sundry Creditors (current balances) ---
+            logger.info("--- Phase 8: Sundry Creditors ---")
+            self.report_progress('phase_start', phase='sundry_creditors')
+            creditors = self.tally.fetch_sundry_creditors()
+            if creditors:
+                self.save_cache('sundry_creditors', creditors)
+                self.sync_to_backend('sundry_creditors', creditors)
+            logger.info(f"  Got {len(creditors)} sundry creditors")
+            self.report_progress('phase_complete', phase='sundry_creditors', count=len(creditors))
+
             # Mark first full sync as done for this company
             if not hasattr(self, '_full_sync_done') or self._full_sync_done is None:
                 self._full_sync_done = set()
@@ -1476,11 +1675,15 @@ class FlowraSyncAgent:
             total_cn = len(all_credit_notes_combined)
             total_jv = len(all_journals_combined)
             total_sj = len(all_stock_journals_combined)
+            total_purchases = len(all_purchases_combined)
+            total_dn = len(all_debit_notes_combined)
             logger.info("")
             logger.info(f"[DONE] {sync_mode.capitalize()} sync completed at {datetime.now().strftime('%H:%M:%S')}")
             logger.info(f"  FYs synced:     {', '.join(fys_to_sync)}")
             logger.info(f"  Inventory:      {len(items)} items")
             logger.info(f"  Sales:          {total_sales} vouchers")
+            logger.info(f"  Purchases:      {total_purchases} vouchers")
+            logger.info(f"  Debit Notes:    {total_dn} vouchers")
             logger.info(f"  Receipts:       {total_receipts} vouchers")
             logger.info(f"  Credit Notes:   {total_cn} vouchers")
             logger.info(f"  Journals:       {total_jv} vouchers")

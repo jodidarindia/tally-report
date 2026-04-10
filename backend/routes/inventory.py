@@ -323,6 +323,8 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         for item in inventory_items:
             item_name = item.get("item_name", "")
             closing_stock = safe_num(item.get("quantity"))
+            opening_from_tally = safe_num(item.get("opening_quantity"))
+            cost_price = safe_num(item.get("price", item.get("rate", 0)))
             key = item_name.lower()
             seen_items.add(key)
 
@@ -330,12 +332,17 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
             sales_qty = sales_info["qty"]
             purchase_qty = item_purchases.get(key, 0)
 
-            # Estimate opening stock: Opening + Inward - Outward = Closing
-            # Opening = Closing + Outward - Inward
-            inward = purchase_qty if purchase_qty > 0 else 0
-            opening_stock = closing_stock + sales_qty - inward
-            if opening_stock < 0:
-                opening_stock = 0
+            # Opening stock: use Tally opening_quantity if available, else estimate
+            if opening_from_tally > 0:
+                opening_stock = opening_from_tally
+            else:
+                # Estimate: Closing + Outward - Inward
+                opening_stock = closing_stock + sales_qty - purchase_qty
+                if opening_stock < 0:
+                    opening_stock = 0
+
+            # Inward from purchases
+            inward = purchase_qty
 
             # Movement Rate = (Outward / Opening) * 100
             # Represents what percentage of opening stock was sold
@@ -383,6 +390,7 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                 "monthly_avg_sales": monthly_avg,
                 "transactions": sales_info.get("txns", 0),
                 "revenue": round(sales_info.get("revenue", 0), 2),
+                "cost_price": round(cost_price, 2),
                 "classification": classification,
             })
 
@@ -431,64 +439,6 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         return APIResponse(success=False, error=str(e))
 
 
-@router.get("/inventory/below-cost-sales")
-async def get_below_cost_sales(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
-    try:
-        ctx = await get_tenant_context(request)
-        q = _build_query(ctx, company_id)
-        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
-        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
-
-        item_costs = {}
-        for item in inventory_items:
-            name = item.get("item_name", "")
-            if not name:
-                continue
-            item_costs[name] = {
-                "purchase_price": safe_num(item.get("purchase_price"), safe_num(item.get("price")) * 0.7),
-                "selling_price": safe_num(item.get("price"))
-            }
-
-        below_cost_sales = []
-        for voucher in sales_vouchers:
-            for item in voucher.get("items", []):
-                item_name = item.get("item", "")
-                sale_price = safe_num(item.get("rate"))
-                quantity = safe_num(item.get("quantity"))
-
-                if item_name in item_costs:
-                    purchase_price = item_costs[item_name]["purchase_price"] or 0
-                    if sale_price and purchase_price and sale_price < purchase_price:
-                        loss_per_unit = purchase_price - sale_price
-                        total_loss = loss_per_unit * quantity
-                        below_cost_sales.append({
-                            "item_name": item_name,
-                            "sale_price": sale_price,
-                            "purchase_price": purchase_price,
-                            "loss_per_unit": loss_per_unit,
-                            "quantity_sold": quantity,
-                            "total_loss": total_loss,
-                            "voucher_id": voucher.get("voucher_id"),
-                            "sale_date": voucher.get("voucher_date"),
-                            "customer": voucher.get("party_name")
-                        })
-
-        below_cost_sales.sort(key=lambda x: x["total_loss"], reverse=True)
-
-        return APIResponse(
-            success=True,
-            data={
-                "below_cost_sales": below_cost_sales,
-                "total_loss": round(sum(b["total_loss"] for b in below_cost_sales), 2),
-                "count": len(below_cost_sales)
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error analyzing below-cost sales: {e}")
-        return APIResponse(success=False, error=str(e))
-
-
 @router.get("/inventory/pivot-data")
 async def get_pivot_data(request: Request, group_by: str = "category", metric: str = "value", company_id: Optional[str] = None):
     try:
@@ -527,4 +477,307 @@ async def get_pivot_data(request: Request, group_by: str = "category", metric: s
         )
     except Exception as e:
         logger.error(f"Error creating pivot table: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== BELOW COST SALES ====================
+
+@router.get("/inventory/below-cost-sales")
+async def get_below_cost_sales(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """Find items where sales price < purchase cost price (negative margin)."""
+    try:
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+
+        inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+
+        # Also get purchase vouchers for cost price
+        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+
+        # Build cost price map from inventory (Tally's rate/price field) and purchases
+        cost_map = {}
+        for item in inventory_items:
+            name = item.get("item_name", "").lower()
+            price = safe_num(item.get("price", item.get("rate", 0)))
+            if price > 0:
+                cost_map[name] = price
+
+        # Override with purchase price if available (more accurate for FY)
+        purchase_price_map = {}
+        for pv in purchase_vouchers:
+            for item in pv.get("items", []):
+                iname = item.get("item", "").strip().lower()
+                rate = safe_num(item.get("rate", 0))
+                qty = safe_num(item.get("quantity", 0))
+                if iname and rate > 0:
+                    if iname not in purchase_price_map:
+                        purchase_price_map[iname] = {"total_cost": 0, "total_qty": 0}
+                    purchase_price_map[iname]["total_cost"] += abs(rate * qty)
+                    purchase_price_map[iname]["total_qty"] += abs(qty)
+
+        for iname, pdata in purchase_price_map.items():
+            if pdata["total_qty"] > 0:
+                cost_map[iname] = pdata["total_cost"] / pdata["total_qty"]
+
+        # Build sales price map
+        sales_price_map = {}
+        for sv in sales_vouchers:
+            for item in sv.get("items", []):
+                iname = item.get("item", "").strip().lower()
+                rate = safe_num(item.get("rate", 0))
+                qty = safe_num(item.get("quantity", 0))
+                amt = safe_num(item.get("amount", 0))
+                if iname and (rate > 0 or (qty > 0 and amt != 0)):
+                    if iname not in sales_price_map:
+                        sales_price_map[iname] = {"total_revenue": 0, "total_qty": 0, "txns": 0}
+                    sales_price_map[iname]["total_revenue"] += abs(amt) if amt else abs(rate * qty)
+                    sales_price_map[iname]["total_qty"] += abs(qty)
+                    sales_price_map[iname]["txns"] += 1
+
+        below_cost_items = []
+        for iname, sdata in sales_price_map.items():
+            cost = cost_map.get(iname, 0)
+            if cost <= 0 or sdata["total_qty"] <= 0:
+                continue
+
+            avg_selling_price = sdata["total_revenue"] / sdata["total_qty"]
+            margin = avg_selling_price - cost
+            margin_pct = (margin / cost) * 100
+
+            if margin < 0:
+                # Find display name
+                display_name = iname
+                for inv in inventory_items:
+                    if inv.get("item_name", "").lower() == iname:
+                        display_name = inv["item_name"]
+                        break
+
+                below_cost_items.append({
+                    "item_name": display_name,
+                    "cost_price": round(cost, 2),
+                    "avg_selling_price": round(avg_selling_price, 2),
+                    "margin": round(margin, 2),
+                    "margin_pct": round(margin_pct, 1),
+                    "qty_sold": round(sdata["total_qty"], 1),
+                    "total_revenue": round(sdata["total_revenue"], 2),
+                    "total_loss": round(abs(margin) * sdata["total_qty"], 2),
+                    "transactions": sdata["txns"],
+                })
+
+        below_cost_items.sort(key=lambda x: x["total_loss"], reverse=True)
+
+        return APIResponse(
+            success=True,
+            data={
+                "items": below_cost_items,
+                "summary": {
+                    "total_items": len(below_cost_items),
+                    "total_loss": round(sum(i["total_loss"] for i in below_cost_items), 2),
+                    "total_affected_revenue": round(sum(i["total_revenue"] for i in below_cost_items), 2),
+                },
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error analyzing below-cost sales: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== MOVEMENT ANALYSIS EXCEL EXPORT ====================
+
+@router.get("/inventory/movement-export")
+async def export_movement_analysis(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """Export movement analysis to Excel."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from fastapi.responses import StreamingResponse
+        import io
+
+        # Reuse the movement-analysis logic
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        inventory_items_raw = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+
+        # Build item sales and purchases maps
+        item_sales = {}
+        for voucher in sales_vouchers:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "").strip()
+                qty = safe_num(item.get("quantity"))
+                if item_name:
+                    key = item_name.lower()
+                    item_sales[key] = item_sales.get(key, 0) + qty
+
+        item_purchases = {}
+        for voucher in purchase_vouchers:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "").strip()
+                qty = safe_num(item.get("quantity"))
+                if item_name:
+                    key = item_name.lower()
+                    item_purchases[key] = item_purchases.get(key, 0) + qty
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Movement Analysis FY {fy or 'All'}"
+
+        header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=10)
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+        ws.merge_cells('A1:J1')
+        ws['A1'] = f"Movement Analysis | FY: {fy or 'All'}"
+        ws['A1'].font = Font(bold=True, size=12)
+        ws.append([])
+
+        headers = ["Item Name", "Category", "Opening Qty", "Inward (Purchases)", "Outward (Sales)", "Closing Qty", "Movement %", "Days to Sell", "Transactions", "Classification"]
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=3, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center')
+            cell.border = thin_border
+
+        for inv_item in inventory_items_raw:
+            name = inv_item.get("item_name", "")
+            key = name.lower()
+            closing = safe_num(inv_item.get("quantity"))
+            opening_tally = safe_num(inv_item.get("opening_quantity"))
+            s_qty = item_sales.get(key, 0)
+            p_qty = item_purchases.get(key, 0)
+            opening = opening_tally if opening_tally > 0 else max(closing + s_qty - p_qty, 0)
+            rate = round((s_qty / opening * 100), 1) if opening > 0 else (100.0 if s_qty > 0 else 0.0)
+            daily = s_qty / 365 if s_qty > 0 else 0
+            dts = round(closing / daily, 1) if closing > 0 and daily > 0 else (999 if closing > 0 else 0)
+            cls_tag = "fast-moving" if s_qty > 0 and rate >= 50 else "moderate" if rate >= 20 else "slow-moving" if s_qty > 0 else "non-moving"
+
+            ws.append([name, inv_item.get("category", ""), round(opening, 1), round(p_qty, 1), round(s_qty, 1), round(closing, 1), rate, dts if dts < 999 else "N/A", 0, cls_tag])
+
+        for col_cells in ws.columns:
+            valid_cells = [c for c in col_cells if not isinstance(c, openpyxl.cell.cell.MergedCell)]
+            if not valid_cells:
+                continue
+            max_len = max((len(str(cell.value or "")) for cell in valid_cells), default=10)
+            ws.column_dimensions[valid_cells[0].column_letter].width = min(max_len + 4, 35)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"movement_analysis_{fy or 'all'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting movement analysis: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ==================== BELOW COST SALES EXCEL EXPORT ====================
+
+@router.get("/inventory/below-cost-export")
+async def export_below_cost_sales(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """Export below-cost sales items to Excel."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from fastapi.responses import StreamingResponse
+        import io
+
+        # Get the below-cost data
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+
+        inventory_items_list = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+
+        cost_map = {}
+        for item in inventory_items_list:
+            name = item.get("item_name", "").lower()
+            price = safe_num(item.get("price", item.get("rate", 0)))
+            if price > 0:
+                cost_map[name] = price
+
+        for pv in purchase_vouchers:
+            for item in pv.get("items", []):
+                iname = item.get("item", "").strip().lower()
+                rate = safe_num(item.get("rate", 0))
+                if iname and rate > 0:
+                    cost_map[iname] = rate
+
+        sales_map = {}
+        for sv in sales_vouchers:
+            for item in sv.get("items", []):
+                iname = item.get("item", "").strip().lower()
+                rate = safe_num(item.get("rate", 0))
+                qty = safe_num(item.get("quantity", 0))
+                amt = safe_num(item.get("amount", 0))
+                if iname and qty > 0:
+                    if iname not in sales_map:
+                        sales_map[iname] = {"revenue": 0, "qty": 0}
+                    sales_map[iname]["revenue"] += abs(amt) if amt else abs(rate * qty)
+                    sales_map[iname]["qty"] += abs(qty)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Below Cost Sales FY {fy or 'All'}"
+
+        header_fill = PatternFill(start_color="EF4444", end_color="EF4444", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=10)
+
+        ws.merge_cells('A1:H1')
+        ws['A1'] = f"Below Cost Sales | FY: {fy or 'All'}"
+        ws['A1'].font = Font(bold=True, size=12, color="EF4444")
+        ws.append([])
+
+        headers = ["Item Name", "Cost Price", "Avg Selling Price", "Margin", "Margin %", "Qty Sold", "Revenue", "Total Loss"]
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=3, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center')
+
+        for iname, sdata in sorted(sales_map.items()):
+            cost = cost_map.get(iname, 0)
+            if cost <= 0 or sdata["qty"] <= 0:
+                continue
+            avg_sell = sdata["revenue"] / sdata["qty"]
+            margin = avg_sell - cost
+            if margin >= 0:
+                continue
+            ws.append([iname.title(), round(cost, 2), round(avg_sell, 2), round(margin, 2), round(margin / cost * 100, 1), round(sdata["qty"], 1), round(sdata["revenue"], 2), round(abs(margin) * sdata["qty"], 2)])
+
+        for col_cells in ws.columns:
+            valid_cells = [c for c in col_cells if not isinstance(c, openpyxl.cell.cell.MergedCell)]
+            if not valid_cells:
+                continue
+            max_len = max((len(str(cell.value or "")) for cell in valid_cells), default=10)
+            ws.column_dimensions[valid_cells[0].column_letter].width = min(max_len + 4, 35)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"below_cost_sales_{fy or 'all'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Error exporting below-cost sales: {e}")
         return APIResponse(success=False, error=str(e))

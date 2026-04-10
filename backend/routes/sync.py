@@ -271,6 +271,98 @@ async def receive_agent_sync(request: dict):
                     await db.stock_journals.bulk_write(operations)
             logger.info(f"Synced {len(data)} stock journals")
 
+        elif data_type == 'purchase_vouchers':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for pv in data:
+                    v_id = pv.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": pv.get('voucher_type', 'purchase'),
+                                "voucher_date": pv.get('voucher_date', ''),
+                                "party_name": pv.get('party_name', ''),
+                                "total_amount": pv.get('total_amount', 0),
+                                "items": pv.get('items', []),
+                                "reference_number": pv.get('reference_number', ''),
+                                "ledger_entries": pv.get('ledger_entries', []),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.purchase_vouchers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} purchase vouchers")
+
+        elif data_type == 'debit_notes':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for dn in data:
+                    v_id = dn.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": dn.get('voucher_type', 'debit_note'),
+                                "voucher_date": dn.get('voucher_date', ''),
+                                "party_name": dn.get('party_name', ''),
+                                "total_amount": dn.get('total_amount', 0),
+                                "items": dn.get('items', []),
+                                "reference_number": dn.get('reference_number', ''),
+                                "ledger_entries": dn.get('ledger_entries', []),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.debit_notes.bulk_write(operations)
+            logger.info(f"Synced {len(data)} debit notes")
+
+        elif data_type == 'sundry_creditors':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for cr in data:
+                    cname = cr.get('creditor_name', '')
+                    if not cname:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"creditor_name": cname, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "creditor_name": cname,
+                                "ledger_group": _clean_tally_val(cr.get('ledger_group', 'Sundry Creditors')),
+                                "outstanding_amount": cr.get('outstanding_amount', 0),
+                                "opening_balance": cr.get('opening_balance', 0),
+                                "phone": _clean_tally_val(cr.get('phone', '')),
+                                "contact_person": _clean_tally_val(cr.get('contact_person', '')),
+                                "state": _clean_tally_val(cr.get('state', '')),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.sundry_creditors.bulk_write(operations)
+            logger.info(f"Synced {len(data)} sundry creditors")
+
         # Update last sync time
         company_name = request.get('company_name', '') or req_company_id
         financial_year = request.get('financial_year', '')

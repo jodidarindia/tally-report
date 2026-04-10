@@ -9,12 +9,13 @@ const API = `${BACKEND_URL}/api`;
 const InventoryAnalytics = ({ selectedFY }) => {
   const [activeTab, setActiveTab] = useState('movement');
   const [movementData, setMovementData] = useState([]);
-  const [belowCostSales, setBelowCostSales] = useState([]);
+  const [belowCostData, setBelowCostData] = useState({ items: [], summary: {} });
   const [salesFrequency, setSalesFrequency] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [sortField, setSortField] = useState('movement_rate');
   const [sortDir, setSortDir] = useState('desc');
+  const [classFilter, setClassFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState({
     start_date: '',
     end_date: ''
@@ -33,7 +34,7 @@ const InventoryAnalytics = ({ selectedFY }) => {
         setMovementData(res.data?.data?.movements || []);
       } else if (activeTab === 'below-cost') {
         const res = await axios.get(`${API}/inventory/below-cost-sales?${fyParam}`);
-        setBelowCostSales(res.data?.data?.below_cost_sales || []);
+        setBelowCostData(res.data?.data || { items: [], summary: {} });
       } else if (activeTab === 'sales-frequency') {
         const params = new URLSearchParams();
         if (dateFilter.start_date) params.append('start_date', dateFilter.start_date);
@@ -59,38 +60,54 @@ const InventoryAnalytics = ({ selectedFY }) => {
 
   const SortTh = ({ field, label, className = '' }) => (
     <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-analytics-${field}`}>
-      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '\u2191' : '\u2193') : ''}</span>
     </th>
   );
 
-  const exportSalesFrequency = async (format) => {
+  const handleExportMovement = async () => {
     setExporting(true);
     try {
-      const response = await axios.post(
-        `${API}/analytics/sales-frequency/export`,
-        {
-          format,
-          start_date: dateFilter.start_date || null,
-          end_date: dateFilter.end_date || null
-        },
-        { responseType: 'blob' }
-      );
-
-      const ext = format === 'excel' ? 'xlsx' : 'pdf';
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const fyParam = selectedFY ? `fy=${selectedFY}` : '';
+      const res = await axios.get(`${API}/inventory/movement-export?${fyParam}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `sales_frequency_report.${ext}`);
+      link.setAttribute('download', `movement_analysis_${selectedFY || 'all'}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
-      toast.success(`Sales frequency exported as ${format.toUpperCase()}`);
-    } catch (error) {
-      console.error('Export error:', error);
-      toast.error('Failed to export sales frequency');
-    } finally {
-      setExporting(false);
-    }
+      window.URL.revokeObjectURL(url);
+      toast.success('Movement analysis exported');
+    } catch { toast.error('Export failed'); }
+    finally { setExporting(false); }
+  };
+
+  const handleExportBelowCost = async () => {
+    setExporting(true);
+    try {
+      const fyParam = selectedFY ? `fy=${selectedFY}` : '';
+      const res = await axios.get(`${API}/inventory/below-cost-export?${fyParam}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `below_cost_sales_${selectedFY || 'all'}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Below cost sales exported');
+    } catch { toast.error('Export failed'); }
+    finally { setExporting(false); }
+  };
+
+  const filteredMovement = classFilter === 'all' ? movementData : movementData.filter(m => m.classification === classFilter);
+
+  const fmt = (n) => {
+    if (n === undefined || n === null || n === 0) return '0';
+    if (n >= 10000000) return `${(n / 10000000).toFixed(2)} Cr`;
+    if (n >= 100000) return `${(n / 100000).toFixed(2)} L`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1)} K`;
+    return Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
   };
 
   const tabs = [
@@ -139,43 +156,42 @@ const InventoryAnalytics = ({ selectedFY }) => {
           {/* Movement Analysis */}
           {activeTab === 'movement' && (
             <div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <TrendingUp className="text-green-600" size={22} />
-                    <span className="text-xs font-medium text-slate-600">Fast Moving</span>
+              {/* Classification Filter Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                <button onClick={() => setClassFilter('all')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'all' ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-all">
+                  <div className="flex items-center gap-2 mb-1"><BarChart3 className="text-slate-600" size={16} /><span className="text-[10px] font-medium text-slate-500">All Items</span></div>
+                  <div className="text-xl font-bold text-slate-900">{movementData.length}</div>
+                </button>
+                <button onClick={() => setClassFilter('fast-moving')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'fast-moving' ? 'border-green-500 ring-2 ring-green-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-fast-moving">
+                  <div className="flex items-center gap-2 mb-1"><TrendingUp className="text-green-600" size={16} /><span className="text-[10px] font-medium text-slate-500">Fast Moving</span></div>
+                  <div className="text-xl font-bold text-green-700" data-testid="fast-moving-count">{movementData.filter(m => m.classification === 'fast-moving').length}</div>
+                </button>
+                <button onClick={() => setClassFilter('moderate')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'moderate' ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-moderate">
+                  <div className="flex items-center gap-2 mb-1"><BarChart3 className="text-blue-600" size={16} /><span className="text-[10px] font-medium text-slate-500">Moderate</span></div>
+                  <div className="text-xl font-bold text-blue-700" data-testid="moderate-count">{movementData.filter(m => m.classification === 'moderate').length}</div>
+                </button>
+                <button onClick={() => setClassFilter('slow-moving')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'slow-moving' ? 'border-yellow-500 ring-2 ring-yellow-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-slow-moving">
+                  <div className="flex items-center gap-2 mb-1"><TrendingDown className="text-yellow-600" size={16} /><span className="text-[10px] font-medium text-slate-500">Slow Moving</span></div>
+                  <div className="text-xl font-bold text-yellow-700" data-testid="slow-moving-count">{movementData.filter(m => m.classification === 'slow-moving').length}</div>
+                </button>
+                <button onClick={() => setClassFilter('non-moving')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'non-moving' ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-non-moving">
+                  <div className="flex items-center gap-2 mb-1"><AlertTriangle className="text-red-600" size={16} /><span className="text-[10px] font-medium text-slate-500">Non-Moving</span></div>
+                  <div className="text-xl font-bold text-red-700" data-testid="non-moving-count">{movementData.filter(m => m.classification === 'non-moving').length}</div>
+                </button>
+              </div>
+
+              {/* Export + Active filter indicator */}
+              <div className="flex items-center justify-between mb-3">
+                {classFilter !== 'all' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Showing: <strong className="text-slate-700 capitalize">{classFilter.replace('-', ' ')}</strong> ({filteredMovement.length} items)</span>
+                    <button onClick={() => setClassFilter('all')} className="text-xs text-blue-600 hover:text-blue-700 font-medium" data-testid="reset-filter">Reset</button>
                   </div>
-                  <div className="text-2xl font-semibold text-slate-900" data-testid="fast-moving-count">
-                    {movementData.filter(m => m.classification === 'fast-moving').length}
-                  </div>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <BarChart3 className="text-blue-600" size={22} />
-                    <span className="text-xs font-medium text-slate-600">Moderate</span>
-                  </div>
-                  <div className="text-2xl font-semibold text-slate-900" data-testid="moderate-count">
-                    {movementData.filter(m => m.classification === 'moderate').length}
-                  </div>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <TrendingDown className="text-yellow-600" size={22} />
-                    <span className="text-xs font-medium text-slate-600">Slow Moving</span>
-                  </div>
-                  <div className="text-2xl font-semibold text-slate-900" data-testid="slow-moving-count">
-                    {movementData.filter(m => m.classification === 'slow-moving').length}
-                  </div>
-                </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <AlertTriangle className="text-red-600" size={22} />
-                    <span className="text-xs font-medium text-slate-600">Non-Moving</span>
-                  </div>
-                  <div className="text-2xl font-semibold text-slate-900" data-testid="non-moving-count">
-                    {movementData.filter(m => m.classification === 'non-moving').length}
-                  </div>
-                </div>
+                )}
+                {classFilter === 'all' && <div />}
+                <button onClick={handleExportMovement} disabled={exporting} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors" data-testid="export-movement">
+                  <Download size={12} />{exporting ? 'Exporting...' : 'Export Excel'}
+                </button>
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -196,7 +212,7 @@ const InventoryAnalytics = ({ selectedFY }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...movementData].sort((a, b) => {
+                      {[...filteredMovement].sort((a, b) => {
                         const dir = sortDir === 'asc' ? 1 : -1;
                         if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
                         return dir * ((a[sortField] || 0) - (b[sortField] || 0));
@@ -233,64 +249,69 @@ const InventoryAnalytics = ({ selectedFY }) => {
           {/* Below Cost Sales */}
           {activeTab === 'below-cost' && (
             <div>
-              <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
-                <div className="flex items-center gap-3 mb-2">
-                  <AlertTriangle className="text-red-600" size={24} />
-                  <h3 className="text-lg font-semibold text-red-900">Critical: Items Sold Below Cost</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <div className="text-sm text-red-600">Total Transactions</div>
-                    <div className="text-2xl font-bold text-red-900">{belowCostSales.length}</div>
+              {/* Summary */}
+              {belowCostData.items.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                    <div className="text-xs text-red-600 font-medium mb-1">Items Below Cost</div>
+                    <div className="text-2xl font-bold text-red-700">{belowCostData.summary.total_items || 0}</div>
                   </div>
-                  <div>
-                    <div className="text-sm text-red-600">Total Loss</div>
-                    <div className="text-2xl font-bold text-red-900">
-                      ₹{belowCostSales.reduce((sum, item) => sum + item.total_loss, 0).toLocaleString('en-IN')}
-                    </div>
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                    <div className="text-xs text-red-600 font-medium mb-1">Total Loss</div>
+                    <div className="text-2xl font-bold text-red-700">Rs.{fmt(belowCostData.summary.total_loss || 0)}</div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                    <div className="text-xs text-red-600 font-medium mb-1">Affected Revenue</div>
+                    <div className="text-2xl font-bold text-red-700">Rs.{fmt(belowCostData.summary.total_affected_revenue || 0)}</div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {belowCostData.items.length > 0 && (
+                <div className="flex justify-end mb-3">
+                  <button onClick={handleExportBelowCost} disabled={exporting} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors" data-testid="export-below-cost">
+                    <Download size={12} />{exporting ? 'Exporting...' : 'Export Excel'}
+                  </button>
+                </div>
+              )}
 
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="data-table" data-testid="below-cost-table">
                     <thead>
                       <tr>
-                        <th>Item Name</th>
-                        <th>Voucher ID</th>
-                        <th>Date</th>
-                        <th>Customer</th>
-                        <th className="numeric">Purchase Price</th>
-                        <th className="numeric">Sale Price</th>
-                        <th className="numeric">Loss/Unit</th>
-                        <th className="numeric">Quantity</th>
-                        <th className="numeric">Total Loss</th>
+                        <SortTh field="item_name" label="Item Name" />
+                        <SortTh field="cost_price" label="Cost Price" className="numeric" />
+                        <SortTh field="avg_selling_price" label="Avg Sale Price" className="numeric" />
+                        <SortTh field="margin" label="Margin" className="numeric" />
+                        <SortTh field="margin_pct" label="Margin %" className="numeric" />
+                        <SortTh field="qty_sold" label="Qty Sold" className="numeric" />
+                        <SortTh field="total_revenue" label="Revenue" className="numeric" />
+                        <SortTh field="total_loss" label="Total Loss" className="numeric" />
                       </tr>
                     </thead>
                     <tbody>
-                      {belowCostSales.length > 0 ? (
-                        belowCostSales.map((item, idx) => (
-                          <tr key={idx} className="bg-red-50">
+                      {belowCostData.items.length > 0 ? (
+                        [...belowCostData.items].sort((a, b) => {
+                          const dir = sortDir === 'asc' ? 1 : -1;
+                          if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
+                          return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+                        }).map((item, idx) => (
+                          <tr key={idx} className="bg-red-50/50" data-testid={`below-cost-row-${idx}`}>
                             <td className="font-medium text-red-900">{item.item_name}</td>
-                            <td>{item.voucher_id}</td>
-                            <td>{item.sale_date}</td>
-                            <td>{item.customer}</td>
-                            <td className="numeric">₹{item.purchase_price.toLocaleString('en-IN')}</td>
-                            <td className="numeric">₹{item.sale_price.toLocaleString('en-IN')}</td>
-                            <td className="numeric text-red-600 font-semibold">
-                              ₹{item.loss_per_unit.toLocaleString('en-IN')}
-                            </td>
-                            <td className="numeric">{item.quantity_sold}</td>
-                            <td className="numeric text-red-600 font-bold">
-                              ₹{item.total_loss.toLocaleString('en-IN')}
-                            </td>
+                            <td className="numeric">Rs.{item.cost_price.toLocaleString('en-IN')}</td>
+                            <td className="numeric">Rs.{item.avg_selling_price.toLocaleString('en-IN')}</td>
+                            <td className="numeric text-red-600 font-semibold">Rs.{item.margin.toLocaleString('en-IN')}</td>
+                            <td className="numeric text-red-600 font-semibold">{item.margin_pct}%</td>
+                            <td className="numeric">{item.qty_sold}</td>
+                            <td className="numeric">Rs.{fmt(item.total_revenue)}</td>
+                            <td className="numeric text-red-700 font-bold">Rs.{fmt(item.total_loss)}</td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="9" className="text-center py-8">
-                            <div className="text-green-600 font-medium">✓ No items sold below cost - Great!</div>
+                          <td colSpan="8" className="text-center py-8">
+                            <div className="text-green-600 font-medium">No items sold below cost{belowCostData.summary?.total_items === undefined ? ' (sync purchase vouchers from Tally for cost data)' : ' - Great!'}</div>
                           </td>
                         </tr>
                       )}
