@@ -567,6 +567,7 @@ class TallyCollectionClient:
 <FETCH>LEDGERCONTACT</FETCH>
 <FETCH>LEDSTATENAME</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
+<COMPUTE>OPBAL : $$NumValue:$OpeningBalance</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -602,6 +603,7 @@ class TallyCollectionClient:
                 'customer_name': name,
                 'ledger_group': parent_str,
                 'outstanding_amount': self._num(l.get('CLBAL', l.get('CLOSINGBALANCE', 0))),
+                'opening_balance': self._num(l.get('OPBAL', l.get('OPENINGBALANCE', 0))),
                 'phone': str(l.get('LEDGERPHONE', '') or '').strip(),
                 'contact_person': str(l.get('LEDGERCONTACT', '') or '').strip(),
                 'state': str(l.get('LEDSTATENAME', '') or '').strip(),

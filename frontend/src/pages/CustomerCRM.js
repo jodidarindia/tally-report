@@ -718,7 +718,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
         <span className="text-xs text-slate-400">{filtered.length} customers</span>
       </div>
 
-      <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated across all financial years. Click a row for detailed breakdown.</p>
+      <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated for the selected financial year. Opening balance carries forward from prior FYs. Click a row for detailed breakdown.</p>
 
       {/* Table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -783,6 +783,7 @@ const CustomerPaymentDetail = ({ customer: c }) => {
   const timeline = c.monthly_timeline || [];
   const topOverdue = c.top_overdue_invoices || [];
   const totalCredits = (c.paid_amount || 0) + (c.credit_note_total || 0) + (c.journal_credit || 0);
+  const openingBal = c.opening_balance || 0;
 
   return (
     <div className="bg-slate-50 border-t border-slate-200 p-5" data-testid={`behavior-detail-${c.customer_name}`}>
@@ -792,12 +793,14 @@ const CustomerPaymentDetail = ({ customer: c }) => {
           <h4 className="text-sm font-semibold text-slate-700">Financial Breakdown</h4>
           <div className="space-y-2">
             {[
-              { label: 'Total Sales', value: c.total_amount, color: 'text-slate-800' },
+              { label: 'Opening Balance', value: openingBal, color: openingBal > 0 ? 'text-orange-600' : 'text-slate-500' },
+              { label: 'Total Sales (FY)', value: c.total_amount, color: 'text-slate-800' },
+              { label: 'Total Debits', value: openingBal + (c.total_amount || 0), color: 'text-slate-900', bold: true },
               { label: 'Receipts (Cash/Bank)', value: c.paid_amount, color: 'text-emerald-600' },
               { label: 'Credit Notes', value: c.credit_note_total, color: 'text-purple-600' },
               { label: 'Journal Credits', value: c.journal_credit, color: 'text-indigo-600' },
               { label: 'Total Credits', value: totalCredits, color: 'text-green-700', bold: true },
-              { label: 'Outstanding', value: c.outstanding_amount, color: 'text-red-600', bold: true },
+              { label: 'Closing Balance', value: c.outstanding_amount, color: (c.outstanding_amount || 0) > 0 ? 'text-red-600' : 'text-green-600', bold: true },
             ].map(({ label, value, color, bold }) => (
               <div key={label} className="flex items-center justify-between">
                 <span className={`text-xs ${bold ? 'font-semibold' : ''} text-slate-600`}>{label}</span>

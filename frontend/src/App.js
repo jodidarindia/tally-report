@@ -33,10 +33,9 @@ const FEATURE_NAV_MAP = {
   analytics: { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
   salesman: { id: 'salesman', label: 'Salesman', icon: Truck },
+  insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
   sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
   setup: { id: 'setup', label: 'Setup', icon: Settings },
-  analytics: { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-  insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
 };
 
 function App() {
@@ -228,8 +227,7 @@ function App() {
       .filter(Boolean);
     // Activity log always visible for admin
     items.push({ id: 'activity', label: 'Activity', icon: History });
-    // Insider Result always visible for admin
-    items.push({ id: 'insider', label: 'Insider Result', icon: Lightbulb });
+    // Note: 'insider' is now in ALL_FEATURES and FEATURE_NAV_MAP, so no need to add it here
     return items;
   }, [user]);
 
@@ -382,7 +380,7 @@ function App() {
       case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
       case 'activity': return <ActivityLog token={token} role={user?.role} />;
-      case 'insider': return <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} />;
+      case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} />);
       default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
     }
   };

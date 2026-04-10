@@ -13,7 +13,7 @@ JWT_ALGORITHM = "HS256"
 
 ALL_FEATURES = [
     "dashboard", "inventory", "sales", "crm", "analytics",
-    "ai_reports", "salesman", "sync_history", "setup"
+    "ai_reports", "salesman", "insider", "sync_history", "setup"
 ]
 
 
@@ -142,6 +142,12 @@ async def seed_admin(db):
             update_fields["tenant_id"] = tenant_id
         if not existing_admin.get("features"):
             update_fields["features"] = list(ALL_FEATURES)
+        elif set(existing_admin.get("features", [])) != set(ALL_FEATURES):
+            # Add any new features that were added to ALL_FEATURES
+            current = set(existing_admin.get("features", []))
+            new_features = set(ALL_FEATURES) - current
+            if new_features:
+                update_fields["features"] = list(current | new_features)
         if "active" not in existing_admin:
             update_fields["active"] = True
         if "companies" not in existing_admin:

@@ -105,6 +105,13 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 if p:
                     opening_balance[p] = opening_balance.get(p, 0) + safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
 
+            # Fallback: use Tally's opening_balance from customers collection
+            for sc in synced_customers:
+                name = sc.get("customer_name")
+                tally_ob = safe_num(sc.get("opening_balance", 0))
+                if name and name not in opening_balance and tally_ob != 0:
+                    opening_balance[name] = tally_ob
+
         # Compute current FY credits per customer
         customer_receipts = {}
         customer_cn_total = {}
@@ -609,24 +616,90 @@ async def export_customer_ledger(request: Request):
 
 @router.get("/customers/payment-behavior")
 async def get_payment_behavior(request: Request, customer: Optional[str] = None, fy: Optional[str] = None, company_id: Optional[str] = None):
-    """Payment behavior analysis — always uses ALL historical data regardless of FY.
-    The FY param is accepted but ignored to maintain API compatibility."""
+    """Payment behavior analysis — filters by FY when provided. Includes opening balance."""
     try:
         from datetime import date as date_type
         today = date_type.today()
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
-        # Always use ALL data for payment behavior (FY-independent)
-        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
-        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
-        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
-        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+        # Fetch ALL vouchers first
+        all_sales_raw = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_receipts_raw = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_credit_notes_raw = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+        all_journals_raw = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
         synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
-        # Build per-customer receipt totals
+        # FY boundary for opening balance calculation
+        fy_start_str = None
+        if fy:
+            try:
+                parts = fy.split('-')
+                start_year = int(parts[0])
+                fy_start_str = f"{start_year}-04-01"
+            except:
+                pass
+
+        # Split vouchers into pre-FY (for opening balance) and current FY
+        def split_by_fy(vouchers, date_field='voucher_date'):
+            pre_fy = []
+            current_fy = []
+            for v in vouchers:
+                d = v.get(date_field, '')
+                if fy_start_str and d < fy_start_str:
+                    pre_fy.append(v)
+                else:
+                    current_fy.append(v)
+            return pre_fy, current_fy
+
+        if fy:
+            pre_sales, fy_sales_raw = split_by_fy(all_sales_raw)
+            pre_receipts, fy_receipts_raw = split_by_fy(all_receipts_raw)
+            pre_cns, fy_cns_raw = split_by_fy(all_credit_notes_raw)
+            pre_jvs, fy_jvs_raw = split_by_fy(all_journals_raw)
+
+            all_sales = filter_vouchers_by_fy(fy_sales_raw, fy)
+            all_receipts = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date', '')} for r in fy_receipts_raw], fy)
+            all_credit_notes = filter_vouchers_by_fy(fy_cns_raw, fy)
+            all_journals = filter_vouchers_by_fy(fy_jvs_raw, fy)
+        else:
+            pre_sales, pre_receipts, pre_cns, pre_jvs = [], [], [], []
+            all_sales = all_sales_raw
+            all_receipts = all_receipts_raw
+            all_credit_notes = all_credit_notes_raw
+            all_journals = all_journals_raw
+
+        # Compute opening balance per customer
+        # Priority: 1) Pre-FY voucher calculation  2) Tally's opening_balance from customers collection
+        opening_balance_map = {}
+        if fy_start_str:
+            for v in pre_sales:
+                p = v.get('party_name', '')
+                if p:
+                    opening_balance_map[p] = opening_balance_map.get(p, 0) + safe_num(v.get('total_amount'))
+            for r in pre_receipts:
+                p = r.get('party_name', '')
+                if p:
+                    opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(r.get('amount'))
+            for cn in pre_cns:
+                p = cn.get('party_name', '')
+                if p:
+                    opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(cn.get('total_amount'))
+            for jv in pre_jvs:
+                p = jv.get('party_name', '')
+                if p:
+                    opening_balance_map[p] = opening_balance_map.get(p, 0) + safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+
+            # Fallback: use Tally's opening_balance from customers collection for any customer not captured by pre-FY vouchers
+            for sc in synced_customers:
+                name = sc.get("customer_name")
+                tally_ob = safe_num(sc.get("opening_balance", 0))
+                if name and name not in opening_balance_map and tally_ob != 0:
+                    opening_balance_map[name] = tally_ob
+
+        # Build per-customer receipt totals (FY-filtered)
         customer_payments = {}
         customer_receipt_dates = {}
         for r in all_receipts:
@@ -636,14 +709,14 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             customer_payments[party] = customer_payments.get(party, 0) + safe_num(r.get("amount"))
             customer_receipt_dates.setdefault(party, []).append(r.get("voucher_date", ""))
 
-        # Build per-customer credit note totals
+        # Build per-customer credit note totals (FY-filtered)
         customer_cn = {}
         for cn in all_credit_notes:
             party = safe_str(cn.get("party_name")).strip()
             if party:
                 customer_cn[party] = customer_cn.get(party, 0) + safe_num(cn.get("total_amount"))
 
-        # Build per-customer journal credit totals
+        # Build per-customer journal credit totals (FY-filtered)
         customer_jv = {}
         for jv in all_journals:
             party = safe_str(jv.get("party_name")).strip()
@@ -658,12 +731,14 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
 
             if party not in behavior_map:
                 synced = synced_map.get(party.lower(), {})
+                ob = round(opening_balance_map.get(party, 0), 2)
                 behavior_map[party] = {
                     "customer_name": party,
                     "phone": synced.get("phone", ""),
                     "state": synced.get("state", ""),
                     "total_transactions": 0,
                     "total_amount": 0,
+                    "opening_balance": ob,
                     "average_transaction": 0,
                     "outstanding_amount": 0,
                     "paid_amount": 0,
@@ -705,13 +780,15 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             name = sc.get("customer_name")
             if not name or name in behavior_map:
                 continue
-            if customer_payments.get(name, 0) > 0 or safe_num(sc.get("outstanding_amount")) > 0:
+            if customer_payments.get(name, 0) > 0 or safe_num(sc.get("outstanding_amount")) > 0 or opening_balance_map.get(name, 0) != 0:
+                ob = round(opening_balance_map.get(name, 0), 2)
                 behavior_map[name] = {
                     "customer_name": name,
                     "phone": sc.get("phone", ""),
                     "state": sc.get("state", ""),
                     "total_transactions": 0,
                     "total_amount": 0,
+                    "opening_balance": ob,
                     "average_transaction": 0,
                     "outstanding_amount": safe_num(sc.get("outstanding_amount")),
                     "paid_amount": 0,
@@ -730,6 +807,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
 
         for party, data in behavior_map.items():
             total = data["total_amount"]
+            ob = data.get("opening_balance", 0)
             receipt_paid = customer_payments.get(party, 0)
             cn_credit = customer_cn.get(party, 0)
             jv_credit = customer_jv.get(party, 0)
@@ -739,10 +817,13 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             data["credit_note_total"] = round(cn_credit, 2)
             data["journal_credit"] = round(jv_credit, 2)
             data["receipt_count"] = len(customer_receipt_dates.get(party, []))
-            data["outstanding_amount"] = round(max(0, total - total_credits), 2)
+            # Outstanding = Opening Balance + Sales - Total Credits
+            data["outstanding_amount"] = round(ob + total - total_credits, 2)
 
+            # Total debits for ratio calculation = opening + sales
+            total_debits = ob + total
             data["average_transaction"] = round(total / data["total_transactions"], 2) if data["total_transactions"] > 0 else 0
-            data["payment_ratio"] = round((total_credits / total * 100), 1) if total > 0 else 100
+            data["payment_ratio"] = round((total_credits / total_debits * 100), 1) if total_debits > 0 else 100
 
             # Compute average payment delay using receipt-to-invoice matching
             if receipt_paid > 0 and data["invoices"]:

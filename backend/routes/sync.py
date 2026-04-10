@@ -135,6 +135,7 @@ async def receive_agent_sync(request: dict):
                                 "customer_name": customer_name,
                                 "ledger_group": _clean_tally_val(cust.get('ledger_group', 'Sundry Debtors')),
                                 "outstanding_amount": cust.get('outstanding_amount', 0),
+                                "opening_balance": cust.get('opening_balance', 0),
                                 "total_purchases": cust.get('total_purchases', 0),
                                 "transaction_count": cust.get('transaction_count', 0),
                                 "phone": _clean_tally_val(cust.get('phone', '')),

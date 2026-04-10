@@ -1,0 +1,163 @@
+{
+  "summary": "Iteration 27: Payment Behavior FY Filtering & Feature Gating Tests - Backend: 15/15 PASSED. Frontend: All features verified. Fixed 1 BUG: Duplicate 'Insider Result' nav item in sidebar.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "App.js - getNavItems()",
+        "issue": "Duplicate 'Insider Result' nav item appears in sidebar. The nav shows 12 items instead of 11 because 'Insider Result' is added twice: once from FEATURE_NAV_MAP (when 'insider' is in user.features) and once from hardcoded push at line 231.",
+        "selector": "[data-testid='nav-insider']",
+        "priority": "MEDIUM",
+        "fix": "Remove the hardcoded push at line 231: `items.push({ id: 'insider', label: 'Insider Result', icon: Lightbulb });` since 'insider' is now in ALL_FEATURES and gets mapped via FEATURE_NAV_MAP"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/customers/payment-behavior?fy=2025-26 returns 42 customers",
+    "Backend: GET /api/customers/payment-behavior (no FY) returns 43 customers",
+    "Backend: payment-behavior response includes opening_balance field per customer",
+    "Backend: payment-behavior has all required fields (customer_name, opening_balance, total_amount, paid_amount, credit_note_total, journal_credit, outstanding_amount, payment_ratio, credit_score, payment_pattern)",
+    "Backend: FY filtering changes customer count (2025-26: 42, 2024-25: 2)",
+    "Backend: Closing balance (outstanding_amount) can be negative - 10 customers have negative outstanding (credits > debits)",
+    "Backend: Admin has 10 features including 'insider'",
+    "Backend: All 10 expected features present in admin's features list",
+    "Backend: SuperAdmin can list admins and admin has 10 features",
+    "Backend: GET /api/customers/outstanding?fy=2025-26 returns 42 customers",
+    "Backend: GET /api/insights/customer-lifecycle returns success with active, inactive, lost, summary, trend",
+    "Backend: GET /api/insights/sales-forecast returns success with timeline, forecasts, yoy, summary",
+    "Backend: GET /api/insights/spip-analysis returns success with items, summary, total_items",
+    "Backend: GET /api/insights/concentration-risk returns success with customers, summary, risk_level",
+    "Frontend: Login with admin/admin123 works",
+    "Frontend: Company selector shows ASA AUTOTECH with 202 items, 1258 vouchers",
+    "Frontend: Insider Result nav item visible in sidebar",
+    "Frontend: CRM page loads with 4 tabs (Outstanding, Follow-ups, Targets, Payment Behavior)",
+    "Frontend: Payment Behavior tab shows 42 customers with FY 2025-26",
+    "Frontend: Payment Behavior summary cards show Total (42), Excellent (33), Regular (2), Irregular (3), Risky (4), Avg Score (71)",
+    "Frontend: Payment Behavior table shows negative outstanding in red (e.g., Rs.-11,504, Rs.-15,843, Rs.-2,835)",
+    "Frontend: Customer expand card shows Financial Breakdown with all 8 fields (Opening Balance, Total Sales (FY), Total Debits, Receipts, Credit Notes, Journal Credits, Total Credits, Closing Balance)",
+    "Frontend: Closing Balance shows negative (red) when credits > debits - NOT clamped to 0",
+    "Frontend: Outstanding tab shows 42 customers with FY 2025-26, 39 with FY 2024-25 (FY filtering works)",
+    "Frontend: Insider Result page loads with 4 tabs (Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk)",
+    "Frontend: Customer Lifecycle shows Active (27), Inactive (4), Lost (10), Total (41)",
+    "Frontend: test_admin has 5 nav items (Dashboard, Inventory, Sales, Activity, Insider Result)",
+    "Frontend: test_admin sees 'Feature Not Activated' when clicking Insider Result (feature gating works)",
+    "Frontend: SuperAdmin dashboard shows 10 features in ALL_FEATURES list",
+    "Frontend: SuperAdmin shows admin has 10/10 features, test_admin has 3/10 features"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_payment_behavior.py",
+    "/app/test_reports/pytest/iteration27_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "bug_fixed": {
+    "duplicate_insider_nav": {
+      "description": "Insider Result appeared twice in the navigation bar",
+      "root_cause": "In App.js getNavItems(), 'insider' was mapped from FEATURE_NAV_MAP AND also hardcoded pushed at line 231",
+      "fix_applied": "Removed line 231: `items.push({ id: 'insider', label: 'Insider Result', icon: Lightbulb });`",
+      "verified": "Nav now shows 11 items with 'Insider Result' appearing only once"
+    }
+  },
+  
+  "critical_code_review_comments": [
+    "App.js line 231: FIXED - Removed hardcoded `items.push({ id: 'insider', ...})` that caused duplicate nav item",
+    "routes/customers.py: payment-behavior endpoint correctly filters by FY and includes opening_balance",
+    "routes/customers.py: outstanding_amount calculation allows negative values (credits > debits)",
+    "auth_service.py: ALL_FEATURES correctly includes 'insider' (10 total)",
+    "CustomerCRM.js: CustomerPaymentDetail shows all 8 Financial Breakdown fields correctly",
+    "SuperAdminDashboard.js: ALL_FEATURES correctly shows 10 features including 'Insider Result'"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration27_payment_behavior.py",
+    "/app/frontend/src/App.js"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (15/15 tests passed)",
+    "frontend": "100% (all features verified, 1 minor bug found)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "company": "ASA AUTOTECH INDIA PRIVATE LIMITED", "features": 10},
+    "test_admin": {"username": "test_admin", "password": "test123", "features": 3},
+    "superadmin": {"username": "superadmin", "password": "superadmin123"}
+  },
+  
+  "seed_data_creation": "No new seed data created.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 27 validated Payment Behavior FY filtering and Feature Gating updates. All tests passed. Key findings: 1) Payment Behavior now correctly filters by FY (42 customers in 2025-26 vs 2 in 2024-25). 2) opening_balance field is included in API response. 3) Closing balance can be negative (10 customers have credits > debits). 4) Financial Breakdown in customer expand card shows all 8 fields. 5) 'insider' feature is now in ALL_FEATURES (10 total). 6) Feature gating works - test_admin sees 'Feature Not Activated' for Insider. BUG FIXED: Removed duplicate 'Insider Result' nav item by removing hardcoded push in App.js.",
+  
+  "bug_fixed": {
+    "duplicate_insider_nav": {
+      "description": "Insider Result appeared twice in the navigation bar",
+      "root_cause": "In App.js getNavItems(), 'insider' was mapped from FEATURE_NAV_MAP AND also hardcoded pushed at line 231",
+      "fix_applied": "Removed line 231: `items.push({ id: 'insider', label: 'Insider Result', icon: Lightbulb });`",
+      "verified": "Nav now shows 11 items with 'Insider Result' appearing only once"
+    }
+  },
+  
+  "features_validated": {
+    "payment_behavior_fy_filtering": {
+      "status": "WORKING",
+      "details": [
+        "FY 2025-26: 42 customers",
+        "FY 2024-25: 2 customers",
+        "No FY filter: 43 customers",
+        "opening_balance field present in API response",
+        "Closing balance can be negative (not clamped to 0)"
+      ]
+    },
+    "customer_expand_financial_breakdown": {
+      "status": "WORKING",
+      "details": [
+        "Opening Balance: Rs.0 (or actual value)",
+        "Total Sales (FY): Shows FY sales",
+        "Total Debits: Opening + Sales",
+        "Receipts (Cash/Bank): Green color",
+        "Credit Notes: Green color",
+        "Journal Credits: Green color",
+        "Total Credits: Sum of all credits",
+        "Closing Balance: Red when negative, green when positive"
+      ]
+    },
+    "feature_gating_insider": {
+      "status": "WORKING",
+      "details": [
+        "admin has 'insider' in features (10 total)",
+        "test_admin does NOT have 'insider' (3 features)",
+        "test_admin sees 'Feature Not Activated' when clicking Insider Result",
+        "SuperAdmin shows 10 features in ALL_FEATURES list"
+      ]
+    },
+    "insider_result_page": {
+      "status": "WORKING",
+      "details": [
+        "4 tabs: Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk",
+        "Customer Lifecycle shows Active (27), Inactive (4), Lost (10)",
+        "All API endpoints return success"
+      ]
+    },
+    "outstanding_tab": {
+      "status": "WORKING",
+      "details": [
+        "FY 2025-26: 42 customers",
+        "FY 2024-25: 39 customers",
+        "Table shows Opening Bal, Total Sales, Paid, Outstanding, aging buckets"
+      ]
+    }
+  }
+}
