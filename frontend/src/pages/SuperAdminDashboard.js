@@ -54,7 +54,12 @@ const SuperAdminDashboard = ({ token }) => {
 
   const createAdmin = async () => {
     if (!newAdmin.username || !newAdmin.password) {
-      toast.error('Username and password are required');
+      toast.error('Email and password are required');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newAdmin.username)) {
+      toast.error('Please enter a valid email address');
       return;
     }
     try {
@@ -313,13 +318,13 @@ const SuperAdminDashboard = ({ token }) => {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email (Login ID)</label>
                 <input
-                  type="text"
+                  type="email"
                   value={newAdmin.username}
-                  onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value })}
+                  onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value.toLowerCase().trim() })}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  placeholder="e.g. company_xyz"
+                  placeholder="e.g. admin@company.com"
                   data-testid="new-admin-username"
                 />
               </div>

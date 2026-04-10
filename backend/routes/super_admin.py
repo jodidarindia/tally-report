@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 import logging
+import re
 
 from db import db
 from models import APIResponse
@@ -77,9 +78,14 @@ async def create_admin(request: Request):
         features = body.get("features", [])
 
         if not username or not password:
-            return APIResponse(success=False, error="Username and password are required")
+            return APIResponse(success=False, error="Email and password are required")
         if len(password) < 4:
             return APIResponse(success=False, error="Password must be at least 4 characters")
+
+        # Validate email format for new admins
+        email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+        if not re.match(email_pattern, username):
+            return APIResponse(success=False, error="Username must be a valid email address")
 
         existing = await db.users.find_one({"username": username})
         if existing:
@@ -88,7 +94,14 @@ async def create_admin(request: Request):
         # Validate features
         valid_features = [f for f in features if f in ALL_FEATURES]
 
-        tenant_id = f"tenant_{username}"
+        # Generate a clean tenant_id from email
+        clean_name = re.sub(r'[^a-z0-9]', '_', username.lower().split('@')[0])
+        tenant_id = f"tenant_{clean_name}"
+        # Ensure uniqueness
+        existing_tenant = await db.users.find_one({"tenant_id": tenant_id})
+        if existing_tenant:
+            import uuid
+            tenant_id = f"tenant_{clean_name}_{uuid.uuid4().hex[:6]}"
         await db.users.insert_one({
             "username": username,
             "password_hash": hash_password(password),

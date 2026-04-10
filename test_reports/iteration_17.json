@@ -1,0 +1,121 @@
+{
+  "summary": "Iteration 17: Tested email-based username validation for new admins, ProfileModal fixes, and login label update. All new features working correctly. 12/14 backend tests passed (2 failures unrelated to new features - inventory endpoint needs company header).",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/inventory",
+        "issue": "Returns 404 without X-Company-ID header - not related to iteration 17 changes",
+        "priority": "LOW"
+      }
+    ]
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Backend: Super admin login (superadmin/superadmin123) works",
+    "Backend: Admin login (admin/admin123) works",
+    "Backend: Test admin login (test_admin/test123) works",
+    "Backend: POST /api/super-admin/admins rejects non-email username 'newadmin'",
+    "Backend: POST /api/super-admin/admins rejects invalid email 'admin@'",
+    "Backend: POST /api/super-admin/admins rejects invalid email 'admin.example.com'",
+    "Backend: POST /api/super-admin/admins accepts valid email and creates admin",
+    "Backend: Newly created admin with email username can login",
+    "Backend: Super admin stats endpoint works",
+    "Backend: Super admin list admins endpoint works",
+    "Backend: test_admin has exactly 3 features (dashboard, inventory, sales)",
+    "Backend: admin has all 9 features",
+    "Frontend: Login page shows 'Email' label instead of 'User ID'",
+    "Frontend: Login placeholder says 'Enter your email'",
+    "Frontend: Super admin dashboard loads with stats cards",
+    "Frontend: 'New Admin' button opens create admin modal",
+    "Frontend: Create admin modal has 'Email (Login ID)' label",
+    "Frontend: Email validation error shown for non-email username",
+    "Frontend: Admin created successfully with valid email",
+    "Frontend: Tenant ID generated from email prefix (tenant_uitest_xxx)",
+    "Frontend: ProfileModal opens from user menu",
+    "Frontend: ProfileModal has close button with data-testid='profile-modal-close'",
+    "Frontend: ProfileModal closes when clicking close button",
+    "Frontend: ProfileModal closes when clicking backdrop",
+    "Frontend: Password change form has all required fields",
+    "Frontend: Password change validation works (shows 'All fields are required')",
+    "Frontend: test_admin sees exactly 3 nav items (Dashboard, Inventory, Sales)",
+    "Frontend: test_admin hidden nav items: CRM, Analytics, AI Reports, Salesman, Sync History, Setup",
+    "Frontend: test_admin dashboard shows 0 values (data isolation working)",
+    "Frontend: Admin sees all 9 nav items",
+    "Frontend: Admin dashboard shows data (202 items, 1255 vouchers)"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_email_validation.py",
+    "/app/test_reports/pytest/iteration17_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "Email validation regex in backend (routes/super_admin.py line 86-88) correctly validates email format",
+    "Frontend email validation in SuperAdminDashboard.js (line 60-64) matches backend validation",
+    "ProfileModal backdrop click handler (line 82) correctly closes modal on backdrop click",
+    "ProfileModal close button has proper data-testid attribute (line 86)",
+    "Login page label correctly updated to 'Email' (App.js line 244)"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration17_email_validation.py"
+  ],
+  
+  "success_rate": {
+    "backend": "86% (12/14 tests - 2 failures unrelated to new features)",
+    "frontend": "100% (all new features working correctly)"
+  },
+  
+  "test_credentials": {
+    "super_admin": {"username": "superadmin", "password": "superadmin123"},
+    "admin": {"username": "admin", "password": "admin123"},
+    "test_admin": {"username": "test_admin", "password": "test123"}
+  },
+  
+  "seed_data_creation": "Created and deleted test admin 'uitest_519da8@example.com' during UI testing",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 17 validated all new features: (1) Login page now shows 'Email' label, (2) Super Admin create admin form requires valid email format, (3) Backend validates email format and rejects non-email usernames, (4) ProfileModal can be closed by clicking backdrop or close button, (5) ProfileModal close button has data-testid='profile-modal-close'. Existing accounts (superadmin, admin, test_admin) still work with non-email usernames as expected. Feature gating and data isolation continue to work correctly.",
+  
+  "features_validated": {
+    "email_username_validation": {
+      "status": "WORKING",
+      "features": [
+        "Login page shows 'Email' label",
+        "Create admin form has 'Email (Login ID)' label",
+        "Backend rejects non-email usernames",
+        "Backend accepts valid email usernames",
+        "Tenant ID generated from email prefix"
+      ]
+    },
+    "profile_modal_fix": {
+      "status": "WORKING",
+      "features": [
+        "Close button has data-testid='profile-modal-close'",
+        "Modal closes on backdrop click",
+        "Modal closes on close button click"
+      ]
+    },
+    "existing_functionality": {
+      "status": "WORKING",
+      "features": [
+        "Existing accounts still work (superadmin, admin, test_admin)",
+        "Feature gating works (test_admin sees 3 nav items)",
+        "Data isolation works (test_admin sees 0 items)",
+        "Password change form works"
+      ]
+    }
+  }
+}

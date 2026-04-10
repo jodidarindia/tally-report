@@ -241,11 +241,11 @@ function App() {
           </div>
           <form onSubmit={handleLogin} className="bg-white rounded-2xl border border-slate-200 p-8 space-y-5">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">User ID</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
               <input
                 type="text" value={username} onChange={e => setUsername(e.target.value)}
                 className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                placeholder="Enter your User ID"
+                placeholder="Enter your email"
                 data-testid="username-input"
               />
             </div>

@@ -65,10 +65,7 @@ TALLY_HOST = os.getenv('TALLY_HOST', 'localhost')
 TALLY_PORT = int(os.getenv('TALLY_PORT', '9000'))
 TALLY_URL = f"http://{TALLY_HOST}:{TALLY_PORT}/"
 COMPANY_NAME = os.getenv('TALLY_COMPANY', '')  # Leave empty for current company
-BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
-API_KEY = os.getenv('AGENT_API_KEY', '')
-TENANT_ID = os.getenv('TENANT_ID', '')  # Multi-tenant: assigned by FLOWRA super admin
-SYNC_TOKEN = os.getenv('SYNC_TOKEN', '')  # Multi-tenant: auth token for sync
+BACKEND_URL = os.getenv('BACKEND_URL', '')  # Will be set during login if not provided
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
 SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'
 SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
@@ -81,6 +78,7 @@ SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
 SYNC_STATE_FILE = 'sync_state_v6.json'
+AUTH_CONFIG_FILE = 'flowra_auth.json'  # Stores login session locally
 
 
 def load_sync_state():
@@ -898,19 +896,192 @@ class TallyCollectionClient:
         return results
 
 
+# ==================== AUTH & SESSION MANAGEMENT ====================
+
+def load_auth_config():
+    """Load saved auth session (token, tenant_id, backend_url) from local file."""
+    if os.path.exists(AUTH_CONFIG_FILE):
+        try:
+            with open(AUTH_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            # Check if token is still valid (simple expiry check)
+            saved_at = config.get('saved_at', '')
+            if saved_at:
+                saved_time = datetime.fromisoformat(saved_at)
+                if (datetime.now() - saved_time).total_seconds() > 23 * 3600:
+                    logger.info("Saved auth session expired, re-login needed")
+                    return None
+            return config
+        except Exception as e:
+            logger.warning(f"Could not load auth config: {e}")
+    return None
+
+
+def save_auth_config(config: dict):
+    """Save auth session to local file."""
+    config['saved_at'] = datetime.now().isoformat()
+    with open(AUTH_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+    logger.info(f"Auth session saved to {AUTH_CONFIG_FILE}")
+
+
+def clear_auth_config():
+    """Remove saved auth session."""
+    if os.path.exists(AUTH_CONFIG_FILE):
+        os.remove(AUTH_CONFIG_FILE)
+        logger.info("Auth session cleared")
+
+
+def login_to_flowra(backend_url: str, email: str = None, password: str = None) -> dict:
+    """Authenticate with FLOWRA backend. Returns auth config dict or raises error."""
+    if not email:
+        print("\n" + "=" * 50)
+        print("  FLOWRA Desktop Agent - Login")
+        print("=" * 50)
+        email = input("  Email: ").strip()
+        password = input("  Password: ").strip()
+
+    if not email or not password:
+        raise ValueError("Email and password are required")
+
+    try:
+        resp = requests.post(
+            f"{backend_url}/api/auth/login",
+            json={"username": email, "password": password},
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                auth_data = data["data"]
+                if auth_data.get("role") not in ("admin",):
+                    raise ValueError("Only admin accounts can use the desktop sync agent")
+                config = {
+                    "backend_url": backend_url,
+                    "email": email,
+                    "token": auth_data["token"],
+                    "tenant_id": auth_data.get("tenant_id", ""),
+                    "companies": auth_data.get("companies", []),
+                    "name": auth_data.get("name", ""),
+                    "features": auth_data.get("features", []),
+                }
+                # Get sync token for this tenant
+                try:
+                    token_resp = requests.get(
+                        f"{backend_url}/api/auth/sync-token",
+                        headers={"Authorization": f"Bearer {auth_data['token']}"},
+                        timeout=10
+                    )
+                    if token_resp.status_code == 200:
+                        token_data = token_resp.json()
+                        if token_data.get("success"):
+                            config["sync_token"] = token_data["data"].get("sync_token", "")
+                except Exception as e:
+                    logger.warning(f"Could not get sync token: {e}")
+                    config["sync_token"] = ""
+
+                save_auth_config(config)
+                print(f"\n  Logged in as: {auth_data.get('name') or email}")
+                print(f"  Tenant ID:    {config['tenant_id']}")
+                if config['companies']:
+                    print(f"  Companies:    {', '.join(config['companies'])}")
+                print()
+                return config
+            else:
+                raise ValueError(data.get("error", "Login failed"))
+        else:
+            raise ValueError(f"Server returned HTTP {resp.status_code}")
+    except requests.exceptions.ConnectionError:
+        raise ValueError(f"Cannot connect to FLOWRA at {backend_url}. Check your internet connection.")
+    except requests.exceptions.Timeout:
+        raise ValueError("Connection timed out")
+
+
+def get_or_refresh_auth(backend_url: str = None) -> dict:
+    """Load saved auth or prompt for login. Returns auth config."""
+    config = load_auth_config()
+    if config:
+        # Validate the token is still working
+        try:
+            url = config.get('backend_url', backend_url)
+            resp = requests.get(
+                f"{url}/api/auth/me",
+                headers={"Authorization": f"Bearer {config['token']}"},
+                timeout=10
+            )
+            if resp.status_code == 200 and resp.json().get("success"):
+                # Update companies list from server
+                me_data = resp.json().get("data", {})
+                config["companies"] = me_data.get("companies", config.get("companies", []))
+                save_auth_config(config)
+                logger.info(f"Auth session valid for {config.get('email', 'unknown')}")
+                return config
+        except Exception as e:
+            logger.warning(f"Auth validation failed: {e}")
+
+        # Token expired or invalid — try re-login with saved email
+        logger.info("Session expired, re-authenticating...")
+        print("\n  Session expired. Please re-enter your password.")
+        email = config.get('email', '')
+        if email:
+            print(f"  Email: {email}")
+            password = input("  Password: ").strip()
+            url = config.get('backend_url', backend_url)
+            return login_to_flowra(url, email, password)
+
+    # No saved config — fresh login
+    url = backend_url or BACKEND_URL
+    if not url:
+        print("\n" + "=" * 50)
+        print("  FLOWRA Desktop Agent - Setup")
+        print("=" * 50)
+        url = input("  FLOWRA Server URL (e.g. https://yourapp.flowra.in): ").strip().rstrip('/')
+        if not url:
+            raise ValueError("Server URL is required")
+
+    return login_to_flowra(url)
+
+
+# ==================== INCREMENTAL SYNC HELPERS ====================
+
+def compute_data_hash(data: list) -> str:
+    """Compute a quick hash of the data for change detection."""
+    import hashlib
+    content = json.dumps(data, sort_keys=True, default=str)
+    return hashlib.md5(content.encode()).hexdigest()
+
+
+def should_skip_sync(state: dict, company: str, data_type: str, data: list) -> bool:
+    """Check if data has changed since last sync using hash comparison."""
+    company_state = state.get('companies', {}).get(company, {})
+    last_hash = company_state.get('hashes', {}).get(data_type, '')
+    current_hash = compute_data_hash(data)
+    return last_hash == current_hash and last_hash != ''
+
+
+def update_sync_hash(state: dict, company: str, data_type: str, data: list) -> dict:
+    """Update the stored hash after successful sync."""
+    if 'companies' not in state:
+        state['companies'] = {}
+    if company not in state['companies']:
+        state['companies'][company] = {'hashes': {}, 'last_sync': {}}
+    state['companies'][company]['hashes'][data_type] = compute_data_hash(data)
+    state['companies'][company]['last_sync'][data_type] = datetime.now().isoformat()
+    return state
+
+
 # ==================== MAIN AGENT ====================
 
 class FlowraSyncAgent:
     def __init__(self):
-        self.backend_url = BACKEND_URL
-        self.api_key = API_KEY
         self.financial_year = FINANCIAL_YEAR
         self.sync_interval = SYNC_INTERVAL
         self.export_dir = EXPORT_DIR
         self.sync_running = False
         self.ws_server = None
-        self._active_company = COMPANY_NAME  # Currently syncing company
-        self._companies_to_sync = []  # List of companies to sync
+        self._active_company = COMPANY_NAME
+        self._companies_to_sync = []
         self.tally = TallyCollectionClient(
             url=TALLY_URL,
             company=COMPANY_NAME,
@@ -921,19 +1092,29 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v6.1 (Multi-Tenant)")
-        logger.info("  Lightweight Collection Requests (No Freeze)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v7.0 (Login-Based Auth)")
+        logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
+
+        # --- LOGIN-BASED AUTH ---
+        # Authenticate with FLOWRA backend to get tenant_id + sync_token
+        self.auth_config = get_or_refresh_auth(BACKEND_URL or None)
+        self.backend_url = self.auth_config['backend_url']
+        self.tenant_id = self.auth_config['tenant_id']
+        self.sync_token = self.auth_config.get('sync_token', '')
+        self.auth_token = self.auth_config['token']
+        self.server_companies = self.auth_config.get('companies', [])
+
         logger.info(f"  Tally URL     : {TALLY_URL}")
         logger.info(f"  Cloud Backend : {self.backend_url}")
-        logger.info(f"  Tenant ID     : {TENANT_ID or '(auto-detect)'}")
+        logger.info(f"  Logged in as  : {self.auth_config.get('email', 'unknown')}")
+        logger.info(f"  Tenant ID     : {self.tenant_id}")
+        logger.info(f"  Server Cos    : {', '.join(self.server_companies) if self.server_companies else '(none yet)'}")
         logger.info(f"  Financial Year: {self.financial_year}")
         logger.info(f"  Auto Multi-FY : {SYNC_ALL_FY} (also syncs current FY: {current_fy()})")
         logger.info(f"  Incremental   : {INCREMENTAL_SYNC}")
         logger.info(f"  Sync Interval : every {self.sync_interval} min")
-        logger.info(f"  Timeout/req   : {REQUEST_TIMEOUT} sec")
         logger.info(f"  Cache Dir     : {self.export_dir}")
-        logger.info(f"  Multi-Company : {'Sync all' if SYNC_ALL_COMPANIES else 'Selected only'}")
         logger.info("=" * 60)
 
     def detect_companies(self):
@@ -1014,7 +1195,7 @@ class FlowraSyncAgent:
             'timestamp': datetime.now().isoformat(),
             'financial_year': self.financial_year,
             'company_name': self._active_company or self.tally.company or '',
-            'tenant_id': TENANT_ID,
+            'tenant_id': self.tenant_id,
             'company_id': self._active_company or '',
             **kwargs
         }
@@ -1024,7 +1205,7 @@ class FlowraSyncAgent:
             requests.post(
                 f"{self.backend_url}/api/agent/sync-progress",
                 json=progress,
-                headers={'Content-Type': 'application/json', 'X-Agent-Key': self.api_key},
+                headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
                 timeout=5
             )
         except:
@@ -1033,29 +1214,54 @@ class FlowraSyncAgent:
     def sync_to_backend(self, data_type, data):
         if not data:
             return True
+
+        # Incremental optimization: skip if data hash unchanged
+        state = load_sync_state()
+        company = self._active_company or ''
+        if INCREMENTAL_SYNC and should_skip_sync(state, company, data_type, data):
+            logger.info(f"  [SKIP] {data_type}: data unchanged since last sync (hash match)")
+            return True
+
         try:
             payload = {
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '6.1.0-multitenant',
+                'agent_version': '7.0.0-login-auth',
                 'company_name': self._active_company or self.tally.company or '',
                 'financial_year': self.financial_year,
-                'tenant_id': TENANT_ID,
+                'tenant_id': self.tenant_id,
                 'company_id': self._active_company or '',
-                'sync_token': SYNC_TOKEN
+                'sync_token': self.sync_token
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/sync",
                 json=payload,
-                headers={'Content-Type': 'application/json', 'X-Agent-Key': self.api_key},
+                headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
                 timeout=30
             )
             if resp.status_code == 200:
-                logger.info(f"  [OK] Synced {len(data)} {data_type} to cloud")
-                return True
+                result = resp.json()
+                if result.get('success'):
+                    logger.info(f"  [OK] Synced {len(data)} {data_type} to cloud")
+                    # Update hash after successful sync
+                    state = update_sync_hash(state, company, data_type, data)
+                    save_sync_state(state)
+                    return True
+                else:
+                    logger.error(f"  Sync {data_type} failed: {result.get('error', 'unknown')}")
+                    return False
             else:
                 logger.error(f"  Sync {data_type} failed: HTTP {resp.status_code}")
+                # If 401/403, try to re-authenticate
+                if resp.status_code in (401, 403):
+                    logger.warning("Auth token expired during sync, refreshing...")
+                    try:
+                        self.auth_config = get_or_refresh_auth(self.backend_url)
+                        self.auth_token = self.auth_config['token']
+                        self.sync_token = self.auth_config.get('sync_token', '')
+                    except Exception:
+                        pass
                 return False
         except Exception as e:
             logger.error(f"  Sync error ({data_type}): {e}")
@@ -1079,6 +1285,17 @@ class FlowraSyncAgent:
             return
         try:
             self.sync_running = True
+
+            # Refresh auth token before each cycle
+            try:
+                self.auth_config = get_or_refresh_auth(self.backend_url)
+                self.auth_token = self.auth_config['token']
+                self.tenant_id = self.auth_config['tenant_id']
+                self.sync_token = self.auth_config.get('sync_token', '')
+            except Exception as auth_err:
+                logger.error(f"Auth refresh failed: {auth_err}. Skipping this sync cycle.")
+                return
+
             if not self._companies_to_sync:
                 self.select_companies()
             for company in self._companies_to_sync:
@@ -1311,9 +1528,10 @@ class FlowraSyncAgent:
         # Initial sync
         self.run_sync_cycle()
 
-        # Schedule every 20 min
+        # Schedule every N min
         schedule.every(self.sync_interval).minutes.do(self.run_sync_cycle)
         logger.info(f"Next sync in {self.sync_interval} minutes. Ctrl+C to stop.")
+        logger.info("Type Ctrl+C to exit. Run with --logout to clear saved credentials.")
 
         try:
             while True:
@@ -1325,5 +1543,11 @@ class FlowraSyncAgent:
 
 
 if __name__ == "__main__":
+    # Handle --logout flag
+    if '--logout' in sys.argv:
+        clear_auth_config()
+        print("Saved credentials cleared. Run again to log in.")
+        sys.exit(0)
+
     agent = FlowraSyncAgent()
     agent.start()
