@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   Users, Shield, ToggleLeft, ToggleRight, Trash2, Key,
   Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
-  Lock, Eye, EyeOff, X
+  Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -27,8 +27,10 @@ const SuperAdminDashboard = ({ token }) => {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(null);
   const [expandedAdmin, setExpandedAdmin] = useState(null);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', features: [] });
+  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', features: ['sync_history', 'setup'], subscription_months: 12 });
+  const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -63,17 +65,52 @@ const SuperAdminDashboard = ({ token }) => {
       return;
     }
     try {
-      const res = await axios.post(`${API}/super-admin/admins`, newAdmin, { headers });
+      const res = await axios.post(`${API}/super-admin/admins`, {
+        ...newAdmin,
+        subscription_months: newAdmin.subscription_months || 12
+      }, { headers });
       if (res.data?.success) {
         toast.success(`Admin '${newAdmin.username}' created`);
         setShowCreateModal(false);
-        setNewAdmin({ username: '', password: '', name: '', features: [] });
+        setNewAdmin({ username: '', password: '', name: '', features: ['sync_history', 'setup'], subscription_months: 12 });
         fetchData();
       } else {
         toast.error(res.data?.error || 'Failed to create admin');
       }
     } catch (err) {
       toast.error('Failed to create admin');
+    }
+  };
+
+  const openEditAdmin = (admin) => {
+    setEditAdmin({
+      username: admin.username,
+      name: admin.name || '',
+      features: [...(admin.features || [])],
+      subscription_months: admin.subscription_months || 12,
+      subscription_start: admin.subscription_start || admin.created_at || ''
+    });
+    setShowEditModal(admin.username);
+  };
+
+  const saveEditAdmin = async () => {
+    if (!editAdmin) return;
+    try {
+      // Update features
+      await axios.put(`${API}/super-admin/admins/${editAdmin.username}/features`, {
+        features: editAdmin.features
+      }, { headers });
+      // Update subscription & name
+      await axios.put(`${API}/super-admin/admins/${editAdmin.username}/subscription`, {
+        name: editAdmin.name,
+        subscription_months: editAdmin.subscription_months
+      }, { headers });
+      toast.success('Admin updated successfully');
+      setShowEditModal(null);
+      setEditAdmin(null);
+      fetchData();
+    } catch (err) {
+      toast.error('Failed to update admin');
     }
   };
 
@@ -98,10 +135,8 @@ const SuperAdminDashboard = ({ token }) => {
     try {
       const res = await axios.put(`${API}/super-admin/admins/${username}/toggle-active`, {}, { headers });
       if (res.data?.success) {
-        setAdmins(prev => prev.map(a =>
-          a.username === username ? { ...a, active: res.data.data.active } : a
-        ));
         toast.success(res.data.message);
+        fetchData(); // Refresh all data including stats
       }
     } catch (err) {
       toast.error('Failed to toggle status');
@@ -224,34 +259,65 @@ const SuperAdminDashboard = ({ token }) => {
 
       {/* Admin List */}
       <div className="space-y-4">
-        {admins.map((admin) => (
+        {admins.map((admin) => {
+          const joinDate = admin.created_at ? new Date(admin.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A';
+          const subMonths = admin.subscription_months || 12;
+          const subStart = admin.subscription_start || admin.created_at || '';
+          let subEndDate = 'N/A';
+          let subActive = false;
+          if (subStart) {
+            const start = new Date(subStart);
+            const end = new Date(start);
+            end.setMonth(end.getMonth() + subMonths);
+            subEndDate = end.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+            subActive = end > new Date();
+          }
+
+          return (
           <div key={admin.username} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`admin-card-${admin.username}`}>
             {/* Admin Header */}
-            <div className="p-5 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className={`w-3 h-3 rounded-full ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
-                <div>
-                  <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
-                  <div className="text-xs text-slate-500">@{admin.username} &middot; Tenant: {admin.tenant_id} &middot; {admin.employee_count || 0} employees</div>
+            <div className="p-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)}>
+                  <div className={`w-3 h-3 rounded-full flex-shrink-0 ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
+                    <div className="text-xs text-slate-500 truncate">@{admin.username} &middot; {admin.employee_count || 0} employees</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
+                    {admin.features?.length || 0}/{ALL_FEATURES.length} features
+                  </span>
+                  <button onClick={(e) => { e.stopPropagation(); toggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-700 hover:bg-red-100'}`} data-testid={`toggle-active-${admin.username}`}>
+                    {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                    {admin.active ? 'Active' : 'Inactive'}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); openEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit Admin" data-testid={`edit-admin-${admin.username}`}>
+                    <Pencil size={14} />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setShowResetModal(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Reset Password" data-testid={`reset-pwd-${admin.username}`}>
+                    <Key size={14} />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); deleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete Admin" data-testid={`delete-admin-${admin.username}`}>
+                    <Trash2 size={14} />
+                  </button>
+                  <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
+                    {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
-                  {admin.features?.length || 0}/{ALL_FEATURES.length} features
+
+              {/* Subscription Summary Row */}
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                <span className="flex items-center gap-1"><Calendar size={12} /> Joined: {joinDate}</span>
+                <span className="flex items-center gap-1"><Clock size={12} /> Plan: {subMonths} months</span>
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${subActive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                  {subActive ? 'Active' : 'Expired'} until {subEndDate}
                 </span>
-                <button onClick={() => toggleActive(admin.username)} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-700 hover:bg-red-100'}`} data-testid={`toggle-active-${admin.username}`}>
-                  {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                  {admin.active ? 'Active' : 'Inactive'}
-                </button>
-                <button onClick={() => setShowResetModal(admin.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Reset Password" data-testid={`reset-pwd-${admin.username}`}>
-                  <Key size={14} />
-                </button>
-                <button onClick={() => deleteAdmin(admin.username)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete Admin" data-testid={`delete-admin-${admin.username}`}>
-                  <Trash2 size={14} />
-                </button>
-                <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
-                  {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
+                {admin.companies?.length > 0 && (
+                  <span className="flex items-center gap-1"><Building2 size={12} /> {admin.companies.length} {admin.companies.length === 1 ? 'company' : 'companies'}</span>
+                )}
               </div>
             </div>
 
@@ -300,7 +366,8 @@ const SuperAdminDashboard = ({ token }) => {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
         {admins.length === 0 && (
           <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">
             No admin accounts yet. Create one to get started.
@@ -310,8 +377,8 @@ const SuperAdminDashboard = ({ token }) => {
 
       {/* Create Admin Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="create-admin-modal">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="create-admin-modal" onClick={e => { if (e.target === e.currentTarget) setShowCreateModal(false); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-slate-900">Create New Admin</h3>
               <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -356,6 +423,22 @@ const SuperAdminDashboard = ({ token }) => {
                 </div>
               </div>
               <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Period</label>
+                <select
+                  value={newAdmin.subscription_months}
+                  onChange={e => setNewAdmin({ ...newAdmin, subscription_months: parseInt(e.target.value) })}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                  data-testid="new-admin-subscription"
+                >
+                  <option value={1}>1 Month</option>
+                  <option value={3}>3 Months</option>
+                  <option value={6}>6 Months</option>
+                  <option value={12}>12 Months (1 Year)</option>
+                  <option value={24}>24 Months (2 Years)</option>
+                  <option value={36}>36 Months (3 Years)</option>
+                </select>
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Features to Activate</label>
                 <div className="grid grid-cols-2 gap-2">
                   {ALL_FEATURES.map(f => (
@@ -382,6 +465,77 @@ const SuperAdminDashboard = ({ token }) => {
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
               <button onClick={createAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8]" data-testid="confirm-create-admin">Create Admin</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Admin Modal */}
+      {showEditModal && editAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="edit-admin-modal" onClick={e => { if (e.target === e.currentTarget) { setShowEditModal(null); setEditAdmin(null); } }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Edit Admin</h3>
+              <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+            <div className="space-y-4">
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="text-xs text-slate-500">Email (cannot change)</div>
+                <div className="font-medium text-slate-800">{editAdmin.username}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
+                <input
+                  type="text"
+                  value={editAdmin.name}
+                  onChange={e => setEditAdmin({ ...editAdmin, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                  data-testid="edit-admin-name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Period</label>
+                <select
+                  value={editAdmin.subscription_months}
+                  onChange={e => setEditAdmin({ ...editAdmin, subscription_months: parseInt(e.target.value) })}
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                  data-testid="edit-admin-subscription"
+                >
+                  <option value={1}>1 Month</option>
+                  <option value={3}>3 Months</option>
+                  <option value={6}>6 Months</option>
+                  <option value={12}>12 Months (1 Year)</option>
+                  <option value={24}>24 Months (2 Years)</option>
+                  <option value={36}>36 Months (3 Years)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Features</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {ALL_FEATURES.map(f => (
+                    <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editAdmin.features.includes(f.id)}
+                        onChange={() => {
+                          setEditAdmin(prev => ({
+                            ...prev,
+                            features: prev.features.includes(f.id)
+                              ? prev.features.filter(x => x !== f.id)
+                              : [...prev.features, f.id]
+                          }));
+                        }}
+                        className="rounded border-slate-300"
+                      />
+                      {f.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button onClick={saveEditAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8]" data-testid="confirm-edit-admin">Save Changes</button>
             </div>
           </div>
         </div>

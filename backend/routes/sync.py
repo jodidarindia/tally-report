@@ -417,6 +417,52 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
         return APIResponse(success=False, error=str(e))
 
 
+@router.get("/sync/connection-status")
+async def get_connection_status(request: Request):
+    """Get comprehensive connection status for the Setup page — last sync, agent version, companies, data counts."""
+    try:
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        company_id = ctx.get("company_id", "") if ctx else ""
+
+        if not tenant_id:
+            return APIResponse(success=True, data=None)
+
+        # Get last sync info
+        q = {"type": "agent_sync", "tenant_id": tenant_id}
+        if company_id:
+            q["company_id"] = company_id
+        sync_status = await db.sync_status.find_one(q, {"_id": 0}, sort=[("last_sync", -1)])
+
+        # Get user's companies
+        user = await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "companies": 1})
+        companies = user.get("companies", []) if user else []
+
+        # Get data counts
+        base_q = {"tenant_id": tenant_id}
+        if company_id:
+            base_q["company_id"] = company_id
+        inv_count = await db.inventory_items.count_documents(base_q)
+        sales_count = await db.sales_vouchers.count_documents(base_q)
+        cust_count = await db.customers.count_documents(base_q)
+
+        return APIResponse(success=True, data={
+            "last_sync": sync_status.get("last_sync") if sync_status else None,
+            "agent_version": sync_status.get("agent_version", "") if sync_status else "",
+            "companies": companies,
+            "sync_counts": {
+                "inventory_items": inv_count,
+                "sales_vouchers": sales_count,
+                "customers": cust_count
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting connection status: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+
+
 @router.get("/sync/history")
 async def get_sync_history(request: Request, limit: int = 100, company_id: Optional[str] = None):
     """Get sync history timeline."""

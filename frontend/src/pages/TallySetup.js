@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { CheckCircle, XCircle, Settings as SettingsIcon } from 'lucide-react';
+import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const TallySetup = () => {
+const TallySetup = ({ companyId }) => {
   const [connectionType, setConnectionType] = useState('xml');
   const [host, setHost] = useState('localhost');
   const [port, setPort] = useState('9000');
@@ -14,9 +14,11 @@ const TallySetup = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [syncStatus, setSyncStatus] = useState(null);
 
   useEffect(() => {
     checkStatus();
+    fetchSyncStatus();
   }, []);
 
   const checkStatus = async () => {
@@ -28,6 +30,20 @@ const TallySetup = () => {
       console.error('Error checking status:', error);
     } finally {
       setChecking(false);
+    }
+  };
+
+  const fetchSyncStatus = async () => {
+    try {
+      const token = localStorage.getItem('flowra_token');
+      const response = await axios.get(`${API}/sync/connection-status`, {
+        headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': companyId || '' }
+      });
+      if (response.data?.success) {
+        setSyncStatus(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching sync status:', error);
     }
   };
 
@@ -77,7 +93,67 @@ const TallySetup = () => {
         <p className="mt-2 text-base text-slate-600">Configure your TallyPrime connection</p>
       </div>
 
-      <div className="max-w-2xl">
+      <div className="max-w-2xl space-y-6">
+        {/* Connection Status Card */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6" data-testid="connection-status-card">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${syncStatus?.last_sync ? 'bg-green-50' : 'bg-slate-100'}`}>
+                {syncStatus?.last_sync ? <Wifi size={20} className="text-green-600" /> : <WifiOff size={20} className="text-slate-400" />}
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Desktop Agent Status</h2>
+                <p className="text-xs text-slate-500">Real-time sync connection info</p>
+              </div>
+            </div>
+            <button onClick={fetchSyncStatus} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg" data-testid="refresh-sync-status">
+              <RefreshCw size={16} />
+            </button>
+          </div>
+
+          {syncStatus ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-3 rounded-lg bg-slate-50">
+                <div className="text-xs text-slate-500 flex items-center gap-1 mb-1"><Clock size={12} /> Last Sync</div>
+                <div className="text-sm font-medium text-slate-800" data-testid="last-sync-time">
+                  {syncStatus.last_sync ? new Date(syncStatus.last_sync).toLocaleString('en-IN') : 'Never synced'}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50">
+                <div className="text-xs text-slate-500 flex items-center gap-1 mb-1"><Monitor size={12} /> Agent Version</div>
+                <div className="text-sm font-medium text-slate-800" data-testid="agent-version">
+                  {syncStatus.agent_version || 'Unknown'}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 sm:col-span-2">
+                <div className="text-xs text-slate-500 flex items-center gap-1 mb-2"><Building2 size={12} /> Linked Companies</div>
+                <div className="flex flex-wrap gap-2" data-testid="linked-companies">
+                  {syncStatus.companies?.length > 0 ? syncStatus.companies.map((c, i) => (
+                    <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-700">{c}</span>
+                  )) : (
+                    <span className="text-xs text-slate-400">No companies synced yet. Run the Desktop Agent to start syncing.</span>
+                  )}
+                </div>
+              </div>
+              {syncStatus.sync_counts && (
+                <div className="p-3 rounded-lg bg-slate-50 sm:col-span-2">
+                  <div className="text-xs text-slate-500 mb-2">Synced Data</div>
+                  <div className="flex flex-wrap gap-3">
+                    {Object.entries(syncStatus.sync_counts).map(([key, val]) => (
+                      <span key={key} className="text-xs text-slate-600"><span className="font-semibold text-slate-800">{val}</span> {key.replace(/_/g, ' ')}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-6 text-sm text-slate-400">
+              <WifiOff size={32} className="mx-auto mb-2 text-slate-300" />
+              No sync data found. Install and run the FLOWRA Desktop Agent to start syncing.
+            </div>
+          )}
+        </div>
+
         <div className="bg-white border border-slate-200 rounded-xl p-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-12 h-12 bg-[#E7F5F0] rounded-lg flex items-center justify-center">

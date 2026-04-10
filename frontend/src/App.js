@@ -236,6 +236,7 @@ function App() {
         <Toaster position="top-right" richColors />
         <div className="w-full max-w-md p-8">
           <div className="text-center mb-8">
+            <img src="/flowra-logo.png" alt="FLOWRA" className="h-16 mx-auto mb-3" data-testid="login-logo" />
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">FLOWRA</h1>
             <p className="text-slate-500 mt-1 text-sm">Organize. Automate. Accelerate.</p>
           </div>
@@ -292,7 +293,7 @@ function App() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6">
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center gap-3">
-                <Shield size={22} className="text-[#2563EB]" />
+                <img src="/flowra-logo.png" alt="FLOWRA" className="h-8" data-testid="navbar-logo" />
                 <span className="text-lg font-bold text-slate-900">FLOWRA</span>
                 <span className="px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 text-xs font-semibold">Super Admin</span>
               </div>
@@ -386,6 +387,7 @@ function App() {
               <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden p-1.5 hover:bg-slate-100 rounded-lg">
                 {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
               </button>
+              <img src="/flowra-logo.png" alt="FLOWRA" className="h-7 hidden sm:block" data-testid="navbar-logo" />
               <div className="flex flex-col">
                 <span className="text-sm sm:text-base font-bold text-slate-900 leading-tight">FLOWRA</span>
                 {selectedCompany && (

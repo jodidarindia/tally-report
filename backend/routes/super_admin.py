@@ -50,6 +50,8 @@ async def list_admins(request: Request):
                 "companies": admin.get("companies", []),
                 "active": admin.get("active", True),
                 "employee_count": emp_count,
+                "subscription_months": admin.get("subscription_months", 12),
+                "subscription_start": admin.get("subscription_start", admin.get("created_at", "")),
                 "created_at": admin.get("created_at", ""),
                 "last_sync": sync_status.get("last_sync") if sync_status else None
             })
@@ -76,6 +78,7 @@ async def create_admin(request: Request):
         password = body.get("password", "")
         name = body.get("name", "")
         features = body.get("features", [])
+        subscription_months = body.get("subscription_months", 12)
 
         if not username or not password:
             return APIResponse(success=False, error="Email and password are required")
@@ -102,6 +105,7 @@ async def create_admin(request: Request):
         if existing_tenant:
             import uuid
             tenant_id = f"tenant_{clean_name}_{uuid.uuid4().hex[:6]}"
+        now = datetime.now(timezone.utc).isoformat()
         await db.users.insert_one({
             "username": username,
             "password_hash": hash_password(password),
@@ -111,7 +115,9 @@ async def create_admin(request: Request):
             "features": valid_features,
             "companies": [],
             "active": True,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "subscription_months": subscription_months,
+            "subscription_start": now,
+            "created_at": now
         })
 
         sync_token = generate_sync_token(tenant_id)
@@ -253,6 +259,35 @@ async def get_admin_sync_token(username: str, request: Request):
         return APIResponse(success=True, data={"sync_token": token, "tenant_id": admin.get("tenant_id")})
     except Exception as e:
         return APIResponse(success=False, error=str(e))
+
+
+@router.put("/super-admin/admins/{username}/subscription")
+async def update_admin_subscription(username: str, request: Request):
+    """Update admin subscription details and name."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        admin = await db.users.find_one({"username": username, "role": "admin"})
+        if not admin:
+            return APIResponse(success=False, error="Admin not found")
+
+        body = await request.json()
+        update_fields = {}
+        if "name" in body:
+            update_fields["name"] = body["name"]
+        if "subscription_months" in body:
+            update_fields["subscription_months"] = int(body["subscription_months"])
+        if "subscription_start" in body:
+            update_fields["subscription_start"] = body["subscription_start"]
+
+        if update_fields:
+            await db.users.update_one({"username": username}, {"$set": update_fields})
+
+        return APIResponse(success=True, message=f"Admin '{username}' updated")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
 
 
 @router.get("/super-admin/stats")
