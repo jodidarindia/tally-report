@@ -88,7 +88,7 @@ const Inventory = ({ selectedFY }) => {
   };
 
   const filteredItems = items.filter(item => {
-    const matchesSearch = item.item_name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (item.item_name || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
     return matchesSearch && matchesCategory && matchesGroup;
