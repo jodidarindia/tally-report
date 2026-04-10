@@ -4,7 +4,7 @@ import { toast, Toaster } from 'sonner';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
   Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
-  X, Building2, Shield, User, Lock, ChevronDown
+  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -19,6 +19,7 @@ import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
 import ActivityLog from './pages/ActivityLog';
+import InsiderResult from './pages/InsiderResult';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
@@ -34,6 +35,8 @@ const FEATURE_NAV_MAP = {
   salesman: { id: 'salesman', label: 'Salesman', icon: Truck },
   sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
   setup: { id: 'setup', label: 'Setup', icon: Settings },
+  analytics: { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
 };
 
 function App() {
@@ -225,6 +228,8 @@ function App() {
       .filter(Boolean);
     // Activity log always visible for admin
     items.push({ id: 'activity', label: 'Activity', icon: History });
+    // Insider Result always visible for admin
+    items.push({ id: 'insider', label: 'Insider Result', icon: Lightbulb });
     return items;
   }, [user]);
 
@@ -377,6 +382,7 @@ function App() {
       case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
       case 'activity': return <ActivityLog token={token} role={user?.role} />;
+      case 'insider': return <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} />;
       default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
     }
   };

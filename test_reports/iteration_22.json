@@ -1,0 +1,149 @@
+{
+  "summary": "Iteration 22: Insider Result Analytics Dashboard - All tests PASSED. Backend: 20/20 tests passed. Frontend: All 4 tabs (Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk) verified with charts, tables, and filters working correctly.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/insights/customer-lifecycle returns success with active/inactive/lost arrays",
+    "Backend: Customer lifecycle summary has active_count, inactive_count, lost_count, revenues",
+    "Backend: Customer entries have customer_name, status, last_transaction, days_since_last, total_revenue, transaction_count",
+    "Backend: GET /api/insights/sales-forecast returns success with timeline, forecasts, yoy, summary",
+    "Backend: Sales forecast summary has total_months, avg_monthly_revenue, best_month, best_month_revenue",
+    "Backend: Timeline entries have month, revenue, count, unique_customers",
+    "Backend: Forecasts include month, forecast_revenue, confidence",
+    "Backend: GET /api/insights/spip-analysis returns success with items, summary, total_items",
+    "Backend: SPIP items have item_name, gap_type, stock_qty, qty_sold, revenue, monthly_avg_sales, months_of_stock",
+    "Backend: SPIP gap_type is valid (out_of_stock, understocked, dead_stock, overstocked, balanced)",
+    "Backend: GET /api/insights/concentration-risk returns success with customers, summary, risk_level",
+    "Backend: Concentration summary has total_customers, total_revenue, top5_pct, top10_pct, top20pct_pct",
+    "Backend: Customer entries have rank, customer_name, revenue, pct_of_total, cumulative_pct",
+    "Backend: Risk level is valid (critical, high, moderate, healthy, no_data)",
+    "Backend: test_admin (different tenant) gets 0 customers from customer-lifecycle",
+    "Backend: test_admin gets 0 timeline entries from sales-forecast",
+    "Backend: test_admin gets 0 items from spip-analysis",
+    "Backend: test_admin gets 0 customers or no_data from concentration-risk",
+    "Backend: admin with ASA AUTOTECH company has data in all endpoints",
+    "Backend: Unauthenticated requests return empty data (tenant isolation working)",
+    "Frontend: Insider Result nav item visible in navbar (data-testid='nav-insider')",
+    "Frontend: Insider Result page loads with title 'Insider Result'",
+    "Frontend: All 4 tabs visible (Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk)",
+    "Frontend: Customer Lifecycle tab - stat cards (Active: 27, Inactive: 4, Lost: 11, Total: 42)",
+    "Frontend: Customer Lifecycle tab - pie chart renders with Active/Inactive/Lost distribution",
+    "Frontend: Customer Lifecycle tab - monthly trend chart renders",
+    "Frontend: Customer Lifecycle tab - customer table renders with search and status filter",
+    "Frontend: Sales Forecast tab - stat cards (Monthly Avg: 35.76L, Best Month: 2026-03, Forecasts)",
+    "Frontend: Sales Forecast tab - revenue trend & forecast chart renders with forecast line",
+    "Frontend: Sales Forecast tab - YoY comparison chart renders",
+    "Frontend: Sales Forecast tab - monthly breakdown table renders",
+    "Frontend: SPIP Analysis tab - gap distribution chart renders (202 Balanced items)",
+    "Frontend: SPIP Analysis tab - info banner visible",
+    "Frontend: SPIP Analysis tab - item details table renders with search and gap type filter",
+    "Frontend: Concentration Risk tab - risk level banner shows 'High Risk' (62% top 5)",
+    "Frontend: Concentration Risk tab - stat cards (Total: 41, Top 5: 62%, Top 10: 79.9%)",
+    "Frontend: Concentration Risk tab - Pareto chart renders with cumulative line and 80% reference",
+    "Frontend: Concentration Risk tab - customer ranking table renders with progress bars",
+    "Frontend: Tab switching works correctly between all 4 tabs"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22_insights.py",
+    "/app/test_reports/pytest/iteration22_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "routes/insights.py: _build_query() correctly builds tenant_id + company_id filter for data isolation",
+    "routes/insights.py: customer-lifecycle correctly classifies customers as active (<90d), inactive (90-180d), lost (>180d)",
+    "routes/insights.py: sales-forecast uses 3-month moving average with trend adjustment for forecasting",
+    "routes/insights.py: spip-analysis correctly identifies gap types (out_of_stock, understocked, dead_stock, overstocked, balanced)",
+    "routes/insights.py: concentration-risk correctly calculates Pareto metrics and risk levels",
+    "InsiderResult.js: All 4 tabs have proper data-testid attributes for testing",
+    "InsiderResult.js: Charts use Recharts library (PieChart, AreaChart, BarChart, ComposedChart)",
+    "InsiderResult.js: Tables have search and filter functionality",
+    "InsiderResult.js: Proper loading state with spinner",
+    "App.js line 232: Insider Result nav item always added for admin users",
+    "App.js line 385: InsiderResult component rendered for 'insider' page case"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration22_insights.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (20/20 tests passed)",
+    "frontend": "100% (all 4 tabs and features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "company": "ASA AUTOTECH INDIA PRIVATE LIMITED"},
+    "test_admin": {"username": "test_admin", "password": "test123", "tenant": "tenant_test_admin (different tenant, sees no data)"}
+  },
+  
+  "seed_data_creation": "No new seed data created. Analytics endpoints use existing sales_vouchers and inventory_items collections.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 22 validated the new Insider Result analytics dashboard with 4 tabs: 1) Customer Lifecycle - tracks Active/Inactive/Lost customers with pie chart and trend. 2) Sales Forecast - shows revenue trends with 3-month moving average forecasts. 3) SPIP Analysis - identifies inventory gaps (out_of_stock, understocked, dead_stock, overstocked, balanced). 4) Concentration Risk - Pareto analysis showing customer revenue concentration (High Risk: 62% from top 5). All endpoints use strict tenant_id + company_id isolation via _build_query(). test_admin (different tenant) correctly sees 0 data. Admin with ASA AUTOTECH company sees 42 customers, 14 months of sales data, 202 inventory items.",
+  
+  "features_validated": {
+    "insider_result_backend": {
+      "status": "WORKING",
+      "endpoints": [
+        "GET /api/insights/customer-lifecycle - Active/Inactive/Lost customer tracking",
+        "GET /api/insights/sales-forecast - Sales trend with 3-month forecasts",
+        "GET /api/insights/spip-analysis - Purchase vs Sales gap analysis",
+        "GET /api/insights/concentration-risk - Customer concentration Pareto analysis"
+      ]
+    },
+    "insider_result_frontend": {
+      "status": "WORKING",
+      "nav_item": "Insider Result (data-testid='nav-insider') - always visible for admin",
+      "tabs": [
+        "Customer Lifecycle (tab-lifecycle) - stat cards, pie chart, trend chart, table with search/filter",
+        "Sales Forecast (tab-forecast) - stat cards, revenue chart with forecast line, YoY chart, table",
+        "SPIP Analysis (tab-spip) - gap distribution chart, info banner, item table with search/filter",
+        "Concentration Risk (tab-concentration) - risk banner, stat cards, Pareto chart, ranking table"
+      ]
+    },
+    "data_isolation": {
+      "status": "WORKING",
+      "verified": "test_admin (tenant_test_admin) sees 0 data from all 4 endpoints, admin (tenant_admin) with ASA AUTOTECH company sees full data"
+    }
+  },
+  
+  "analytics_data_summary": {
+    "customer_lifecycle": {
+      "active_customers": 27,
+      "inactive_customers": 4,
+      "lost_customers": 11,
+      "total_customers": 42
+    },
+    "sales_forecast": {
+      "months_of_data": 14,
+      "monthly_average": "35.76 L",
+      "best_month": "2026-03",
+      "forecast_confidence": "high"
+    },
+    "spip_analysis": {
+      "total_items": 202,
+      "balanced_items": 202
+    },
+    "concentration_risk": {
+      "risk_level": "high",
+      "total_customers": 41,
+      "top5_share": "62%",
+      "top10_share": "79.9%"
+    }
+  }
+}

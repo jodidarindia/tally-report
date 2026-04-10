@@ -22,6 +22,7 @@ from routes.dashboard import router as dashboard_router
 from routes.salesman import router as salesman_router
 from routes.super_admin import router as super_admin_router
 from routes.audit import router as audit_router
+from routes.insights import router as insights_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -47,6 +48,7 @@ api_router.include_router(dashboard_router)
 api_router.include_router(salesman_router)
 api_router.include_router(super_admin_router)
 api_router.include_router(audit_router)
+api_router.include_router(insights_router)
 
 # Include the combined router in the main app
 app.include_router(api_router)
