@@ -39,6 +39,8 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
         today = date_type.today()
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1, "amount": 1, "total_amount": 1}).to_list(20000)
+        if fy:
+            vouchers = filter_vouchers_by_fy(vouchers, fy)
 
         customer_data = defaultdict(lambda: {"dates": [], "total": 0, "count": 0})
         for v in vouchers:
@@ -118,13 +120,15 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
 # ===================== 2. SALES FORECASTING =====================
 
 @router.get("/insights/sales-forecast")
-async def get_sales_forecast(request: Request, company_id: Optional[str] = None):
+async def get_sales_forecast(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     """Sales trend with moving average forecast for next 3 months."""
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(20000)
+        if fy:
+            vouchers = filter_vouchers_by_fy(vouchers, fy)
 
         monthly_sales = defaultdict(lambda: {"revenue": 0, "count": 0, "customers": set()})
         for v in vouchers:

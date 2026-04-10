@@ -97,7 +97,7 @@ const InsiderResult = ({ selectedFY, companyId }) => {
         const res = await axios.get(`${API}/insights/customer-lifecycle?${fyParam}`);
         setLifecycle(res.data?.data || null);
       } else if (activeTab === 'forecast') {
-        const res = await axios.get(`${API}/insights/sales-forecast`);
+        const res = await axios.get(`${API}/insights/sales-forecast?${fyParam}`);
         setForecast(res.data?.data || null);
       } else if (activeTab === 'spip') {
         const res = await axios.get(`${API}/insights/spip-analysis?${fyParam}`);
