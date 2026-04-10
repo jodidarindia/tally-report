@@ -332,14 +332,8 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
             sales_qty = sales_info["qty"]
             purchase_qty = item_purchases.get(key, 0)
 
-            # Opening stock: use Tally opening_quantity if available, else estimate
-            if opening_from_tally > 0:
-                opening_stock = opening_from_tally
-            else:
-                # Estimate: Closing + Outward - Inward
-                opening_stock = closing_stock + sales_qty - purchase_qty
-                if opening_stock < 0:
-                    opening_stock = 0
+            # Opening stock: use Tally opening_quantity only — no estimation
+            opening_stock = opening_from_tally
 
             # Inward from purchases
             inward = purchase_qty
@@ -398,16 +392,13 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         for item_key, info in item_sales.items():
             if item_key not in seen_items and info["qty"] > 0:
                 purchase_qty = item_purchases.get(item_key, 0)
-                opening_est = info["qty"] - purchase_qty
-                if opening_est < 0:
-                    opening_est = 0
                 fy_months = max(fy_days / 30, 1)
                 monthly_avg = round(info["qty"] / fy_months, 1)
                 classification = "fast-moving" if info["txns"] >= fy_months * 2 else "moderate" if info["txns"] >= fy_months * 0.5 else "slow-moving"
                 movement_data.append({
                     "item_name": item_key.title(),
                     "category": "General",
-                    "opening_stock": round(max(opening_est, info["qty"]), 1),
+                    "opening_stock": 0,
                     "inward": round(purchase_qty, 1),
                     "sales": round(info["qty"], 1),
                     "closing_stock": 0,
@@ -653,7 +644,7 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
             opening_tally = safe_num(inv_item.get("opening_quantity"))
             s_qty = item_sales.get(key, 0)
             p_qty = item_purchases.get(key, 0)
-            opening = opening_tally if opening_tally > 0 else max(closing + s_qty - p_qty, 0)
+            opening = opening_tally  # No estimation — 0 if Tally has no data
             rate = round((s_qty / opening * 100), 1) if opening > 0 else (100.0 if s_qty > 0 else 0.0)
             daily = s_qty / 365 if s_qty > 0 else 0
             dts = round(closing / daily, 1) if closing > 0 and daily > 0 else (999 if closing > 0 else 0)
