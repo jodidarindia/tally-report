@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import json
 import logging
+import re
 
 from db import db
 from models import InventoryItem, SalesVoucher, APIResponse
@@ -12,6 +13,18 @@ from services.tenant_context import get_tenant_context, tenant_filter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _clean_tally_val(val):
+    """Extract plain text from Tally XML dict strings like {'@TYPE': 'String', '#text': 'value'}."""
+    if isinstance(val, dict):
+        return val.get('#text', str(val))
+    if isinstance(val, str) and "'#text'" in val:
+        m = re.search(r"'#text':\s*'([^']*)'", val)
+        return m.group(1) if m else val
+    return val
+
+
 
 
 @router.post("/agent/sync")
@@ -120,13 +133,13 @@ async def receive_agent_sync(request: dict):
                             {"customer_name": customer_name, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "customer_name": customer_name,
-                                "ledger_group": cust.get('ledger_group', 'Sundry Debtors'),
+                                "ledger_group": _clean_tally_val(cust.get('ledger_group', 'Sundry Debtors')),
                                 "outstanding_amount": cust.get('outstanding_amount', 0),
                                 "total_purchases": cust.get('total_purchases', 0),
                                 "transaction_count": cust.get('transaction_count', 0),
-                                "phone": cust.get('phone', ''),
-                                "contact_person": cust.get('contact_person', ''),
-                                "state": cust.get('state', ''),
+                                "phone": _clean_tally_val(cust.get('phone', '')),
+                                "contact_person": _clean_tally_val(cust.get('contact_person', '')),
+                                "state": _clean_tally_val(cust.get('state', '')),
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id

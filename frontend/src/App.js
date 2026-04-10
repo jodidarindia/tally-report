@@ -112,11 +112,13 @@ function App() {
       try {
         wsRef.current = new WebSocket(WS_URL);
         wsRef.current.onopen = () => {
-          wsRef.current?.send(JSON.stringify({
-            action: 'get_status',
-            tenant_id: user?.tenant_id || '',
-            company_id: selectedCompany || ''
-          }));
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+              action: 'get_status',
+              tenant_id: user?.tenant_id || '',
+              company_id: selectedCompany || ''
+            }));
+          }
         };
         wsRef.current.onmessage = (event) => {
           try {

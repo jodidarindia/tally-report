@@ -25,7 +25,9 @@ export function useSyncWebSocket() {
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
         // Request current status
-        ws.send(JSON.stringify({ action: 'get_status' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: 'get_status' }));
+        }
       };
 
       ws.onmessage = (event) => {
