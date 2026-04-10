@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import {
   Users, Shield, ToggleLeft, ToggleRight, Trash2, Key,
   Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
-  Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2
+  Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
+  UserPlus, Phone, Mail, FileText, ArrowRightCircle
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 
@@ -36,18 +37,25 @@ const SuperAdminDashboard = ({ token }) => {
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [activeTab, setActiveTab] = useState('admins');
+  const [prospects, setProspects] = useState([]);
+  const [prospectStats, setProspectStats] = useState({});
+  const [convertModal, setConvertModal] = useState(null);
+  const [convertData, setConvertData] = useState({ password: '', features: [], subscription_months: 12 });
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [statsRes, adminsRes] = await Promise.all([
+      const [statsRes, adminsRes, prospectsRes] = await Promise.all([
         axios.get(`${API}/super-admin/stats`, { headers }),
-        axios.get(`${API}/super-admin/admins`, { headers })
+        axios.get(`${API}/super-admin/admins`, { headers }),
+        axios.get(`${API}/super-admin/prospects`, { headers }).catch(() => ({ data: { data: { prospects: [], stats: {} } } }))
       ]);
       setStats(statsRes.data?.data);
       setAdmins(adminsRes.data?.data?.admins || []);
+      setProspects(prospectsRes.data?.data?.prospects || []);
+      setProspectStats(prospectsRes.data?.data?.stats || {});
     } catch (err) {
       toast.error('Failed to fetch data');
     } finally {
@@ -201,6 +209,49 @@ const SuperAdminDashboard = ({ token }) => {
     }
   };
 
+  const updateProspectStatus = async (prospectId, status, notes = '') => {
+    try {
+      const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status, notes }, { headers });
+      if (res.data?.success) {
+        toast.success(`Status updated to "${status}"`);
+        fetchData();
+      }
+    } catch (err) { toast.error('Failed to update status'); }
+  };
+
+  const convertProspect = async () => {
+    if (!convertModal) return;
+    if (!convertData.password || convertData.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    try {
+      const res = await axios.post(`${API}/super-admin/prospects/${convertModal}/convert`, {
+        password: convertData.password,
+        features: convertData.features.length > 0 ? convertData.features : ALL_FEATURES.map(f => f.id),
+        subscription_months: convertData.subscription_months
+      }, { headers });
+      if (res.data?.success) {
+        toast.success(`Converted to admin: ${res.data.data.username}`);
+        setConvertModal(null);
+        setConvertData({ password: '', features: [], subscription_months: 12 });
+        fetchData();
+      } else {
+        toast.error(res.data?.error);
+      }
+    } catch (err) { toast.error(err.response?.data?.error || 'Conversion failed'); }
+  };
+
+  const statusColors = {
+    new: 'bg-blue-50 text-blue-700',
+    contacted: 'bg-amber-50 text-amber-700',
+    demo_given: 'bg-purple-50 text-purple-700',
+    requirements_submitted: 'bg-indigo-50 text-indigo-700',
+    negotiating: 'bg-cyan-50 text-cyan-700',
+    converted: 'bg-green-50 text-green-700',
+    lost: 'bg-red-50 text-red-700'
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>;
   }
@@ -263,11 +314,186 @@ const SuperAdminDashboard = ({ token }) => {
         >
           <span className="flex items-center gap-1.5"><Activity size={14} /> Activity Log</span>
         </button>
+        <button
+          onClick={() => setActiveTab('enquiries')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'enquiries' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          data-testid="tab-enquiries"
+        >
+          <span className="flex items-center gap-1.5"><UserPlus size={14} /> Enquiries {prospectStats.new > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{prospectStats.new}</span>}</span>
+        </button>
       </div>
 
       {activeTab === 'activity' && (
         <div className="bg-white border border-slate-200 rounded-xl p-6">
           <ActivityLog token={token} role="super_admin" />
+        </div>
+      )}
+
+      {activeTab === 'enquiries' && (
+        <div data-testid="enquiries-section">
+          {/* Enquiry Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            {[
+              { label: 'Total', value: prospectStats.total || 0, color: 'text-slate-700' },
+              { label: 'New', value: prospectStats.new || 0, color: 'text-blue-600' },
+              { label: 'Contacted', value: prospectStats.contacted || 0, color: 'text-amber-600' },
+              { label: 'Demo Given', value: prospectStats.demo_given || 0, color: 'text-purple-600' },
+              { label: 'Converted', value: prospectStats.converted || 0, color: 'text-green-600' },
+            ].map(s => (
+              <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
+                <div className={`text-xl font-bold ${s.color}`}>{s.value}</div>
+                <div className="text-xs text-slate-500">{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Enquiry List */}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Customer Enquiries</h2>
+            <button onClick={fetchData} className="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5">
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
+
+          {prospects.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400">
+              <UserPlus size={32} className="mx-auto mb-3 opacity-50" />
+              <p className="font-medium">No enquiries yet</p>
+              <p className="text-sm">New prospect signups will appear here</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {prospects.map(p => (
+                <div key={p.prospect_id} className="bg-white border border-slate-200 rounded-xl p-5" data-testid={`prospect-${p.prospect_id}`}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Building2 size={15} className="text-slate-400" />
+                        <span className="font-semibold text-slate-900">{p.company_name}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColors[p.status] || 'bg-slate-100 text-slate-600'}`}>
+                          {(p.status || 'new').replace(/_/g, ' ').toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-slate-500">
+                        <span className="flex items-center gap-1"><Mail size={11} /> {p.email}</span>
+                        <span className="flex items-center gap-1"><Phone size={11} /> {p.phone}</span>
+                        <span>{p.prospect_id}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <select value={p.status}
+                        onChange={e => updateProspectStatus(p.prospect_id, e.target.value)}
+                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        data-testid={`prospect-status-${p.prospect_id}`}>
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="demo_given">Demo Given</option>
+                        <option value="negotiating">Negotiating</option>
+                        <option value="converted">Converted</option>
+                        <option value="lost">Lost</option>
+                      </select>
+                      {p.status !== 'converted' && p.status !== 'lost' && (
+                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', features: ALL_FEATURES.map(f => f.id), subscription_months: 12 }); }}
+                          className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
+                          data-testid={`convert-${p.prospect_id}`}>
+                          <ArrowRightCircle size={12} /> Convert
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400">Contact:</span>
+                      <span className="ml-1 text-slate-700">{p.contact_person}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Plan:</span>
+                      <span className="ml-1 text-slate-700 capitalize">{p.selected_plan || 'Not selected'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Demo:</span>
+                      <span className={`ml-1 ${p.demo_completed ? 'text-green-600' : p.demo_requested ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {p.demo_completed ? 'Completed' : p.demo_requested ? 'Requested' : 'Not requested'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Date:</span>
+                      <span className="ml-1 text-slate-700">{p.created_at ? new Date(p.created_at).toLocaleDateString('en-IN') : '—'}</span>
+                    </div>
+                  </div>
+                  {(p.requirements && p.requirements.length > 0) && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <p className="text-xs text-slate-400 mb-1">Required Features:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {p.requirements.map(r => (
+                          <span key={r} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">{r}</span>
+                        ))}
+                      </div>
+                      {p.requirement_notes && <p className="text-xs text-slate-500 mt-1 italic">"{p.requirement_notes}"</p>}
+                    </div>
+                  )}
+                  {p.message && (
+                    <p className="text-xs text-slate-500 mt-2 italic border-l-2 border-slate-200 pl-2">"{p.message}"</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Convert Modal */}
+          {convertModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="convert-modal">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-semibold text-slate-900">Convert Prospect to Admin</h3>
+                  <button onClick={() => setConvertModal(null)}><X size={20} className="text-slate-400" /></button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Password for new admin *</label>
+                    <input type="text" value={convertData.password}
+                      onChange={e => setConvertData(prev => ({ ...prev, password: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Min 6 characters" data-testid="convert-password" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Subscription (months)</label>
+                    <select value={convertData.subscription_months}
+                      onChange={e => setConvertData(prev => ({ ...prev, subscription_months: parseInt(e.target.value) }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      data-testid="convert-subscription">
+                      <option value={1}>1 month</option>
+                      <option value={3}>3 months</option>
+                      <option value={6}>6 months</option>
+                      <option value={12}>12 months</option>
+                      <option value={24}>24 months</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Features</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {ALL_FEATURES.map(f => (
+                        <label key={f.id} className="flex items-center gap-2 text-xs p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                          <input type="checkbox" checked={convertData.features.includes(f.id)}
+                            onChange={e => {
+                              setConvertData(prev => ({
+                                ...prev,
+                                features: e.target.checked ? [...prev.features, f.id] : prev.features.filter(x => x !== f.id)
+                              }));
+                            }} className="rounded" />
+                          <span>{f.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={convertProspect} data-testid="convert-confirm-btn"
+                    className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2">
+                    <ArrowRightCircle size={16} /> Convert to Admin Account
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

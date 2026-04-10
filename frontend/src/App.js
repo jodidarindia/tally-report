@@ -20,6 +20,8 @@ import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
 import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
+import LandingPage from './pages/LandingPage';
+import SignupPage from './pages/SignupPage';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
@@ -50,6 +52,7 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [publicView, setPublicView] = useState('landing'); // landing, login, signup
   const wsRef = useRef(null);
   const userMenuRef = useRef(null);
 
@@ -243,8 +246,33 @@ function App() {
     fyOptions.push(`${i}-${String(i + 1).slice(2)}`);
   }
 
-  // Login page
+  // Public pages (not authenticated)
   if (!isAuthenticated) {
+    if (publicView === 'signup') {
+      return (
+        <>
+          <Toaster position="top-right" richColors />
+          <SignupPage
+            onNavigateToLogin={() => setPublicView('login')}
+            onNavigateToLanding={() => setPublicView('landing')}
+          />
+        </>
+      );
+    }
+
+    if (publicView === 'landing') {
+      return (
+        <>
+          <Toaster position="top-right" richColors />
+          <LandingPage
+            onNavigateToLogin={() => setPublicView('login')}
+            onNavigateToSignup={() => setPublicView('signup')}
+          />
+        </>
+      );
+    }
+
+    // Login page (publicView === 'login' or fallback)
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <Toaster position="top-right" richColors />
@@ -281,6 +309,10 @@ function App() {
               {loginLoading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
+          <div className="flex items-center justify-between mt-4">
+            <button onClick={() => setPublicView('landing')} className="text-sm text-[#2563EB] hover:underline" data-testid="back-to-home">Back to Home</button>
+            <button onClick={() => setPublicView('signup')} className="text-sm text-[#2563EB] hover:underline" data-testid="go-to-signup">New Customer? Sign Up</button>
+          </div>
           <p className="text-center text-xs text-slate-400 mt-6">FLOWRA by Jodidar India</p>
         </div>
       </div>
