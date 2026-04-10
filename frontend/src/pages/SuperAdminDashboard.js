@@ -6,6 +6,7 @@ import {
   Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2
 } from 'lucide-react';
+import ActivityLog from './ActivityLog';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -33,6 +34,7 @@ const SuperAdminDashboard = ({ token }) => {
   const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [activeTab, setActiveTab] = useState('admins');
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -244,6 +246,31 @@ const SuperAdminDashboard = ({ token }) => {
         </div>
       </div>
 
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-1 mb-6 border-b border-slate-200">
+        <button
+          onClick={() => setActiveTab('admins')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'admins' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          data-testid="tab-admins"
+        >
+          <span className="flex items-center gap-1.5"><Users size={14} /> Admin Management</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('activity')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'activity' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          data-testid="tab-activity"
+        >
+          <span className="flex items-center gap-1.5"><Activity size={14} /> Activity Log</span>
+        </button>
+      </div>
+
+      {activeTab === 'activity' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6">
+          <ActivityLog token={token} role="super_admin" />
+        </div>
+      )}
+
+      {activeTab === 'admins' && <>
       {/* Admin Management Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-semibold text-slate-900">Admin Management</h2>
@@ -374,6 +401,7 @@ const SuperAdminDashboard = ({ token }) => {
           </div>
         )}
       </div>
+      </>}
 
       {/* Create Admin Modal */}
       {showCreateModal && (

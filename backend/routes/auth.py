@@ -11,18 +11,21 @@ from services.auth_service import (
     hash_password, verify_password, create_access_token,
     get_current_user, generate_sync_token, ALL_FEATURES
 )
+from services.audit_service import log_audit, get_client_ip
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.post("/auth/login")
-async def login(request: LoginRequest, response: Response):
+async def login(request: LoginRequest, raw_request: Request, response: Response):
     try:
         user = await db.users.find_one({"username": request.username}, {"_id": 0})
         if not user:
+            await log_audit("login_failed", request.username, ip_address=get_client_ip(raw_request), details="Invalid username")
             return APIResponse(success=False, error="Invalid username or password")
         if not verify_password(request.password, user["password_hash"]):
+            await log_audit("login_failed", request.username, tenant_id=user.get("tenant_id", ""), ip_address=get_client_ip(raw_request), details="Wrong password")
             return APIResponse(success=False, error="Invalid username or password")
         # Check if admin is active
         if user.get("role") == "admin" and not user.get("active", True):
@@ -50,6 +53,8 @@ async def login(request: LoginRequest, response: Response):
                 {"tenant_id": tenant_id, "role": "admin"}, {"_id": 0}
             )
             companies = admin_user.get("companies", []) if admin_user else []
+
+        await log_audit("login", user["username"], tenant_id=tenant_id or "", ip_address=get_client_ip(raw_request))
 
         return APIResponse(
             success=True,
@@ -120,6 +125,7 @@ async def change_password(req: ChangePasswordRequest, request: Request):
             {"username": user["username"]},
             {"$set": {"password_hash": hash_password(req.new_password)}}
         )
+        await log_audit("password_change", user["username"], tenant_id=user.get("tenant_id", ""), ip_address=get_client_ip(request))
         return APIResponse(success=True, message="Password changed successfully")
     except Exception as e:
         logger.error(f"Change password error: {e}")

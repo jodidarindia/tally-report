@@ -49,12 +49,16 @@ async def ai_query(request: Request):
         )
 
         ai_query_obj = AIQuery(
-            query_text=request.query,
+            query_text=query_text,
             response=result.get("raw_response"),
             report_data=result.get("report")
         )
         doc = ai_query_obj.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
+        if ctx and ctx.get("tenant_id"):
+            doc["tenant_id"] = ctx["tenant_id"]
+        if ctx and ctx.get("company_id"):
+            doc["company_id"] = ctx["company_id"]
         await db.ai_queries.insert_one(doc)
 
         return APIResponse(

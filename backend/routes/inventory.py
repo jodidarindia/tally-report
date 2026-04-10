@@ -196,9 +196,11 @@ async def get_purchase_orders(request: Request, status: Optional[str] = None, co
 
 
 @router.get("/inventory/sales-frequency")
-async def get_sales_frequency(start_date: Optional[str] = None, end_date: Optional[str] = None, fy: Optional[str] = None):
+async def get_sales_frequency(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         if start_date or end_date:

@@ -10,6 +10,7 @@ from services.auth_service import (
     hash_password, verify_password, get_current_user,
     generate_sync_token, ALL_FEATURES
 )
+from services.audit_service import log_audit, get_client_ip
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -122,6 +123,8 @@ async def create_admin(request: Request):
 
         sync_token = generate_sync_token(tenant_id)
 
+        await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
+
         return APIResponse(success=True, message=f"Admin '{username}' created", data={
             "username": username,
             "tenant_id": tenant_id,
@@ -151,6 +154,8 @@ async def update_admin_features(username: str, request: Request):
         if result.matched_count == 0:
             return APIResponse(success=False, error="Admin not found")
 
+        await log_audit("features_updated", sa["username"], target=username, details=f"Features: {', '.join(valid_features)}", ip_address=get_client_ip(request))
+
         return APIResponse(success=True, message=f"Features updated for '{username}'", data={
             "features": valid_features
         })
@@ -175,6 +180,7 @@ async def toggle_admin_active(username: str, request: Request):
             {"username": username},
             {"$set": {"active": new_status}}
         )
+        await log_audit("admin_toggled", sa["username"], target=username, details=f"{'Activated' if new_status else 'Deactivated'}", ip_address=get_client_ip(request))
         return APIResponse(success=True, message=f"Admin '{username}' {'activated' if new_status else 'deactivated'}", data={
             "active": new_status
         })
@@ -213,6 +219,8 @@ async def delete_admin(username: str, request: Request):
         # Delete the admin user
         await db.users.delete_one({"username": username})
 
+        await log_audit("admin_deleted", sa["username"], target=username, details=f"Tenant: {tenant_id}", ip_address=get_client_ip(request))
+
         return APIResponse(success=True, message=f"Admin '{username}' and all data deleted")
     except Exception as e:
         logger.error(f"Error deleting admin: {e}")
@@ -239,6 +247,7 @@ async def reset_admin_password(username: str, request: Request):
             {"username": username},
             {"$set": {"password_hash": hash_password(new_password)}}
         )
+        await log_audit("password_reset", sa["username"], target=username, details="Admin password reset by super admin", ip_address=get_client_ip(request))
         return APIResponse(success=True, message=f"Password reset for '{username}'")
     except Exception as e:
         logger.error(f"Error resetting password: {e}")

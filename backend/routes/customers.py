@@ -13,6 +13,8 @@ from services.auth_service import get_current_user
 from services.export_service import ExportService
 from services.tenant_context import get_tenant_context
 
+from services.audit_service import log_audit, get_client_ip
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -592,6 +594,9 @@ async def export_customer_ledger(request: Request):
         )
 
         filename = f"ledger_{customer_name.replace(' ', '_')}_{fy or 'all'}.pdf"
+        user = await get_current_user(request, db)
+        if user:
+            await log_audit("data_export", user.get("username", ""), tenant_id=ctx.get("tenant_id", "") if ctx else "", company_id=ctx.get("company_id", "") if ctx else "", target=f"Ledger PDF: {customer_name}", ip_address=get_client_ip(request))
         return StreamingResponse(
             output,
             media_type="application/pdf",

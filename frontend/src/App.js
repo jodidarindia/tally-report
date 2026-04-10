@@ -18,6 +18,7 @@ import TallySetup from './pages/TallySetup';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
+import ActivityLog from './pages/ActivityLog';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
@@ -217,9 +218,12 @@ function App() {
     if (!user) return [];
     if (user.role === 'super_admin') return [];
     const features = user.features || [];
-    return features
+    const items = features
       .map(f => FEATURE_NAV_MAP[f])
       .filter(Boolean);
+    // Activity log always visible for admin
+    items.push({ id: 'activity', label: 'Activity', icon: History });
+    return items;
   }, [user]);
 
   // Generate FY options
@@ -370,6 +374,7 @@ function App() {
       case 'salesman': return renderFeatureGated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} />);
       case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
+      case 'activity': return <ActivityLog token={token} role={user?.role} />;
       default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
     }
   };
