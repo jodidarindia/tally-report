@@ -9,84 +9,64 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **Desktop Agent**: Python script syncing Tally Prime data via XML HTTP requests (v7.0 login-based auth)
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
 
+## Security Architecture
+- **Auth**: bcrypt password hashing, HS256 JWT (secret from .env, 256-bit random key)
+- **Tenant Isolation**: Every DB query includes `tenant_id` + `company_id` via `_build_query()` / `tenant_context.py`
+- **Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
+- **Rate Limiting**: 20 login attempts per 60 seconds
+- **Desktop Agent**: Login-based auth with token auto-refresh, session file (not plain .env secrets)
+
 ## Multi-Tenant Architecture
-- **Super Admin**: Manages all admin tenants, feature gating, password resets, subscription management
-- **Admin**: Owns a tenant with isolated data. Created with email-based username.
-- **Employee**: Belongs to an admin's tenant, inherits features
-- **Data Isolation**: All DB queries filter by `tenant_id` + `company_id`
-- **Feature Gating**: 9 toggleable features per admin tenant (sync_history + setup ON by default)
-- **Desktop Agent**: Login-based auth (email + password) → auto-gets `tenant_id` + `sync_token`
-- **Multi-Company**: Each admin can have multiple Tally companies. CompanySelector modal on login, X-Company-ID header on all requests.
+- **Super Admin**: Manages admin tenants, feature gating, password resets, subscriptions
+- **Admin**: Email-based username, owns tenant with isolated data
+- **Employee**: Belongs to admin's tenant, inherits features
+- **Data Isolation**: `tenant_id` + `company_id` required on ALL DB operations (reads, writes, deletes)
+- **Feature Gating**: 9 toggleable features (sync_history + setup ON by default)
+- **Multi-Company**: CompanySelector on login, X-Company-ID header on all API calls, per-company sync info shown
 
 ## What's Been Implemented
 
 ### Core Features (Complete)
-- JWT Authentication with super_admin/admin/employee roles
-- Multi-FY support with FY selector in navbar
-- Dashboard with stat cards, overdue digest, top customers, recent transactions
-- Inventory page with sortable columns, multi-select stock group filter, search
-- Sales page with sortable columns, party/month filters, chart, export (PDF/Excel)
-- CRM Outstanding tab with sortable columns, Opening Balance, aging, Ledger PDF export
-- CRM Payment Behavior (FY-independent): summary bar, credit notes, journal credits
-- AI Reports (GPT-5.2 powered) with filters and sample queries
-- AI Purchase Order generation
-- Inventory Analytics: Movement Analysis, Below Cost Sales, Sales Frequency
-- Sync History page
-- Tally-format PDF Ledger export with opening balance, voucher numbers, running balance
-- WebSocket live sync status
-- Copyright: Jodidar India footer
+- JWT Auth with super_admin/admin/employee roles
+- Multi-FY support, Dashboard, Inventory, Sales, CRM, AI Reports, Sync History
+- PDF Ledger export, WebSocket live sync, AI Purchase Orders (GPT-5.2)
 
 ### Multi-Tenant & Security (Apr 2026)
-- Super Admin dashboard with admin management, feature toggles, stats, subscription management
-- Feature gating (9 features toggleable per admin tenant)
-- Multi-tenant data isolation (tenant_id + company_id on all queries)
+- Super Admin dashboard with admin management, feature toggles, stats, subscriptions
 - Role-Based Access Control (RBAC) in frontend routing
-- Email-based username for new admin accounts (prevents duplicates)
-- Password change (self), password reset (admin→employee, super_admin→admin)
-- Security headers, rate limiting on login
+- Email-based username, password change/reset
+- Security headers, rate limiting
 
 ### Multi-Company Data Switcher (Apr 10 2026) — VERIFIED
-- CompanySelector modal appears on login when admin has multiple companies
-- Clicking company name in navbar reopens CompanySelector for switching
-- X-Company-ID header sent with every API request (set in axios defaults)
-- Backend reads X-Company-ID header in tenant_context.py
-- Data isolation verified: different inventory/sales/CRM/dashboard data per company
-- Selected company persists in localStorage (survives page refresh)
-- Null-safety fix in Inventory.js for item_name
-- Data migration script: backfilled company_id on legacy data, seeded Demo Trading Co test company
+- CompanySelector with real-time sync info (last sync time, item count, voucher count per company)
+- X-Company-ID header on every API request
+- Data isolation verified across all pages
 
-### Super Admin Enhancements (Apr 10 2026)
-- FLOWRA logo on login page and all navbars
-- Admin cards show subscription details: joining date, plan duration, active/expired status
-- Edit Admin modal (pencil icon) for changing name, features, subscription period
-- Subscription period dropdown (1/3/6/12/24/36 months) on create and edit
-- Default features: sync_history + setup pre-checked
-- Page auto-refresh after activate/deactivate toggle
-- Connection Status card on Setup page
+### Security Audit (Apr 10 2026) — 8 ROUTES FIXED
+Routes that had missing tenant/company isolation:
+1. `GET /api/sales/vouchers/{id}` — now includes tenant/company filter
+2. `GET /api/salesman/master` — now requires tenant context
+3. `GET /api/salesman/performance` — salesman_master filtered by tenant
+4. `GET /api/salesman/performance-detailed` — requires tenant context
+5. `POST /api/salesman/master` — includes tenant_id/company_id on insert
+6. `DELETE /api/salesman/master/{name}` — requires tenant context on delete
+7. `POST /api/customers/targets/set` — includes tenant_id/company_id
+8. `PATCH /api/customers/followups/{id}` — includes tenant filter
+Cross-tenant isolation verified (test_admin cannot see admin's data).
 
-### Desktop Sync Agent v7.0 (Apr 2026)
-- Login-based auth: agent prompts email + password, authenticates with FLOWRA backend
-- Auto-gets tenant_id, sync_token, and companies from login response
-- Saved session file (flowra_auth.json) — auto-loads on restart, re-login if expired
-- Incremental sync: MD5 hash comparison skips unchanged data types
-- Multi-company detection and interactive company selection
-- --logout flag to clear saved credentials
+### Desktop Sync Agent v7.0
+- Login-based auth, incremental sync with hash detection, multi-company support
 
 ## Key API Endpoints
-- `POST /api/auth/login` - JWT login (returns tenant_id, companies, features)
-- `GET /api/auth/me` - Current user with companies
-- `GET /api/sync/connection-status` - Desktop agent sync status for Setup page
-- `POST /api/super-admin/admins` - Create admin (requires email, includes subscription_months)
-- `PUT /api/super-admin/admins/{username}/features` - Toggle features
-- `PUT /api/super-admin/admins/{username}/subscription` - Update name, subscription period
-- `GET /api/inventory/items` - Inventory (tenant + company isolated)
-- `GET /api/sales/vouchers` - Sales (tenant + company isolated)
-- `GET /api/customers/outstanding` - Outstanding (tenant + company isolated)
-- `POST /api/ai/advanced-query` - AI report generation
+- Auth: `/api/auth/login`, `/api/auth/me`, `/api/auth/sync-token`, `/api/auth/change-password`, `/api/auth/reset-password`
+- Super Admin: `/api/super-admin/stats`, `/api/super-admin/admins`, `PUT .../features`, `PUT .../subscription`, `PUT .../toggle-active`
+- Sync: `/api/sync/companies-status`, `/api/sync/connection-status`, `/api/sync/status`
+- Data: `/api/inventory/items`, `/api/sales/vouchers`, `/api/customers/outstanding`
+- AI: `/api/ai/advanced-query`
 
 ## Test Data
 - Admin (admin/admin123): 2 companies
-  - "ASA AUTOTECH INDIA PRIVATE LIMITED": 202 inv, 1255 sales, 38+ customers
+  - "ASA AUTOTECH INDIA PRIVATE LIMITED": 202 inv, 1258 sales, 38+ customers
   - "Demo Trading Co": 3 inv, 2 sales, 2 customers
 
 ## Pending Tasks
