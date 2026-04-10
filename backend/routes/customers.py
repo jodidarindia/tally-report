@@ -810,6 +810,34 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             else:
                 data["relationship_months"] = 0
 
+            # Build monthly payment timeline for the detail dropdown
+            monthly_map = {}
+            for inv in data.get("invoices", []):
+                m = inv.get("date", "")[:7]  # YYYY-MM
+                if m:
+                    monthly_map.setdefault(m, {"invoiced": 0, "month": m})
+                    monthly_map[m]["invoiced"] += inv["amount"]
+            for rd in customer_receipt_dates.get(party, []):
+                m = rd[:7] if rd else ""
+                if m:
+                    monthly_map.setdefault(m, {"invoiced": 0, "month": m})
+                    # Distribute receipts proportionally — simple approach: total receipt / months
+            # Add receipt amounts to monthly timeline
+            if receipt_paid > 0 and monthly_map:
+                receipt_months = sorted(set(rd[:7] for rd in customer_receipt_dates.get(party, []) if rd))
+                per_month_receipt = receipt_paid / len(receipt_months) if receipt_months else 0
+                for rm in receipt_months:
+                    if rm in monthly_map:
+                        monthly_map[rm]["received"] = monthly_map[rm].get("received", 0) + per_month_receipt
+                    else:
+                        monthly_map[rm] = {"invoiced": 0, "received": per_month_receipt, "month": rm}
+
+            data["monthly_timeline"] = sorted(monthly_map.values(), key=lambda x: x["month"])[-12:]  # Last 12 months
+
+            # Top invoices (largest, most overdue)
+            top_invoices = sorted(data.get("invoices", []), key=lambda i: i.get("days_old", 0), reverse=True)[:5]
+            data["top_overdue_invoices"] = top_invoices
+
             del data["invoices"]
 
         customers = list(behavior_map.values())

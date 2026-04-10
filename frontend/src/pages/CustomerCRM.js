@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X, Phone, MapPin, Clock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 
@@ -637,95 +637,251 @@ const CustomerCRM = ({ user, selectedFY }) => {
 
           {/* Payment Behavior */}
           {activeTab === 'behavior' && (
-            <div>
-              {/* Summary Bar */}
-              {paymentBehavior.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 text-center">
-                    <div className="text-xs text-slate-500 mb-1">Total Customers</div>
-                    <div className="text-xl font-bold text-slate-900">{paymentBehavior.length}</div>
-                  </div>
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
-                    <div className="text-xs text-green-700 mb-1">Excellent</div>
-                    <div className="text-xl font-bold text-green-700">{paymentBehavior.filter(c => c.payment_pattern === 'excellent').length}</div>
-                  </div>
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
-                    <div className="text-xs text-blue-700 mb-1">Regular</div>
-                    <div className="text-xl font-bold text-blue-700">{paymentBehavior.filter(c => c.payment_pattern === 'regular').length}</div>
-                  </div>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center">
-                    <div className="text-xs text-yellow-700 mb-1">Irregular</div>
-                    <div className="text-xl font-bold text-yellow-700">{paymentBehavior.filter(c => c.payment_pattern === 'irregular').length}</div>
-                  </div>
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
-                    <div className="text-xs text-red-700 mb-1">Risky</div>
-                    <div className="text-xl font-bold text-red-700">{paymentBehavior.filter(c => c.payment_pattern === 'risky').length}</div>
-                  </div>
-                </div>
-              )}
-              <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated across all financial years for accurate historical analysis.</p>
-              
-              {/* Table View */}
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden mb-6">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="payment-behavior-table">
-                    <thead>
-                      <tr>
-                        <th>Customer</th>
-                        <th className="numeric">Total Sales</th>
-                        <th className="numeric">Receipts</th>
-                        <th className="numeric">Credit Notes</th>
-                        <th className="numeric">Outstanding</th>
-                        <th className="numeric">Pay Ratio</th>
-                        <th className="numeric">Avg Delay</th>
-                        <th className="numeric">Score</th>
-                        <th>Pattern</th>
-                        <th className="numeric">Months</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paymentBehavior.map((customer, idx) => (
-                        <tr key={idx} data-testid={`behavior-row-${idx}`}>
-                          <td className="font-medium text-slate-900">
-                            <div>{customer.customer_name}</div>
-                            <div className="text-xs text-slate-400">{customer.total_transactions} txns</div>
-                          </td>
-                          <td className="numeric">Rs.{(customer.total_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                          <td className="numeric text-emerald-600">Rs.{(customer.paid_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                          <td className="numeric text-purple-600">Rs.{(customer.credit_note_total || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                          <td className="numeric text-red-600 font-medium">Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
-                          <td className="numeric">
-                            <div className="flex items-center gap-1">
-                              <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                <div className={`h-full ${customer.payment_ratio >= 80 ? 'bg-green-500' : customer.payment_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                                  style={{ width: `${Math.min(customer.payment_ratio, 100)}%` }} />
-                              </div>
-                              <span className="text-xs">{customer.payment_ratio}%</span>
-                            </div>
-                          </td>
-                          <td className="numeric">{customer.average_payment_delay || 0}d</td>
-                          <td className="numeric font-semibold text-[#2563EB]">{(customer.credit_score || 0).toFixed(0)}</td>
-                          <td>
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              customer.payment_pattern === 'excellent' ? 'bg-green-100 text-green-700' :
-                              customer.payment_pattern === 'regular' ? 'bg-blue-100 text-blue-700' :
-                              customer.payment_pattern === 'irregular' ? 'bg-yellow-100 text-yellow-700' :
-                              'bg-red-100 text-red-700'
-                            }`}>
-                              {customer.payment_pattern}
-                            </span>
-                          </td>
-                          <td className="numeric text-xs text-slate-500">{customer.relationship_months || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <PaymentBehaviorTab paymentBehavior={paymentBehavior} />
           )}
         </>
       )}
+    </div>
+  );
+};
+
+const PATTERN_STYLES = {
+  excellent: 'bg-green-100 text-green-700',
+  regular: 'bg-blue-100 text-blue-700',
+  irregular: 'bg-yellow-100 text-yellow-700',
+  risky: 'bg-red-100 text-red-700',
+  no_transactions: 'bg-slate-100 text-slate-500',
+};
+
+const fmtRs = (v) => `Rs.${(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
+const PaymentBehaviorTab = ({ paymentBehavior }) => {
+  const [expanded, setExpanded] = useState(null);
+  const [filterPattern, setFilterPattern] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('credit_score');
+  const [sortDir, setSortDir] = useState('desc');
+
+  const toggleSort = (field) => {
+    if (sortBy === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(field); setSortDir('desc'); }
+  };
+
+  const filtered = paymentBehavior
+    .filter(c => filterPattern === 'all' || c.payment_pattern === filterPattern)
+    .filter(c => !searchTerm || (c.customer_name || '').toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a, b) => {
+      const av = a[sortBy] ?? 0, bv = b[sortBy] ?? 0;
+      return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+    });
+
+  const summary = {
+    total: paymentBehavior.length,
+    excellent: paymentBehavior.filter(c => c.payment_pattern === 'excellent').length,
+    regular: paymentBehavior.filter(c => c.payment_pattern === 'regular').length,
+    irregular: paymentBehavior.filter(c => c.payment_pattern === 'irregular').length,
+    risky: paymentBehavior.filter(c => c.payment_pattern === 'risky').length,
+    avgScore: paymentBehavior.length > 0 ? (paymentBehavior.reduce((s, c) => s + (c.credit_score || 0), 0) / paymentBehavior.length).toFixed(0) : 0,
+  };
+
+  return (
+    <div data-testid="payment-behavior-section">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+        {[
+          { label: 'Total', count: summary.total, cls: 'bg-white border-slate-200', textCls: 'text-slate-900' },
+          { label: 'Excellent', count: summary.excellent, cls: 'bg-green-50 border-green-200', textCls: 'text-green-700' },
+          { label: 'Regular', count: summary.regular, cls: 'bg-blue-50 border-blue-200', textCls: 'text-blue-700' },
+          { label: 'Irregular', count: summary.irregular, cls: 'bg-yellow-50 border-yellow-200', textCls: 'text-yellow-700' },
+          { label: 'Risky', count: summary.risky, cls: 'bg-red-50 border-red-200', textCls: 'text-red-700' },
+          { label: 'Avg Score', count: summary.avgScore, cls: 'bg-indigo-50 border-indigo-200', textCls: 'text-indigo-700' },
+        ].map(({ label, count, cls, textCls }) => (
+          <button key={label} onClick={() => setFilterPattern(label === 'Total' || label === 'Avg Score' ? 'all' : label.toLowerCase())}
+            className={`border rounded-xl p-3 text-center transition-all ${cls} ${filterPattern === label.toLowerCase() ? 'ring-2 ring-blue-300' : ''}`}
+            data-testid={`behavior-summary-${label.toLowerCase()}`}>
+            <div className={`text-xs ${textCls} mb-0.5`}>{label}</div>
+            <div className={`text-lg font-bold ${textCls}`}>{count}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Search + Filter */}
+      <div className="flex items-center gap-3 mb-4">
+        <input
+          type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+          placeholder="Search customer..."
+          className="flex-1 px-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+          data-testid="behavior-search"
+        />
+        {filterPattern !== 'all' && (
+          <button onClick={() => setFilterPattern('all')} className="px-3 py-2 text-xs bg-slate-100 rounded-lg hover:bg-slate-200 flex items-center gap-1">
+            <X size={12} /> Clear Filter
+          </button>
+        )}
+        <span className="text-xs text-slate-400">{filtered.length} customers</span>
+      </div>
+
+      <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated across all financial years. Click a row for detailed breakdown.</p>
+
+      {/* Table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="data-table" data-testid="payment-behavior-table">
+            <thead>
+              <tr>
+                <th className="w-6"></th>
+                <th className="cursor-pointer" onClick={() => toggleSort('customer_name')}>Customer {sortBy === 'customer_name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('total_amount')}>Sales {sortBy === 'total_amount' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('paid_amount')}>Receipts</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('outstanding_amount')}>Outstanding {sortBy === 'outstanding_amount' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('payment_ratio')}>Pay Ratio</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('average_payment_delay')}>Avg Delay</th>
+                <th className="numeric cursor-pointer" onClick={() => toggleSort('credit_score')}>Score {sortBy === 'credit_score' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
+                <th>Pattern</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c, idx) => (
+                <React.Fragment key={idx}>
+                  <tr className="cursor-pointer hover:bg-blue-50/30" onClick={() => setExpanded(expanded === idx ? null : idx)} data-testid={`behavior-row-${idx}`}>
+                    <td className="w-6 text-slate-400">{expanded === idx ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
+                    <td className="font-medium text-slate-900">
+                      <div>{c.customer_name}</div>
+                      <div className="text-xs text-slate-400">{c.total_transactions} txns &middot; {c.relationship_months || 0}mo</div>
+                    </td>
+                    <td className="numeric">{fmtRs(c.total_amount)}</td>
+                    <td className="numeric text-emerald-600">{fmtRs(c.paid_amount)}</td>
+                    <td className="numeric text-red-600 font-medium">{fmtRs(c.outstanding_amount)}</td>
+                    <td className="numeric">
+                      <div className="flex items-center gap-1">
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div className={`h-full ${c.payment_ratio >= 80 ? 'bg-green-500' : c.payment_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                            style={{ width: `${Math.min(c.payment_ratio, 100)}%` }} />
+                        </div>
+                        <span className="text-xs">{c.payment_ratio}%</span>
+                      </div>
+                    </td>
+                    <td className="numeric">{c.average_payment_delay || 0}d</td>
+                    <td className="numeric font-semibold text-[#2563EB]">{(c.credit_score || 0).toFixed(0)}</td>
+                    <td><span className={`px-2 py-1 rounded-full text-xs font-medium ${PATTERN_STYLES[c.payment_pattern] || 'bg-slate-100 text-slate-500'}`}>{c.payment_pattern}</span></td>
+                  </tr>
+                  {expanded === idx && (
+                    <tr>
+                      <td colSpan="9" className="p-0">
+                        <CustomerPaymentDetail customer={c} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CustomerPaymentDetail = ({ customer: c }) => {
+  const timeline = c.monthly_timeline || [];
+  const topOverdue = c.top_overdue_invoices || [];
+  const totalCredits = (c.paid_amount || 0) + (c.credit_note_total || 0) + (c.journal_credit || 0);
+
+  return (
+    <div className="bg-slate-50 border-t border-slate-200 p-5" data-testid={`behavior-detail-${c.customer_name}`}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left: Financial Breakdown */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-semibold text-slate-700">Financial Breakdown</h4>
+          <div className="space-y-2">
+            {[
+              { label: 'Total Sales', value: c.total_amount, color: 'text-slate-800' },
+              { label: 'Receipts (Cash/Bank)', value: c.paid_amount, color: 'text-emerald-600' },
+              { label: 'Credit Notes', value: c.credit_note_total, color: 'text-purple-600' },
+              { label: 'Journal Credits', value: c.journal_credit, color: 'text-indigo-600' },
+              { label: 'Total Credits', value: totalCredits, color: 'text-green-700', bold: true },
+              { label: 'Outstanding', value: c.outstanding_amount, color: 'text-red-600', bold: true },
+            ].map(({ label, value, color, bold }) => (
+              <div key={label} className="flex items-center justify-between">
+                <span className={`text-xs ${bold ? 'font-semibold' : ''} text-slate-600`}>{label}</span>
+                <span className={`text-sm ${bold ? 'font-bold' : 'font-medium'} ${color}`}>{fmtRs(value)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-slate-200 pt-3 space-y-1.5">
+            {c.phone && <div className="flex items-center gap-2 text-xs text-slate-500"><Phone size={11} /> {c.phone}</div>}
+            {c.state && <div className="flex items-center gap-2 text-xs text-slate-500"><MapPin size={11} /> {c.state}</div>}
+            {c.first_transaction && <div className="flex items-center gap-2 text-xs text-slate-500"><Clock size={11} /> Since {c.first_transaction}</div>}
+          </div>
+          {/* Score Gauge */}
+          <div className="p-3 rounded-lg bg-white border border-slate-200">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-medium text-slate-600">Credit Score</span>
+              <span className={`text-lg font-bold ${c.credit_score >= 80 ? 'text-green-600' : c.credit_score >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{(c.credit_score || 0).toFixed(0)}/100</span>
+            </div>
+            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${c.credit_score >= 80 ? 'bg-green-500' : c.credit_score >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                style={{ width: `${Math.min(c.credit_score || 0, 100)}%` }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Monthly Payment Timeline Chart */}
+        <div>
+          <h4 className="text-sm font-semibold text-slate-700 mb-3">Monthly Payment Timeline</h4>
+          {timeline.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={timeline}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} tickFormatter={m => m.slice(5)} />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                <Tooltip formatter={(v) => fmtRs(v)} labelFormatter={l => `Month: ${l}`} />
+                <Bar dataKey="invoiced" fill="#64748b" name="Invoiced" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="received" fill="#22c55e" name="Received" radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[200px] flex items-center justify-center text-sm text-slate-400">No monthly data available</div>
+          )}
+        </div>
+
+        {/* Right: Top Overdue Invoices & Payment Gap */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-semibold text-slate-700">Payment Gap Analysis</h4>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-3 rounded-lg bg-white border border-slate-200">
+              <div className="text-xs text-slate-500">Avg Delay</div>
+              <div className={`text-lg font-bold ${(c.average_payment_delay || 0) > 30 ? 'text-red-600' : 'text-slate-800'}`}>{c.average_payment_delay || 0} days</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white border border-slate-200">
+              <div className="text-xs text-slate-500">Oldest Invoice</div>
+              <div className={`text-lg font-bold ${(c.oldest_invoice_days || 0) > 90 ? 'text-red-600' : 'text-slate-800'}`}>{c.oldest_invoice_days || 0}d</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white border border-slate-200">
+              <div className="text-xs text-slate-500">Receipt Count</div>
+              <div className="text-lg font-bold text-slate-800">{c.receipt_count || 0}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white border border-slate-200">
+              <div className="text-xs text-slate-500">Avg Transaction</div>
+              <div className="text-lg font-bold text-slate-800">{fmtRs(c.average_transaction)}</div>
+            </div>
+          </div>
+          {topOverdue.length > 0 && (
+            <>
+              <h4 className="text-xs font-semibold text-slate-600 mt-2">Most Overdue Invoices</h4>
+              <div className="space-y-1.5">
+                {topOverdue.map((inv, i) => (
+                  <div key={i} className="flex items-center justify-between p-2 rounded bg-white border border-slate-100 text-xs">
+                    <span className="text-slate-500">{inv.date || 'N/A'}</span>
+                    <span className="font-medium text-slate-800">{fmtRs(inv.amount)}</span>
+                    <span className={`font-medium ${inv.days_old > 90 ? 'text-red-600' : inv.days_old > 30 ? 'text-yellow-600' : 'text-green-600'}`}>{inv.days_old}d old</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
