@@ -16,6 +16,7 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **Data Isolation**: All DB queries filter by `tenant_id` + `company_id`
 - **Feature Gating**: 9 toggleable features per admin tenant (sync_history + setup ON by default)
 - **Desktop Agent**: Login-based auth (email + password) → auto-gets `tenant_id` + `sync_token`
+- **Multi-Company**: Each admin can have multiple Tally companies. CompanySelector modal on login, X-Company-ID header on all requests.
 
 ## What's Been Implemented
 
@@ -36,7 +37,7 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - Copyright: Jodidar India footer
 
 ### Multi-Tenant & Security (Apr 2026)
-- Super Admin dashboard with admin management, feature toggles, stats
+- Super Admin dashboard with admin management, feature toggles, stats, subscription management
 - Feature gating (9 features toggleable per admin tenant)
 - Multi-tenant data isolation (tenant_id + company_id on all queries)
 - Role-Based Access Control (RBAC) in frontend routing
@@ -44,15 +45,24 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - Password change (self), password reset (admin→employee, super_admin→admin)
 - Security headers, rate limiting on login
 
+### Multi-Company Data Switcher (Apr 10 2026) — VERIFIED
+- CompanySelector modal appears on login when admin has multiple companies
+- Clicking company name in navbar reopens CompanySelector for switching
+- X-Company-ID header sent with every API request (set in axios defaults)
+- Backend reads X-Company-ID header in tenant_context.py
+- Data isolation verified: different inventory/sales/CRM/dashboard data per company
+- Selected company persists in localStorage (survives page refresh)
+- Null-safety fix in Inventory.js for item_name
+- Data migration script: backfilled company_id on legacy data, seeded Demo Trading Co test company
+
 ### Super Admin Enhancements (Apr 10 2026)
 - FLOWRA logo on login page and all navbars
-- Admin cards show subscription details: joining date, plan duration (months), active/expired status
+- Admin cards show subscription details: joining date, plan duration, active/expired status
 - Edit Admin modal (pencil icon) for changing name, features, subscription period
 - Subscription period dropdown (1/3/6/12/24/36 months) on create and edit
-- sync_history and setup features default to ON in create admin form
-- Page refreshes (stats + admin list) after activate/deactivate toggle
-- ProfileModal backdrop click-to-close fix
-- Connection Status card on Setup page: last sync time, agent version, linked companies, synced data counts
+- Default features: sync_history + setup pre-checked
+- Page auto-refresh after activate/deactivate toggle
+- Connection Status card on Setup page
 
 ### Desktop Sync Agent v7.0 (Apr 2026)
 - Login-based auth: agent prompts email + password, authenticates with FLOWRA backend
@@ -65,28 +75,23 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 ## Key API Endpoints
 - `POST /api/auth/login` - JWT login (returns tenant_id, companies, features)
 - `GET /api/auth/me` - Current user with companies
-- `GET /api/auth/sync-token` - Desktop agent sync token
-- `POST /api/auth/change-password` - Change own password
-- `POST /api/auth/reset-password` - Reset employee/admin password
-- `GET /api/super-admin/stats` - Platform stats
-- `GET /api/super-admin/admins` - List all admin tenants (includes subscription data)
+- `GET /api/sync/connection-status` - Desktop agent sync status for Setup page
 - `POST /api/super-admin/admins` - Create admin (requires email, includes subscription_months)
 - `PUT /api/super-admin/admins/{username}/features` - Toggle features
 - `PUT /api/super-admin/admins/{username}/subscription` - Update name, subscription period
-- `PUT /api/super-admin/admins/{username}/toggle-active` - Activate/deactivate admin
-- `GET /api/sync/connection-status` - Desktop agent sync status for Setup page
-- `GET /api/inventory/items` - Inventory (tenant-isolated)
-- `GET /api/sales/vouchers` - Sales (tenant-isolated)
-- `GET /api/customers/outstanding` - Outstanding (tenant-isolated)
+- `GET /api/inventory/items` - Inventory (tenant + company isolated)
+- `GET /api/sales/vouchers` - Sales (tenant + company isolated)
+- `GET /api/customers/outstanding` - Outstanding (tenant + company isolated)
 - `POST /api/ai/advanced-query` - AI report generation
 
-## DB Schema Updates
-- `users` collection: added `subscription_months` (int), `subscription_start` (ISO datetime)
+## Test Data
+- Admin (admin/admin123): 2 companies
+  - "ASA AUTOTECH INDIA PRIVATE LIMITED": 202 inv, 1255 sales, 38+ customers
+  - "Demo Trading Co": 3 inv, 2 sales, 2 customers
 
 ## Pending Tasks
 ### P1
 - Compile Desktop Agent into one-click installable .exe with UI/CLI
-- Verify Multi-company Data Switcher on Frontend (CompanySelector.js)
 
 ### P2
 - Automated payment follow-up reminders via email/WhatsApp
