@@ -5,16 +5,16 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 
 ## Architecture
 - **Frontend**: React + Shadcn UI
-- **Backend**: FastAPI + Motor (MongoDB) + PyJWT + WebSockets
+- **Backend**: FastAPI + Motor (MongoDB) + PyJWT
 - **Desktop Agent**: Python script syncing Tally Prime data via XML HTTP requests (v7.0 login-based auth)
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
 
 ## Multi-Tenant Architecture
-- **Super Admin**: Manages all admin tenants, feature gating, password resets
+- **Super Admin**: Manages all admin tenants, feature gating, password resets, subscription management
 - **Admin**: Owns a tenant with isolated data. Created with email-based username.
 - **Employee**: Belongs to an admin's tenant, inherits features
 - **Data Isolation**: All DB queries filter by `tenant_id` + `company_id`
-- **Feature Gating**: 9 toggleable features per admin tenant
+- **Feature Gating**: 9 toggleable features per admin tenant (sync_history + setup ON by default)
 - **Desktop Agent**: Login-based auth (email + password) → auto-gets `tenant_id` + `sync_token`
 
 ## What's Been Implemented
@@ -42,9 +42,17 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - Role-Based Access Control (RBAC) in frontend routing
 - Email-based username for new admin accounts (prevents duplicates)
 - Password change (self), password reset (admin→employee, super_admin→admin)
-- Security headers (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection)
-- Rate limiting on login (20 attempts per 60 seconds)
-- ProfileModal with backdrop close and close button
+- Security headers, rate limiting on login
+
+### Super Admin Enhancements (Apr 10 2026)
+- FLOWRA logo on login page and all navbars
+- Admin cards show subscription details: joining date, plan duration (months), active/expired status
+- Edit Admin modal (pencil icon) for changing name, features, subscription period
+- Subscription period dropdown (1/3/6/12/24/36 months) on create and edit
+- sync_history and setup features default to ON in create admin form
+- Page refreshes (stats + admin list) after activate/deactivate toggle
+- ProfileModal backdrop click-to-close fix
+- Connection Status card on Setup page: last sync time, agent version, linked companies, synced data counts
 
 ### Desktop Sync Agent v7.0 (Apr 2026)
 - Login-based auth: agent prompts email + password, authenticates with FLOWRA backend
@@ -52,9 +60,6 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - Saved session file (flowra_auth.json) — auto-loads on restart, re-login if expired
 - Incremental sync: MD5 hash comparison skips unchanged data types
 - Multi-company detection and interactive company selection
-- Lightweight Collection requests (1-5 sec each, no Tally freeze)
-- XML sanitization: handles control chars, numeric refs, unescaped &
-- Local cache with company-specific subdirectories
 - --logout flag to clear saved credentials
 
 ## Key API Endpoints
@@ -62,19 +67,21 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - `GET /api/auth/me` - Current user with companies
 - `GET /api/auth/sync-token` - Desktop agent sync token
 - `POST /api/auth/change-password` - Change own password
-- `POST /api/auth/reset-password` - Reset employee password (admin) or admin password (super_admin)
+- `POST /api/auth/reset-password` - Reset employee/admin password
 - `GET /api/super-admin/stats` - Platform stats
-- `GET /api/super-admin/admins` - List all admin tenants
-- `POST /api/super-admin/admins` - Create admin (requires email username)
+- `GET /api/super-admin/admins` - List all admin tenants (includes subscription data)
+- `POST /api/super-admin/admins` - Create admin (requires email, includes subscription_months)
 - `PUT /api/super-admin/admins/{username}/features` - Toggle features
+- `PUT /api/super-admin/admins/{username}/subscription` - Update name, subscription period
+- `PUT /api/super-admin/admins/{username}/toggle-active` - Activate/deactivate admin
+- `GET /api/sync/connection-status` - Desktop agent sync status for Setup page
 - `GET /api/inventory/items` - Inventory (tenant-isolated)
 - `GET /api/sales/vouchers` - Sales (tenant-isolated)
 - `GET /api/customers/outstanding` - Outstanding (tenant-isolated)
 - `POST /api/ai/advanced-query` - AI report generation
 
-## Known Limitations
-- Inventory valuation shows Rs.0 (Tally sync doesn't populate qty/price fields)
-- WebSocket reconnection on initial page load (auto-reconnects)
+## DB Schema Updates
+- `users` collection: added `subscription_months` (int), `subscription_start` (ISO datetime)
 
 ## Pending Tasks
 ### P1
@@ -84,7 +91,6 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 ### P2
 - Automated payment follow-up reminders via email/WhatsApp
 - Customer Payment Behaviour detailed dropdown analytics
-- Desktop Agent incremental sync — per-month hash tracking (currently per-data-type)
 
 ## Tech Stack
 - React 18, Tailwind CSS, Shadcn UI, Recharts, Lucide React
