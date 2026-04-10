@@ -139,32 +139,41 @@ const InventoryAnalytics = ({ selectedFY }) => {
           {/* Movement Analysis */}
           {activeTab === 'movement' && (
             <div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
                   <div className="flex items-center gap-3 mb-2">
-                    <TrendingUp className="text-green-600" size={24} />
-                    <span className="text-sm font-medium text-slate-600">Fast Moving</span>
+                    <TrendingUp className="text-green-600" size={22} />
+                    <span className="text-xs font-medium text-slate-600">Fast Moving</span>
                   </div>
-                  <div className="text-3xl font-semibold text-slate-900">
+                  <div className="text-2xl font-semibold text-slate-900" data-testid="fast-moving-count">
                     {movementData.filter(m => m.classification === 'fast-moving').length}
                   </div>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
                   <div className="flex items-center gap-3 mb-2">
-                    <TrendingDown className="text-yellow-600" size={24} />
-                    <span className="text-sm font-medium text-slate-600">Slow Moving</span>
+                    <BarChart3 className="text-blue-600" size={22} />
+                    <span className="text-xs font-medium text-slate-600">Moderate</span>
                   </div>
-                  <div className="text-3xl font-semibold text-slate-900">
+                  <div className="text-2xl font-semibold text-slate-900" data-testid="moderate-count">
+                    {movementData.filter(m => m.classification === 'moderate').length}
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                  <div className="flex items-center gap-3 mb-2">
+                    <TrendingDown className="text-yellow-600" size={22} />
+                    <span className="text-xs font-medium text-slate-600">Slow Moving</span>
+                  </div>
+                  <div className="text-2xl font-semibold text-slate-900" data-testid="slow-moving-count">
                     {movementData.filter(m => m.classification === 'slow-moving').length}
                   </div>
                 </div>
-                <div className="bg-white border border-slate-200 rounded-xl p-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-5">
                   <div className="flex items-center gap-3 mb-2">
-                    <AlertTriangle className="text-red-600" size={24} />
-                    <span className="text-sm font-medium text-slate-600">Dead Stock</span>
+                    <AlertTriangle className="text-red-600" size={22} />
+                    <span className="text-xs font-medium text-slate-600">Non-Moving</span>
                   </div>
-                  <div className="text-3xl font-semibold text-slate-900">
-                    {movementData.filter(m => m.classification === 'dead-stock').length}
+                  <div className="text-2xl font-semibold text-slate-900" data-testid="non-moving-count">
+                    {movementData.filter(m => m.classification === 'non-moving').length}
                   </div>
                 </div>
               </div>
@@ -176,11 +185,13 @@ const InventoryAnalytics = ({ selectedFY }) => {
                       <tr>
                         <SortTh field="item_name" label="Item Name" />
                         <th>Category</th>
-                        <SortTh field="opening_stock" label="Opening Stock" className="numeric" />
-                        <SortTh field="sales" label="Sales" className="numeric" />
-                        <SortTh field="closing_stock" label="Closing Stock" className="numeric" />
-                        <SortTh field="movement_rate" label="Movement Rate %" className="numeric" />
+                        <SortTh field="opening_stock" label="Opening" className="numeric" />
+                        <SortTh field="inward" label="Inward" className="numeric" />
+                        <SortTh field="sales" label="Outward (Sales)" className="numeric" />
+                        <SortTh field="closing_stock" label="Closing" className="numeric" />
+                        <SortTh field="movement_rate" label="Movement %" className="numeric" />
                         <SortTh field="days_to_sell" label="Days to Sell" className="numeric" />
+                        <SortTh field="transactions" label="Txns" className="numeric" />
                         <th>Classification</th>
                       </tr>
                     </thead>
@@ -190,17 +201,20 @@ const InventoryAnalytics = ({ selectedFY }) => {
                         if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
                         return dir * ((a[sortField] || 0) - (b[sortField] || 0));
                       }).map((item, idx) => (
-                        <tr key={idx}>
+                        <tr key={idx} data-testid={`movement-row-${idx}`}>
                           <td className="font-medium">{item.item_name}</td>
-                          <td>{item.category}</td>
-                          <td className="numeric">{item.opening_stock}</td>
-                          <td className="numeric">{item.sales}</td>
-                          <td className="numeric">{item.closing_stock}</td>
+                          <td className="text-slate-500 text-xs">{item.category}</td>
+                          <td className="numeric">{item.opening_stock > 0 ? item.opening_stock : '-'}</td>
+                          <td className="numeric">{item.inward > 0 ? item.inward : '-'}</td>
+                          <td className="numeric font-medium">{item.sales > 0 ? item.sales : '-'}</td>
+                          <td className="numeric font-semibold">{item.closing_stock > 0 ? item.closing_stock : '0'}</td>
                           <td className="numeric font-semibold">{item.movement_rate}%</td>
-                          <td className="numeric">{item.days_to_sell}</td>
+                          <td className="numeric">{item.days_to_sell >= 999 ? 'N/A' : item.days_to_sell}</td>
+                          <td className="numeric">{item.transactions || 0}</td>
                           <td>
-                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                               item.classification === 'fast-moving' ? 'bg-green-100 text-green-700' :
+                              item.classification === 'moderate' ? 'bg-blue-100 text-blue-700' :
                               item.classification === 'slow-moving' ? 'bg-yellow-100 text-yellow-700' :
                               'bg-red-100 text-red-700'
                             }`}>

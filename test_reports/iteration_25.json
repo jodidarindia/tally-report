@@ -1,0 +1,111 @@
+{
+  "summary": "Iteration 25: Movement Analysis Tab Testing - All tests PASSED. Backend: 11/11 tests passed. Frontend: Movement Analysis tab verified with correct formulas, all columns, 4 classification cards, and proper sorting.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "FY Selector", "issues": ["Console warning: span cannot be child of option (hydration error) - minor React warning, doesn't affect functionality"]}
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/inventory/movement-analysis returns correct structure (movements, summary, fy_days)",
+    "Backend: Movement data has all 10 required columns (item_name, category, opening_stock, inward, sales, closing_stock, movement_rate, days_to_sell, transactions, classification)",
+    "Backend: Movement rate formula correct - (sales/opening)*100, max 100% when all sold",
+    "Backend: Days to sell = 0 when closing_stock = 0",
+    "Backend: Classification has 4 categories (fast-moving, moderate, slow-moving, non-moving)",
+    "Backend: Inward column present (from purchase_vouchers, currently 0 since no purchase data)",
+    "Backend: Opening stock formula correct - Opening = Closing + Sales - Inward",
+    "Backend: FY days calculated correctly (364 days for FY 2025-26)",
+    "Backend: Movement rate NOT 200% - all rates <= 100%",
+    "Backend: Security - test_admin (different tenant) sees 0 items",
+    "Backend: FY filtering works - different FYs return different data",
+    "Frontend: Movement Analysis tab loads with 4 summary cards (Fast=56, Moderate=53, Slow=63, Non-moving=30)",
+    "Frontend: Table has all columns (Item Name, Category, Opening, Inward, Outward (Sales), Closing, Movement %, Days to Sell, Txns, Classification)",
+    "Frontend: Movement rate shows 100% (not 200%) for items where all stock was sold",
+    "Frontend: Days to Sell shows 0 for items with 0 closing stock",
+    "Frontend: Classification badges display correctly (green=fast-moving, blue=moderate, yellow=slow-moving, red=non-moving)",
+    "Frontend: Sort functionality works on all columns",
+    "Frontend: Security - test_admin cannot access Analytics (feature not enabled)"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_movement_analysis.py",
+    "/app/test_reports/pytest/iteration25_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "routes/inventory.py: movement_rate formula correctly uses (sales/opening)*100, capped at 100% when opening=sales",
+    "routes/inventory.py: days_to_sell correctly returns 0 when closing_stock=0",
+    "routes/inventory.py: classification based on transaction frequency per month (fast >2x, moderate 0.5-2x, slow <0.5x, non-moving 0)",
+    "routes/inventory.py: inward column populated from purchase_vouchers (currently 0 since no purchase data exists)",
+    "InventoryAnalytics.js: All 10 columns rendered correctly with proper sorting",
+    "InventoryAnalytics.js: 4 summary cards with correct classification counts"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_movement_analysis.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (11/11 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "company": "ASA AUTOTECH INDIA PRIVATE LIMITED"},
+    "test_admin": {"username": "test_admin", "password": "test123", "tenant": "tenant_test_admin (different tenant, no Analytics access)"}
+  },
+  
+  "seed_data_creation": "No new seed data created.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 25 validated Movement Analysis tab fixes: 1) Movement rate formula fixed - now (sales/opening)*100, showing 100% (not 200%) when all stock sold. 2) Inward column added (from purchase_vouchers, currently 0 since no purchase data). 3) Days to sell = 0 when closing stock = 0. 4) Classification based on transaction frequency: fast-moving (>2x/month), moderate (0.5-2x/month), slow-moving (<0.5x/month), non-moving (0 sales). 5) Security: test_admin cannot access Analytics feature. 6) FY filtering works correctly.",
+  
+  "features_validated": {
+    "movement_analysis_tab": {
+      "status": "WORKING",
+      "details": [
+        "4 summary cards: Fast Moving (56), Moderate (53), Slow Moving (63), Non-Moving (30)",
+        "10 columns: Item Name, Category, Opening, Inward, Outward (Sales), Closing, Movement %, Days to Sell, Txns, Classification",
+        "Movement rate = 100% (not 200%) for items with all stock sold",
+        "Days to sell = 0 for items with 0 closing stock",
+        "Classification badges: green (fast), blue (moderate), yellow (slow), red (non-moving)",
+        "Sorting works on all columns"
+      ]
+    },
+    "movement_rate_formula": {
+      "status": "FIXED",
+      "details": [
+        "Formula: (sales/opening)*100",
+        "When opening=sales and closing=0, rate=100% (not 200%)",
+        "All rates capped at 100%"
+      ]
+    },
+    "inward_column": {
+      "status": "WORKING",
+      "details": [
+        "Inward column present in table",
+        "Data from purchase_vouchers collection",
+        "Currently shows 0/dash since no purchase data exists"
+      ]
+    },
+    "security_tenant_isolation": {
+      "status": "WORKING",
+      "details": [
+        "test_admin (different tenant) cannot access Analytics feature",
+        "Backend API returns 0 items for test_admin"
+      ]
+    }
+  }
+}

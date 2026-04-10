@@ -8,7 +8,7 @@ from models import (
     InventoryItem, SalesVoucher, APIResponse,
     PurchaseOrder, PurchaseOrderItem
 )
-from utils import safe_num, filter_vouchers_by_fy
+from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
 from services.purchase_order_ai import PurchaseOrderAI
 from services.tenant_context import get_tenant_context
 
@@ -266,54 +266,152 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
+        # Try to get purchase data (if synced)
+        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+
+        # Calculate FY duration in days for rate calculations
+        from datetime import date as date_type
+        if fy:
+            fy_start_str, fy_end_str = fy_to_date_range(fy)
+            try:
+                fy_start_parts = fy_start_str.split('-')
+                fy_end_parts = fy_end_str.split('-')
+                fy_start = date_type(int(fy_start_parts[0]), int(fy_start_parts[1]), int(fy_start_parts[2]))
+                fy_end = date_type(int(fy_end_parts[0]), int(fy_end_parts[1]), int(fy_end_parts[2]))
+                today = date_type.today()
+                # If FY is still running, use today as end date
+                effective_end = min(fy_end, today)
+                fy_days = max((effective_end - fy_start).days, 1)
+            except (ValueError, TypeError):
+                fy_days = 365
+        else:
+            fy_days = 365
+
+        # Aggregate item-wise sales: qty, revenue, txn count, first/last date
         item_sales = {}
         for voucher in sales_vouchers:
+            vdate = voucher.get("voucher_date", "")
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "").strip()
+                qty = safe_num(item.get("quantity"))
+                amount = safe_num(item.get("amount"))
+                if item_name:
+                    key = item_name.lower()
+                    if key not in item_sales:
+                        item_sales[key] = {"qty": 0, "revenue": 0, "txns": 0, "first_date": vdate, "last_date": vdate}
+                    item_sales[key]["qty"] += qty
+                    item_sales[key]["revenue"] += amount
+                    item_sales[key]["txns"] += 1
+                    if vdate < item_sales[key]["first_date"]:
+                        item_sales[key]["first_date"] = vdate
+                    if vdate > item_sales[key]["last_date"]:
+                        item_sales[key]["last_date"] = vdate
+
+        # Aggregate item-wise purchases (inward)
+        item_purchases = {}
+        for voucher in purchase_vouchers:
             for item in voucher.get("items", []):
                 item_name = item.get("item", "").strip()
                 qty = safe_num(item.get("quantity"))
                 if item_name:
-                    item_sales[item_name.lower()] = item_sales.get(item_name.lower(), 0) + qty
+                    key = item_name.lower()
+                    item_purchases[key] = item_purchases.get(key, 0) + qty
 
         movement_data = []
         seen_items = set()
         for item in inventory_items:
             item_name = item.get("item_name", "")
-            current_stock = safe_num(item.get("quantity"))
-            sales_qty = item_sales.get(item_name.lower(), 0)
-            seen_items.add(item_name.lower())
+            closing_stock = safe_num(item.get("quantity"))
+            key = item_name.lower()
+            seen_items.add(key)
 
-            opening_stock = current_stock + sales_qty
-            avg_stock = (opening_stock + current_stock) / 2
-            movement_rate = (sales_qty / avg_stock * 100) if avg_stock > 0 else 0
-            days_to_sell = (current_stock / (sales_qty / 30)) if sales_qty > 0 else 999
+            sales_info = item_sales.get(key, {"qty": 0, "revenue": 0, "txns": 0})
+            sales_qty = sales_info["qty"]
+            purchase_qty = item_purchases.get(key, 0)
+
+            # Estimate opening stock: Opening + Inward - Outward = Closing
+            # Opening = Closing + Outward - Inward
+            inward = purchase_qty if purchase_qty > 0 else 0
+            opening_stock = closing_stock + sales_qty - inward
+            if opening_stock < 0:
+                opening_stock = 0
+
+            # Movement Rate = (Outward / Opening) * 100
+            # Represents what percentage of opening stock was sold
+            if opening_stock > 0:
+                movement_rate = round((sales_qty / opening_stock) * 100, 1)
+            elif sales_qty > 0:
+                movement_rate = 100.0  # All stock sold (opening was approx = sales)
+            else:
+                movement_rate = 0.0
+
+            # Days to sell remaining stock at current rate
+            daily_sales = sales_qty / fy_days if fy_days > 0 else 0
+            if closing_stock > 0 and daily_sales > 0:
+                days_to_sell = round(closing_stock / daily_sales, 1)
+            elif closing_stock > 0 and sales_qty == 0:
+                days_to_sell = 999  # Stock exists but no sales
+            else:
+                days_to_sell = 0  # No stock remaining
+
+            # Monthly average sales
+            fy_months = max(fy_days / 30, 1)
+            monthly_avg = round(sales_qty / fy_months, 1) if sales_qty > 0 else 0
+
+            # Classification based on sales frequency and movement
+            if sales_qty == 0:
+                classification = "non-moving"
+            elif sales_info["txns"] >= fy_months * 2:  # Sells twice+ per month
+                classification = "fast-moving"
+            elif sales_info["txns"] >= fy_months * 0.5:  # Sells at least every 2 months
+                classification = "moderate"
+            elif sales_info["txns"] > 0:
+                classification = "slow-moving"
+            else:
+                classification = "non-moving"
 
             movement_data.append({
                 "item_name": item_name,
                 "category": item.get("category", item.get("stock_group", "General")),
-                "opening_stock": round(opening_stock, 2),
-                "purchases": 0,
-                "sales": round(sales_qty, 2),
-                "closing_stock": round(current_stock, 2),
-                "movement_rate": round(movement_rate, 2),
-                "days_to_sell": round(min(days_to_sell, 999), 1),
-                "classification": "fast-moving" if movement_rate > 30 else "slow-moving" if movement_rate > 10 else "dead-stock"
+                "opening_stock": round(opening_stock, 1),
+                "inward": round(inward, 1),
+                "sales": round(sales_qty, 1),
+                "closing_stock": round(closing_stock, 1),
+                "movement_rate": movement_rate,
+                "days_to_sell": min(days_to_sell, 999),
+                "monthly_avg_sales": monthly_avg,
+                "transactions": sales_info.get("txns", 0),
+                "revenue": round(sales_info.get("revenue", 0), 2),
+                "classification": classification,
             })
 
-        for item_key, qty in item_sales.items():
-            if item_key not in seen_items and qty > 0:
+        # Items sold but not in inventory master
+        for item_key, info in item_sales.items():
+            if item_key not in seen_items and info["qty"] > 0:
+                purchase_qty = item_purchases.get(item_key, 0)
+                opening_est = info["qty"] - purchase_qty
+                if opening_est < 0:
+                    opening_est = 0
+                fy_months = max(fy_days / 30, 1)
+                monthly_avg = round(info["qty"] / fy_months, 1)
+                classification = "fast-moving" if info["txns"] >= fy_months * 2 else "moderate" if info["txns"] >= fy_months * 0.5 else "slow-moving"
                 movement_data.append({
                     "item_name": item_key.title(),
                     "category": "General",
-                    "opening_stock": qty,
-                    "purchases": 0,
-                    "sales": round(qty, 2),
+                    "opening_stock": round(max(opening_est, info["qty"]), 1),
+                    "inward": round(purchase_qty, 1),
+                    "sales": round(info["qty"], 1),
                     "closing_stock": 0,
                     "movement_rate": 100.0,
                     "days_to_sell": 0,
-                    "classification": "fast-moving"
+                    "monthly_avg_sales": monthly_avg,
+                    "transactions": info["txns"],
+                    "revenue": round(info["revenue"], 2),
+                    "classification": classification,
                 })
 
-        movement_data.sort(key=lambda x: x["movement_rate"], reverse=True)
+        movement_data.sort(key=lambda x: x["transactions"], reverse=True)
 
         return APIResponse(
             success=True,
@@ -321,9 +419,11 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                 "movements": movement_data,
                 "summary": {
                     "fast_moving": len([m for m in movement_data if m["classification"] == "fast-moving"]),
+                    "moderate": len([m for m in movement_data if m["classification"] == "moderate"]),
                     "slow_moving": len([m for m in movement_data if m["classification"] == "slow-moving"]),
-                    "dead_stock": len([m for m in movement_data if m["classification"] == "dead-stock"])
-                }
+                    "non_moving": len([m for m in movement_data if m["classification"] == "non-moving"]),
+                },
+                "fy_days": fy_days,
             }
         )
     except Exception as e:
