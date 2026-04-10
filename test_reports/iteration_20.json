@@ -1,0 +1,126 @@
+{
+  "summary": "Iteration 20: CompanySelector Enhancement & Security Audit - All tests PASSED. Backend: 19/19 tests passed. Frontend: All company switching flows and sync info display verified. Security fixes for tenant isolation across 6 routes confirmed working.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CompanySelector", "issues": ["Minor: Demo Trading Co shows no sync time (expected - may not have been synced recently)"]}
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/sync/companies-status returns per-company sync data",
+    "Backend: companies-status returns array with company_name, last_sync, inventory_count, sales_count",
+    "Backend: companies-status matches user's companies list",
+    "Backend: SECURITY - GET /api/sales/vouchers/{id} returns 'not found' with wrong X-Company-ID",
+    "Backend: SECURITY - Voucher list filtered by X-Company-ID header",
+    "Backend: SECURITY - GET /api/salesman/master requires tenant context",
+    "Backend: SECURITY - GET /api/salesman/performance requires tenant context",
+    "Backend: SECURITY - GET /api/salesman/performance-detailed requires tenant context",
+    "Backend: SECURITY - POST /api/salesman/master includes tenant_id/company_id on insert",
+    "Backend: SECURITY - DELETE /api/salesman/master/{name} requires tenant context",
+    "Backend: SECURITY - POST /api/customers/targets/set includes tenant_id/company_id",
+    "Backend: SECURITY - PATCH /api/customers/followups/{id} includes tenant filter",
+    "Backend: SECURITY - Cross-tenant isolation (test_admin cannot see admin's data)",
+    "Backend: Inventory works for both companies",
+    "Backend: Sales works for both companies",
+    "Backend: CRM works for both companies",
+    "Backend: Dashboard works for both companies",
+    "Frontend: CompanySelector shows sync info (last sync time, item count, voucher count)",
+    "Frontend: ASA AUTOTECH shows 'Synced 15h ago', '202 items', '1258 vouchers'",
+    "Frontend: Demo Trading Co shows '3 items', '2 vouchers'",
+    "Frontend: Company selection works and loads correct data",
+    "Frontend: Company switching via navbar works",
+    "Frontend: Inventory page shows correct data for each company",
+    "Frontend: Sales page shows correct data for each company (1255 vs 2 vouchers)",
+    "Frontend: CRM page shows correct data for each company"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration20_security.py",
+    "/app/test_reports/pytest/iteration20_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "CompanySelector.js correctly fetches /api/sync/companies-status and displays per-company sync info",
+    "Backend routes/sync.py line 420-451: new /api/sync/companies-status endpoint working correctly",
+    "Backend routes/sales.py line 80: voucher detail now has Request param and uses tenant context",
+    "Backend routes/salesman.py: all routes (lines 35, 101, 109, 149, 162) now require tenant context",
+    "Backend routes/customers.py line 418: set_customer_target uses request body + tenant context",
+    "Backend routes/customers.py line 325: followup update has tenant filter",
+    "Backend routes/ai_reports.py line 102: ai_queries insert includes company_id",
+    "Security audit fixes verified - all 6 routes now properly filter by tenant_id/company_id"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration20_security.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (all company switching and sync info flows verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123", "companies": ["ASA AUTOTECH INDIA PRIVATE LIMITED", "Demo Trading Co"]},
+    "test_admin": {"username": "test_admin", "password": "test123", "companies": []}
+  },
+  
+  "seed_data_creation": "No new seed data created. Using existing data from iteration 19.",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 20 validated: 1) CompanySelector enhancement showing sync info (last sync time, item count, voucher count) per company. 2) Security audit fixes for 6 routes - all now properly filter by tenant_id/company_id. Cross-tenant isolation verified (test_admin cannot access admin's data). All pages (Dashboard, Inventory, Sales, CRM) work correctly for both companies.",
+  
+  "features_validated": {
+    "company_selector_sync_info": {
+      "status": "WORKING",
+      "features": [
+        "Fetches /api/sync/companies-status on modal open",
+        "Displays last sync time (e.g., '15h ago')",
+        "Displays inventory item count",
+        "Displays sales voucher count",
+        "Shows 'No data synced yet' for companies without sync data"
+      ]
+    },
+    "security_audit_fixes": {
+      "status": "WORKING",
+      "routes_fixed": [
+        "GET /api/sales/vouchers/{id} - tenant/company isolation",
+        "GET /api/salesman/master - tenant context required",
+        "GET /api/salesman/performance - filters by tenant",
+        "GET /api/salesman/performance-detailed - tenant context required",
+        "POST /api/salesman/master - includes tenant_id/company_id",
+        "DELETE /api/salesman/master/{name} - tenant context required",
+        "POST /api/customers/targets/set - includes tenant_id/company_id",
+        "PATCH /api/customers/followups/{id} - tenant filter"
+      ]
+    },
+    "cross_tenant_isolation": {
+      "status": "WORKING",
+      "verified": "test_admin cannot access admin's company data even with X-Company-ID header"
+    }
+  },
+  
+  "data_verification": {
+    "ASA_AUTOTECH_INDIA_PRIVATE_LIMITED": {
+      "inventory_items": 202,
+      "sales_vouchers": 1255,
+      "last_sync": "15h ago"
+    },
+    "Demo_Trading_Co": {
+      "inventory_items": 3,
+      "sales_vouchers": 2,
+      "last_sync": "not shown (may not have sync_status record)"
+    }
+  }
+}

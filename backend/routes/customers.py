@@ -322,10 +322,12 @@ async def create_followup(followup: CustomerFollowupCreate, request: Request):
 
 
 @router.patch("/customers/followups/{followup_id}")
-async def update_followup_status(followup_id: str, status: str):
+async def update_followup_status(followup_id: str, status: str, request: Request):
     try:
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
         result = await db.customer_followups.update_one(
-            {"id": followup_id},
+            {**tq, "id": followup_id},
             {"$set": {"status": status}}
         )
         return APIResponse(
@@ -414,13 +416,17 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
 
 
 @router.post("/customers/targets/set")
-async def set_customer_target(request: dict):
+async def set_customer_target(request: Request):
     try:
         from datetime import date as date_type
-        customer_name = request.get("customer_name", "").strip()
-        target_amount = request.get("target_amount", 0)
-        last_fy_sales = request.get("last_fy_sales", 0)
-        target_fy = request.get("fy", "")
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+
+        customer_name = body.get("customer_name", "").strip()
+        target_amount = body.get("target_amount", 0)
+        last_fy_sales = body.get("last_fy_sales", 0)
+        target_fy = body.get("fy", "")
 
         if not customer_name:
             return APIResponse(success=False, error="Customer name is required")
@@ -440,9 +446,13 @@ async def set_customer_target(request: dict):
             "fy": target_fy,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
+        if ctx and ctx.get("tenant_id"):
+            doc["tenant_id"] = ctx["tenant_id"]
+        if ctx and ctx.get("company_id"):
+            doc["company_id"] = ctx["company_id"]
 
         await db.customer_targets.update_one(
-            {"customer_name": customer_name, "fy": target_fy},
+            {**tq, "customer_name": customer_name, "fy": target_fy},
             {"$set": doc},
             upsert=True
         )

@@ -99,6 +99,8 @@ async def ai_advanced_query(request: Request):
             doc['created_at'] = doc['created_at'].isoformat()
             if ctx and ctx.get("tenant_id"):
                 doc["tenant_id"] = ctx["tenant_id"]
+            if ctx and ctx.get("company_id"):
+                doc["company_id"] = ctx["company_id"]
             await db.ai_queries.insert_one(doc)
 
         return APIResponse(

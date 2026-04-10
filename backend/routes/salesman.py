@@ -32,7 +32,7 @@ async def get_salesman_performance(request: Request, fy: Optional[str] = None, c
         q = _build_query(ctx, company_id)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(all_vouchers, fy)
-        master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        master_list = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}
 
         customer_to_salesman = {}
@@ -96,9 +96,11 @@ async def get_salesman_performance(request: Request, fy: Optional[str] = None, c
 
 
 @router.get("/salesman/master")
-async def get_salesman_master():
+async def get_salesman_master(request: Request, company_id: Optional[str] = None):
     try:
-        salesmen = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        salesmen = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         return APIResponse(success=True, data={"salesmen": salesmen})
     except Exception as e:
         logger.error(f"Error fetching salesman master: {e}")
@@ -106,17 +108,19 @@ async def get_salesman_master():
 
 
 @router.post("/salesman/master")
-async def create_salesman(request: dict):
+async def create_salesman(request: Request):
     try:
-        salesman_name = request.get("salesman_name", "").strip()
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        salesman_name = body.get("salesman_name", "").strip()
         if not salesman_name:
             return APIResponse(success=False, error="Salesman name is required")
 
-        customers = request.get("customers", [])
-        monthly_target = request.get("monthly_target", 0)
-        quarterly_target = request.get("quarterly_target", 0)
-        phone = request.get("phone", "")
-        email = request.get("email", "")
+        customers = body.get("customers", [])
+        monthly_target = body.get("monthly_target", 0)
+        quarterly_target = body.get("quarterly_target", 0)
+        phone = body.get("phone", "")
+        email = body.get("email", "")
 
         doc = {
             "salesman_id": str(uuid.uuid4()),
@@ -128,9 +132,14 @@ async def create_salesman(request: dict):
             "email": email,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
+        if ctx and ctx.get("tenant_id"):
+            doc["tenant_id"] = ctx["tenant_id"]
+        if ctx and ctx.get("company_id"):
+            doc["company_id"] = ctx["company_id"]
 
+        tq = _build_query(ctx)
         await db.salesman_master.update_one(
-            {"salesman_name": salesman_name},
+            {**tq, "salesman_name": salesman_name},
             {"$set": doc},
             upsert=True
         )
@@ -146,9 +155,11 @@ async def create_salesman(request: dict):
 
 
 @router.delete("/salesman/master/{salesman_name}")
-async def delete_salesman(salesman_name: str):
+async def delete_salesman(salesman_name: str, request: Request):
     try:
-        result = await db.salesman_master.delete_one({"salesman_name": salesman_name})
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+        result = await db.salesman_master.delete_one({**tq, "salesman_name": salesman_name})
         return APIResponse(
             success=result.deleted_count > 0,
             message="Deleted" if result.deleted_count > 0 else "Not found"
@@ -159,11 +170,13 @@ async def delete_salesman(salesman_name: str):
 
 
 @router.get("/salesman/performance-detailed")
-async def get_salesman_performance_detailed(fy: Optional[str] = None):
+async def get_salesman_performance_detailed(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
-        all_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(all_vouchers, fy)
-        master_list = await db.salesman_master.find({}, {"_id": 0}).to_list(100)
+        master_list = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}
 
         customer_to_salesman = {}

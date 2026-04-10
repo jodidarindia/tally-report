@@ -417,6 +417,43 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
         return APIResponse(success=False, error=str(e))
 
 
+@router.get("/sync/companies-status")
+async def get_all_companies_sync_status(request: Request):
+    """Get sync status for ALL companies of the current admin — powers the CompanySelector overlay."""
+    try:
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        if not tenant_id:
+            return APIResponse(success=True, data=[])
+
+        # Get the admin's companies list
+        user = await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "companies": 1})
+        companies = user.get("companies", []) if user else []
+
+        result = []
+        for company in companies:
+            sync_status = await db.sync_status.find_one(
+                {"type": "agent_sync", "tenant_id": tenant_id, "company_id": company},
+                {"_id": 0}
+            )
+            inv_count = await db.inventory_items.count_documents({"tenant_id": tenant_id, "company_id": company})
+            sales_count = await db.sales_vouchers.count_documents({"tenant_id": tenant_id, "company_id": company})
+            result.append({
+                "company_name": company,
+                "last_sync": sync_status.get("last_sync") if sync_status else None,
+                "agent_version": sync_status.get("agent_version", "") if sync_status else "",
+                "inventory_count": inv_count,
+                "sales_count": sales_count,
+            })
+
+        return APIResponse(success=True, data=result)
+    except Exception as e:
+        logger.error(f"Error getting companies sync status: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+
+
 @router.get("/sync/connection-status")
 async def get_connection_status(request: Request):
     """Get comprehensive connection status for the Setup page — last sync, agent version, companies, data counts."""

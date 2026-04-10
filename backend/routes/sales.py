@@ -77,15 +77,17 @@ async def get_sales_vouchers(request: Request, start_date: Optional[str] = None,
 
 
 @router.get("/sales/vouchers/{voucher_id:path}")
-async def get_voucher_detail(voucher_id: str):
+async def get_voucher_detail(voucher_id: str, request: Request):
     try:
         from urllib.parse import unquote
         decoded_id = unquote(voucher_id)
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
 
-        voucher = await db.sales_vouchers.find_one({"voucher_id": decoded_id}, {"_id": 0})
+        voucher = await db.sales_vouchers.find_one({**tq, "voucher_id": decoded_id}, {"_id": 0})
         if not voucher:
             voucher = await db.sales_vouchers.find_one(
-                {"voucher_id": {"$regex": f"^{decoded_id}$", "$options": "i"}},
+                {**tq, "voucher_id": {"$regex": f"^{decoded_id}$", "$options": "i"}},
                 {"_id": 0}
             )
         if not voucher:
