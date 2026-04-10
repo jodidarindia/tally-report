@@ -60,6 +60,13 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **Data Isolation**: All 4 endpoints use `_build_query(ctx, company_id)` — verified test_admin sees zero data
 - **Endpoints**: `/api/insights/customer-lifecycle`, `/api/insights/sales-forecast`, `/api/insights/spip-analysis`, `/api/insights/concentration-risk`
 
+### Movement Analysis Fix (Apr 10 2026)
+- **Movement Rate**: Fixed from 200% to 100% — formula changed from `sales/avg_stock` to `sales/opening_stock`
+- **Inward column**: Added to table, sourced from `purchase_vouchers` (currently 0 as no purchase data synced)
+- **Days to Sell**: Correctly shows 0 when closing stock = 0
+- **Classification**: Now frequency-based — fast-moving (>2 txns/month), moderate (0.5-2/month), slow-moving (<0.5/month), non-moving (0 sales)
+- **Opening Stock**: Estimated as `closing + sales - inward`
+
 ### Salesman FY-Specific Targets & Performance (Apr 10 2026)
 - **FY-based targets**: Monthly/quarterly targets stored per FY in `fy_targets` nested dict
 - **FY-based customer mapping**: Customer-to-salesman mapping stored per FY in `fy_customers`, inherits from previous FY
