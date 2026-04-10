@@ -60,6 +60,20 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **Data Isolation**: All 4 endpoints use `_build_query(ctx, company_id)` — verified test_admin sees zero data
 - **Endpoints**: `/api/insights/customer-lifecycle`, `/api/insights/sales-forecast`, `/api/insights/spip-analysis`, `/api/insights/concentration-risk`
 
+### Salesman FY-Specific Targets & Performance (Apr 10 2026)
+- **FY-based targets**: Monthly/quarterly targets stored per FY in `fy_targets` nested dict
+- **FY-based customer mapping**: Customer-to-salesman mapping stored per FY in `fy_customers`, inherits from previous FY
+- **FY locking**: Once FY ends (past Mar 31), targets and mappings are frozen. Only current/future FY editable
+- **Performance breakdown**: Monthly/Quarterly/Annual toggle with customer-wise tabulated comparison per salesman
+- **Excel export**: Per salesman per duration — `GET /api/salesman/export?salesman_name=X&fy=Y&duration=monthly|quarterly|annual`
+- **Best Performer tag**: Weighted average (achieved/target) determines top performer
+- **Endpoints**: `/api/salesman/master`, `/api/salesman/performance`, `/api/salesman/performance-detailed`, `/api/salesman/export`
+
+### Sorted & Searchable Dropdowns (Apr 10 2026)
+- **SearchableSelect component**: Reusable component with type-to-search, sorted alphabetically, multiple selection support
+- **Applied to**: Sales page (party filter), CRM page (followup customer), Salesman page (customer mapping)
+- **Sorted dropdowns**: Inventory categories, stock groups, CRM customer groups, CRM states — all sorted alphabetically
+
 ### Audit Logging System (Apr 10 2026)
 - **Actions logged**: login, login_failed, password_change, password_reset, admin_created, admin_deleted, admin_toggled, features_updated, data_export
 - **Data captured**: actor, action, target, details, IP address (x-forwarded-for aware), timestamp
@@ -75,6 +89,8 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - Auth: login, me, sync-token, change-password, reset-password
 - Super Admin: stats, admins CRUD, features, subscription, toggle-active
 - Audit: `/api/audit/logs`, `/api/audit/actions`
+- Salesman: `/api/salesman/master`, `/api/salesman/performance`, `/api/salesman/performance-detailed`, `/api/salesman/export`
+- Insights: `/api/insights/customer-lifecycle`, `/api/insights/sales-forecast`, `/api/insights/spip-analysis`, `/api/insights/concentration-risk`
 - Sync: companies-status, connection-status
 - Data: inventory/items, sales/vouchers, customers/outstanding, inventory/sales-frequency
 - AI: advanced-query
