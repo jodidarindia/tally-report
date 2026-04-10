@@ -6,7 +6,7 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 ## Architecture
 - **Frontend**: React + Shadcn UI
 - **Backend**: FastAPI + Motor (MongoDB) + PyJWT
-- **Desktop Agent**: Python script syncing Tally Prime data via XML HTTP requests (v7.0 login-based auth, file: tally_sync_agent_v6.py)
+- **Desktop Agent**: Python script syncing Tally Prime data via XML HTTP requests (v7.0 login-based auth, files: tally_sync_agent_v7.py)
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
 
 ## Security Architecture
@@ -16,13 +16,8 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
 - **Rate Limiting**: 20 login attempts per 60 seconds
 
-## Multi-Tenant Architecture
-- **Super Admin**: Manages admin tenants, feature gating, subscriptions, sees all audit logs
-- **Admin**: Email-based username, owns tenant with isolated data, sees own audit logs
-- **Employee**: Belongs to admin's tenant, inherits features
-- **Data Isolation**: `tenant_id` + `company_id` on ALL DB operations
-- **Feature Gating**: 9 toggleable features (sync_history + setup ON by default)
-- **Multi-Company**: CompanySelector with per-company sync info, X-Company-ID header
+## Feature Gating (10 Features)
+1. dashboard, 2. inventory, 3. sales, 4. crm, 5. analytics, 6. ai_reports, 7. salesman, 8. insider, 9. sync_history, 10. setup
 
 ## What's Been Implemented
 
@@ -33,71 +28,54 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 
 ### Multi-Tenant & Security (Apr 2026)
 - Super Admin dashboard with admin management, feature toggles, stats, subscriptions
-- RBAC, email-based usernames, password change/reset
-- Security headers, rate limiting
+- RBAC, email-based usernames, password change/reset, security headers, rate limiting
 
 ### Multi-Company Data Switcher (Apr 10 2026)
-- CompanySelector with real-time sync info per company
-- X-Company-ID header on every API request
-- Data isolation verified across all pages
+- CompanySelector with real-time sync info per company, X-Company-ID header
 
 ### Security Audit — 9 Routes Fixed (Apr 10 2026)
-1. `GET /api/sales/vouchers/{id}` — tenant/company filter added
-2. `GET /api/salesman/master` — tenant context added
-3. `GET /api/salesman/performance` — tenant filter on salesman_master
-4. `GET /api/salesman/performance-detailed` — tenant context added
-5. `POST /api/salesman/master` — tenant_id/company_id on insert
-6. `DELETE /api/salesman/master/{name}` — tenant context on delete
-7. `POST /api/customers/targets/set` — tenant_id/company_id on insert
-8. `PATCH /api/customers/followups/{id}` — tenant filter on update
-9. `GET /api/inventory/sales-frequency` — tenant context added
 
 ### Insider Result Analytics (Apr 10 2026)
-- **Customer Lifecycle**: Active/Inactive/Lost classification (90d/180d thresholds), pie chart, monthly trend, searchable table
-- **Sales Forecast**: Moving average forecast (3-month), YoY comparison, revenue trend with forecast line
-- **SPIP Analysis**: Sales vs Purchase gap detection (out_of_stock, understocked, dead_stock, overstocked, balanced), horizontal bar chart, filterable table
-- **Concentration Risk**: Pareto analysis with cumulative % line, 80% reference line, risk level banner (critical/high/moderate/healthy)
-- **Data Isolation**: All 4 endpoints use `_build_query(ctx, company_id)` — verified test_admin sees zero data
+- Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk — all feature-gated
 
 ### Salesman FY-Specific Targets & Performance (Apr 10 2026)
-- **FY-based targets**: Monthly/quarterly targets stored per FY in `fy_targets` nested dict
-- **FY-based customer mapping**: Customer-to-salesman mapping stored per FY in `fy_customers`, inherits from previous FY
-- **FY locking**: Once FY ends (past Mar 31), targets and mappings are frozen. Only current/future FY editable
-- **Performance breakdown**: Monthly/Quarterly/Annual toggle with customer-wise tabulated comparison per salesman
-- **Excel export**: Per salesman per duration
-- **Best Performer tag**: Weighted average (achieved/target) determines top performer
+- FY-based targets/mapping, locking, performance breakdown, Excel export
 
 ### Sorted & Searchable Dropdowns (Apr 10 2026)
-- **SearchableSelect component**: Reusable with type-to-search, sorted alphabetically, multiple selection support
-- **Applied to**: Sales page (party filter), CRM page (followup customer), Salesman page (customer mapping)
+- SearchableSelect component applied across app
 
 ### Audit Logging System (Apr 10 2026)
-- **Actions logged**: login, login_failed, password_change, password_reset, admin_created, admin_deleted, admin_toggled, features_updated, data_export
-- **Data captured**: actor, action, target, details, IP address, timestamp
-- **Super Admin view**: Activity Log tab → sees ALL tenants' activity
-- **Admin view**: Activity nav item → sees only own tenant's activity
 
 ### Inventory Analytics Redesign (Apr 10 2026) — TESTED ✅
-- **Movement Analysis Tab**: 5 clickable classification filter cards (All/Fast/Moderate/Slow/Non-Moving) with live counts, sortable 10-column table (Item Name, Category, Opening, Inward, Outward, Closing, Movement %, Days to Sell, Txns, Classification), Excel export
-- **Below Cost Sales Tab**: Real cost prices from purchase vouchers (weighted avg), negative-margin detection with summary cards (Items Below Cost, Total Loss, Affected Revenue), Excel export
-- **Sales Frequency Tab**: Transaction frequency analysis with date filters, Excel + PDF exports, summary cards
-- **Desktop Agent Updated**: Fetches `purchase_vouchers`, `debit_notes`, `sundry_creditors` from Tally. Opening stock from `opening_quantity`
-- **Data Isolation**: Verified admin sees 202 items, test_admin sees 0 items
-- **Test Report**: iteration_26.json — 100% pass (17/17 backend, all frontend verified)
+- Movement Analysis (5 clickable filters), Below Cost Sales (real cost), Sales Frequency (Excel+PDF exports)
+- Desktop Agent fetches purchase_vouchers, debit_notes, sundry_creditors
 
-### Desktop Sync Agent v7.0
+### Payment Behavior FY Filtering + Opening Balance (Apr 10 2026) — TESTED ✅
+- Payment Behavior now filters by FY (was ignoring FY before)
+- Opening Balance calculated from pre-FY vouchers or Tally's opening_balance field
+- Outstanding = Opening Balance + FY Sales - FY Credits (can be negative for overpayments)
+- Customer expand card shows: Opening Balance, Total Sales (FY), Total Debits, Receipts, Credit Notes, Journal Credits, Total Credits, Closing Balance
+
+### Feature Gating Updated to 10 Features (Apr 10 2026) — TESTED ✅
+- Added 'insider' to ALL_FEATURES in backend (auth_service.py) and frontend (SuperAdminDashboard.js, App.js)
+- Insider Result page properly feature-gated via renderFeatureGated()
+- Seed script auto-adds new features to existing admins
+- Fixed duplicate nav entries (analytics, insider)
+
+### Desktop Agent v7.0 (Apr 10 2026)
+- Renamed to tally_sync_agent_v7.py
+- Fetches: inventory_items, sales_vouchers, purchase_vouchers, debit_notes, sundry_creditors, customers (with opening_balance), ledgers
 - Login-based auth, incremental sync with hash detection, multi-company support
-- Fetches: inventory_items, sales_vouchers, purchase_vouchers, debit_notes, sundry_creditors, ledgers
 
 ## Key API Endpoints
 - Auth: login, me, sync-token, change-password, reset-password
 - Super Admin: stats, admins CRUD, features, subscription, toggle-active
-- Audit: `/api/audit/logs`, `/api/audit/actions`
-- Salesman: `/api/salesman/master`, `/api/salesman/performance`, `/api/salesman/performance-detailed`, `/api/salesman/export`
-- Insights: `/api/insights/customer-lifecycle`, `/api/insights/sales-forecast`, `/api/insights/spip-analysis`, `/api/insights/concentration-risk`
-- Inventory Analytics: `/api/inventory/movement-analysis`, `/api/inventory/below-cost-sales`, `/api/inventory/movement-export`, `/api/inventory/below-cost-export`, `/api/inventory/sales-frequency-export`
+- Audit: logs, actions
+- Salesman: master, performance, export
+- Insights: customer-lifecycle, sales-forecast, spip-analysis, concentration-risk
+- Inventory: movement-analysis, below-cost-sales, movement-export, below-cost-export, sales-frequency-export
+- CRM: outstanding, payment-behavior, followups, targets
 - Sync: companies-status, connection-status, vouchers
-- Data: inventory/items, sales/vouchers, customers/outstanding, inventory/sales-frequency
 - AI: advanced-query
 
 ## Pending Tasks
@@ -107,7 +85,6 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 ### P2
 - Export Audit Logs to CSV
 - Automated payment follow-up reminders via email/WhatsApp
-- Customer Payment Behaviour detailed dropdown analytics
 
 ## Tech Stack
 - React 18, Tailwind CSS, Shadcn UI, Recharts, Lucide React
