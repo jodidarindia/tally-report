@@ -27,12 +27,12 @@ const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').
 // Feature to nav mapping
 const FEATURE_NAV_MAP = {
   dashboard: { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  inventory: { id: 'inventory', label: 'Inventory', icon: Package },
   sales: { id: 'sales', label: 'Sales', icon: ShoppingCart },
   crm: { id: 'crm', label: 'CRM', icon: Users },
+  inventory: { id: 'inventory', label: 'Inventory', icon: Package },
   analytics: { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-  ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
   salesman: { id: 'salesman', label: 'Salesman', icon: Truck },
+  ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
   insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
   sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
   setup: { id: 'setup', label: 'Setup', icon: Settings },
@@ -225,9 +225,14 @@ function App() {
     const items = features
       .map(f => FEATURE_NAV_MAP[f])
       .filter(Boolean);
-    // Activity log always visible for admin
-    items.push({ id: 'activity', label: 'Activity', icon: History });
-    // Note: 'insider' is now in ALL_FEATURES and FEATURE_NAV_MAP, so no need to add it here
+    // Insert Activity after Sync History but before Setup
+    const setupIdx = items.findIndex(i => i.id === 'setup');
+    const activityItem = { id: 'activity', label: 'Activity', icon: History };
+    if (setupIdx >= 0) {
+      items.splice(setupIdx, 0, activityItem);
+    } else {
+      items.push(activityItem);
+    }
     return items;
   }, [user]);
 

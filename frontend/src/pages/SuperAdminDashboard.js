@@ -12,12 +12,12 @@ const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
 const ALL_FEATURES = [
   { id: 'dashboard', label: 'Dashboard', desc: 'Overview stats & charts' },
-  { id: 'inventory', label: 'Inventory', desc: 'Stock management & items' },
   { id: 'sales', label: 'Sales', desc: 'Sales vouchers & analytics' },
   { id: 'crm', label: 'CRM', desc: 'Customer outstanding & behavior' },
+  { id: 'inventory', label: 'Inventory', desc: 'Stock management & items' },
   { id: 'analytics', label: 'Analytics', desc: 'Movement analysis & reports' },
-  { id: 'ai_reports', label: 'AI Reports', desc: 'AI-powered insights' },
   { id: 'salesman', label: 'Salesman', desc: 'Salesman performance' },
+  { id: 'ai_reports', label: 'AI Reports', desc: 'AI-powered insights' },
   { id: 'insider', label: 'Insider Result', desc: 'BI analytics & forecasts' },
   { id: 'sync_history', label: 'Sync History', desc: 'Data sync logs' },
   { id: 'setup', label: 'Setup', desc: 'Tally connection settings' },
