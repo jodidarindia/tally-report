@@ -10,19 +10,19 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
 
 ## Security Architecture
-- **Auth**: bcrypt password hashing, HS256 JWT (secret from .env, 256-bit random key)
+- **Auth**: bcrypt password hashing, HS256 JWT (256-bit secret from .env)
 - **Tenant Isolation**: Every DB query includes `tenant_id` + `company_id` via `_build_query()` / `tenant_context.py`
+- **Audit Logging**: All admin actions logged with actor, action, target, details, IP address, timestamp
 - **Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
 - **Rate Limiting**: 20 login attempts per 60 seconds
-- **Desktop Agent**: Login-based auth with token auto-refresh, session file (not plain .env secrets)
 
 ## Multi-Tenant Architecture
-- **Super Admin**: Manages admin tenants, feature gating, password resets, subscriptions
-- **Admin**: Email-based username, owns tenant with isolated data
+- **Super Admin**: Manages admin tenants, feature gating, subscriptions, sees all audit logs
+- **Admin**: Email-based username, owns tenant with isolated data, sees own audit logs
 - **Employee**: Belongs to admin's tenant, inherits features
-- **Data Isolation**: `tenant_id` + `company_id` required on ALL DB operations (reads, writes, deletes)
+- **Data Isolation**: `tenant_id` + `company_id` on ALL DB operations
 - **Feature Gating**: 9 toggleable features (sync_history + setup ON by default)
-- **Multi-Company**: CompanySelector on login, X-Company-ID header on all API calls, per-company sync info shown
+- **Multi-Company**: CompanySelector with per-company sync info, X-Company-ID header
 
 ## What's Been Implemented
 
@@ -33,41 +33,43 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 
 ### Multi-Tenant & Security (Apr 2026)
 - Super Admin dashboard with admin management, feature toggles, stats, subscriptions
-- Role-Based Access Control (RBAC) in frontend routing
-- Email-based username, password change/reset
+- RBAC, email-based usernames, password change/reset
 - Security headers, rate limiting
 
-### Multi-Company Data Switcher (Apr 10 2026) — VERIFIED
-- CompanySelector with real-time sync info (last sync time, item count, voucher count per company)
+### Multi-Company Data Switcher (Apr 10 2026)
+- CompanySelector with real-time sync info per company
 - X-Company-ID header on every API request
 - Data isolation verified across all pages
 
-### Security Audit (Apr 10 2026) — 8 ROUTES FIXED
-Routes that had missing tenant/company isolation:
-1. `GET /api/sales/vouchers/{id}` — now includes tenant/company filter
-2. `GET /api/salesman/master` — now requires tenant context
-3. `GET /api/salesman/performance` — salesman_master filtered by tenant
-4. `GET /api/salesman/performance-detailed` — requires tenant context
-5. `POST /api/salesman/master` — includes tenant_id/company_id on insert
-6. `DELETE /api/salesman/master/{name}` — requires tenant context on delete
-7. `POST /api/customers/targets/set` — includes tenant_id/company_id
-8. `PATCH /api/customers/followups/{id}` — includes tenant filter
-Cross-tenant isolation verified (test_admin cannot see admin's data).
+### Security Audit — 9 Routes Fixed (Apr 10 2026)
+1. `GET /api/sales/vouchers/{id}` — tenant/company filter added
+2. `GET /api/salesman/master` — tenant context added
+3. `GET /api/salesman/performance` — tenant filter on salesman_master
+4. `GET /api/salesman/performance-detailed` — tenant context added
+5. `POST /api/salesman/master` — tenant_id/company_id on insert
+6. `DELETE /api/salesman/master/{name}` — tenant context on delete
+7. `POST /api/customers/targets/set` — tenant_id/company_id on insert
+8. `PATCH /api/customers/followups/{id}` — tenant filter on update
+9. `GET /api/inventory/sales-frequency` — tenant context added
+
+### Audit Logging System (Apr 10 2026)
+- **Actions logged**: login, login_failed, password_change, password_reset, admin_created, admin_deleted, admin_toggled, features_updated, data_export
+- **Data captured**: actor, action, target, details, IP address (x-forwarded-for aware), timestamp
+- **Super Admin view**: Activity Log tab in dashboard → sees ALL tenants' activity
+- **Admin view**: Activity nav item → sees only own tenant's activity
+- **Filter**: Dropdown to filter by action type
+- **Tenant isolation**: Admin cannot see superadmin's or other tenants' logs
 
 ### Desktop Sync Agent v7.0
 - Login-based auth, incremental sync with hash detection, multi-company support
 
 ## Key API Endpoints
-- Auth: `/api/auth/login`, `/api/auth/me`, `/api/auth/sync-token`, `/api/auth/change-password`, `/api/auth/reset-password`
-- Super Admin: `/api/super-admin/stats`, `/api/super-admin/admins`, `PUT .../features`, `PUT .../subscription`, `PUT .../toggle-active`
-- Sync: `/api/sync/companies-status`, `/api/sync/connection-status`, `/api/sync/status`
-- Data: `/api/inventory/items`, `/api/sales/vouchers`, `/api/customers/outstanding`
-- AI: `/api/ai/advanced-query`
-
-## Test Data
-- Admin (admin/admin123): 2 companies
-  - "ASA AUTOTECH INDIA PRIVATE LIMITED": 202 inv, 1258 sales, 38+ customers
-  - "Demo Trading Co": 3 inv, 2 sales, 2 customers
+- Auth: login, me, sync-token, change-password, reset-password
+- Super Admin: stats, admins CRUD, features, subscription, toggle-active
+- Audit: `/api/audit/logs`, `/api/audit/actions`
+- Sync: companies-status, connection-status
+- Data: inventory/items, sales/vouchers, customers/outstanding, inventory/sales-frequency
+- AI: advanced-query
 
 ## Pending Tasks
 ### P1
@@ -80,5 +82,4 @@ Cross-tenant isolation verified (test_admin cannot see admin's data).
 ## Tech Stack
 - React 18, Tailwind CSS, Shadcn UI, Recharts, Lucide React
 - FastAPI, Motor, PyJWT, ReportLab, OpenPyXL, bcrypt
-- MongoDB
-- OpenAI GPT-5.2 (Emergent LLM Key)
+- MongoDB, OpenAI GPT-5.2 (Emergent LLM Key)
