@@ -52,6 +52,14 @@ Build a SaaS web application connecting to local Tally Prime database to prepare
 8. `PATCH /api/customers/followups/{id}` — tenant filter on update
 9. `GET /api/inventory/sales-frequency` — tenant context added
 
+### Insider Result Analytics (Apr 10 2026)
+- **Customer Lifecycle**: Active/Inactive/Lost classification (90d/180d thresholds), pie chart, monthly trend, searchable table
+- **Sales Forecast**: Moving average forecast (3-month), YoY comparison, revenue trend with forecast line
+- **SPIP Analysis**: Sales vs Purchase gap detection (out_of_stock, understocked, dead_stock, overstocked, balanced), horizontal bar chart, filterable table
+- **Concentration Risk**: Pareto analysis with cumulative % line, 80% reference line, risk level banner (critical/high/moderate/healthy)
+- **Data Isolation**: All 4 endpoints use `_build_query(ctx, company_id)` — verified test_admin sees zero data
+- **Endpoints**: `/api/insights/customer-lifecycle`, `/api/insights/sales-forecast`, `/api/insights/spip-analysis`, `/api/insights/concentration-risk`
+
 ### Audit Logging System (Apr 10 2026)
 - **Actions logged**: login, login_failed, password_change, password_reset, admin_created, admin_deleted, admin_toggled, features_updated, data_export
 - **Data captured**: actor, action, target, details, IP address (x-forwarded-for aware), timestamp
