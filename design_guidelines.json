@@ -1,111 +1,148 @@
 {
-  "project_name": "Tally SaaS Report Builder",
-  "theme": "light",
-  "archetype": "Archetype 1 (Organic & Earthy)",
-  "design_philosophy": {
-    "emotion": "Trust, Growth, Calm, Stability",
-    "description": "A finance dashboard that breaks the 'boring blue tech' stereotype. Uses warm, tactile colors and a grounded earthy palette to make dense Tally data feel approachable and reliable. Negative space is highly prioritized to avoid visual fatigue."
+  "theme_and_archetype": {
+    "domain": "B2B SaaS Analytics",
+    "theme": "LIGHT",
+    "archetype": "4 (Swiss & High-Contrast)",
+    "reasoning": "For a B2B finance/analytics tool for Indian SMEs, Authority, clarity, and function-first design are paramount. The high-contrast Swiss style builds immediate trust and looks highly professional while maintaining a focus on completely secure data."
   },
   "typography": {
-    "fonts": {
-      "headings": "Outfit, sans-serif",
-      "body": "Work Sans, sans-serif",
-      "monospace": "JetBrains Mono, monospace"
+    "headings": {
+      "font_family": "Cabinet Grotesk, sans-serif",
+      "weights": ["300", "800", "900"],
+      "classes": "font-black tracking-tighter text-zinc-950"
+    },
+    "body": {
+      "font_family": "Outfit, sans-serif",
+      "weights": ["400", "500"],
+      "classes": "text-zinc-700 leading-relaxed"
     },
     "hierarchy": {
-      "h1": "text-4xl sm:text-5xl tracking-tight font-light text-stone-900",
-      "h2": "text-2xl sm:text-3xl tracking-tight font-medium text-stone-900",
-      "h3": "text-xl sm:text-2xl tracking-tight font-medium text-stone-800",
-      "body": "text-base leading-relaxed text-stone-600",
-      "small_label": "text-xs tracking-[0.2em] uppercase font-semibold text-stone-500"
-    }
-  },
-  "colors": {
-    "palette": {
-      "background": "#FDFBF7",
-      "surface": "#FFFFFF",
-      "primary": "#064E3B",
-      "primary_hover": "#047857",
-      "secondary": "#E7E5E4",
-      "text_main": "#1C1917",
-      "text_muted": "#57534E",
-      "border": "#E7E5E4",
-      "success": "#166534",
-      "destructive": "#991B1B",
-      "warning": "#B45309"
+      "h1": "text-5xl sm:text-6xl+ tracking-tighter font-black",
+      "h2": "text-3xl sm:text-4xl tracking-tight font-bold",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "body": "text-base sm:text-lg",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-blue-600"
     },
-    "tailwind_classes": {
-      "page_bg": "bg-[#FDFBF7]",
-      "card_bg": "bg-white",
-      "primary_text": "text-stone-900",
-      "muted_text": "text-stone-500",
-      "border": "border-stone-200"
-    }
+    "rules": "Never center-align large blocks of text. Ensure extreme contrast between heading weight and overline size. No Inter or default sans for headings."
   },
-  "spacing_and_layout": {
-    "grid_strategy": "MODE B: The 'Control Room' Grid",
-    "grid_classes": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
-    "container_padding": "p-6 md:p-8 lg:p-12",
-    "card_padding": "p-6",
-    "alignment_rules": "Left-align dense tabular data and inputs. Right-align numerical data in tables. Center-align empty state illustrations only.",
-    "border_radius": "rounded-xl"
+  "color_palette": {
+    "background": {
+      "primary": "#ffffff",
+      "secondary": "#f4f4f5"
+    },
+    "foreground": {
+      "primary": "#09090b",
+      "secondary": "#52525b"
+    },
+    "accent": {
+      "primary": "#0052FF", 
+      "hover": "#0039B3"
+    },
+    "surfaces": {
+      "card": "#ffffff",
+      "border": "rgba(9, 9, 11, 0.1)"
+    },
+    "rules": "Avoid soft gray mush. Use sharp pure white against solid zinc-100 backgrounds. Accent color must be used sparingly, mostly for primary CTAs and active states."
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Use generous spacing. p-8, p-12 inside containers. py-24 or py-32 for section padding.",
+    "grid_strategy": {
+      "features": "MODE A: 'Tetris' Grid for bento layouts. Asymmetrical spans (col-span-8, col-span-4).",
+      "pricing": "Equal 3-column grid but with the middle tier slightly elevated or visually dominant."
+    },
+    "alignment": "Prioritize optical alignment and aggressive asymmetry. Left-align content where possible.",
+    "borders": "1px solid border-zinc-200. No soft box-shadows. Use crisp borders to delineate spaces (Neo-Brutalist undertones)."
+  },
+  "motion_and_interaction": {
+    "hover_states": "Crisp transformations. -translate-y-1 with a sharp, not blurry, shadow.",
+    "transitions": "transition-transform 0.2s ease, transition-colors 0.2s ease",
+    "animations": "Subtle fade-in-up on scroll for major sections."
   },
   "components": {
-    "cards": {
-      "style": "Flat background (bg-white), 1px subtle border (border-stone-200), rounded-xl, no heavy shadows.",
-      "hover": "hover:-translate-y-1 hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300"
-    },
     "buttons": {
-      "primary": "bg-[#064E3B] text-white hover:bg-[#047857] shadow-sm rounded-lg px-6 py-2 transition-colors",
-      "secondary": "bg-white border border-stone-200 text-stone-900 hover:bg-stone-50 shadow-[0_2px_4px_rgba(28,25,23,0.05)] rounded-lg px-6 py-2 transition-all"
+      "primary": "bg-blue-600 text-white rounded-sm hover:bg-blue-700 font-bold px-8 py-3 transition-colors",
+      "secondary": "bg-transparent text-zinc-950 border border-zinc-950 rounded-sm hover:bg-zinc-100 font-bold px-8 py-3 transition-colors"
     },
-    "tables": {
-      "header": "Sticky top, bg-stone-50, text-xs uppercase tracking-wider text-stone-500 font-semibold py-4 border-b border-stone-200",
-      "row": "border-b border-stone-100 hover:bg-stone-50/50 transition-colors",
-      "cell": "py-4 text-sm text-stone-700",
-      "numbers": "text-right tabular-nums",
-      "zebra_striping": "Even rows bg-white, odd rows bg-[#FDFBF7]"
+    "cards": {
+      "default": "bg-white border border-zinc-200 rounded-sm p-8",
+      "hover": "hover:-translate-y-1 hover:border-zinc-300 transition-all"
     },
-    "ai_query_builder": {
-      "container": "relative overflow-hidden rounded-2xl border border-stone-200 p-8 shadow-sm",
-      "background_overlay": "absolute inset-0 opacity-10 bg-cover bg-center mix-blend-multiply",
-      "input_area": "relative z-10 bg-white/80 backdrop-blur-md rounded-xl p-2 border border-stone-200/50 shadow-inner flex items-center gap-4"
-    },
-    "navigation_header": {
-      "style": "Sticky top-0 z-50 bg-[#FDFBF7]/80 backdrop-blur-xl border-b border-stone-200 px-6 py-4 flex items-center justify-between"
+    "header": {
+      "style": "bg-white/90 backdrop-blur-xl border-b border-zinc-100 sticky top-0 z-50",
+      "elements": "Logo, Features, Pricing, Testimonials, Login, Signup CTA"
     }
   },
-  "interactive_states": {
-    "focus": "focus:outline-none focus:ring-2 focus:ring-[#064E3B]/20 focus:border-[#064E3B]",
-    "hover_links": "hover:text-[#064E3B] transition-colors"
-  },
-  "media_and_assets": {
-    "icons_library": "lucide-react",
-    "images": {
-      "logo": {
-        "url": "https://images.pexels.com/photos/26576975/pexels-photo-26576975.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-        "description": "Minimalist textured logo to be used as a brand placeholder in the navbar.",
-        "category": "logo"
+  "media": {
+    "hero_image": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/30a6d04821ce3b4a99db05c23abc0de43d8ee58256920e819491659c1ba96161.png",
+      "description": "Abstract modern data visualization, glowing connected nodes on a sleek white and soft gray background, representing secure B2B software syncing",
+      "placement": "Hero Section (Right side in split layout or layered beneath in hero)"
+    },
+    "feature_analytics": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/822981571d5523871c0ce0aafe81e484074cf15ae6e5ed0d5adb01d21b68caa9.png",
+      "description": "Minimalist 3D isometric dashboard interface, floating glass panels with clean charts and graphs",
+      "placement": "Features Section (Bento Grid - Main/Large Card)"
+    },
+    "feature_security": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/79d800c4ff059a91b2cbe505090dd05a64aa55b94e6fcabc1044f3c0734b6697.png",
+      "description": "Abstract metallic vault lock or secure data shield, minimalist 3D design",
+      "placement": "Features Section (Bento Grid - Security/Data sync feature)"
+    },
+    "feature_inventory": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/e0e227771fb9f72d8092c15bd91e44c0b84d98af399d4fbf7394d0aff3561a31.png",
+      "description": "Modern warehouse logistics and inventory boxes, clean 3D isometric composition",
+      "placement": "Features Section (Bento Grid - Inventory Analytics feature)"
+    },
+    "testimonials": [
+      {
+        "url": "https://images.unsplash.com/photo-1695391396401-5fbb4bedafc1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxpbmRpYW4lMjBidXNpbmVzcyUyMG93bmVyJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc1ODQyMTkzfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Male business owner portrait",
+        "placement": "Testimonials Section (Customer 1)"
       },
-      "user_avatar": {
-        "url": "https://images.pexels.com/photos/36363694/pexels-photo-36363694.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-        "description": "Professional confident business woman portrait for user profile avatars.",
-        "category": "avatar"
+      {
+        "url": "https://images.unsplash.com/photo-1770627000564-3feb36aecbcd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxpbmRpYW4lMjBidXNpbmVzcyUyMG93bmVyJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc1ODQyMTkzfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Female business owner at desk",
+        "placement": "Testimonials Section (Customer 2)"
       },
-      "ai_feature_bg": {
-        "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/1e9e8fc2367de38e12a3264a83ec836765e5585a923a048af222e80cdb30cf72.png",
-        "description": "Abstract 3D topography map in earthy tones to be used as a subtle background for the AI Report Builder section to make it feel premium and intelligent.",
-        "category": "background"
-      },
-      "login_bg": {
-        "url": "https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/a89e0dd27207c002eb0159b05100eb80fffeaeae096c10dc8d6517ba5c602c72.png",
-        "description": "Soft blurred gradient background in warm sand and moss green. Use for login/authentication pages.",
-        "category": "background"
+      {
+        "url": "https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Smiling male worker/owner",
+        "placement": "Testimonials Section (Customer 3)"
       }
-    }
+    ],
+    "logos": [
+      {
+        "url": "https://images.unsplash.com/photo-1496200186974-4293800e2c20?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwzfHxjb21wYW55JTIwbG9nb3xlbnwwfHx8fDE3NzU4NDIxOTR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Slack logo",
+        "placement": "Trusted By / Logo banner"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1562783912-21ad31ee2a83?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwyfHxjb21wYW55JTIwbG9nb3xlbnwwfHx8fDE3NzU4NDIxOTR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Jaguar emblem",
+        "placement": "Trusted By / Logo banner"
+      }
+    ]
   },
-  "accessibility": {
-    "contrast_ratio": "Ensure all text against the #FDFBF7 or #FFFFFF backgrounds passes at least 4.5:1 ratio (e.g. use #1C1917 or #064E3B).",
-    "test_attributes": "Add data-testid to ALL interactive elements. Example: data-testid='ai-generate-btn'."
-  }
+  "content_strategy": {
+    "tagline": "Organize. Automate. Accelerate.",
+    "hero_copy": "Unlock full-scale analytics synced directly with Tally Prime. Built for Indian SMEs to drive sales, manage inventory, and securely optimize performance.",
+    "pricing_tiers": [
+      { "name": "Starter", "price": "₹999/mo", "features": ["Tally Prime Sync", "Basic CRM", "Standard Reports"] },
+      { "name": "Professional", "price": "₹2,499/mo", "features": ["Everything in Starter", "Inventory Analytics", "Salesman Tracking"] },
+      { "name": "Enterprise", "price": "₹4,999/mo", "features": ["Everything in Pro", "AI Reports", "Dedicated Support", "Custom Integrations"] }
+    ],
+    "key_features": ["Inventory Analytics", "Sales Tracking", "CRM", "AI Reports", "Salesman Performance"]
+  },
+  "instructions_to_main_agent": [
+    "Install custom fonts Cabinet Grotesk (headings) and Outfit (body) via Google Fonts or standard imports.",
+    "Use standard HTML + Tailwind for marketing layout (sections, asymmetric grids). Avoid over-relying on standard Card components.",
+    "Build a clear 3-tier pricing section based on the content strategy using INR prices.",
+    "Include a 'Trusted By' section with the provided logo URLs.",
+    "Ensure 'Login' button and 'Sign Up' CTA are prominent in the sticky header navigation.",
+    "Apply 'data-testid' attributes to all interactive elements (buttons, links, form inputs) using kebab-case role-based names.",
+    "Use Phosphor icons or Lucide-React for crisp, professional iconography.",
+    "The hero section should be narrative-driven, split-screen or asymmetric, with the hero_image providing a strong visual anchor.",
+    "Implement the 'Tetris' grid layout for the features section, mapping each feature text to one of the provided 3D feature images.",
+    "Ensure the entire app has a cohesive 'Swiss & High-Contrast' aesthetic: sharp edges (rounded-none or max rounded-sm), high contrast typography, minimal decorative fluff."
+  ]
 }
