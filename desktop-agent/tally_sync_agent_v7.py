@@ -37,7 +37,7 @@ import json
 import logging
 import asyncio
 import threading
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
 import requests
@@ -1373,7 +1373,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v7.1 (Default-Company-Fix)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v7.2 (Incremental + IST Fix)")
         logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
 
@@ -1575,7 +1575,7 @@ class FlowraSyncAgent:
             company = ''
         progress = {
             'type': event_type,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'financial_year': self.financial_year,
             'company_name': company,
             'tenant_id': self.tenant_id,
@@ -1612,8 +1612,8 @@ class FlowraSyncAgent:
             payload = {
                 'data_type': data_type,
                 'data': data,
-                'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '7.1.0-default-fix',
+                'sync_time': datetime.now(timezone.utc).isoformat(),
+                'agent_version': '7.2.0-incremental-ist',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -1710,8 +1710,11 @@ class FlowraSyncAgent:
             is_placeholder = company_name == '_active_'
             display_name = company_name if not is_placeholder else 'Active Company (auto-detect)'
 
-            is_first_sync = not hasattr(self, '_full_sync_done') or company_name not in (self._full_sync_done or set())
-            sync_mode = 'full' if is_first_sync else ('incremental' if INCREMENTAL_SYNC else 'full')
+            # Check persisted sync state — if company has had a full sync before, use incremental
+            state = load_sync_state()
+            company_state = state.get('companies', {}).get(company_name, {})
+            has_completed_full_sync = company_state.get('full_sync_done', False)
+            sync_mode = 'incremental' if (has_completed_full_sync and INCREMENTAL_SYNC) else 'full'
 
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
 
@@ -1919,10 +1922,16 @@ class FlowraSyncAgent:
             logger.info(f"  Got {len(creditors)} sundry creditors")
             self.report_progress('phase_complete', phase='sundry_creditors', count=len(creditors))
 
-            # Mark first full sync as done for this company
-            if not hasattr(self, '_full_sync_done') or self._full_sync_done is None:
-                self._full_sync_done = set()
-            self._full_sync_done.add(company_name)
+            # Mark first full sync as done for this company (persisted to disk)
+            if sync_mode == 'full':
+                state = load_sync_state()
+                if 'companies' not in state:
+                    state['companies'] = {}
+                if company_name not in state['companies']:
+                    state['companies'][company_name] = {'hashes': {}, 'last_sync': {}}
+                state['companies'][company_name]['full_sync_done'] = True
+                state['companies'][company_name]['full_sync_at'] = datetime.now().isoformat()
+                save_sync_state(state)
 
             # Summary
             total_sales = len(all_sales_combined)
@@ -1965,11 +1974,6 @@ class FlowraSyncAgent:
                                  journals=total_jv, stock_journals=total_sj,
                                  customers=len(customers),
                                  fys_synced=fys_to_sync, sync_mode=sync_mode)
-
-            # Mark first sync done for this company
-            if not hasattr(self, '_full_sync_done') or self._full_sync_done is None:
-                self._full_sync_done = set()
-            self._full_sync_done.add(company_name)
 
         except Exception as e:
             logger.error(f"Sync error for {company_name}: {e}")

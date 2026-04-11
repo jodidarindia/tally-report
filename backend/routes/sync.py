@@ -382,7 +382,21 @@ async def receive_agent_sync(request: dict):
         # Update last sync time
         company_name = request.get('company_name', '') or req_company_id
         financial_year = request.get('financial_year', '')
-        sync_time_val = sync_time or datetime.now(timezone.utc).isoformat()
+        # Normalize sync_time to always have timezone info (UTC)
+        if sync_time:
+            try:
+                from dateutil.parser import parse as parse_dt
+                parsed = parse_dt(sync_time)
+                if parsed.tzinfo is None:
+                    # Naive datetime — assume UTC
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                sync_time = parsed.isoformat()
+            except Exception:
+                sync_time = datetime.now(timezone.utc).isoformat()
+        else:
+            sync_time = datetime.now(timezone.utc).isoformat()
+
+        sync_time_val = sync_time
         await db.sync_status.update_one(
             {'type': 'agent_sync', 'tenant_id': req_tenant_id, 'company_id': req_company_id},
             {'$set': {
