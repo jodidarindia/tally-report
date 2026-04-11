@@ -1,111 +1,76 @@
 # FLOWRA - Tally Prime Report & Analytics SaaS
 
 ## Problem Statement
-Build a SaaS web application connecting to local Tally Prime database to prepare inventory and sales reports. Features: JWT Auth, FY filtering, AI Purchase Orders (GPT-5.2), WebSockets for live sync, CRM with customer outstanding/payment tracking, PDF ledger exports. Multi-tenant architecture with Super Admin, feature gating, RBAC, data isolation, and marketing website.
+Build a SaaS web application connecting to local Tally Prime database for inventory and sales analytics. Multi-tenant with Super Admin, feature gating, RBAC, marketing website with subscription plans in INR, prospect management, and demo experience.
 
 ## Architecture
-- **Frontend**: React + Shadcn UI + Tailwind CSS
-- **Backend**: FastAPI + Motor (MongoDB) + PyJWT
-- **Desktop Agent**: Python v7.0 (login-based auth, tally_sync_agent_v7.py)
+- **Frontend**: React + Shadcn UI + Tailwind CSS + Outfit font
+- **Backend**: FastAPI + Motor (MongoDB) + PyJWT + Fernet AES-256
+- **Desktop Agent**: Python v7.0 (tally_sync_agent_v7.py)
 - **AI**: OpenAI GPT-5.2 via Emergent LLM Key
-- **Encryption**: Fernet AES-256 for PII fields
+- **Video**: Sora 2 generated feature walkthrough
+
+## Subscription Plans (INR)
+| Plan | Monthly | Annual | Features | Companies | Employees |
+|------|---------|--------|----------|-----------|-----------|
+| Starter | Rs.999 | Rs.9,990 | 5 | 1 | 2 |
+| Professional | Rs.2,499 | Rs.24,990 | 8 | 3 | 5 |
+| Enterprise | Rs.4,999 | Rs.37,990 | 10 | 10 | 20 |
 
 ## Security Architecture
-- **Auth**: bcrypt password hashing, HS256 JWT (256-bit secret from .env)
-- **Encryption**: AES-256 Fernet field-level encryption for prospect PII (company, email, phone, GST, address)
-- **Tenant Isolation**: Every DB query includes `tenant_id` + `company_id` via `_build_query()`
-- **Rate Limiting**: Auth: 10/60s, Signup: 3/hr, API: 200/60s
-- **Headers**: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy, Cache-Control
-- **NoSQL Injection**: Pattern detection blocks MongoDB operators in user input
-- **Payload Limit**: 10MB max request body
-- **Audit Logging**: All admin actions logged with actor, action, target, details, IP, timestamp
-- **API Docs**: Disabled (docs_url=None, redoc_url=None)
-
-## Feature Gating (10 Features)
-dashboard, sales, crm, inventory, analytics, salesman, ai_reports, insider, sync_history, setup
-
-## What's Been Implemented
-
-### Core Features (Complete)
-- JWT Auth with super_admin/admin/employee roles
-- Multi-FY support, Dashboard, Inventory, Sales, CRM, AI Reports, Sync History
-- PDF Ledger export, WebSocket live sync, AI Purchase Orders (GPT-5.2)
-
-### Multi-Tenant & RBAC (Apr 2026)
-- Super Admin dashboard: admin CRUD, feature toggles, stats, subscriptions
-- Email-based usernames, password change/reset, security headers, rate limiting
-
-### Multi-Company Data Switcher (Apr 10)
-- CompanySelector, X-Company-ID header, per-company data isolation
-
-### Security Audit — 9 Routes Fixed (Apr 10)
-
-### Insider Result Analytics (Apr 10) — Feature-gated
-- Customer Lifecycle, Sales Forecast, SPIP Analysis, Concentration Risk
-
-### Salesman FY Performance (Apr 10)
-- FY-locked targets/mapping, performance breakdown, Excel export
-
-### SearchableSelect Dropdowns (Apr 10) — Applied globally
-
-### Audit Logging System (Apr 10)
-
-### Inventory Analytics Redesign (Apr 10) — TESTED ✅
-- Movement Analysis (5 clickable filters), Below Cost Sales (real cost), Sales Frequency (Excel+PDF)
-- Desktop Agent fetches purchase_vouchers, debit_notes, sundry_creditors
-
-### Payment Behavior FY Filtering + Opening Balance (Apr 10) — TESTED ✅
-- FY-filtered with opening balance (pre-FY vouchers + Tally opening_balance fallback)
-- Outstanding = OB + FY Sales - FY Credits (can be negative)
-
-### Database Security Hardening (Apr 10) — TESTED ✅
 - AES-256 Fernet field-level encryption for prospect PII
-- Comprehensive security headers (HSTS, CSP, CORS, XSS, etc.)
-- Rate limiting: auth 10/60s, signup 3/hr, API 200/60s
-- NoSQL injection protection, payload size limits
-- MongoDB indexes for security and performance
-- API docs disabled in production
+- bcrypt password hashing, HS256 JWT
+- Rate limiting: Auth 10/60s, Signup 3/hr, API 200/60s
+- HSTS, CSP, X-Frame-Options, XSS protection, Referrer-Policy
+- NoSQL injection protection, 10MB payload limit
+- Multi-tenant data isolation (tenant_id + company_id)
+- Audit logging with IP tracking
 
-### Marketing Website (Apr 10) — TESTED ✅
-- **Landing Page**: Hero section, 6 feature cards, pricing (3 tiers INR), testimonials, security section, footer
-- **Pricing**: Starter ₹999/mo, Professional ₹2,499/mo, Enterprise ₹4,999/mo with Monthly/Annual toggle (17% annual savings)
-- **Signup Flow**: 4-step process (Business Details → Demo → Requirements → Complete)
-- **Demo Experience**: Hardcoded sample data (Demo Trading Co.) — NO real data exposed
-- **Feature Requirements**: Optional feature selection after demo
-- **Navigation**: Landing → Login / Signup, with cross-links
+## What's Been Implemented (All Tested)
 
-### SuperAdmin Enquiry Management (Apr 10) — TESTED ✅
-- **Enquiries Tab**: Stats cards (Total, New, Contacted, Demo Given, Converted)
-- **Prospect Cards**: Company, email, phone, status, contact, plan, demo status, date, requirements
-- **Status Tracking**: new → contacted → demo_given → negotiating → converted / lost
-- **Convert to Admin**: Creates admin account with email as username, selected features, subscription period
-- **Audit Trail**: All status changes and conversions logged
+### Core App Features
+- JWT Auth (super_admin/admin/employee), Multi-FY, Dashboard, Inventory, Sales, CRM
+- PDF Ledger export, WebSocket live sync, AI Purchase Orders (GPT-5.2)
+- Multi-Company Data Switcher, Security Audit (9 routes fixed)
+- Insider Result BI (4 tabs), Salesman FY Performance, SearchableSelect
+- Audit Logging, Inventory Analytics Redesign, Payment Behavior FY+Opening Balance
 
-### Desktop Agent v7.0 (Apr 10)
-- Login-based auth, incremental sync, multi-company
+### Marketing Website (Apr 10 2026) — TESTED
+- Landing page: Hero, features, pricing (3 tiers INR), testimonials, security, footer
+- Monthly/Annual billing toggle with 17% savings
+- Professional plan features shown in demo
+
+### Prospect Signup Flow (Apr 10 2026) — TESTED
+- 4-step: Details → Demo (with Professional features + video) → Requirements → Complete
+- Demo uses hardcoded sample data only — no real customer data
+- PII encrypted with AES-256 in database
+- Video walkthrough generated via Sora 2
+
+### SuperAdmin Plan-Based Management (Apr 11 2026) — TESTED
+- Plan selection (Starter/Professional/Enterprise) when creating admin or converting prospect
+- Plan auto-sets: features, max_companies, max_employees
+- Billing cycle toggle (Monthly/Annual)
+- Admin cards show: plan badge, employee limits, company limits, feature counts
+- Enquiry management: status tracking, convert to admin with plan
+
+### Plan Enforcement (Apr 11 2026) — TESTED
+- Employee creation blocked when max_employees reached
+- Company sync blocked when max_companies reached
+- Error messages reference the plan name for upgrade guidance
+
+### Desktop Agent v7.0
 - Fetches: inventory_items, sales_vouchers, purchase_vouchers, debit_notes, sundry_creditors, customers (with opening_balance)
-
-## Key API Endpoints
-- **Public**: /api/public/plans, /api/public/signup, /api/public/demo-request, /api/public/demo-data, /api/public/submit-requirements
-- **Auth**: login, me, sync-token, change-password, reset-password
-- **Super Admin**: stats, admins CRUD, features, subscription, toggle-active, prospects, prospects/{id}/status, prospects/{id}/convert
-- **Audit**: logs, actions
-- **Salesman**: master, performance, export
-- **Insights**: customer-lifecycle, sales-forecast, spip-analysis, concentration-risk
-- **Inventory**: movement-analysis, below-cost-sales, movement-export, below-cost-export, sales-frequency-export
-- **CRM**: outstanding, payment-behavior, followups, targets
-- **Sync**: companies-status, connection-status, vouchers
-- **AI**: advanced-query
 
 ## Pending Tasks
 ### P1
-- Compile Desktop Agent v7 into one-click installable .exe with UI/CLI
+- Compile Desktop Agent v7 into one-click installable .exe
 
 ### P2
 - Export Audit Logs to CSV
 - Automated payment follow-up reminders via email/WhatsApp
+- Razorpay payment gateway for self-checkout
 
 ## Tech Stack
-- React 18, Tailwind CSS, Shadcn UI, Recharts, Lucide React, Outfit font
-- FastAPI, Motor, PyJWT, ReportLab, OpenPyXL, bcrypt, cryptography (Fernet)
-- MongoDB, OpenAI GPT-5.2 (Emergent LLM Key)
+- React 18, Tailwind CSS, Shadcn UI, Recharts, Lucide React, Outfit
+- FastAPI, Motor, PyJWT, ReportLab, OpenPyXL, bcrypt, cryptography
+- MongoDB, OpenAI GPT-5.2, Sora 2
