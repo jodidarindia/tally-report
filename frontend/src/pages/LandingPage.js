@@ -36,7 +36,7 @@ const PLANS = [
     id: 'enterprise',
     name: 'Enterprise',
     monthly: 4999,
-    annual: 49990,
+    annual: 37990,
     desc: 'Full suite with AI and unlimited features',
     features: ['Everything in Professional', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'Sales Forecast & SPIP Analysis', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,

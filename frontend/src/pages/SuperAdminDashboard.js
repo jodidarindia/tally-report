@@ -32,7 +32,7 @@ const SuperAdminDashboard = ({ token }) => {
   const [showResetModal, setShowResetModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
   const [expandedAdmin, setExpandedAdmin] = useState(null);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', features: ['sync_history', 'setup'], subscription_months: 12 });
+  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
   const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -40,7 +40,13 @@ const SuperAdminDashboard = ({ token }) => {
   const [prospects, setProspects] = useState([]);
   const [prospectStats, setProspectStats] = useState({});
   const [convertModal, setConvertModal] = useState(null);
-  const [convertData, setConvertData] = useState({ password: '', features: [], subscription_months: 12 });
+  const [convertData, setConvertData] = useState({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
+
+  const PLANS = {
+    starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
+    professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'salesman', 'sync_history', 'setup'] },
+    enterprise: { name: 'Enterprise', monthly: 4999, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
+  };
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -81,9 +87,9 @@ const SuperAdminDashboard = ({ token }) => {
         subscription_months: newAdmin.subscription_months || 12
       }, { headers });
       if (res.data?.success) {
-        toast.success(`Admin '${newAdmin.username}' created`);
+        toast.success(`Admin '${newAdmin.username}' created with ${newAdmin.plan} plan`);
         setShowCreateModal(false);
-        setNewAdmin({ username: '', password: '', name: '', features: ['sync_history', 'setup'], subscription_months: 12 });
+        setNewAdmin({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
         fetchData();
       } else {
         toast.error(res.data?.error || 'Failed to create admin');
@@ -228,13 +234,14 @@ const SuperAdminDashboard = ({ token }) => {
     try {
       const res = await axios.post(`${API}/super-admin/prospects/${convertModal}/convert`, {
         password: convertData.password,
-        features: convertData.features.length > 0 ? convertData.features : ALL_FEATURES.map(f => f.id),
+        plan: convertData.plan,
+        billing_cycle: convertData.billing_cycle,
         subscription_months: convertData.subscription_months
       }, { headers });
       if (res.data?.success) {
         toast.success(`Converted to admin: ${res.data.data.username}`);
         setConvertModal(null);
-        setConvertData({ password: '', features: [], subscription_months: 12 });
+        setConvertData({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
         fetchData();
       } else {
         toast.error(res.data?.error);
@@ -393,7 +400,7 @@ const SuperAdminDashboard = ({ token }) => {
                         <option value="lost">Lost</option>
                       </select>
                       {p.status !== 'converted' && p.status !== 'lost' && (
-                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', features: ALL_FEATURES.map(f => f.id), subscription_months: 12 }); }}
+                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 }); }}
                           className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
                           data-testid={`convert-${p.prospect_id}`}>
                           <ArrowRightCircle size={12} /> Convert
@@ -443,7 +450,7 @@ const SuperAdminDashboard = ({ token }) => {
           {/* Convert Modal */}
           {convertModal && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="convert-modal">
+              <div className="bg-white rounded-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" data-testid="convert-modal">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-lg font-semibold text-slate-900">Convert Prospect to Admin</h3>
                   <button onClick={() => setConvertModal(null)}><X size={20} className="text-slate-400" /></button>
@@ -456,8 +463,42 @@ const SuperAdminDashboard = ({ token }) => {
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Min 6 characters" data-testid="convert-password" />
                   </div>
+
+                  {/* Plan Selection */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Subscription (months)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan *</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {Object.entries(PLANS).map(([id, plan]) => (
+                        <button key={id} onClick={() => setConvertData(prev => ({ ...prev, plan: id }))}
+                          className={`p-3 border rounded-lg text-left transition-all ${convertData.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
+                          data-testid={`plan-select-${id}`}>
+                          <p className="text-sm font-bold text-slate-900">{plan.name}</p>
+                          <p className="text-xs text-blue-600 font-medium mt-0.5">
+                            {convertData.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
+                          </p>
+                          <div className="text-[10px] text-slate-500 mt-1">
+                            {plan.maxCompanies} co. | {plan.maxEmployees} emp
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Billing Cycle */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
+                    <div className="flex gap-2">
+                      {['monthly', 'annual'].map(cycle => (
+                        <button key={cycle} onClick={() => setConvertData(prev => ({ ...prev, billing_cycle: cycle }))}
+                          className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${convertData.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
+                          {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Duration</label>
                     <select value={convertData.subscription_months}
                       onChange={e => setConvertData(prev => ({ ...prev, subscription_months: parseInt(e.target.value) }))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -469,26 +510,24 @@ const SuperAdminDashboard = ({ token }) => {
                       <option value={24}>24 months</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Features</label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {ALL_FEATURES.map(f => (
-                        <label key={f.id} className="flex items-center gap-2 text-xs p-1.5 rounded hover:bg-slate-50 cursor-pointer">
-                          <input type="checkbox" checked={convertData.features.includes(f.id)}
-                            onChange={e => {
-                              setConvertData(prev => ({
-                                ...prev,
-                                features: e.target.checked ? [...prev.features, f.id] : prev.features.filter(x => x !== f.id)
-                              }));
-                            }} className="rounded" />
-                          <span>{f.label}</span>
-                        </label>
+
+                  {/* Plan features preview */}
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <p className="text-xs font-medium text-slate-500 mb-2">Included Features ({PLANS[convertData.plan]?.features.length || 0}):</p>
+                    <div className="flex flex-wrap gap-1">
+                      {(PLANS[convertData.plan]?.features || []).map(f => (
+                        <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
                       ))}
                     </div>
+                    <div className="flex gap-4 mt-2 text-[10px] text-slate-500">
+                      <span>Max Companies: <strong>{PLANS[convertData.plan]?.maxCompanies}</strong></span>
+                      <span>Max Employees: <strong>{PLANS[convertData.plan]?.maxEmployees}</strong></span>
+                    </div>
                   </div>
+
                   <button onClick={convertProspect} data-testid="convert-confirm-btn"
                     className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2">
-                    <ArrowRightCircle size={16} /> Convert to Admin Account
+                    <ArrowRightCircle size={16} /> Convert to Admin — {PLANS[convertData.plan]?.name} Plan
                   </button>
                 </div>
               </div>
@@ -536,10 +575,13 @@ const SuperAdminDashboard = ({ token }) => {
                   <div className={`w-3 h-3 rounded-full flex-shrink-0 ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
                   <div className="min-w-0">
                     <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
-                    <div className="text-xs text-slate-500 truncate">@{admin.username} &middot; {admin.employee_count || 0} employees</div>
+                    <div className="text-xs text-slate-500 truncate">@{admin.username} &middot; {admin.employee_count || 0}/{admin.max_employees || 20} employees</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${admin.plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : admin.plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {admin.plan || 'enterprise'}
+                  </span>
                   <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
                     {admin.features?.length || 0}/{ALL_FEATURES.length} features
                   </span>
@@ -570,7 +612,7 @@ const SuperAdminDashboard = ({ token }) => {
                   {subActive ? 'Active' : 'Expired'} until {subEndDate}
                 </span>
                 {admin.companies?.length > 0 && (
-                  <span className="flex items-center gap-1"><Building2 size={12} /> {admin.companies.length} {admin.companies.length === 1 ? 'company' : 'companies'}</span>
+                  <span className="flex items-center gap-1"><Building2 size={12} /> {admin.companies.length}/{admin.max_companies || 10} companies</span>
                 )}
               </div>
             </div>
@@ -694,25 +736,39 @@ const SuperAdminDashboard = ({ token }) => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Features to Activate</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {ALL_FEATURES.map(f => (
-                    <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={newAdmin.features.includes(f.id)}
-                        onChange={() => {
-                          setNewAdmin(prev => ({
-                            ...prev,
-                            features: prev.features.includes(f.id)
-                              ? prev.features.filter(x => x !== f.id)
-                              : [...prev.features, f.id]
-                          }));
-                        }}
-                        className="rounded border-slate-300"
-                      />
-                      {f.label}
-                    </label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan *</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(PLANS).map(([id, plan]) => (
+                    <button key={id} onClick={() => setNewAdmin({ ...newAdmin, plan: id })}
+                      className={`p-3 border rounded-lg text-left transition-all ${newAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
+                      data-testid={`new-plan-${id}`}>
+                      <p className="text-sm font-bold text-slate-900">{plan.name}</p>
+                      <p className="text-xs text-blue-600 font-medium mt-0.5">
+                        {newAdmin.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
+                      </p>
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        {plan.maxCompanies} co. | {plan.maxEmployees} emp | {plan.features.length} features
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
+                <div className="flex gap-2">
+                  {['monthly', 'annual'].map(cycle => (
+                    <button key={cycle} onClick={() => setNewAdmin({ ...newAdmin, billing_cycle: cycle })}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg border ${newAdmin.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
+                      {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs font-medium text-slate-500 mb-1">Plan includes:</p>
+                <div className="flex flex-wrap gap-1">
+                  {(PLANS[newAdmin.plan]?.features || []).map(f => (
+                    <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
                   ))}
                 </div>
               </div>

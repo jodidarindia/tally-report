@@ -42,7 +42,7 @@ SUBSCRIPTION_PLANS = {
     "enterprise": {
         "name": "Enterprise",
         "monthly_price": 4999,
-        "annual_price": 49990,
+        "annual_price": 37990,
         "features": ALL_FEATURES,
         "max_companies": 10,
         "max_employees": 20,
@@ -268,18 +268,24 @@ async def update_prospect_status(prospect_id: str, request: Request):
 
 @router.post("/super-admin/prospects/{prospect_id}/convert")
 async def convert_prospect_to_admin(prospect_id: str, request: Request):
-    """SuperAdmin: convert a prospect to an actual admin account."""
+    """SuperAdmin: convert a prospect to an actual admin account with plan-based limits."""
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
         body = await request.json()
         password = body.get("password", "")
-        features = body.get("features", [])
+        plan_id = body.get("plan", "starter")
+        billing_cycle = body.get("billing_cycle", "annual")
         subscription_months = body.get("subscription_months", 12)
 
         if not password or len(password) < 6:
             return APIResponse(success=False, error="Password must be at least 6 characters")
+
+        if plan_id not in SUBSCRIPTION_PLANS:
+            return APIResponse(success=False, error=f"Invalid plan. Use: {', '.join(SUBSCRIPTION_PLANS.keys())}")
+
+        plan = SUBSCRIPTION_PLANS[plan_id]
 
         prospect = await db.prospects.find_one({"prospect_id": prospect_id})
         if not prospect:
@@ -296,8 +302,6 @@ async def convert_prospect_to_admin(prospect_id: str, request: Request):
         if existing:
             return APIResponse(success=False, error="This email is already an active user")
 
-        valid_features = [f for f in features if f in ALL_FEATURES] if features else list(ALL_FEATURES)
-
         clean_name = re.sub(r'[^a-z0-9]', '_', email.lower().split('@')[0])
         tenant_id = f"tenant_{clean_name}"
         existing_tenant = await db.users.find_one({"tenant_id": tenant_id})
@@ -311,9 +315,13 @@ async def convert_prospect_to_admin(prospect_id: str, request: Request):
             "name": name,
             "role": "admin",
             "tenant_id": tenant_id,
-            "features": valid_features,
+            "features": list(plan["features"]),
             "companies": [],
             "active": True,
+            "plan": plan_id,
+            "billing_cycle": billing_cycle,
+            "max_companies": plan["max_companies"],
+            "max_employees": plan["max_employees"],
             "subscription_months": subscription_months,
             "subscription_start": now,
             "converted_from_prospect": prospect_id,
@@ -327,13 +335,16 @@ async def convert_prospect_to_admin(prospect_id: str, request: Request):
 
         sync_token = generate_sync_token(tenant_id)
 
-        await log_audit("prospect_converted", sa["username"], target=email, details=f"Prospect {prospect_id} -> Admin, Tenant: {tenant_id}", ip_address=get_client_ip(request))
+        await log_audit("prospect_converted", sa["username"], target=email, details=f"Prospect {prospect_id} -> Admin, Plan: {plan_id}, Tenant: {tenant_id}", ip_address=get_client_ip(request))
 
         return APIResponse(success=True, message=f"Prospect converted to admin! Login: {email}", data={
             "username": email,
             "tenant_id": tenant_id,
             "sync_token": sync_token,
-            "features": valid_features
+            "plan": plan_id,
+            "features": list(plan["features"]),
+            "max_companies": plan["max_companies"],
+            "max_employees": plan["max_employees"]
         })
     except Exception as e:
         logger.error(f"Error converting prospect: {e}")

@@ -66,7 +66,10 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "token": token,
                 "tenant_id": tenant_id,
                 "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else []),
-                "companies": companies
+                "companies": companies,
+                "plan": user.get("plan", "enterprise"),
+                "max_companies": user.get("max_companies", 10),
+                "max_employees": user.get("max_employees", 20)
             }
         )
     except Exception as e:
@@ -100,7 +103,10 @@ async def get_me(request: Request):
             "role": user["role"],
             "tenant_id": tenant_id,
             "features": features,
-            "companies": companies
+            "companies": companies,
+            "plan": user.get("plan", "enterprise"),
+            "max_companies": user.get("max_companies", 10),
+            "max_employees": user.get("max_employees", 20)
         })
     except Exception as e:
         return APIResponse(success=False, error=str(e))
@@ -176,6 +182,15 @@ async def create_user(req: CreateUserRequest, request: Request):
             return APIResponse(success=False, error="Username already exists")
 
         tenant_id = user.get("tenant_id")
+
+        # Enforce max_employees from plan
+        if user["role"] == "admin":
+            max_emp = user.get("max_employees", 20)
+            current_employees = await db.users.count_documents({"tenant_id": tenant_id, "role": "employee"})
+            if current_employees >= max_emp:
+                plan_name = user.get("plan", "current").capitalize()
+                return APIResponse(success=False, error=f"Employee limit reached ({max_emp}). Upgrade your {plan_name} plan to add more employees.")
+
         new_user = {
             "username": req.username,
             "password_hash": hash_password(req.password),

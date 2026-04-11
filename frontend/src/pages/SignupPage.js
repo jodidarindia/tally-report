@@ -266,11 +266,22 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                 <div className="w-16 h-16 bg-[#0052FF]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Play size={24} className="text-[#0052FF]" />
                 </div>
-                <p className="text-zinc-700 font-medium mb-4">Would you like to try the demo?</p>
+                <p className="text-zinc-700 font-medium mb-2">Would you like to explore FLOWRA?</p>
+                <p className="text-zinc-500 text-sm mb-6">Watch a quick feature walkthrough and try with sample data.</p>
+
+                {/* Feature Video */}
+                <div className="mb-8 max-w-lg mx-auto">
+                  <video controls className="w-full rounded-sm border border-zinc-200" poster="/flowra-logo.png" data-testid="demo-video">
+                    <source src="/flowra-demo.mp4" type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                  <p className="text-xs text-zinc-400 mt-2">30-second FLOWRA feature overview</p>
+                </div>
+
                 <div className="flex justify-center gap-4">
                   <button onClick={handleDemoRequest} disabled={loading} data-testid="demo-start-btn"
                     className="bg-[#0052FF] text-white px-8 py-3 font-bold rounded-sm hover:bg-[#0039B3] transition-colors flex items-center gap-2 disabled:opacity-50">
-                    {loading ? <Loader className="animate-spin" size={18} /> : <Play size={18} />} Yes, Show Demo
+                    {loading ? <Loader className="animate-spin" size={18} /> : <Eye size={18} />} Try with Sample Data
                   </button>
                   <button onClick={() => setStep(3)} className="border border-zinc-300 text-zinc-700 px-8 py-3 font-bold rounded-sm hover:bg-zinc-50 transition-colors">
                     Skip to Requirements
@@ -280,7 +291,20 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
             ) : (
               <div>
                 <div className="bg-[#0052FF]/5 border border-[#0052FF]/20 rounded-sm p-3 mb-6 text-xs text-[#0052FF] font-medium">
-                  Demo Company: {demoData.company_name} | FY: {demoData.fy} — This is sample data for illustration only
+                  Demo Company: {demoData.company_name} | FY: {demoData.fy} — Showing Professional Plan features
+                </div>
+
+                {/* Professional Plan Features */}
+                <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-sm p-4">
+                  <h3 className="text-sm font-bold text-blue-900 mb-2">Professional Plan Features Included</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {['Dashboard', 'Sales Tracking', 'Customer CRM', 'Inventory Mgmt', 'Movement Analytics', 'Salesman Performance', 'Excel/PDF Exports', 'Multi-Company (3)'].map(f => (
+                      <div key={f} className="flex items-center gap-1.5 text-xs text-blue-800">
+                        <Check size={12} className="text-blue-600" /> {f}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-blue-600 mt-2">Upgrade to Enterprise for AI Reports, Insider BI Analytics, and up to 10 companies</p>
                 </div>
 
                 {/* Demo Dashboard */}

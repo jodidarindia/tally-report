@@ -54,12 +54,20 @@ async def receive_agent_sync(request: dict):
             req_tenant_id = admin.get("tenant_id", "tenant_admin") if admin else "tenant_admin"
             logger.info(f"No tenant_id in sync request, using default: {req_tenant_id}")
 
-        # Add company to admin's company list if new
+        # Add company to admin's company list if new — enforce max_companies limit
         if req_company_id and req_tenant_id:
-            await db.users.update_one(
-                {"tenant_id": req_tenant_id, "role": "admin"},
-                {"$addToSet": {"companies": req_company_id}}
-            )
+            admin_user = await db.users.find_one({"tenant_id": req_tenant_id, "role": "admin"}, {"_id": 0, "companies": 1, "max_companies": 1, "plan": 1})
+            if admin_user:
+                current_companies = admin_user.get("companies", [])
+                max_companies = admin_user.get("max_companies", 10)
+                if req_company_id not in current_companies:
+                    if len(current_companies) >= max_companies:
+                        plan_name = (admin_user.get("plan") or "current").capitalize()
+                        return APIResponse(success=False, error=f"Company limit reached ({max_companies}). Your {plan_name} plan allows syncing {max_companies} companies. Please upgrade to add more.")
+                    await db.users.update_one(
+                        {"tenant_id": req_tenant_id, "role": "admin"},
+                        {"$addToSet": {"companies": req_company_id}}
+                    )
 
         logger.info(f"Received {data_type} sync: {len(data)} items [tenant={req_tenant_id}, company={req_company_id}]")
 

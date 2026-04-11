@@ -51,6 +51,10 @@ async def list_admins(request: Request):
                 "companies": admin.get("companies", []),
                 "active": admin.get("active", True),
                 "employee_count": emp_count,
+                "plan": admin.get("plan", "enterprise"),
+                "max_companies": admin.get("max_companies", 10),
+                "max_employees": admin.get("max_employees", 20),
+                "billing_cycle": admin.get("billing_cycle", "annual"),
                 "subscription_months": admin.get("subscription_months", 12),
                 "subscription_start": admin.get("subscription_start", admin.get("created_at", "")),
                 "created_at": admin.get("created_at", ""),
@@ -78,6 +82,8 @@ async def create_admin(request: Request):
         username = body.get("username", "").strip()
         password = body.get("password", "")
         name = body.get("name", "")
+        plan_id = body.get("plan", "starter")
+        billing_cycle = body.get("billing_cycle", "annual")
         features = body.get("features", [])
         subscription_months = body.get("subscription_months", 12)
 
@@ -95,8 +101,12 @@ async def create_admin(request: Request):
         if existing:
             return APIResponse(success=False, error="Username already exists")
 
-        # Validate features
-        valid_features = [f for f in features if f in ALL_FEATURES]
+        # Get plan config
+        from routes.prospects import SUBSCRIPTION_PLANS
+        plan_config = SUBSCRIPTION_PLANS.get(plan_id, SUBSCRIPTION_PLANS["starter"])
+
+        # Use plan features if no custom features provided
+        valid_features = [f for f in features if f in ALL_FEATURES] if features else list(plan_config["features"])
 
         # Generate a clean tenant_id from email
         clean_name = re.sub(r'[^a-z0-9]', '_', username.lower().split('@')[0])
@@ -116,6 +126,10 @@ async def create_admin(request: Request):
             "features": valid_features,
             "companies": [],
             "active": True,
+            "plan": plan_id,
+            "billing_cycle": billing_cycle,
+            "max_companies": plan_config["max_companies"],
+            "max_employees": plan_config["max_employees"],
             "subscription_months": subscription_months,
             "subscription_start": now,
             "created_at": now
@@ -123,7 +137,7 @@ async def create_admin(request: Request):
 
         sync_token = generate_sync_token(tenant_id)
 
-        await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
+        await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Plan: {plan_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
 
         return APIResponse(success=True, message=f"Admin '{username}' created", data={
             "username": username,
@@ -289,6 +303,17 @@ async def update_admin_subscription(username: str, request: Request):
             update_fields["subscription_months"] = int(body["subscription_months"])
         if "subscription_start" in body:
             update_fields["subscription_start"] = body["subscription_start"]
+        if "plan" in body:
+            from routes.prospects import SUBSCRIPTION_PLANS
+            plan_id = body["plan"]
+            if plan_id in SUBSCRIPTION_PLANS:
+                plan_config = SUBSCRIPTION_PLANS[plan_id]
+                update_fields["plan"] = plan_id
+                update_fields["features"] = list(plan_config["features"])
+                update_fields["max_companies"] = plan_config["max_companies"]
+                update_fields["max_employees"] = plan_config["max_employees"]
+        if "billing_cycle" in body:
+            update_fields["billing_cycle"] = body["billing_cycle"]
 
         if update_fields:
             await db.users.update_one({"username": username}, {"$set": update_fields})
