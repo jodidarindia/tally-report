@@ -422,24 +422,35 @@ async def get_latest_fy(request: Request):
         if not tenant_id:
             return APIResponse(success=False, error="No tenant context")
 
-        # Find the most recent sales voucher to determine FY
+        # 1. Find the most recent sales voucher to determine FY
         latest_sale = await db.sales_vouchers.find_one(
             {"tenant_id": tenant_id},
             {"_id": 0, "fy": 1, "voucher_date": 1},
             sort=[("voucher_date", -1)]
         )
-
         if latest_sale and latest_sale.get("fy"):
             return APIResponse(success=True, data={"latest_fy": latest_sale["fy"]})
 
-        # Fallback: check sync status for last synced FY
-        sync_rec = await db.sync_status.find_one(
-            {"tenant_id": tenant_id, "type": "agent_sync"},
-            {"_id": 0, "fy": 1}
+        # 2. Check inventory items for FY
+        latest_inv = await db.inventory_items.find_one(
+            {"tenant_id": tenant_id},
+            {"_id": 0, "fy": 1},
+            sort=[("fy", -1)]
         )
-        if sync_rec and sync_rec.get("fy"):
-            return APIResponse(success=True, data={"latest_fy": sync_rec["fy"]})
+        if latest_inv and latest_inv.get("fy"):
+            return APIResponse(success=True, data={"latest_fy": latest_inv["fy"]})
 
+        # 3. Fallback: check sync status for last synced FY
+        sync_recs = await db.sync_status.find(
+            {"tenant_id": tenant_id},
+            {"_id": 0, "fy": 1}
+        ).to_list(100)
+        fys = [r["fy"] for r in sync_recs if r.get("fy")]
+        if fys:
+            fys.sort(reverse=True)
+            return APIResponse(success=True, data={"latest_fy": fys[0]})
+
+        # 4. No synced data at all — return null (frontend will use current FY)
         return APIResponse(success=True, data={"latest_fy": None})
     except Exception as e:
         return APIResponse(success=False, error=str(e))

@@ -46,7 +46,19 @@ function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [selectedFY, setSelectedFY] = useState('2025-26');
+  // Calculate default FY from current date (April start)
+  const getCurrentFY = () => {
+    const now = new Date();
+    const month = now.getMonth(); // 0-indexed, Jan=0
+    const year = now.getFullYear();
+    // Indian FY: April to March
+    if (month >= 3) { // April onwards
+      return `${year}-${String(year + 1).slice(2)}`;
+    }
+    return `${year - 1}-${String(year).slice(2)}`;
+  };
+
+  const [selectedFY, setSelectedFY] = useState(getCurrentFY());
   const [selectedCompany, setSelectedCompany] = useState('');
   const [showCompanySelector, setShowCompanySelector] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);

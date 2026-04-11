@@ -115,7 +115,12 @@ const Dashboard = ({ selectedFY }) => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-slate-500 text-sm">
-            {syncStatus?.last_sync ? `Last sync: ${new Date(syncStatus.last_sync).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}` : 'Awaiting first sync'}
+            {(() => {
+              const hasData = (salesSummary?.total_sales || 0) > 0 || (inventorySummary?.total_items || 0) > 0;
+              if (!syncStatus?.last_sync) return 'Awaiting first sync';
+              if (!hasData) return `No data found for FY ${selectedFY || ''}`;
+              return `Last sync: ${new Date(syncStatus.last_sync).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+            })()}
             {selectedFY && ` | FY ${selectedFY}`}
           </p>
         </div>
@@ -166,9 +171,14 @@ const Dashboard = ({ selectedFY }) => {
           {syncStatus?.last_sync && (salesSummary?.total_sales || 0) === 0 && (inventorySummary?.total_items || 0) === 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center" data-testid="no-data-banner">
               <Database size={28} className="mx-auto text-blue-500 mb-3" />
-              <h3 className="text-lg font-semibold text-blue-900 mb-1">No Data Found for This FY</h3>
-              <p className="text-sm text-blue-700 mb-3">Your Tally is connected but no data is available for <strong>FY {selectedFY}</strong>. This could mean the selected financial year has no transactions yet, or the company has not been synced for this FY.</p>
-              <p className="text-xs text-blue-600">Try selecting a different financial year or sync your data again from the Desktop Agent.</p>
+              <h3 className="text-lg font-semibold text-blue-900 mb-1">No Data Available for FY {selectedFY}</h3>
+              <p className="text-sm text-blue-700 mb-3">No transactions were found for the selected financial year. This could mean:</p>
+              <ul className="text-sm text-blue-700 text-left max-w-md mx-auto space-y-1 mb-3">
+                <li>- The selected FY has no transactions in Tally Prime</li>
+                <li>- Data for this FY has not been synced yet from the Desktop Agent</li>
+                <li>- The company was not active during this financial year</li>
+              </ul>
+              <p className="text-xs text-blue-600">Try selecting a different financial year from the dropdown above, or run a fresh sync from the FLOWRA Desktop Agent.</p>
             </div>
           )}
         </>
