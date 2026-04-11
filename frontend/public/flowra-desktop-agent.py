@@ -278,12 +278,14 @@ class TallyCollectionClient:
             return None
 
     def _company_tag(self):
-        if self.company:
+        """Return SVCurrentCompany XML tag. Skip if company is unknown/Default — Tally will use the active company."""
+        if self.company and self.company.lower() not in ('default', '##default'):
             return f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>"
         return ""
 
     def test_connection(self) -> bool:
-        """Quick ping to check Tally is responding — uses Collection request."""
+        """Quick ping to check Tally is responding + detect active company name."""
+        # Method 1: Collection request for company list
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
@@ -296,30 +298,108 @@ class TallyCollectionClient:
 <TDL><TDLMESSAGE>
 <COLLECTION NAME="FlowraCompanyList" ISINITIALIZE="Yes">
 <TYPE>Company</TYPE>
-<FETCH>NAME</FETCH>
+<FETCH>NAME, BASICCOMPANYFORMALNAME</FETCH>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
         data = self._post(xml, debug_name='companies')
-        if data:
-            # Navigate to DATA > COLLECTION > COMPANY (skip CMPINFO counts)
-            companies = self._get_collection_items(data, 'COMPANY')
-            for c in companies:
-                if isinstance(c, dict):
-                    name = c.get('NAME', c.get('@NAME', ''))
-                    # NAME might have TYPE attribute: {'#text': 'name', '@TYPE': 'String'}
+        if not data:
+            return False
+
+        # Try to extract company name from collection response
+        companies = self._get_collection_items(data, 'COMPANY')
+        for c in companies:
+            if isinstance(c, dict):
+                # Try formal name first, then NAME
+                for key in ('BASICCOMPANYFORMALNAME', 'NAME', '@NAME'):
+                    name = c.get(key, '')
                     if isinstance(name, dict):
                         name = name.get('#text', '')
                     name = str(name).strip() if name else ''
-                    if name and name.lower() not in ('default', '##default'):
-                        self.company = self.company or name
+                    if name and name.lower() not in ('default', '##default', ''):
+                        self.company = name
                         break
-            if self.company:
-                logger.info(f"  Tally company: {self.company}")
-            else:
-                logger.info("  Tally connected (company auto-detect pending)")
-            return True
-        return False
+                if self.company and self.company.lower() not in ('default', '##default'):
+                    break
+
+        # Method 2: If collection didn't yield a name, try TDL report for $$CurrentCompany
+        if not self.company or self.company.lower() in ('default', '##default'):
+            self.company = ''  # Reset
+            try:
+                xml2 = """<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
+<ID>FlowraCurrentCompany</ID></HEADER>
+<BODY><DESC><TDL><TDLMESSAGE>
+<REPORT NAME="FlowraCurrentCompany"><FORMS>FCCForm</FORMS></REPORT>
+<FORM NAME="FCCForm"><PARTS>FCCPart</PARTS></FORM>
+<PART NAME="FCCPart"><LINES>FCCLine</LINES></PART>
+<LINE NAME="FCCLine"><FIELDS>FCCField</FIELDS></LINE>
+<FIELD NAME="FCCField"><SET>$$CurrentCompany</SET></FIELD>
+</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"""
+                data2 = self._post(xml2)
+                if data2:
+                    # Extract text from the response — the company name is the field value
+                    text = self._extract_text_deep(data2)
+                    if text and text.lower() not in ('default', '##default', ''):
+                        self.company = text
+            except Exception as e:
+                logger.debug(f"  CurrentCompany TDL failed: {e}")
+
+        # Method 3: Try "List of Companies" report
+        if not self.company or self.company.lower() in ('default', '##default'):
+            self.company = ''
+            try:
+                xml3 = '<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Companies</REPORTNAME></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>'
+                data3 = self._post(xml3)
+                if data3:
+                    collection = data3.get('ENVELOPE', {}).get('BODY', {}).get('DATA', {}).get('COLLECTION', {})
+                    if collection:
+                        items = collection.get('COMPANY', [])
+                        if isinstance(items, dict):
+                            items = [items]
+                        for item in items:
+                            name = item.get('NAME', {}).get('#text', '') if isinstance(item.get('NAME'), dict) else item.get('NAME', '')
+                            name = str(name).strip() if name else ''
+                            if name and name.lower() not in ('default', '##default'):
+                                self.company = name
+                                break
+            except Exception as e:
+                logger.debug(f"  List of Companies failed: {e}")
+
+        if self.company and self.company.lower() not in ('default', '##default'):
+            logger.info(f"  Tally company: {self.company}")
+        else:
+            self.company = ''
+            logger.info("  Tally connected (company name will be detected from data)")
+        return True
+
+    def _extract_text_deep(self, d):
+        """Recursively extract meaningful text from a nested dict/xml response."""
+        if isinstance(d, str):
+            d = d.strip()
+            return d if d and d.lower() not in ('default', '##default', 'no', 'yes', '') else None
+        if isinstance(d, dict):
+            # Check #text first
+            if '#text' in d:
+                val = str(d['#text']).strip()
+                if val and len(val) > 2 and val.lower() not in ('default', '##default'):
+                    return val
+            # Check FCCFIELD or any FIELD
+            for key in ('FCCFIELD', 'FIELD', 'FCFFIELD'):
+                if key in d:
+                    return self._extract_text_deep(d[key])
+            # Recurse into BODY, DATA, REPORT, FORM, PART, LINE
+            for key in ('BODY', 'DATA', 'REPORT', 'FORM', 'PART', 'LINE', 'FIELD', 'COLLECTION', 'ENVELOPE'):
+                if key in d:
+                    result = self._extract_text_deep(d[key])
+                    if result:
+                        return result
+        if isinstance(d, list):
+            for item in d:
+                result = self._extract_text_deep(item)
+                if result:
+                    return result
+        return None
 
     def _find_deep(self, d, key):
         if isinstance(d, dict):
@@ -1440,11 +1520,10 @@ class FlowraSyncAgent:
             if current and current.lower() not in ('default', '##default', ''):
                 self._companies_to_sync = [current]
             else:
-                logger.error("Could not detect any companies from Tally!")
-                logger.error("Please ensure a company is open in TallyPrime and restart the agent.")
-                print("\n  ERROR: No company detected in Tally.")
-                print("  Please open a company in TallyPrime and restart the FLOWRA agent.")
-                self._companies_to_sync = []
+                # Tally is connected but company name unknown — proceed with placeholder
+                # SVCurrentCompany will be empty so Tally uses the active company
+                logger.info("  Company name not detected — using Tally's active company")
+                self._companies_to_sync = ['_active_']
             return
 
         if len(companies) == 1:
@@ -1490,13 +1569,16 @@ class FlowraSyncAgent:
             self._companies_to_sync = self._companies_to_sync[:self.max_companies]
 
     def report_progress(self, event_type, **kwargs):
+        company = self._active_company or self.tally.company or ''
+        if company in ('_active_', 'Default', '##Default'):
+            company = ''
         progress = {
             'type': event_type,
             'timestamp': datetime.now().isoformat(),
             'financial_year': self.financial_year,
-            'company_name': self._active_company or self.tally.company or '',
+            'company_name': company,
             'tenant_id': self.tenant_id,
-            'company_id': self._active_company or '',
+            'company_id': company,
             **kwargs
         }
         if self.ws_server:
@@ -1523,15 +1605,18 @@ class FlowraSyncAgent:
             return True
 
         try:
+            company = self._active_company or self.tally.company or ''
+            if company in ('_active_', 'Default', '##Default'):
+                company = ''
             payload = {
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
                 'agent_version': '7.0.0-login-auth',
-                'company_name': self._active_company or self.tally.company or '',
+                'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
-                'company_id': self._active_company or '',
+                'company_id': company,
                 'sync_token': self.sync_token
             }
             resp = requests.post(
@@ -1604,10 +1689,11 @@ class FlowraSyncAgent:
                 return
             for company in self._companies_to_sync:
                 self._active_company = company
-                self.tally.company = company
+                self.tally.company = company if company != '_active_' else ''
+                display = company if company != '_active_' else 'Active Company (auto-detect)'
                 logger.info("")
                 logger.info(f"{'=' * 60}")
-                logger.info(f"Syncing company: {company}")
+                logger.info(f"Syncing company: {display}")
                 logger.info(f"{'=' * 60}")
                 self._sync_single_company(company)
         except Exception as e:
@@ -1619,6 +1705,10 @@ class FlowraSyncAgent:
     def _sync_single_company(self, company_name):
         """Run sync for a single company."""
         try:
+            # If company_name is placeholder, use empty string for display but still sync
+            is_placeholder = company_name == '_active_'
+            display_name = company_name if not is_placeholder else 'Active Company (auto-detect)'
+
             is_first_sync = not hasattr(self, '_full_sync_done') or company_name not in (self._full_sync_done or set())
             sync_mode = 'full' if is_first_sync else ('incremental' if INCREMENTAL_SYNC else 'full')
 
@@ -1633,6 +1723,13 @@ class FlowraSyncAgent:
             # Determine which FYs to sync
             fys_to_sync = get_sync_fys()
             logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)} ({sync_mode} mode)")
+
+            # If company name is still unknown, try to resolve from Tally now
+            if is_placeholder and self.tally.company and self.tally.company.lower() not in ('default', '##default', '', '_active_'):
+                resolved = self.tally.company
+                logger.info(f"  Resolved company name: {resolved}")
+                self._active_company = resolved
+                company_name = resolved
 
             # --- Phase 1: Stock Items (always full — just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")
