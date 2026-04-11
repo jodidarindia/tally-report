@@ -39,21 +39,36 @@ async def receive_agent_sync(request: dict):
         req_tenant_id = request.get('tenant_id', '')
         req_company_id = request.get('company_id', '')
         sync_token = request.get('sync_token', '')
+        company_name_raw = request.get('company_name', '') or req_company_id
 
         # Verify sync token if provided
         if req_tenant_id and sync_token:
             if not verify_sync_token(req_tenant_id, sync_token):
                 return APIResponse(success=False, error="Invalid sync token")
         elif req_tenant_id:
-            # Legacy: allow sync without token but log warning
             logger.warning(f"Sync without token for tenant {req_tenant_id}")
 
-        # Fallback: if no tenant_id, use default (for backward compat)
+        # Fallback: if no tenant_id, use default
         if not req_tenant_id:
-            # Try to find the default admin tenant
             admin = await db.users.find_one({"role": "admin"}, {"_id": 0, "tenant_id": 1})
-            req_tenant_id = admin.get("tenant_id", "tenant_admin") if admin else "tenant_admin"
+            req_tenant_id = admin.get("tenant_id", "") if admin else ""
             logger.info(f"No tenant_id in sync request, using default: {req_tenant_id}")
+
+        # Resolve company_id: if it's a plain name (not UUID), map it to UUID
+        from services.id_mapping_service import register_company_mapping, get_company_uuid
+        is_uuid = False
+        try:
+            import uuid as _uuid
+            _uuid.UUID(req_company_id)
+            is_uuid = True
+        except (ValueError, AttributeError):
+            pass
+
+        if req_company_id and not is_uuid and req_tenant_id:
+            # Agent sent a company name — resolve or create UUID mapping
+            resolved_uuid = await register_company_mapping(req_tenant_id, req_company_id)
+            company_name_raw = req_company_id
+            req_company_id = resolved_uuid
 
         # Add company to admin's company list if new — enforce max_companies limit
         if req_company_id and req_tenant_id:
@@ -380,7 +395,6 @@ async def receive_agent_sync(request: dict):
             logger.info(f"Synced {len(data)} sundry creditors")
 
         # Update last sync time
-        company_name = request.get('company_name', '') or req_company_id
         financial_year = request.get('financial_year', '')
         # Normalize sync_time to always have timezone info (UTC)
         if sync_time:
@@ -404,7 +418,7 @@ async def receive_agent_sync(request: dict):
                 'data_type': data_type,
                 'count': len(data),
                 'agent_version': request.get('agent_version', ''),
-                'company_name': company_name,
+                'company_name': company_name_raw,
                 'financial_year': financial_year,
                 'tenant_id': req_tenant_id,
                 'company_id': req_company_id
@@ -418,7 +432,7 @@ async def receive_agent_sync(request: dict):
             'data_type': data_type,
             'count': len(data),
             'financial_year': financial_year,
-            'company_name': company_name,
+            'company_name': company_name_raw,
             'agent_version': request.get('agent_version', ''),
             'sync_mode': request.get('sync_mode', 'full'),
             'tenant_id': req_tenant_id,
@@ -566,6 +580,8 @@ async def get_all_companies_sync_status(request: Request):
         companies = user.get("companies", []) if user else []
 
         result = []
+        from services.id_mapping_service import resolve_company_names
+        name_map = await resolve_company_names(tenant_id, companies)
         for company in companies:
             sync_status = await db.sync_status.find_one(
                 {"type": "agent_sync", "tenant_id": tenant_id, "company_id": company},
@@ -574,7 +590,8 @@ async def get_all_companies_sync_status(request: Request):
             inv_count = await db.inventory_items.count_documents({"tenant_id": tenant_id, "company_id": company})
             sales_count = await db.sales_vouchers.count_documents({"tenant_id": tenant_id, "company_id": company})
             result.append({
-                "company_name": company,
+                "company_id": company,
+                "company_name": name_map.get(company, company),
                 "last_sync": sync_status.get("last_sync") if sync_status else None,
                 "agent_version": sync_status.get("agent_version", "") if sync_status else "",
                 "inventory_count": inv_count,
@@ -618,10 +635,15 @@ async def get_connection_status(request: Request):
         sales_count = await db.sales_vouchers.count_documents(base_q)
         cust_count = await db.customers.count_documents(base_q)
 
+        # Resolve company names
+        from services.id_mapping_service import resolve_company_names
+        company_name_map = await resolve_company_names(tenant_id, companies)
+        companies_with_names = [{"company_id": c, "company_name": company_name_map.get(c, c)} for c in companies]
+
         return APIResponse(success=True, data={
             "last_sync": sync_status.get("last_sync") if sync_status else None,
             "agent_version": sync_status.get("agent_version", "") if sync_status else "",
-            "companies": companies,
+            "companies": companies_with_names,
             "sync_counts": {
                 "inventory_items": inv_count,
                 "sales_vouchers": sales_count,

@@ -574,7 +574,7 @@ const SuperAdminDashboard = ({ token }) => {
                   <div key={u.username} className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-red-900">{u.name || u.username}</p>
-                      <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()} Plan | Tenant: {u.tenant_id}</p>
+                      <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()} Plan</p>
                       <p className="text-xs text-red-600 mt-1">Expired {Math.abs(u.days_left)} days ago | Was: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
                     </div>
                     <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
@@ -596,7 +596,7 @@ const SuperAdminDashboard = ({ token }) => {
                   <div key={u.username} className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-amber-900">{u.name || u.username}</p>
-                      <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()} Plan | Tenant: {u.tenant_id}</p>
+                      <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()} Plan</p>
                       <p className="text-xs text-amber-600 mt-1">{u.days_left} days left | Expires: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
                     </div>
                     <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}

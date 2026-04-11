@@ -13,7 +13,7 @@ const timeAgo = (dateStr) => {
   return `${Math.floor(diff / 86400)}d ago`;
 };
 
-const CompanySelector = ({ companies, onSelect }) => {
+const CompanySelector = ({ companies, companyMappings = {}, onSelect }) => {
   const [selected, setSelected] = useState('');
   const [syncInfo, setSyncInfo] = useState({});
 
@@ -33,7 +33,7 @@ const CompanySelector = ({ companies, onSelect }) => {
         });
         if (res.data?.success && res.data.data) {
           const map = {};
-          res.data.data.forEach(c => { map[c.company_name] = c; });
+          res.data.data.forEach(c => { map[c.company_id] = c; });
           setSyncInfo(map);
         }
       } catch { /* ignore */ }
@@ -42,6 +42,8 @@ const CompanySelector = ({ companies, onSelect }) => {
   }, [companies]);
 
   if (!companies || companies.length <= 1) return null;
+
+  const getDisplayName = (companyId) => companyMappings[companyId] || companyId;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="company-selector-modal">
@@ -54,15 +56,16 @@ const CompanySelector = ({ companies, onSelect }) => {
           <p className="text-sm text-slate-500 mt-1">Choose which company data to view</p>
         </div>
         <div className="space-y-3 mb-6">
-          {companies.map((company, idx) => {
-            const info = syncInfo[company];
+          {companies.map((companyId, idx) => {
+            const info = syncInfo[companyId];
             const lastSyncAgo = info ? timeAgo(info.last_sync) : null;
+            const displayName = getDisplayName(companyId);
             return (
               <button
                 key={idx}
-                onClick={() => setSelected(company)}
+                onClick={() => setSelected(companyId)}
                 className={`w-full p-4 rounded-xl border text-left transition-all ${
-                  selected === company
+                  selected === companyId
                     ? 'border-[#2563EB] bg-blue-50 ring-2 ring-blue-100'
                     : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                 }`}
@@ -70,10 +73,10 @@ const CompanySelector = ({ companies, onSelect }) => {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <Building2 size={18} className={selected === company ? 'text-[#2563EB]' : 'text-slate-400'} />
-                    <span className={`font-medium ${selected === company ? 'text-[#2563EB]' : 'text-slate-700'}`}>{company}</span>
+                    <Building2 size={18} className={selected === companyId ? 'text-[#2563EB]' : 'text-slate-400'} />
+                    <span className={`font-medium ${selected === companyId ? 'text-[#2563EB]' : 'text-slate-700'}`}>{displayName}</span>
                   </div>
-                  {selected === company && <ChevronRight size={18} className="text-[#2563EB]" />}
+                  {selected === companyId && <ChevronRight size={18} className="text-[#2563EB]" />}
                 </div>
                 {info && (
                   <div className="flex items-center gap-4 mt-2 ml-8 text-xs text-slate-400">

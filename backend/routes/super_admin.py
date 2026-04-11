@@ -40,6 +40,7 @@ async def list_admins(request: Request):
         ).to_list(500)
 
         # Enrich with employee count and data stats
+        from services.id_mapping_service import resolve_company_names
         result = []
         for admin in admins:
             tid = admin.get("tenant_id", "")
@@ -47,12 +48,16 @@ async def list_admins(request: Request):
             sync_status = await db.sync_status.find_one(
                 {"tenant_id": tid, "type": "agent_sync"}, {"_id": 0}
             )
+            # Resolve company UUIDs to names
+            company_uuids = admin.get("companies", [])
+            name_map = await resolve_company_names(tid, company_uuids)
+            companies_display = [name_map.get(c, c) for c in company_uuids]
             result.append({
                 "username": admin["username"],
                 "name": admin.get("name", ""),
                 "tenant_id": tid,
                 "features": admin.get("features", []),
-                "companies": admin.get("companies", []),
+                "companies": companies_display,
                 "active": admin.get("active", True),
                 "employee_count": emp_count,
                 "plan": admin.get("plan", "enterprise"),
@@ -119,14 +124,9 @@ async def create_admin(request: Request):
         # Use plan features if no custom features provided
         valid_features = [f for f in features if f in ALL_FEATURES] if features else list(plan_config["features"])
 
-        # Generate a clean tenant_id from email
-        clean_name = re.sub(r'[^a-z0-9]', '_', username.lower().split('@')[0])
-        tenant_id = f"tenant_{clean_name}"
-        # Ensure uniqueness
-        existing_tenant = await db.users.find_one({"tenant_id": tenant_id})
-        if existing_tenant:
-            import uuid
-            tenant_id = f"tenant_{clean_name}_{uuid.uuid4().hex[:6]}"
+        # Generate a UUID tenant_id
+        import uuid
+        tenant_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         await db.users.insert_one({
             "username": username,
@@ -459,6 +459,7 @@ async def get_renewals(request: Request):
             {"_id": 0, "password_hash": 0}
         ).to_list(500)
 
+        from services.id_mapping_service import resolve_company_names
         near_expiry = []
         expired = []
         for admin in admins:
@@ -468,17 +469,21 @@ async def get_renewals(request: Request):
                 continue
             days_left = days_until_expiry(sub_start, sub_months)
             expires_at = subscription_expires_at(sub_start, sub_months)
+            tid = admin.get("tenant_id", "")
+            company_uuids = admin.get("companies", [])
+            name_map = await resolve_company_names(tid, company_uuids)
+            companies_display = [name_map.get(c, c) for c in company_uuids]
             entry = {
                 "username": admin["username"],
                 "name": admin.get("name", ""),
-                "tenant_id": admin.get("tenant_id", ""),
+                "tenant_id": tid,
                 "plan": admin.get("plan", ""),
                 "billing_cycle": admin.get("billing_cycle", ""),
                 "subscription_start": sub_start,
                 "subscription_expires": expires_at,
                 "days_left": days_left,
                 "active": admin.get("active", True),
-                "companies": admin.get("companies", []),
+                "companies": companies_display,
             }
             if days_left < 0:
                 expired.append(entry)

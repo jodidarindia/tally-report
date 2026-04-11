@@ -74,13 +74,17 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
             max_age=86400, path="/"
         )
 
-        # Get companies for this tenant
+        # Get companies for this tenant (UUIDs + resolved names)
         companies = []
+        company_mappings = []
         if tenant_id and user["role"] in ("admin", "employee"):
             admin_user = user if user["role"] == "admin" else await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"}, {"_id": 0}
             )
             companies = admin_user.get("companies", []) if admin_user else []
+            # Resolve UUID company IDs to display names
+            from services.id_mapping_service import get_all_company_mappings
+            company_mappings = await get_all_company_mappings(tenant_id)
 
         await log_audit("login", user["username"], tenant_id=tenant_id or "", ip_address=get_client_ip(raw_request))
 
@@ -95,6 +99,7 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "tenant_id": tenant_id,
                 "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else []),
                 "companies": companies,
+                "company_mappings": company_mappings,
                 "plan": user.get("plan", "enterprise"),
                 "max_companies": user.get("max_companies", 10),
                 "max_employees": user.get("max_employees", 20),
@@ -144,6 +149,10 @@ async def get_me(request: Request):
         sub_expires_iso = subscription_expires_at(sub_start, sub_months) if sub_start else None
         sub_days_left = days_until_expiry(sub_start, sub_months) if sub_start else 999
 
+        # Resolve company UUID mappings
+        from services.id_mapping_service import get_all_company_mappings
+        company_mappings = await get_all_company_mappings(tenant_id) if tenant_id else []
+
         return APIResponse(success=True, data={
             "username": user["username"],
             "name": user.get("name", ""),
@@ -151,6 +160,7 @@ async def get_me(request: Request):
             "tenant_id": tenant_id,
             "features": features,
             "companies": companies,
+            "company_mappings": company_mappings,
             "plan": user.get("plan", "enterprise"),
             "max_companies": user.get("max_companies", 10),
             "max_employees": user.get("max_employees", 20),

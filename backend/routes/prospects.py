@@ -307,11 +307,7 @@ async def convert_prospect_to_admin(prospect_id: str, request: Request):
         if existing:
             return APIResponse(success=False, error="This email is already registered as an active user. Cannot convert — use a different email or delete the existing user first.")
 
-        clean_name = re.sub(r'[^a-z0-9]', '_', email.lower().split('@')[0])
-        tenant_id = f"tenant_{clean_name}"
-        existing_tenant = await db.users.find_one({"tenant_id": tenant_id})
-        if existing_tenant:
-            tenant_id = f"tenant_{clean_name}_{uuid.uuid4().hex[:6]}"
+        tenant_id = str(uuid.uuid4())
 
         now = datetime.now(timezone.utc).isoformat()
         await db.users.insert_one({

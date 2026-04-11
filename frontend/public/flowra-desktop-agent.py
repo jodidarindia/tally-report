@@ -1215,6 +1215,7 @@ def login_to_flowra(backend_url: str, email: str = None, password: str = None) -
                     "token": auth_data["token"],
                     "tenant_id": auth_data.get("tenant_id", ""),
                     "companies": auth_data.get("companies", []),
+                    "company_mappings": auth_data.get("company_mappings", []),
                     "name": auth_data.get("name", ""),
                     "features": auth_data.get("features", []),
                     "plan": plan,
@@ -1247,7 +1248,8 @@ def login_to_flowra(backend_url: str, email: str = None, password: str = None) -
                     if sub_days_left is not None and sub_days_left <= 30:
                         print(f"  WARNING: Subscription expires in {sub_days_left} days! Renew at flowra.in")
                 if config['companies']:
-                    print(f"  Companies:    {', '.join(config['companies'])}")
+                    co_names = [m.get('company_name', '') for m in config.get('company_mappings', [])]
+                    print(f"  Companies:    {', '.join(co_names) if co_names else ', '.join(config['companies'])}")
                 print()
                 return config
             else:
@@ -1276,6 +1278,7 @@ def get_or_refresh_auth(backend_url: str = None) -> dict:
                 # Update companies list and subscription info from server
                 me_data = resp.json().get("data", {})
                 config["companies"] = me_data.get("companies", config.get("companies", []))
+                config["company_mappings"] = me_data.get("company_mappings", config.get("company_mappings", []))
                 config["plan"] = me_data.get("plan", config.get("plan", ""))
                 config["max_companies"] = me_data.get("max_companies", config.get("max_companies", 10))
                 config["subscription_expires"] = me_data.get("subscription_expires")
@@ -1373,7 +1376,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v7.2 (Incremental + IST Fix)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v7.3 (UUID IDs + IST Fix)")
         logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
 
@@ -1385,6 +1388,11 @@ class FlowraSyncAgent:
         self.sync_token = self.auth_config.get('sync_token', '')
         self.auth_token = self.auth_config['token']
         self.server_companies = self.auth_config.get('companies', [])
+        self.company_mappings = {}  # company_name -> company_uuid
+        self.company_names = {}     # company_uuid -> company_name
+        for m in self.auth_config.get('company_mappings', []):
+            self.company_mappings[m.get('company_name', '')] = m.get('company_id', '')
+            self.company_names[m.get('company_id', '')] = m.get('company_name', '')
         self.plan = self.auth_config.get('plan', 'enterprise')
         self.max_companies = self.auth_config.get('max_companies', 10)
         self.sub_days_left = self.auth_config.get('subscription_days_left', 999)
@@ -1397,7 +1405,8 @@ class FlowraSyncAgent:
         logger.info(f"  Plan          : {self.plan.upper()} (max {self.max_companies} companies)")
         if self.sub_expires:
             logger.info(f"  Subscription  : Expires {self.sub_expires[:10]} ({self.sub_days_left} days left)")
-        logger.info(f"  Server Cos    : {', '.join(self.server_companies) if self.server_companies else '(none yet)'}")
+        server_co_names = [self.company_names.get(c, c) for c in self.server_companies]
+        logger.info(f"  Server Cos    : {', '.join(server_co_names) if server_co_names else '(none yet)'}")
         logger.info(f"  Financial Year: {self.financial_year}")
         logger.info(f"  Auto Multi-FY : {SYNC_ALL_FY} (also syncs current FY: {current_fy()})")
         logger.info(f"  Incremental   : {INCREMENTAL_SYNC}")
@@ -1569,17 +1578,24 @@ class FlowraSyncAgent:
             print(f"  Only the first {self.max_companies} will be synced. Upgrade at flowra.in for more.")
             self._companies_to_sync = self._companies_to_sync[:self.max_companies]
 
+    def _resolve_company_id(self, company_name):
+        """Resolve a company name to its UUID if we have the mapping, otherwise return name for backend to resolve."""
+        if not company_name or company_name in ('_active_', 'Default', '##Default'):
+            return ''
+        return self.company_mappings.get(company_name, company_name)
+
     def report_progress(self, event_type, **kwargs):
         company = self._active_company or self.tally.company or ''
         if company in ('_active_', 'Default', '##Default'):
             company = ''
+        company_id = self._resolve_company_id(company)
         progress = {
             'type': event_type,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'financial_year': self.financial_year,
             'company_name': company,
             'tenant_id': self.tenant_id,
-            'company_id': company,
+            'company_id': company_id,
             **kwargs
         }
         if self.ws_server:
@@ -1609,15 +1625,16 @@ class FlowraSyncAgent:
             company = self._active_company or self.tally.company or ''
             if company in ('_active_', 'Default', '##Default'):
                 company = ''
+            company_id = self._resolve_company_id(company)
             payload = {
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '7.2.0-incremental-ist',
+                'agent_version': '7.3.0-uuid-ids',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
-                'company_id': company,
+                'company_id': company_id,
                 'sync_token': self.sync_token
             }
             resp = requests.post(
@@ -1678,6 +1695,10 @@ class FlowraSyncAgent:
                 self.auth_token = self.auth_config['token']
                 self.tenant_id = self.auth_config['tenant_id']
                 self.sync_token = self.auth_config.get('sync_token', '')
+                # Refresh company mappings
+                for m in self.auth_config.get('company_mappings', []):
+                    self.company_mappings[m.get('company_name', '')] = m.get('company_id', '')
+                    self.company_names[m.get('company_id', '')] = m.get('company_name', '')
             except Exception as auth_err:
                 logger.error(f"Auth refresh failed: {auth_err}. Skipping this sync cycle.")
                 return

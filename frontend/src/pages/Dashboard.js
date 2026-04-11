@@ -119,7 +119,12 @@ const Dashboard = ({ selectedFY }) => {
               const hasData = (salesSummary?.total_sales || 0) > 0 || (inventorySummary?.total_items || 0) > 0;
               if (!syncStatus?.last_sync) return 'Awaiting first sync';
               if (!hasData) return `No data found for FY ${selectedFY || ''}`;
-              return `Last sync: ${new Date(syncStatus.last_sync).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+              const rawSync = syncStatus.last_sync;
+              // Normalize: if no timezone marker, treat as UTC
+              const syncDate = rawSync.includes('+') || rawSync.includes('Z') || rawSync.endsWith('00:00')
+                ? new Date(rawSync)
+                : new Date(rawSync + 'Z');
+              return `Last sync: ${syncDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
             })()}
             {selectedFY && ` | FY ${selectedFY}`}
           </p>

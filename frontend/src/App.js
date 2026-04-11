@@ -61,6 +61,7 @@ function App() {
   const [selectedFY, setSelectedFY] = useState(getCurrentFY());
   const [selectedCompany, setSelectedCompany] = useState('');
   const [showCompanySelector, setShowCompanySelector] = useState(false);
+  const [companyMappings, setCompanyMappings] = useState({});  // UUID -> display name
   const [syncStatus, setSyncStatus] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -102,6 +103,13 @@ function App() {
           const userData = res.data.data;
           setUser(userData);
           setIsAuthenticated(true);
+
+          // Store company name mappings (UUID -> name)
+          if (userData.company_mappings) {
+            const map = {};
+            userData.company_mappings.forEach(m => { map[m.company_id] = m.company_name; });
+            setCompanyMappings(map);
+          }
 
           // Check subscription expiry popup
           const daysLeft = userData.subscription_days_left;
@@ -198,6 +206,13 @@ function App() {
         setUser(data);
         setIsAuthenticated(true);
         toast.success(`Welcome, ${data.name || data.username}!`);
+
+        // Store company name mappings
+        if (data.company_mappings) {
+          const map = {};
+          data.company_mappings.forEach(m => { map[m.company_id] = m.company_name; });
+          setCompanyMappings(map);
+        }
 
         // Check subscription expiry - show popup if within 30 days
         const daysLeft = data.subscription_days_left;
@@ -368,7 +383,7 @@ function App() {
     return (
       <div className="min-h-screen bg-slate-50">
         <Toaster position="top-right" richColors />
-        <CompanySelector companies={user?.companies || []} onSelect={handleCompanySelect} />
+        <CompanySelector companies={user?.companies || []} companyMappings={companyMappings} onSelect={handleCompanySelect} />
       </div>
     );
   }
@@ -490,7 +505,7 @@ function App() {
                     data-testid="company-switch-btn"
                   >
                     <Building2 size={10} />
-                    <span className="truncate max-w-[120px] sm:max-w-[200px]">{selectedCompany}</span>
+                    <span className="truncate max-w-[120px] sm:max-w-[200px]">{companyMappings[selectedCompany] || selectedCompany}</span>
                   </button>
                 )}
               </div>
@@ -608,7 +623,7 @@ function App() {
       {/* Modals */}
       {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
       {showCompanySelector && (
-        <CompanySelector companies={user?.companies || []} onSelect={handleCompanySelect} />
+        <CompanySelector companies={user?.companies || []} companyMappings={companyMappings} onSelect={handleCompanySelect} />
       )}
       {showRenewalPopup && (
         <RenewalPopup

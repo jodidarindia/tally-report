@@ -58,7 +58,10 @@ const SyncHistory = () => {
   const formatDate = (ts) => {
     if (!ts) return '-';
     try {
-      return new Date(ts).toLocaleString('en-IN', {
+      // Normalize: treat naive timestamps (no timezone marker) as UTC
+      const d = (ts.includes('+') || ts.includes('Z') || ts.endsWith('00:00'))
+        ? new Date(ts) : new Date(ts + 'Z');
+      return d.toLocaleString('en-IN', {
         day: '2-digit', month: 'short', year: 'numeric',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         timeZone: 'Asia/Kolkata'
