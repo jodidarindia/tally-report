@@ -279,8 +279,9 @@ class TallyCollectionClient:
 
     def _company_tag(self):
         """Return SVCurrentCompany XML tag. Skip if company is unknown/Default — Tally will use the active company."""
-        if self.company and self.company.lower() not in ('default', '##default'):
-            return f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>"
+        c = (self.company or '').strip()
+        if c and c.lower() not in ('default', '##default', '_active_') and 'default' not in c.lower():
+            return f"<SVCURRENTCOMPANY>{c}</SVCURRENTCOMPANY>"
         return ""
 
     def test_connection(self) -> bool:
@@ -366,7 +367,7 @@ class TallyCollectionClient:
             except Exception as e:
                 logger.debug(f"  List of Companies failed: {e}")
 
-        if self.company and self.company.lower() not in ('default', '##default'):
+        if self.company and self.company.strip().lower() not in ('default', '##default') and 'default' not in self.company.strip().lower():
             logger.info(f"  Tally company: {self.company}")
         else:
             self.company = ''
@@ -1372,7 +1373,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v7.0 (Login-Based Auth)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v7.1 (Default-Company-Fix)")
         logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
 
@@ -1612,7 +1613,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.utcnow().isoformat(),
-                'agent_version': '7.0.0-login-auth',
+                'agent_version': '7.1.0-default-fix',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
