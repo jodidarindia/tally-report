@@ -59,7 +59,12 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
   - Convert Prospect: checks users
 - **Employee tenant isolation**: Employees inherit parent admin's tenant_id, can only see data within their own tenant
 
-### Employee Management (April 2026)
+### User Lifecycle & Data Integrity (April 2026)
+- **Soft-delete with archive**: Deleting any user/employee archives their full record to `deleted_users` collection (minus password_hash) with `deleted_at`, `deleted_by`, `deletion_reason`, `original_tenant_id`, `original_role`
+- **Admin deletion archives tenant data**: When SuperAdmin deletes an admin, all employees are archived to `deleted_users` and tenant data is summarized in `archived_tenant_data` before removal from active collections
+- **Re-signup detection**: If a previously-deleted email signs up again, the prospect is flagged `returning_user: true` with `previous_tenant_id` for SuperAdmin awareness
+- **SuperAdmin audit view**: `/api/super-admin/deleted-users` endpoint returns all archived user records and tenant data summaries
+- **Clean tenant isolation**: New signups always get a fresh `tenant_id` — zero data leakage from old tenants
 - Admin Profile > Employees tab: Add/Delete employees with plan-based limits
 - Email format validation required for all new employees
 - Employee count display with max limit and slots available
