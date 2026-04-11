@@ -138,7 +138,7 @@ const TallySetup = ({ companyId }) => {
               <div className="p-3 rounded-lg bg-slate-50">
                 <div className="text-xs text-slate-500 flex items-center gap-1 mb-1"><Clock size={12} /> Last Sync</div>
                 <div className="text-sm font-medium text-slate-800" data-testid="last-sync-time">
-                  {syncStatus.last_sync ? new Date(syncStatus.last_sync).toLocaleString('en-IN') : 'Never synced'}
+                  {syncStatus.last_sync ? new Date(syncStatus.last_sync).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Never synced'}
                 </div>
               </div>
               <div className="p-3 rounded-lg bg-slate-50">

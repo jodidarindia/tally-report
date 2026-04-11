@@ -62,7 +62,7 @@ const ReportHistory = () => {
                   {item.created_at && (
                     <div className="flex items-center gap-2 text-sm text-slate-500 mb-3">
                       <Clock size={14} />
-                      {new Date(item.created_at).toLocaleString()}
+                      {new Date(item.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                     </div>
                   )}
                   {item.response && (

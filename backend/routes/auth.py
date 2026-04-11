@@ -12,6 +12,10 @@ from services.auth_service import (
     get_current_user, generate_sync_token, ALL_FEATURES
 )
 from services.audit_service import log_audit, get_client_ip
+from services.ist_utils import (
+    now_ist_iso, subscription_expires_at, is_subscription_active,
+    days_until_expiry
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -33,12 +37,35 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         if user.get("role") == "employee":
             admin = await db.users.find_one(
                 {"tenant_id": user.get("tenant_id"), "role": "admin"},
-                {"_id": 0, "active": 1}
+                {"_id": 0, "active": 1, "subscription_start": 1, "subscription_months": 1}
             )
             if admin and not admin.get("active", True):
                 return APIResponse(success=False, error="Your organization's account has been deactivated.")
 
+        # Check subscription expiry for admin/employee
         tenant_id = user.get("tenant_id")
+        sub_start = user.get("subscription_start", "")
+        sub_months = user.get("subscription_months", 12)
+        if user.get("role") == "employee" and tenant_id:
+            admin_for_sub = await db.users.find_one(
+                {"tenant_id": tenant_id, "role": "admin"},
+                {"_id": 0, "subscription_start": 1, "subscription_months": 1}
+            )
+            if admin_for_sub:
+                sub_start = admin_for_sub.get("subscription_start", "")
+                sub_months = admin_for_sub.get("subscription_months", 12)
+
+        sub_expired = False
+        sub_days_left = 999
+        sub_expires_iso = None
+        if sub_start and user.get("role") != "super_admin":
+            sub_expired = not is_subscription_active(sub_start, sub_months)
+            sub_days_left = days_until_expiry(sub_start, sub_months)
+            sub_expires_iso = subscription_expires_at(sub_start, sub_months)
+
+        if sub_expired and user.get("role") != "super_admin":
+            return APIResponse(success=False, error="Your subscription has expired. Please renew to continue using FLOWRA. Contact support@flowra.in")
+
         token = create_access_token(user["username"], user["username"], user["role"], tenant_id)
         response.set_cookie(
             key="access_token", value=token,
@@ -69,7 +96,11 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "companies": companies,
                 "plan": user.get("plan", "enterprise"),
                 "max_companies": user.get("max_companies", 10),
-                "max_employees": user.get("max_employees", 20)
+                "max_employees": user.get("max_employees", 20),
+                "subscription_start": sub_start or None,
+                "subscription_months": sub_months,
+                "subscription_expires": sub_expires_iso,
+                "subscription_days_left": sub_days_left
             }
         )
     except Exception as e:
@@ -97,6 +128,21 @@ async def get_me(request: Request):
                 if user["role"] == "employee":
                     features = admin_user.get("features", [])
 
+        # Subscription info
+        sub_start = user.get("subscription_start", "")
+        sub_months = user.get("subscription_months", 12)
+        if user["role"] == "employee" and tenant_id:
+            admin_for_sub = await db.users.find_one(
+                {"tenant_id": tenant_id, "role": "admin"},
+                {"_id": 0, "subscription_start": 1, "subscription_months": 1}
+            )
+            if admin_for_sub:
+                sub_start = admin_for_sub.get("subscription_start", "")
+                sub_months = admin_for_sub.get("subscription_months", 12)
+
+        sub_expires_iso = subscription_expires_at(sub_start, sub_months) if sub_start else None
+        sub_days_left = days_until_expiry(sub_start, sub_months) if sub_start else 999
+
         return APIResponse(success=True, data={
             "username": user["username"],
             "name": user.get("name", ""),
@@ -106,7 +152,11 @@ async def get_me(request: Request):
             "companies": companies,
             "plan": user.get("plan", "enterprise"),
             "max_companies": user.get("max_companies", 10),
-            "max_employees": user.get("max_employees", 20)
+            "max_employees": user.get("max_employees", 20),
+            "subscription_start": sub_start or None,
+            "subscription_months": sub_months,
+            "subscription_expires": sub_expires_iso,
+            "subscription_days_left": sub_days_left
         })
     except Exception as e:
         return APIResponse(success=False, error=str(e))
@@ -293,5 +343,88 @@ async def get_sync_token(request: Request):
             return APIResponse(success=False, error="No tenant context")
         token = generate_sync_token(tenant_id)
         return APIResponse(success=True, data={"sync_token": token, "tenant_id": tenant_id})
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/auth/request-renewal")
+async def request_renewal(request: Request):
+    """Admin requests subscription renewal. Stored for SuperAdmin review."""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] != "admin":
+            return APIResponse(success=False, error="Admin access required")
+
+        body = await request.json()
+        plan_interest = (body.get("plan_interest") or user.get("plan", "")).strip()
+        message = (body.get("message") or "").strip()
+
+        # Check if a pending renewal already exists
+        existing = await db.renewal_requests.find_one({
+            "username": user["username"],
+            "status": "pending"
+        }, {"_id": 0})
+        if existing:
+            return APIResponse(success=False, error="You already have a pending renewal request. Our team will contact you shortly.")
+
+        now = now_ist_iso()
+        await db.renewal_requests.insert_one({
+            "username": user["username"],
+            "tenant_id": user.get("tenant_id", ""),
+            "name": user.get("name", ""),
+            "current_plan": user.get("plan", ""),
+            "plan_interest": plan_interest,
+            "current_expires": subscription_expires_at(
+                user.get("subscription_start", ""),
+                user.get("subscription_months", 12)
+            ),
+            "message": message,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now
+        })
+
+        await log_audit("renewal_requested", user["username"],
+                        tenant_id=user.get("tenant_id", ""),
+                        details=f"Plan interest: {plan_interest}",
+                        ip_address=get_client_ip(request))
+
+        return APIResponse(success=True, message="Renewal request submitted! Our team will contact you shortly.")
+    except Exception as e:
+        logger.error(f"Renewal request error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/sync/latest-fy")
+async def get_latest_fy(request: Request):
+    """Get the latest financial year that has synced data for this tenant."""
+    try:
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Not authenticated")
+
+        tenant_id = user.get("tenant_id", "")
+        if not tenant_id:
+            return APIResponse(success=False, error="No tenant context")
+
+        # Find the most recent sales voucher to determine FY
+        latest_sale = await db.sales_vouchers.find_one(
+            {"tenant_id": tenant_id},
+            {"_id": 0, "fy": 1, "voucher_date": 1},
+            sort=[("voucher_date", -1)]
+        )
+
+        if latest_sale and latest_sale.get("fy"):
+            return APIResponse(success=True, data={"latest_fy": latest_sale["fy"]})
+
+        # Fallback: check sync status for last synced FY
+        sync_rec = await db.sync_status.find_one(
+            {"tenant_id": tenant_id, "type": "agent_sync"},
+            {"_id": 0, "fy": 1}
+        )
+        if sync_rec and sync_rec.get("fy"):
+            return APIResponse(success=True, data={"latest_fy": sync_rec["fy"]})
+
+        return APIResponse(success=True, data={"latest_fy": None})
     except Exception as e:
         return APIResponse(success=False, error=str(e))

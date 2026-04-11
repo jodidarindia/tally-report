@@ -119,7 +119,49 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
             </div>
           </div>
           <div className="hidden lg:block">
-            <img src="https://static.prod-images.emergentagent.com/jobs/e93f8a38-4ad0-4d0c-b41a-81b9cd3b283f/images/30a6d04821ce3b4a99db05c23abc0de43d8ee58256920e819491659c1ba96161.png" alt="FLOWRA Analytics" className="w-full rounded-sm" />
+            {/* Animated Dashboard Mockup */}
+            <div className="bg-white border border-zinc-200 rounded-sm shadow-2xl shadow-zinc-900/10 overflow-hidden">
+              <div className="bg-zinc-900 px-4 py-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-400" />
+                  <div className="w-3 h-3 rounded-full bg-amber-400" />
+                  <div className="w-3 h-3 rounded-full bg-green-400" />
+                </div>
+                <span className="text-[10px] text-zinc-400 font-mono">flowra.in/dashboard</span>
+                <div className="w-12" />
+              </div>
+              <div className="flex">
+                <div className="w-40 bg-zinc-50 border-r border-zinc-100 py-3 px-2">
+                  {[{n:'Dashboard',a:true},{n:'Sales',a:false},{n:'CRM',a:false},{n:'Inventory',a:false},{n:'Analytics',a:false},{n:'AI Reports',a:false}].map(m => (
+                    <div key={m.n} className={`text-[10px] px-3 py-1.5 rounded mb-0.5 ${m.a ? 'bg-[#0052FF] text-white font-semibold' : 'text-zinc-500'}`}>{m.n}</div>
+                  ))}
+                </div>
+                <div className="flex-1 p-4 bg-white">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-bold text-zinc-900">Business Overview</p>
+                    <span className="text-[9px] text-zinc-400 border border-zinc-200 rounded px-1.5 py-0.5">FY 2025-26</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {[{l:'Total Sales',v:'Rs.52.3L',c:'text-blue-600'},{l:'Items',v:'156',c:'text-purple-600'},{l:'Low Stock',v:'23',c:'text-red-500'}].map(s => (
+                      <div key={s.l} className="bg-zinc-50 border border-zinc-100 rounded p-2">
+                        <p className="text-[8px] text-zinc-400">{s.l}</p>
+                        <p className={`text-sm font-bold ${s.c}`}>{s.v}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-zinc-50 border border-zinc-100 rounded p-2 mb-2">
+                    <p className="text-[8px] font-semibold text-zinc-600 mb-1">Recent Sales</p>
+                    {['ABC Motors ‑ Rs.1.2L','Shree Krishna ‑ Rs.98K','National Auto ‑ Rs.75K','Mahalaxmi ‑ Rs.62K'].map(t => (
+                      <div key={t} className="flex justify-between text-[8px] py-0.5 border-b border-zinc-50 last:border-0">
+                        <span className="text-zinc-600">{t.split(' ‑ ')[0]}</span>
+                        <span className="text-[#0052FF] font-semibold">{t.split(' ‑ ')[1]}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[7px] text-zinc-400 text-right">Last sync: 10/04/2026, 14:30 IST</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

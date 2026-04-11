@@ -22,6 +22,7 @@ import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
 import LandingPage from './pages/LandingPage';
 import SignupPage from './pages/SignupPage';
+import RenewalPopup from './components/RenewalPopup';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
@@ -53,6 +54,7 @@ function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [publicView, setPublicView] = useState('landing'); // landing, login, signup
+  const [showRenewalPopup, setShowRenewalPopup] = useState(false);
   const wsRef = useRef(null);
   const userMenuRef = useRef(null);
 
@@ -88,9 +90,23 @@ function App() {
           const userData = res.data.data;
           setUser(userData);
           setIsAuthenticated(true);
+
+          // Check subscription expiry popup
+          const daysLeft = userData.subscription_days_left;
+          if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30 && userData.role !== 'super_admin') {
+            setShowRenewalPopup(true);
+          }
+
           if (userData.role === 'super_admin') {
             setCurrentPage('super-admin');
           } else {
+            // Fetch latest FY
+            axios.get(`${API}/sync/latest-fy`).then(fyRes => {
+              if (fyRes.data?.success && fyRes.data?.data?.latest_fy) {
+                setSelectedFY(fyRes.data.data.latest_fy);
+              }
+            }).catch(() => {});
+
             const savedCompany = localStorage.getItem('flowra_company');
             if (savedCompany && (userData.companies || []).includes(savedCompany)) {
               setSelectedCompany(savedCompany);
@@ -171,9 +187,24 @@ function App() {
         setIsAuthenticated(true);
         toast.success(`Welcome, ${data.name || data.username}!`);
 
+        // Check subscription expiry - show popup if within 30 days
+        const daysLeft = data.subscription_days_left;
+        if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30 && data.role !== 'super_admin') {
+          setShowRenewalPopup(true);
+        }
+
         if (data.role === 'super_admin') {
           setCurrentPage('super-admin');
         } else {
+          // Fetch latest FY from synced data
+          try {
+            axios.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
+            const fyRes = await axios.get(`${API}/sync/latest-fy`);
+            if (fyRes.data?.success && fyRes.data?.data?.latest_fy) {
+              setSelectedFY(fyRes.data.data.latest_fy);
+            }
+          } catch {}
+
           // Check companies
           if ((data.companies || []).length > 1) {
             setShowCompanySelector(true);
@@ -186,7 +217,7 @@ function App() {
         toast.error(res.data?.error || 'Login failed');
       }
     } catch (err) {
-      toast.error('Login failed');
+      toast.error(err.response?.data?.error || 'Login failed');
     } finally {
       setLoginLoading(false);
     }
@@ -563,6 +594,13 @@ function App() {
       {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
       {showCompanySelector && (
         <CompanySelector companies={user?.companies || []} onSelect={handleCompanySelect} />
+      )}
+      {showRenewalPopup && (
+        <RenewalPopup
+          daysLeft={user?.subscription_days_left}
+          onDismiss={() => setShowRenewalPopup(false)}
+          onOpenSubscription={() => { setShowRenewalPopup(false); setShowProfile(true); }}
+        />
       )}
     </div>
   );

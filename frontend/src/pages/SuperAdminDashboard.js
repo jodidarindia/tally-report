@@ -5,7 +5,7 @@ import {
   Users, Shield, ToggleLeft, ToggleRight, Trash2, Key,
   Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
-  UserPlus, Phone, Mail, FileText, ArrowRightCircle
+  UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 
@@ -40,7 +40,10 @@ const SuperAdminDashboard = ({ token }) => {
   const [prospects, setProspects] = useState([]);
   const [prospectStats, setProspectStats] = useState({});
   const [convertModal, setConvertModal] = useState(null);
-  const [convertData, setConvertData] = useState({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
+  const [convertData, setConvertData] = useState({ password: '', plan: 'professional', billing_cycle: 'annual', subscription_months: 12 });
+  const [renewals, setRenewals] = useState({ renewal_requests: [], near_expiry: [], expired: [], stats: {} });
+  const [processModal, setProcessModal] = useState(null);
+  const [processData, setProcessData] = useState({ action: 'approve', plan: '', subscription_months: 12, notes: '' });
 
   const PLANS = {
     starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
@@ -53,15 +56,17 @@ const SuperAdminDashboard = ({ token }) => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [statsRes, adminsRes, prospectsRes] = await Promise.all([
+      const [statsRes, adminsRes, prospectsRes, renewalsRes] = await Promise.all([
         axios.get(`${API}/super-admin/stats`, { headers }),
         axios.get(`${API}/super-admin/admins`, { headers }),
-        axios.get(`${API}/super-admin/prospects`, { headers }).catch(() => ({ data: { data: { prospects: [], stats: {} } } }))
+        axios.get(`${API}/super-admin/prospects`, { headers }).catch(() => ({ data: { data: { prospects: [], stats: {} } } })),
+        axios.get(`${API}/super-admin/renewals`, { headers }).catch(() => ({ data: { data: { renewal_requests: [], near_expiry: [], expired: [], stats: {} } } }))
       ]);
       setStats(statsRes.data?.data);
       setAdmins(adminsRes.data?.data?.admins || []);
       setProspects(prospectsRes.data?.data?.prospects || []);
       setProspectStats(prospectsRes.data?.data?.stats || {});
+      setRenewals(renewalsRes.data?.data || { renewal_requests: [], near_expiry: [], expired: [], stats: {} });
     } catch (err) {
       toast.error('Failed to fetch data');
     } finally {
@@ -241,7 +246,7 @@ const SuperAdminDashboard = ({ token }) => {
       if (res.data?.success) {
         toast.success(`Converted to admin: ${res.data.data.username}`);
         setConvertModal(null);
-        setConvertData({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
+        setConvertData({ password: '', plan: 'professional', billing_cycle: 'annual', subscription_months: 12 });
         fetchData();
       } else {
         toast.error(res.data?.error);
@@ -328,6 +333,13 @@ const SuperAdminDashboard = ({ token }) => {
         >
           <span className="flex items-center gap-1.5"><UserPlus size={14} /> Enquiries {prospectStats.new > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{prospectStats.new}</span>}</span>
         </button>
+        <button
+          onClick={() => setActiveTab('renewals')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'renewals' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          data-testid="tab-renewals"
+        >
+          <span className="flex items-center gap-1.5"><RefreshCw size={14} /> Renewals {(renewals.stats?.pending_renewals > 0 || renewals.stats?.expired_count > 0) && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{(renewals.stats?.pending_renewals || 0) + (renewals.stats?.expired_count || 0)}</span>}</span>
+        </button>
       </div>
 
       {activeTab === 'activity' && (
@@ -400,7 +412,7 @@ const SuperAdminDashboard = ({ token }) => {
                         <option value="lost">Lost</option>
                       </select>
                       {p.status !== 'converted' && p.status !== 'lost' && (
-                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 }); }}
+                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 }); }}
                           className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
                           data-testid={`convert-${p.prospect_id}`}>
                           <ArrowRightCircle size={12} /> Convert
@@ -528,6 +540,171 @@ const SuperAdminDashboard = ({ token }) => {
                   <button onClick={convertProspect} data-testid="convert-confirm-btn"
                     className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2">
                     <ArrowRightCircle size={16} /> Convert to Admin — {PLANS[convertData.plan]?.name} Plan
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'renewals' && (
+        <div data-testid="renewals-section">
+          {/* Renewal Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {[
+              { label: 'Pending Requests', value: renewals.stats?.pending_renewals || 0, color: 'text-amber-600' },
+              { label: 'Near Expiry (30d)', value: renewals.stats?.near_expiry_count || 0, color: 'text-orange-600' },
+              { label: 'Expired', value: renewals.stats?.expired_count || 0, color: 'text-red-600' },
+              { label: 'Total Requests', value: renewals.stats?.total_requests || 0, color: 'text-slate-700' },
+            ].map(s => (
+              <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
+                <p className="text-xs text-slate-500">{s.label}</p>
+                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Expired Users */}
+          {renewals.expired?.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} /> Expired Subscriptions</h3>
+              <div className="space-y-2">
+                {renewals.expired.map(u => (
+                  <div key={u.username} className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-red-900">{u.name || u.username}</p>
+                      <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()} Plan | Tenant: {u.tenant_id}</p>
+                      <p className="text-xs text-red-600 mt-1">Expired {Math.abs(u.days_left)} days ago | Was: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
+                    </div>
+                    <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700" data-testid={`renew-${u.username}`}>
+                      Renew
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Near Expiry Users */}
+          {renewals.near_expiry?.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-1.5"><Clock size={14} /> Expiring Within 30 Days</h3>
+              <div className="space-y-2">
+                {renewals.near_expiry.map(u => (
+                  <div key={u.username} className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-amber-900">{u.name || u.username}</p>
+                      <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()} Plan | Tenant: {u.tenant_id}</p>
+                      <p className="text-xs text-amber-600 mt-1">{u.days_left} days left | Expires: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
+                    </div>
+                    <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
+                      className="px-4 py-2 bg-[#2563EB] text-white rounded-lg text-xs font-medium hover:bg-[#1D4ED8]" data-testid={`extend-${u.username}`}>
+                      Extend
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Renewal Requests */}
+          <div className="mb-6">
+            <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5"><FileText size={14} /> Renewal Requests</h3>
+            {(renewals.renewal_requests || []).length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-400 text-sm">No renewal requests yet</div>
+            ) : (
+              <div className="space-y-2">
+                {renewals.renewal_requests.map((r, i) => (
+                  <div key={i} className="bg-white border border-slate-200 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-900">{r.name || r.username}</p>
+                        <p className="text-xs text-slate-500">{r.username} | Current: {r.current_plan?.toUpperCase()} | Interested: {r.plan_interest?.toUpperCase()}</p>
+                        {r.message && <p className="text-xs text-slate-600 mt-1 italic">"{r.message}"</p>}
+                        <p className="text-xs text-slate-400 mt-1">{new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {r.status === 'pending' ? (
+                          <>
+                            <button onClick={() => { setProcessModal(r.username); setProcessData({ action: 'approve', plan: r.plan_interest || r.current_plan, subscription_months: 12, notes: '' }); }}
+                              className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700">Approve</button>
+                            <button onClick={async () => {
+                              try {
+                                await axios.put(`${API}/super-admin/renewals/${r.username}/process`, { action: 'reject', notes: 'Rejected by admin' }, { headers });
+                                toast.success('Request rejected');
+                                fetchData();
+                              } catch { toast.error('Failed to reject'); }
+                            }}
+                              className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-medium hover:bg-red-100">Reject</button>
+                          </>
+                        ) : (
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${r.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {r.status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {renewals.expired?.length === 0 && renewals.near_expiry?.length === 0 && (renewals.renewal_requests || []).length === 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
+              <Check size={32} className="mx-auto text-green-500 mb-3" />
+              <p className="text-slate-600 font-medium">All subscriptions are healthy</p>
+              <p className="text-sm text-slate-400 mt-1">No pending renewals or near-expiry users</p>
+            </div>
+          )}
+
+          {/* Process Renewal Modal */}
+          {processModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl w-full max-w-md mx-4 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-semibold text-slate-900">Process Renewal: {processModal}</h3>
+                  <button onClick={() => setProcessModal(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-600 font-medium">Plan</label>
+                    <div className="flex gap-2 mt-1">
+                      {['starter', 'professional', 'enterprise'].map(id => (
+                        <button key={id} onClick={() => setProcessData(prev => ({ ...prev, plan: id }))}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${processData.plan === id ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                          {PLANS[id]?.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600 font-medium">Duration (months)</label>
+                    <input type="number" min="1" max="60" value={processData.subscription_months}
+                      onChange={e => setProcessData(prev => ({ ...prev, subscription_months: parseInt(e.target.value) || 12 }))}
+                      className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600 font-medium">Notes</label>
+                    <textarea value={processData.notes} onChange={e => setProcessData(prev => ({ ...prev, notes: e.target.value }))}
+                      rows={2} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none" placeholder="Optional notes..." />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await axios.put(`${API}/super-admin/renewals/${processModal}/process`, processData, { headers });
+                        if (res.data?.success) {
+                          toast.success(res.data.message);
+                          setProcessModal(null);
+                          fetchData();
+                        } else { toast.error(res.data?.error || 'Failed'); }
+                      } catch { toast.error('Failed to process renewal'); }
+                    }}
+                    className="w-full py-2.5 bg-green-600 text-white rounded-lg font-medium text-sm hover:bg-green-700"
+                    data-testid="process-renewal-btn">
+                    Approve & Renew Subscription
                   </button>
                 </div>
               </div>

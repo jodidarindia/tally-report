@@ -218,7 +218,7 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                     <option value="">Select a plan</option>
                     <option value="starter">Starter - ₹999/mo</option>
                     <option value="professional">Professional - ₹2,499/mo</option>
-                    <option value="enterprise">Enterprise - ₹4,999/mo</option>
+                    <option value="enterprise">Enterprise - Rs.3,799/mo</option>
                   </select>
                 </div>
               </div>
@@ -267,16 +267,73 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                   <Play size={24} className="text-[#0052FF]" />
                 </div>
                 <p className="text-zinc-700 font-medium mb-2">Would you like to explore FLOWRA?</p>
-                <p className="text-zinc-500 text-sm mb-6">Watch a quick feature walkthrough and try with sample data.</p>
+                <p className="text-zinc-500 text-sm mb-6">See a preview of the dashboard and try with sample data.</p>
 
-                {/* Feature Video */}
-                <div className="mb-8 max-w-lg mx-auto">
-                  <video controls className="w-full rounded-sm border border-zinc-200" poster="/flowra-logo.png" data-testid="demo-video">
-                    <source src="/flowra-demo.mp4" type="video/mp4" />
-                    Your browser does not support the video tag.
-                  </video>
-                  <p className="text-xs text-zinc-400 mt-2">30-second FLOWRA feature overview</p>
+                {/* Animated Dashboard Mockup */}
+                <div className="mb-8 max-w-2xl mx-auto bg-slate-50 border border-zinc-200 rounded-sm overflow-hidden" data-testid="demo-mockup">
+                  {/* Mock Navbar */}
+                  <div className="bg-white border-b border-zinc-200 px-4 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 bg-[#0052FF] rounded-sm" />
+                      <span className="text-xs font-bold text-zinc-900">FLOWRA</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {['Dashboard', 'Sales', 'CRM', 'Inventory', 'Analytics'].map((n, i) => (
+                        <span key={n} className={`text-[10px] font-medium px-2 py-1 rounded ${i === 0 ? 'bg-[#0052FF] text-white' : 'text-zinc-500'}`}>{n}</span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-zinc-500 border border-zinc-200 rounded px-1.5 py-0.5">FY 2025-26</span>
+                      <div className="w-5 h-5 bg-[#0052FF] rounded-full" />
+                    </div>
+                  </div>
+                  {/* Mock Dashboard Body */}
+                  <div className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <p className="text-sm font-bold text-zinc-900">Dashboard</p>
+                        <p className="text-[10px] text-zinc-500">Last sync: 10/04/2026, 14:30 IST</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                      {[
+                        { label: 'Total Sales', value: 'Rs.52.3L', color: 'text-blue-600' },
+                        { label: 'Inventory Items', value: '156', color: 'text-purple-600' },
+                        { label: 'Low Stock', value: '23', color: 'text-red-600' },
+                        { label: 'FY Sales', value: 'Rs.52.3L', color: 'text-cyan-600' }
+                      ].map(s => (
+                        <div key={s.label} className="bg-white border border-zinc-200 rounded p-2.5 animate-fade-in">
+                          <p className="text-[9px] text-zinc-500">{s.label}</p>
+                          <p className={`text-sm font-bold ${s.color}`}>{s.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-white border border-zinc-200 rounded p-2.5">
+                        <p className="text-[9px] font-medium text-zinc-600 mb-1.5">Recent Transactions</p>
+                        {['ABC Motors - Rs.1.2L', 'Shree Krishna - Rs.98K', 'Mahalaxmi Ent - Rs.75K'].map(t => (
+                          <div key={t} className="flex justify-between text-[9px] py-1 border-b border-zinc-50 last:border-0">
+                            <span className="text-zinc-700">{t.split(' - ')[0]}</span>
+                            <span className="text-[#0052FF] font-medium">{t.split(' - ')[1]}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bg-white border border-zinc-200 rounded p-2.5">
+                        <p className="text-[9px] font-medium text-zinc-600 mb-1.5">Top Customers</p>
+                        {['ABC Motors - Rs.12.5L', 'Shree Krishna - Rs.9.8L', 'National Auto - Rs.6.2L'].map((t, i) => (
+                          <div key={t} className="flex items-center justify-between text-[9px] py-1 border-b border-zinc-50 last:border-0">
+                            <div className="flex items-center gap-1">
+                              <span className="w-3.5 h-3.5 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-[7px] font-bold">{i + 1}</span>
+                              <span className="text-zinc-700">{t.split(' - ')[0]}</span>
+                            </div>
+                            <span className="text-[#0052FF] font-medium">{t.split(' - ')[1]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
+                <p className="text-xs text-zinc-400 mb-6">Interactive preview of the FLOWRA admin dashboard</p>
 
                 <div className="flex justify-center gap-4">
                   <button onClick={handleDemoRequest} disabled={loading} data-testid="demo-start-btn"
@@ -298,13 +355,13 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                 <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-sm p-4">
                   <h3 className="text-sm font-bold text-blue-900 mb-2">Professional Plan Features Included</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {['Dashboard', 'Sales Tracking', 'Customer CRM', 'Inventory Mgmt', 'Movement Analytics', 'Salesman Performance', 'Excel/PDF Exports', 'Multi-Company (3)'].map(f => (
+                    {['Dashboard', 'Sales Tracking', 'Customer CRM', 'Inventory Mgmt', 'Movement Analytics', 'Sync History', 'Excel/PDF Exports', 'Multi-Company (3)'].map(f => (
                       <div key={f} className="flex items-center gap-1.5 text-xs text-blue-800">
                         <Check size={12} className="text-blue-600" /> {f}
                       </div>
                     ))}
                   </div>
-                  <p className="text-[10px] text-blue-600 mt-2">Upgrade to Enterprise for AI Reports, Insider BI Analytics, and up to 10 companies</p>
+                  <p className="text-[10px] text-blue-600 mt-2">Upgrade to Enterprise for Salesman Tracking, AI Reports, Insider BI Analytics, and up to 10 companies</p>
                 </div>
 
                 {/* Demo Dashboard */}

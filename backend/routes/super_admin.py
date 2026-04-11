@@ -11,6 +11,10 @@ from services.auth_service import (
     generate_sync_token, ALL_FEATURES
 )
 from services.audit_service import log_audit, get_client_ip
+from services.ist_utils import (
+    now_ist_iso, subscription_expires_at, is_subscription_active,
+    days_until_expiry
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -343,4 +347,129 @@ async def get_super_admin_stats(request: Request):
             "all_features": ALL_FEATURES
         })
     except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+
+@router.get("/super-admin/renewals")
+async def get_renewals(request: Request):
+    """Get renewal requests and near-expiry admins."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        # Get all renewal requests
+        renewal_requests = await db.renewal_requests.find(
+            {}, {"_id": 0}
+        ).sort("created_at", -1).to_list(500)
+
+        # Get near-expiry admins (within 30 days or already expired)
+        admins = await db.users.find(
+            {"role": "admin", "subscription_start": {"$exists": True, "$ne": ""}},
+            {"_id": 0, "password_hash": 0}
+        ).to_list(500)
+
+        near_expiry = []
+        expired = []
+        for admin in admins:
+            sub_start = admin.get("subscription_start", "")
+            sub_months = admin.get("subscription_months", 12)
+            if not sub_start:
+                continue
+            days_left = days_until_expiry(sub_start, sub_months)
+            expires_at = subscription_expires_at(sub_start, sub_months)
+            entry = {
+                "username": admin["username"],
+                "name": admin.get("name", ""),
+                "tenant_id": admin.get("tenant_id", ""),
+                "plan": admin.get("plan", ""),
+                "billing_cycle": admin.get("billing_cycle", ""),
+                "subscription_start": sub_start,
+                "subscription_expires": expires_at,
+                "days_left": days_left,
+                "active": admin.get("active", True),
+                "companies": admin.get("companies", []),
+            }
+            if days_left < 0:
+                expired.append(entry)
+            elif days_left <= 30:
+                near_expiry.append(entry)
+
+        # Sort by urgency
+        near_expiry.sort(key=lambda x: x["days_left"])
+        expired.sort(key=lambda x: x["days_left"])
+
+        stats = {
+            "pending_renewals": sum(1 for r in renewal_requests if r.get("status") == "pending"),
+            "near_expiry_count": len(near_expiry),
+            "expired_count": len(expired),
+            "total_requests": len(renewal_requests)
+        }
+
+        return APIResponse(success=True, data={
+            "renewal_requests": renewal_requests,
+            "near_expiry": near_expiry,
+            "expired": expired,
+            "stats": stats
+        })
+    except Exception as e:
+        logger.error(f"Error fetching renewals: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.put("/super-admin/renewals/{username}/process")
+async def process_renewal(username: str, request: Request):
+    """SuperAdmin processes a renewal request (approve/reject)."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        action = body.get("action", "")  # approve, reject
+        new_months = body.get("subscription_months", 12)
+        new_plan = body.get("plan", "")
+        notes = body.get("notes", "")
+
+        if action not in ("approve", "reject"):
+            return APIResponse(success=False, error="Action must be 'approve' or 'reject'")
+
+        now = now_ist_iso()
+
+        # Update the renewal request status
+        await db.renewal_requests.update_many(
+            {"username": username, "status": "pending"},
+            {"$set": {"status": action + "d", "processed_at": now, "admin_notes": notes, "updated_at": now}}
+        )
+
+        if action == "approve":
+            # Reset subscription start to now + extend
+            update_fields = {
+                "subscription_start": now,
+                "subscription_months": new_months,
+                "active": True
+            }
+            if new_plan:
+                from routes.prospects import SUBSCRIPTION_PLANS
+                if new_plan in SUBSCRIPTION_PLANS:
+                    plan_config = SUBSCRIPTION_PLANS[new_plan]
+                    update_fields["plan"] = new_plan
+                    update_fields["features"] = list(plan_config["features"])
+                    update_fields["max_companies"] = plan_config["max_companies"]
+                    update_fields["max_employees"] = plan_config["max_employees"]
+
+            await db.users.update_one(
+                {"username": username, "role": "admin"},
+                {"$set": update_fields}
+            )
+
+        await log_audit(
+            f"renewal_{action}d", sa["username"],
+            target=username,
+            details=f"Months: {new_months}, Plan: {new_plan or 'same'}",
+            ip_address=get_client_ip(request)
+        )
+
+        return APIResponse(success=True, message=f"Renewal {action}d for '{username}'")
+    except Exception as e:
+        logger.error(f"Error processing renewal: {e}")
         return APIResponse(success=False, error=str(e))

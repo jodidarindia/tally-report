@@ -436,7 +436,7 @@ const CustomerCRM = ({ user, selectedFY }) => {
                         <div className="flex items-center gap-4 mt-2 text-sm text-slate-600">
                           <span className="flex items-center gap-1">
                             <Calendar size={14} />
-                            {new Date(followup.followup_date).toLocaleString()}
+                            {new Date(followup.followup_date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                           </span>
                           <span className="capitalize px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs">{followup.followup_type}</span>
                           {followup.created_by_name && (

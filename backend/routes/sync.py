@@ -10,6 +10,7 @@ from models import InventoryItem, SalesVoucher, APIResponse
 from utils import safe_num, compute_overdue_digest, ws_manager
 from services.auth_service import verify_sync_token, get_current_user
 from services.tenant_context import get_tenant_context, tenant_filter
+from services.ist_utils import is_subscription_active
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,8 +57,14 @@ async def receive_agent_sync(request: dict):
 
         # Add company to admin's company list if new — enforce max_companies limit
         if req_company_id and req_tenant_id:
-            admin_user = await db.users.find_one({"tenant_id": req_tenant_id, "role": "admin"}, {"_id": 0, "companies": 1, "max_companies": 1, "plan": 1})
+            admin_user = await db.users.find_one({"tenant_id": req_tenant_id, "role": "admin"}, {"_id": 0, "companies": 1, "max_companies": 1, "plan": 1, "subscription_start": 1, "subscription_months": 1})
             if admin_user:
+                # Check subscription expiry before allowing sync
+                sub_start = admin_user.get("subscription_start", "")
+                sub_months = admin_user.get("subscription_months", 12)
+                if sub_start and not is_subscription_active(sub_start, sub_months):
+                    return APIResponse(success=False, error="Subscription expired. Sync disabled. Please renew your FLOWRA subscription to continue syncing data.")
+
                 current_companies = admin_user.get("companies", [])
                 max_companies = admin_user.get("max_companies", 10)
                 if req_company_id not in current_companies:

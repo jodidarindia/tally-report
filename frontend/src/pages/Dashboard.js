@@ -115,7 +115,7 @@ const Dashboard = ({ selectedFY }) => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-slate-500 text-sm">
-            {syncStatus?.last_sync ? `Last sync: ${new Date(syncStatus.last_sync).toLocaleString()}` : 'Awaiting first sync'}
+            {syncStatus?.last_sync ? `Last sync: ${new Date(syncStatus.last_sync).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}` : 'Awaiting first sync'}
             {selectedFY && ` | FY ${selectedFY}`}
           </p>
         </div>
@@ -152,14 +152,26 @@ const Dashboard = ({ selectedFY }) => {
         </div>
       )}
 
-      {/* Not Synced Banner */}
-      {!loading && !syncStatus?.last_sync && (salesSummary?.total_sales || 0) === 0 && (inventorySummary?.total_items || 0) === 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center" data-testid="not-synced-banner">
-          <Database size={28} className="mx-auto text-amber-500 mb-3" />
-          <h3 className="text-lg font-semibold text-amber-900 mb-1">Data Not Synced Yet</h3>
-          <p className="text-sm text-amber-700 mb-3">Your data has not been synced from Tally Prime yet. Please download and run the FLOWRA Desktop Agent to connect with Tally.</p>
-          <p className="text-xs text-amber-600">Go to <strong>Setup</strong> menu to configure your Tally connection and download the Desktop Agent.</p>
-        </div>
+      {/* Not Synced / No Data Banner */}
+      {!loading && (
+        <>
+          {!syncStatus?.last_sync && (salesSummary?.total_sales || 0) === 0 && (inventorySummary?.total_items || 0) === 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center" data-testid="not-synced-banner">
+              <Database size={28} className="mx-auto text-amber-500 mb-3" />
+              <h3 className="text-lg font-semibold text-amber-900 mb-1">Data Not Synced Yet</h3>
+              <p className="text-sm text-amber-700 mb-3">Your data has not been synced from Tally Prime yet. Please download and run the FLOWRA Desktop Agent to connect with Tally.</p>
+              <p className="text-xs text-amber-600">Go to <strong>Setup</strong> menu to configure your Tally connection and download the Desktop Agent.</p>
+            </div>
+          )}
+          {syncStatus?.last_sync && (salesSummary?.total_sales || 0) === 0 && (inventorySummary?.total_items || 0) === 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center" data-testid="no-data-banner">
+              <Database size={28} className="mx-auto text-blue-500 mb-3" />
+              <h3 className="text-lg font-semibold text-blue-900 mb-1">No Data Found for This FY</h3>
+              <p className="text-sm text-blue-700 mb-3">Your Tally is connected but no data is available for <strong>FY {selectedFY}</strong>. This could mean the selected financial year has no transactions yet, or the company has not been synced for this FY.</p>
+              <p className="text-xs text-blue-600">Try selecting a different financial year or sync your data again from the Desktop Agent.</p>
+            </div>
+          )}
+        </>
       )}
 
       {/* Stat Cards */}
@@ -299,7 +311,7 @@ const Dashboard = ({ selectedFY }) => {
               {/* Last computed timestamp */}
               {overdueDigest.computed_at && (
                 <div className="px-5 pb-4 text-xs text-slate-400 text-right">
-                  Last computed: {new Date(overdueDigest.computed_at).toLocaleString()}
+                  Last computed: {new Date(overdueDigest.computed_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                 </div>
               )}
             </div>
