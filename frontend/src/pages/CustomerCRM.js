@@ -9,7 +9,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
-  const [activeTab, setActiveTab] = useState('outstanding');
+  const [activeTab, setActiveTab] = useState('followups');
   const [outstanding, setOutstanding] = useState([]);
   const [followups, setFollowups] = useState([]);
   const [targets, setTargets] = useState([]);
@@ -190,10 +190,10 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   };
 
   const tabs = [
-    { id: 'outstanding', label: 'Outstanding', icon: AlertTriangle },
     { id: 'followups', label: 'Follow-ups', icon: Calendar },
-    { id: 'targets', label: 'Targets', icon: TrendingUp },
-    { id: 'behavior', label: 'Payment Behavior', icon: Users }
+    { id: 'outstanding', label: 'Outstanding', icon: AlertTriangle },
+    { id: 'behavior', label: 'Payment Behavior', icon: Users },
+    { id: 'targets', label: 'Targets', icon: TrendingUp }
   ];
 
   const getFollowupDateColor = (dateStr) => {

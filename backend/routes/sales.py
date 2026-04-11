@@ -269,6 +269,14 @@ async def get_customer_item_sales(request: Request, customer: str = "", fy: Opti
         if not customer:
             return APIResponse(success=False, error="Customer name is required")
 
+        # If branch exclusion is on, check if this customer is a branch party
+        exclude = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        if exclude:
+            from routes.branch_ledgers import get_branch_parties
+            bp = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+            if customer in bp:
+                return APIResponse(success=True, data={"customer": customer, "financial_year": fy, "items": [], "total_items": 0, "total_quantity": 0, "total_amount": 0, "total_vouchers": 0})
+
         q = _build_query(ctx, company_id, {"party_name": customer})
         vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
         if fy:

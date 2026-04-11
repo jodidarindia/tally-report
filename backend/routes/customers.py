@@ -306,6 +306,15 @@ async def get_followups(request: Request, status: Optional[str] = None, company_
             extra["status"] = status
         query = _build_query(ctx, company_id, extra)
         followups = await db.customer_followups.find(query, {"_id": 0}).sort("followup_date", -1).to_list(100)
+
+        # Apply branch exclusion
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        if exclude_branches:
+            branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+            if branch_parties:
+                branch_set = set(p.lower() for p in branch_parties)
+                followups = [f for f in followups if f.get("customer_name", "").lower() not in branch_set]
+
         return APIResponse(success=True, data={"followups": followups, "count": len(followups)})
     except Exception as e:
         logger.error(f"Error fetching followups: {e}")
@@ -373,6 +382,14 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         custom_targets = await db.customer_targets.find(q, {"_id": 0}).to_list(100)
         custom_target_map = {t["customer_name"]: t for t in custom_targets}
+
+        # Apply branch exclusion
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        branch_parties = []
+        if exclude_branches:
+            branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+        if branch_parties:
+            all_vouchers = [v for v in all_vouchers if v.get("party_name") not in branch_parties]
 
         current_fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
 
@@ -646,7 +663,21 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         all_credit_notes_raw = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
         all_journals_raw = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
+        # Apply branch exclusion
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        branch_parties = []
+        if exclude_branches:
+            branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+        if branch_parties:
+            all_sales_raw = [v for v in all_sales_raw if v.get("party_name") not in branch_parties]
+            all_receipts_raw = [v for v in all_receipts_raw if v.get("party_name") not in branch_parties]
+            all_credit_notes_raw = [v for v in all_credit_notes_raw if v.get("party_name") not in branch_parties]
+            all_journals_raw = [v for v in all_journals_raw if v.get("party_name") not in branch_parties]
+
         synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
+        if branch_parties:
+            branch_set = set(p.lower() for p in branch_parties)
+            synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # FY boundary for opening balance calculation

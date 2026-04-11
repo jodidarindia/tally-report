@@ -30,6 +30,21 @@ def _build_query(ctx, company_id=None, extra=None):
     return q
 
 
+async def _get_branch_set(request, ctx):
+    """Return set of branch party names if X-Exclude-Branches header is set, else empty set."""
+    if request.headers.get("X-Exclude-Branches", "").lower() != "true":
+        return set()
+    bp = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+    return set(bp) if bp else set()
+
+
+def _filter_branch_vouchers(vouchers, branch_set):
+    """Filter out vouchers whose party_name is in branch_set."""
+    if not branch_set:
+        return vouchers
+    return [v for v in vouchers if v.get("party_name") not in branch_set]
+
+
 @router.get("/inventory/items")
 async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None):
     try:
@@ -88,11 +103,8 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
         # Items with qty=0 and no sales data: skip (master data only)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
         # Apply branch filter if header set
-        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
-        if exclude_branches:
-            bp = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
-            if bp:
-                all_vouchers = [v for v in all_vouchers if v.get("party_name") not in bp]
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
 
         # Build set of items that had sales (i.e. actively traded)
@@ -208,6 +220,8 @@ async def get_sales_frequency(request: Request, start_date: Optional[str] = None
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         if start_date or end_date:
@@ -271,6 +285,8 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         q = _build_query(ctx, company_id)
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         # Try to get purchase data (if synced)
@@ -489,6 +505,8 @@ async def get_below_cost_sales(request: Request, fy: Optional[str] = None, compa
 
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         # Also get purchase vouchers for cost price
@@ -599,6 +617,8 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
         q = _build_query(ctx, company_id)
         inventory_items_raw = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
         purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
@@ -698,6 +718,8 @@ async def export_below_cost_sales(request: Request, fy: Optional[str] = None, co
 
         inventory_items_list = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
         purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
         purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
@@ -795,6 +817,8 @@ async def export_sales_frequency(request: Request, start_date: Optional[str] = N
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        branch_set = await _get_branch_set(request, ctx)
+        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         if start_date or end_date:
