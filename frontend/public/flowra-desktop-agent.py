@@ -487,7 +487,7 @@ class TallyCollectionClient:
     def fetch_stock_items(self) -> List[Dict]:
         """Fetch stock items with opening/closing balances using TDL Collection + COMPUTE."""
         logger.info("  Requesting stock items (Collection)...")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
@@ -634,7 +634,7 @@ class TallyCollectionClient:
     def fetch_customers(self) -> List[Dict]:
         """Fetch Sundry Debtors using TDL Collection request. ~1-3 seconds."""
         logger.info("  Requesting customer ledgers (Collection)...")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
@@ -710,7 +710,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting sales: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -736,7 +736,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting receipts: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         all_receipts = []
         for vtype_name in ("Receipt", "Payment"):
@@ -769,7 +769,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting credit notes: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -797,7 +797,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting journals: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -827,7 +827,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting stock journals: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -855,7 +855,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting purchase vouchers: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -883,7 +883,7 @@ class TallyCollectionClient:
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting debit notes: {fd_disp} to {td_disp}")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
 
         xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -909,7 +909,7 @@ class TallyCollectionClient:
     def fetch_sundry_creditors(self) -> List[Dict]:
         """Fetch Sundry Creditors (vendors/suppliers) using TDL Collection."""
         logger.info("  Requesting Sundry Creditors (Collection)...")
-        company_tag = f"<SVCURRENTCOMPANY>{self.company}</SVCURRENTCOMPANY>" if self.company else ""
+        company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION>
 <TALLYREQUEST>Export</TALLYREQUEST>
