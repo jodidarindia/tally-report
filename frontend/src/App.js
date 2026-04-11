@@ -570,7 +570,18 @@ function App() {
 
               {/* Branch toggle */}
               <button
-                onClick={() => setExcludeBranches(prev => !prev)}
+                onClick={() => {
+                  setExcludeBranches(prev => {
+                    const next = !prev;
+                    if (next) {
+                      axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
+                    } else {
+                      delete axios.defaults.headers.common['X-Exclude-Branches'];
+                    }
+                    localStorage.setItem('flowra_exclude_branches', next ? 'true' : 'false');
+                    return next;
+                  });
+                }}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}
                 title={excludeBranches ? 'Branch sales excluded — click to include' : 'Branch sales included — click to exclude'}
                 data-testid="branch-toggle"

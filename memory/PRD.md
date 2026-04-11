@@ -19,28 +19,30 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 
 ## What's Been Implemented
 
+### Branch/Division Exclusion Toggle (April 11, 2026)
+- Global toggle in navbar to exclude inter-branch transfer ledgers from all analytics
+- Auto-detects branch parties by matching company name tokens in sales data
+- Toggle sets `X-Exclude-Branches: true` Axios header globally
+- Backend reads header in sales.py, inventory.py, customers.py to filter branch party names
+- Dashboard, Sales, CRM, Inventory, Analytics pages all re-fetch on toggle change
+- Toggle state persists via localStorage (`flowra_exclude_branches`)
+- Impact: Filters ~Rs.1.9Cr of internal transfers, removes branch depot from Top Customers
+- APIs: `/api/settings/branch-ledgers`, `/api/settings/branch-ledgers/detect`
+
 ### SuperAdmin Seller Panel (April 11, 2026)
-**Business backbone for FLOWRA operations:**
-- **Overview Dashboard**: MRR, ARR, ARPU, Collections, Outstanding, Plan Distribution, Recent Payments
-- **Subscription Management**: All customer subscriptions with plan, billing cycle, value, status, expiry tracking
-- **Payment Ledger**: Manual payment recording (bank_transfer, UPI, cash, cheque), per-customer totals, mode-wise breakdown
-- **Invoice System**: Generate invoices (FLW-YYYYMM-NNNN format), PDF download (reportlab), mark paid/unpaid/cancelled
-- **Customer Ledger**: Per-customer view — total billed vs paid vs balance due, payment history, invoice history
-- **Customer Health Monitor**: Sync status (active/moderate/inactive/never_synced), data volume, payment totals, subscription expiry
-- **Prospect Management**: Lead funnel, status tracking, prospect-to-admin conversion
-- **Admin CRUD**: Create/edit/toggle/delete admins, password reset, plan management
-- **Renewals**: Expired & near-expiry tracking, renewal processing
-- **Activity Log**: Audit trail of all operations
+- Overview Dashboard: MRR, ARR, ARPU, Collections, Outstanding, Plan Distribution
+- Subscription Management, Payment Ledger, Invoice System (PDF via reportlab)
+- Customer Ledger, Customer Health Monitor, Prospect Management
+- Admin CRUD, Renewals, Activity Log
 
 ### Customer Item-wise Sales Analytics (April 11, 2026)
-- "Customer Items" tab in Analytics: searchable combobox, item-wise table, summary cards, Excel export
+- "Customer Items" tab in Analytics with searchable combobox, item-wise table, Excel export
 - APIs: `/api/sales/customer-names`, `/api/sales/customer-item-sales`, `/api/sales/customer-item-sales-export`
 
 ### UUID ID System (April 11, 2026)
 - All tenant_id and company_id use UUID format
 - `company_mappings` collection: UUID -> AES-256 encrypted company name
 - Desktop Agent v7.3 resolves company names to UUIDs
-- Seed function uses UUID for new tenants
 
 ### Core Features (Prior)
 - Multi-tenant auth (JWT + bcrypt) with role-based access
@@ -51,17 +53,17 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - Landing page, demo signup flow, SEO meta tags
 
 ## Key Collections
-- `users`, `company_mappings`, `payments`, `invoices`, `migration_log`
+- `users`, `company_mappings`, `branch_ledgers`, `payments`, `invoices`, `migration_log`
 - `sales_vouchers`, `inventory_items`, `customers`, `receipt_vouchers`, `credit_notes`
 - `journal_vouchers`, `purchase_vouchers`, `debit_notes`, `stock_journals`, `sundry_creditors`
 - `sync_status`, `sync_history`, `audit_logs`, `prospects`, `deleted_users`
 
 ## Upcoming Tasks
-- P1: Update Desktop Agent URL to production domain (after deployment)
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)
+- P1: Update Desktop Agent URL to production domain (after deployment)
 - P2: Extended Tally Sync (sale/cost prices, expenses)
 - P2: Salesman Order Management System (Enterprise only)
-- P2: AI Expense Insights in Insider Result page
+- P2: AI Expense Insights in Insider Result page (GPT-5.2)
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders
 - P3: Refactor App.js into smaller routing/layout components

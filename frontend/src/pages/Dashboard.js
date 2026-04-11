@@ -35,7 +35,7 @@ const Dashboard = ({ selectedFY, excludeBranches }) => {
     }
 
     return () => { if (intervalId) clearInterval(intervalId); };
-  }, [autoRefresh, selectedFY]);
+  }, [autoRefresh, selectedFY, excludeBranches]);
 
   const fetchData = async () => {
     setLoading(true);
