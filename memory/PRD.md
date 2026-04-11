@@ -12,17 +12,16 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 
 ## What's Been Implemented
 
-### Movement Analysis Fixes (April 11, 2026)
-- Opening stock now computed: `Opening = Closing + All Sales - All Purchases` (Tally doesn't sync opening_quantity)
-- Opening stock is always computed from UNFILTERED data (fixed historical value)
-- Branch filter only affects Sales (outward) and Inward (purchases) display columns
-- Purchase vouchers also branch-filtered for future-proofing
-- Export endpoint uses same logic
+### Movement Analysis Corrections (April 11, 2026)
+- **Inward = Sundry Creditor purchases only**: Branch-like parties in purchase vouchers (e.g., "ASA AUTOTECH INDIA PVT LTD-BENGALURU") auto-detected via company name token matching and excluded from inward. This is independent of the branch toggle — inward always shows real supplier purchases only.
+- **Opening Stock computed**: `Opening = Closing + AllSales - SundryCreditorPurchases` using UNFILTERED sales data. Fixed historical value that doesn't change with branch toggle.
+- **Movement % fixed**: Now `Sales / (Opening + Inward) * 100` — represents % of available stock that was sold. Previously was `Sales/Opening * 100` which gave absurd 10000%+ values.
+- Export endpoint uses identical logic.
 
 ### Branch/Division Exclusion Toggle — Full Coverage (April 11, 2026)
 - Global navbar toggle with label ("Branch Included" green / "Branch Excluded" amber)
 - Filters applied to ALL endpoints: Dashboard (sales, overdue, top-customers), Sales, CRM (outstanding, targets, followups, payment-behavior), Inventory, Analytics (movement, below-cost, sales-frequency, customer-items)
-- Overdue digest: fresh computation when branches excluded (not cached), unfiltered result cached normally
+- Overdue digest: fresh computation when branches excluded (not cached)
 
 ### CRM Tab Updates (April 11, 2026)
 - Tab order: Targets, Outstanding, Follow-ups, Payment Behavior
@@ -35,6 +34,10 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - UUID-based tenant/company IDs with AES-256 encryption
 - Cross-FY combined dashboard sales totals
 - Desktop Agent v7.3 with "Default" company fix and UTC timestamps
+
+## Key Technical Concepts
+- `_get_purchase_branch_set(ctx)`: Auto-detects branch parties in purchase vouchers using company name token matching (same logic as sales branch detection). Always applied to inward calculations regardless of toggle state.
+- `_get_branch_set(request, ctx)`: Returns branch parties from `branch_ledgers` collection only when `X-Exclude-Branches: true` header is set.
 
 ## Upcoming Tasks
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)

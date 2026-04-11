@@ -38,6 +38,35 @@ async def _get_branch_set(request, ctx):
     return set(bp) if bp else set()
 
 
+async def _get_purchase_branch_set(ctx):
+    """Detect branch-like parties in purchase vouchers (non-sundry-creditor).
+    These are internal transfers, not actual procurement from external suppliers."""
+    from services.id_mapping_service import get_company_name
+    import re
+    tenant_id = ctx.get("tenant_id", "")
+    company_id = ctx.get("company_id", "")
+    company_name = await get_company_name(tenant_id, company_id)
+    if not company_name:
+        return set()
+    name_clean = re.sub(r'\b(private|limited|pvt|ltd|llp|inc|corp)\b', '', company_name, flags=re.IGNORECASE).strip()
+    tokens = [w.lower() for w in name_clean.split() if len(w) > 3]
+    if not tokens:
+        return set()
+    parties = await db.purchase_vouchers.distinct(
+        "party_name",
+        {"tenant_id": tenant_id, "company_id": company_id}
+    )
+    branch_parties = set()
+    for party in parties:
+        if not party:
+            continue
+        party_lower = party.lower()
+        matching = sum(1 for t in tokens if t in party_lower)
+        if matching >= 2:
+            branch_parties.add(party)
+    return branch_parties
+
+
 def _filter_branch_vouchers(vouchers, branch_set):
     """Filter out vouchers whose party_name is in branch_set."""
     if not branch_set:
@@ -290,9 +319,14 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         # Try to get purchase data (if synced)
         raw_purchase_vouchers = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
 
-        # UNFILTERED FY vouchers — for opening stock calculation
+        # ALWAYS filter purchase vouchers to sundry creditors only
+        # (exclude branch-like parties from purchases regardless of toggle)
+        purchase_branch_set = await _get_purchase_branch_set(ctx)
+        sundry_creditor_purchases = _filter_branch_vouchers(raw_purchase_vouchers, purchase_branch_set)
+
+        # UNFILTERED sales FY vouchers + sundry-creditor purchases — for opening stock
         all_sales_fy = filter_vouchers_by_fy(raw_sales_vouchers, fy)
-        all_purchases_fy = filter_vouchers_by_fy(raw_purchase_vouchers, fy) if raw_purchase_vouchers else []
+        sc_purchases_fy = filter_vouchers_by_fy(sundry_creditor_purchases, fy) if sundry_creditor_purchases else []
 
         # Compute unfiltered item totals for opening stock
         all_item_sales_qty = {}
@@ -305,7 +339,7 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                     all_item_sales_qty[key] = all_item_sales_qty.get(key, 0) + qty
 
         all_item_purchase_qty = {}
-        for voucher in all_purchases_fy:
+        for voucher in sc_purchases_fy:
             for item in voucher.get("items", []):
                 item_name = item.get("item", "").strip()
                 qty = safe_num(item.get("quantity"))
@@ -313,11 +347,11 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                     key = item_name.lower()
                     all_item_purchase_qty[key] = all_item_purchase_qty.get(key, 0) + qty
 
-        # FILTERED FY vouchers — for display columns
+        # FILTERED FY vouchers — for display columns (branch toggle affects sales only)
         filtered_sales = _filter_branch_vouchers(raw_sales_vouchers, branch_set)
-        filtered_purchases = _filter_branch_vouchers(raw_purchase_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(filtered_sales, fy)
-        purchase_vouchers = filter_vouchers_by_fy(filtered_purchases, fy) if filtered_purchases else []
+        # Inward always uses sundry creditor purchases only
+        purchase_vouchers = sc_purchases_fy
 
         # Calculate FY duration in days for rate calculations
         from datetime import date as date_type
@@ -372,7 +406,6 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         for item in inventory_items:
             item_name = item.get("item_name", "")
             closing_stock = safe_num(item.get("quantity"))
-            opening_from_tally = safe_num(item.get("opening_quantity"))
             cost_price = safe_num(item.get("price", item.get("rate", 0)))
             key = item_name.lower()
             seen_items.add(key)
@@ -389,12 +422,13 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
             # Inward from filtered purchases
             inward = purchase_qty
 
-            # Movement Rate = (Outward / Opening) * 100
-            # Represents what percentage of opening stock was sold
-            if opening_stock > 0:
-                movement_rate = round((sales_qty / opening_stock) * 100, 1)
+            # Movement Rate = (Sales / (Opening + Inward)) * 100
+            # Represents what % of total available stock was sold
+            available_stock = opening_stock + inward
+            if available_stock > 0:
+                movement_rate = round((sales_qty / available_stock) * 100, 1)
             elif sales_qty > 0:
-                movement_rate = 100.0  # All stock sold (opening was approx = sales)
+                movement_rate = 100.0
             else:
                 movement_rate = 0.0
 
@@ -648,9 +682,13 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
         branch_set = await _get_branch_set(request, ctx)
         raw_purchases = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
 
-        # Unfiltered totals for opening stock
+        # Filter purchases to sundry creditors only (always, regardless of toggle)
+        purchase_branch_set = await _get_purchase_branch_set(ctx)
+        sc_purchases = _filter_branch_vouchers(raw_purchases, purchase_branch_set)
+
+        # Unfiltered sales + sundry creditor purchases for opening stock
         all_sales_fy = filter_vouchers_by_fy(raw_sales, fy)
-        all_purchases_fy = filter_vouchers_by_fy(raw_purchases, fy) if raw_purchases else []
+        sc_purchases_fy = filter_vouchers_by_fy(sc_purchases, fy) if sc_purchases else []
         all_item_sales_qty = {}
         for v in all_sales_fy:
             for item in v.get("items", []):
@@ -659,16 +697,16 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
                     k = n.lower()
                     all_item_sales_qty[k] = all_item_sales_qty.get(k, 0) + safe_num(item.get("quantity"))
         all_item_purchase_qty = {}
-        for v in all_purchases_fy:
+        for v in sc_purchases_fy:
             for item in v.get("items", []):
                 n = item.get("item", "").strip()
                 if n:
                     k = n.lower()
                     all_item_purchase_qty[k] = all_item_purchase_qty.get(k, 0) + safe_num(item.get("quantity"))
 
-        # Filtered vouchers for display
+        # Filtered sales for display; inward always uses sundry creditor purchases
         sales_vouchers = filter_vouchers_by_fy(_filter_branch_vouchers(raw_sales, branch_set), fy)
-        purchase_vouchers = filter_vouchers_by_fy(_filter_branch_vouchers(raw_purchases, branch_set), fy) if raw_purchases else []
+        purchase_vouchers = sc_purchases_fy
 
         # Build item sales and purchases maps
         item_sales = {}
@@ -721,7 +759,8 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
             total_s = all_item_sales_qty.get(key, 0)
             total_p = all_item_purchase_qty.get(key, 0)
             opening = max(closing + total_s - total_p, 0)
-            rate = round((s_qty / opening * 100), 1) if opening > 0 else (100.0 if s_qty > 0 else 0.0)
+            available = opening + p_qty
+            rate = round((s_qty / available * 100), 1) if available > 0 else (100.0 if s_qty > 0 else 0.0)
             daily = s_qty / 365 if s_qty > 0 else 0
             dts = round(closing / daily, 1) if closing > 0 and daily > 0 else (999 if closing > 0 else 0)
             cls_tag = "fast-moving" if s_qty > 0 and rate >= 50 else "moderate" if rate >= 20 else "slow-moving" if s_qty > 0 else "non-moving"
