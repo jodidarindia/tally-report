@@ -12,18 +12,22 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 
 ## What's Been Implemented
 
+### Movement Analysis Fixes (April 11, 2026)
+- Opening stock now computed: `Opening = Closing + All Sales - All Purchases` (Tally doesn't sync opening_quantity)
+- Opening stock is always computed from UNFILTERED data (fixed historical value)
+- Branch filter only affects Sales (outward) and Inward (purchases) display columns
+- Purchase vouchers also branch-filtered for future-proofing
+- Export endpoint uses same logic
+
 ### Branch/Division Exclusion Toggle — Full Coverage (April 11, 2026)
-- Global navbar toggle with label ("Branch Included" / "Branch Excluded")
-- Green/amber color scheme indicates toggle state clearly
+- Global navbar toggle with label ("Branch Included" green / "Branch Excluded" amber)
 - Filters applied to ALL endpoints: Dashboard (sales, overdue, top-customers), Sales, CRM (outstanding, targets, followups, payment-behavior), Inventory, Analytics (movement, below-cost, sales-frequency, customer-items)
 - Overdue digest: fresh computation when branches excluded (not cached), unfiltered result cached normally
-- Toggle state persists via localStorage
 
 ### CRM Tab Updates (April 11, 2026)
 - Tab order: Targets, Outstanding, Follow-ups, Payment Behavior
-- Default tab: Targets
-- All customer lists sorted alphabetically by default across all 4 tabs
-- Branch filtering active on all 4 tabs when toggle is on
+- All customer lists sorted alphabetically by default
+- Branch filtering on all 4 tabs
 
 ### Previous Completions
 - SuperAdmin Seller Panel (subscriptions, invoices, MRR, revenue)
@@ -31,7 +35,6 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - UUID-based tenant/company IDs with AES-256 encryption
 - Cross-FY combined dashboard sales totals
 - Desktop Agent v7.3 with "Default" company fix and UTC timestamps
-- Digital Ocean Deployment Guide PDF
 
 ## Upcoming Tasks
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)

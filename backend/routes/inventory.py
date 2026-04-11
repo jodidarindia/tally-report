@@ -284,14 +284,40 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        raw_sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
-        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
-        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
 
         # Try to get purchase data (if synced)
-        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
-        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+        raw_purchase_vouchers = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+
+        # UNFILTERED FY vouchers — for opening stock calculation
+        all_sales_fy = filter_vouchers_by_fy(raw_sales_vouchers, fy)
+        all_purchases_fy = filter_vouchers_by_fy(raw_purchase_vouchers, fy) if raw_purchase_vouchers else []
+
+        # Compute unfiltered item totals for opening stock
+        all_item_sales_qty = {}
+        for voucher in all_sales_fy:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "").strip()
+                qty = safe_num(item.get("quantity"))
+                if item_name:
+                    key = item_name.lower()
+                    all_item_sales_qty[key] = all_item_sales_qty.get(key, 0) + qty
+
+        all_item_purchase_qty = {}
+        for voucher in all_purchases_fy:
+            for item in voucher.get("items", []):
+                item_name = item.get("item", "").strip()
+                qty = safe_num(item.get("quantity"))
+                if item_name:
+                    key = item_name.lower()
+                    all_item_purchase_qty[key] = all_item_purchase_qty.get(key, 0) + qty
+
+        # FILTERED FY vouchers — for display columns
+        filtered_sales = _filter_branch_vouchers(raw_sales_vouchers, branch_set)
+        filtered_purchases = _filter_branch_vouchers(raw_purchase_vouchers, branch_set)
+        sales_vouchers = filter_vouchers_by_fy(filtered_sales, fy)
+        purchase_vouchers = filter_vouchers_by_fy(filtered_purchases, fy) if filtered_purchases else []
 
         # Calculate FY duration in days for rate calculations
         from datetime import date as date_type
@@ -355,10 +381,12 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
             sales_qty = sales_info["qty"]
             purchase_qty = item_purchases.get(key, 0)
 
-            # Opening stock: use Tally opening_quantity only — no estimation
-            opening_stock = opening_from_tally
+            # Opening stock from UNFILTERED data: Closing + AllSales - AllPurchases
+            total_sales_qty = all_item_sales_qty.get(key, 0)
+            total_purchase_qty = all_item_purchase_qty.get(key, 0)
+            opening_stock = max(closing_stock + total_sales_qty - total_purchase_qty, 0)
 
-            # Inward from purchases
+            # Inward from filtered purchases
             inward = purchase_qty
 
             # Movement Rate = (Outward / Opening) * 100
@@ -616,12 +644,31 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         inventory_items_raw = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        raw_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
-        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
-        sales_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
-        purchase_vouchers_raw = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
-        purchase_vouchers = filter_vouchers_by_fy(purchase_vouchers_raw, fy) if purchase_vouchers_raw else []
+        raw_purchases = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
+
+        # Unfiltered totals for opening stock
+        all_sales_fy = filter_vouchers_by_fy(raw_sales, fy)
+        all_purchases_fy = filter_vouchers_by_fy(raw_purchases, fy) if raw_purchases else []
+        all_item_sales_qty = {}
+        for v in all_sales_fy:
+            for item in v.get("items", []):
+                n = item.get("item", "").strip()
+                if n:
+                    k = n.lower()
+                    all_item_sales_qty[k] = all_item_sales_qty.get(k, 0) + safe_num(item.get("quantity"))
+        all_item_purchase_qty = {}
+        for v in all_purchases_fy:
+            for item in v.get("items", []):
+                n = item.get("item", "").strip()
+                if n:
+                    k = n.lower()
+                    all_item_purchase_qty[k] = all_item_purchase_qty.get(k, 0) + safe_num(item.get("quantity"))
+
+        # Filtered vouchers for display
+        sales_vouchers = filter_vouchers_by_fy(_filter_branch_vouchers(raw_sales, branch_set), fy)
+        purchase_vouchers = filter_vouchers_by_fy(_filter_branch_vouchers(raw_purchases, branch_set), fy) if raw_purchases else []
 
         # Build item sales and purchases maps
         item_sales = {}
@@ -668,10 +715,12 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
             name = inv_item.get("item_name", "")
             key = name.lower()
             closing = safe_num(inv_item.get("quantity"))
-            opening_tally = safe_num(inv_item.get("opening_quantity"))
             s_qty = item_sales.get(key, 0)
             p_qty = item_purchases.get(key, 0)
-            opening = opening_tally  # No estimation — 0 if Tally has no data
+            # Opening from unfiltered data
+            total_s = all_item_sales_qty.get(key, 0)
+            total_p = all_item_purchase_qty.get(key, 0)
+            opening = max(closing + total_s - total_p, 0)
             rate = round((s_qty / opening * 100), 1) if opening > 0 else (100.0 if s_qty > 0 else 0.0)
             daily = s_qty / 365 if s_qty > 0 else 0
             dts = round(closing / daily, 1) if closing > 0 and daily > 0 else (999 if closing > 0 else 0)
