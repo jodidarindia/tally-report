@@ -1710,11 +1710,10 @@ class FlowraSyncAgent:
             is_placeholder = company_name == '_active_'
             display_name = company_name if not is_placeholder else 'Active Company (auto-detect)'
 
-            # Check persisted sync state — if company has had a full sync before, use incremental
-            state = load_sync_state()
-            company_state = state.get('companies', {}).get(company_name, {})
-            has_completed_full_sync = company_state.get('full_sync_done', False)
-            sync_mode = 'incremental' if (has_completed_full_sync and INCREMENTAL_SYNC) else 'full'
+            # Always do full sync — Tally has no change-detection API, so edits to old
+            # invoices/items/vouchers would be missed by partial fetches.
+            # Hash comparison on upload side still prevents unnecessary DB writes.
+            sync_mode = 'full'
 
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
 
@@ -1760,23 +1759,8 @@ class FlowraSyncAgent:
                 self.financial_year = fy
                 fy_start, fy_end = fy_to_dates(fy)
 
-                if sync_mode == 'incremental':
-                    today = date.today()
-                    months = []
-                    m_start = today.replace(day=1)
-                    m_end = min((m_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), today)
-                    if m_start >= fy_start and m_start <= fy_end:
-                        months.append((m_start, m_end))
-                    prev_end = m_start - timedelta(days=1)
-                    prev_start = prev_end.replace(day=1)
-                    if prev_start >= fy_start and prev_start <= fy_end:
-                        months.append((prev_start, prev_end))
-                    if not months:
-                        continue
-                    logger.info(f"--- Incremental sync FY {fy}: {len(months)} months ---")
-                else:
-                    months = list(months_in_fy(fy))
-                    logger.info(f"--- Full sync FY {fy}: {len(months)} months ---")
+                months = list(months_in_fy(fy))
+                logger.info(f"--- Full sync FY {fy}: {len(months)} months ---")
 
                 # Phase 2: Sales
                 logger.info(f"  Phase 2: Sales Vouchers (FY {fy})")
