@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#fff; }
+.nav { display:flex; align-items:center; padding:8px 24px; border-bottom:1px solid #e2e8f0; gap:20px; }
+.logo { font-weight:800; font-size:16px; color:#0f172a; display:flex; align-items:center; gap:6px; }
+.logo-icon { width:28px; height:28px; background:#2563EB; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700; }
+.nav-item { font-size:12px; color:#64748b; padding:6px 12px; border-radius:8px; }
+.nav-item.active { background:#2563EB; color:#fff; }
+.comp { font-size:9px; color:#64748b; }
+.right { margin-left:auto; display:flex; align-items:center; gap:12px; font-size:11px; color:#64748b; }
+.badge { background:#dcfce7; color:#16a34a; padding:2px 8px; border-radius:10px; font-size:10px; }
+.content { padding:24px; }
+h1 { font-size:22px; color:#0f172a; margin-bottom:4px; }
+.subtitle { font-size:13px; color:#64748b; margin-bottom:20px; }
+.filters { display:flex; gap:12px; margin-bottom:20px; }
+.filter { padding:8px 16px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; color:#64748b; background:#f8fafc; }
+.chart { height:200px; display:flex; align-items:flex-end; gap:4px; padding:0 8px; background:#f8fafc; border-radius:12px; margin-bottom:20px; padding-top:16px; }
+.bar { background:#2563EB; border-radius:4px 4px 0 0; flex:1; min-width:30px; }
+.chart-label { font-size:13px; font-weight:600; color:#0f172a; margin-bottom:8px; }
+.export-btns { float:right; display:flex; gap:8px; }
+.export-btn { padding:6px 14px; border-radius:8px; font-size:11px; border:1px solid #e2e8f0; background:#fff; color:#64748b; cursor:pointer; }
+.export-btn.blue { background:#2563EB; color:#fff; border-color:#2563EB; }
+table { width:100%; font-size:11px; border-collapse:collapse; }
+th { text-align:left; color:#64748b; font-weight:500; padding:8px 10px; border-bottom:2px solid #e2e8f0; background:#f8fafc; }
+td { padding:8px 10px; color:#0f172a; border-bottom:1px solid #f1f5f9; }
+.amount { color:#2563EB; font-weight:600; }
+.total { font-size:14px; color:#0f172a; font-weight:600; margin-bottom:16px; }
+</style></head><body>
+<div class="nav">
+  <div class="logo"><div class="logo-icon">F</div>FLOWRA</div>
+  <div class="comp">SHARMA AUTO PARTS PVT LTD</div>
+  <div class="nav-item">Dashboard</div>
+  <div class="nav-item active">Sales</div>
+  <div class="nav-item">CRM</div>
+  <div class="nav-item">Inventory</div>
+  <div class="nav-item">Analytics</div>
+  <div class="nav-item">AI Reports</div>
+  <div class="nav-item">Setup</div>
+  <div class="right"><span>FY 2025-26</span><span class="badge">Synced</span><span>Admin</span></div>
+</div>
+<div class="content">
+  <h1>Sales</h1>
+  <div class="total">248 vouchers | Rs.2,45,80,000</div>
+  <div class="export-btns"><button class="export-btn">PDF</button><button class="export-btn blue">Excel</button></div>
+  <div class="filters">
+    <div class="filter">All Customers</div>
+    <div class="filter">All Months</div>
+  </div>
+  <div class="chart-label">Sales Trend</div>
+  <div class="chart">
+    <div class="bar" style="height:15%"></div><div class="bar" style="height:22%"></div><div class="bar" style="height:35%"></div>
+    <div class="bar" style="height:8%"></div><div class="bar" style="height:45%"></div><div class="bar" style="height:60%"></div>
+    <div class="bar" style="height:28%"></div><div class="bar" style="height:100%"></div><div class="bar" style="height:72%"></div>
+    <div class="bar" style="height:55%"></div><div class="bar" style="height:40%"></div><div class="bar" style="height:18%"></div>
+    <div class="bar" style="height:32%"></div><div class="bar" style="height:25%"></div><div class="bar" style="height:50%"></div>
+  </div>
+  <table>
+    <tr><th>Voucher No.</th><th>Date</th><th>Customer</th><th>Items</th><th>Amount</th></tr>
+    <tr><td>SA2526/0248</td><td>2026-03-28</td><td>Mehta Motors, Indore</td><td>5 items</td><td class="amount">Rs.1,85,000</td></tr>
+    <tr><td>SA2526/0247</td><td>2026-03-27</td><td>Gupta Enterprises, Raipur</td><td>3 items</td><td class="amount">Rs.92,500</td></tr>
+    <tr><td>SA2526/0246</td><td>2026-03-27</td><td>Singh Trading Co., Nagpur</td><td>8 items</td><td class="amount">Rs.2,40,000</td></tr>
+    <tr><td>SA2526/0245</td><td>2026-03-26</td><td>Verma Auto Spares, Bhopal</td><td>2 items</td><td class="amount">Rs.68,000</td></tr>
+    <tr><td>SA2526/0244</td><td>2026-03-26</td><td>Patel Lubricants, Jabalpur</td><td>4 items</td><td class="amount">Rs.1,25,000</td></tr>
+    <tr><td>SA2526/0243</td><td>2026-03-25</td><td>Kumar Distributors, Bhopal</td><td>6 items</td><td class="amount">Rs.3,10,000</td></tr>
+    <tr><td>SA2526/0242</td><td>2026-03-25</td><td>Agarwal Auto Parts, Raipur</td><td>1 item</td><td class="amount">Rs.45,000</td></tr>
+    <tr><td>SA2526/0241</td><td>2026-03-24</td><td>Tiwari Motors, Satna</td><td>3 items</td><td class="amount">Rs.78,000</td></tr>
+  </table>
+  <div style="font-size:11px;color:#2563EB;margin-top:12px;">Showing 8 of 248 vouchers</div>
+</div>
+</body></html>

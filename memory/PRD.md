@@ -2,6 +2,7 @@
 
 ## Product Overview
 Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inventory analytics, sales tracking, CRM, AI reports, and business intelligence.
+Website: www.flowralive.in
 
 ## Core Architecture
 - Frontend: React + Shadcn UI (port 3000)
@@ -12,32 +13,29 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 
 ## What's Been Implemented
 
+### Marketing Materials (April 11, 2026)
+- **FLOWRA_Presentation.pdf**: 10-slide customer pitch deck with demo screenshots (fake data), problem/solution framing, feature walkthroughs, pricing, CTA
+- **FLOWRA_Training_Booklet.pdf**: 7-page employee training guide with product features, setup instructions, pricing, objection handling, demo script, FAQs, quick reference card
+- **FLOWRA_Social_Media_Kit.pdf**: Complete social media package — LinkedIn, Instagram, Twitter/X, WhatsApp, Google My Business posts + 30-day content calendar
+- All materials use demo data (Sharma Auto Parts, Mehta Motors, etc.) — no real customer data
+- Domain updated from flowra.in to flowralive.in across all frontend references
+
 ### Movement Analysis Corrections (April 11, 2026)
-- **Inward = Sundry Creditor purchases only**: Branch-like parties in purchase vouchers (e.g., "ASA AUTOTECH INDIA PVT LTD-BENGALURU") auto-detected via company name token matching and excluded from inward. This is independent of the branch toggle — inward always shows real supplier purchases only.
-- **Opening Stock computed**: `Opening = Closing + AllSales - SundryCreditorPurchases` using UNFILTERED sales data. Fixed historical value that doesn't change with branch toggle.
-- **Movement % fixed**: Now `Sales / (Opening + Inward) * 100` — represents % of available stock that was sold. Previously was `Sales/Opening * 100` which gave absurd 10000%+ values.
-- Export endpoint uses identical logic.
+- Inward = Sundry Creditor purchases only (branch transfers auto-excluded)
+- Opening Stock = Closing + AllSales - AllPurchases (uses full data for balance)
+- Movement % = Sales / (Opening + Inward) * 100
 
 ### Branch/Division Exclusion Toggle — Full Coverage (April 11, 2026)
-- Global navbar toggle with label ("Branch Included" green / "Branch Excluded" amber)
-- Filters applied to ALL endpoints: Dashboard (sales, overdue, top-customers), Sales, CRM (outstanding, targets, followups, payment-behavior), Inventory, Analytics (movement, below-cost, sales-frequency, customer-items)
-- Overdue digest: fresh computation when branches excluded (not cached)
+- All endpoints filtered: Dashboard, Sales, CRM, Inventory, Analytics
+- Overdue digest: fresh computation when branches excluded
 
 ### CRM Tab Updates (April 11, 2026)
 - Tab order: Targets, Outstanding, Follow-ups, Payment Behavior
-- All customer lists sorted alphabetically by default
-- Branch filtering on all 4 tabs
+- All customer lists sorted alphabetically
 
 ### Previous Completions
-- SuperAdmin Seller Panel (subscriptions, invoices, MRR, revenue)
-- Customer Item-wise Sales Analytics with combobox and Excel export
-- UUID-based tenant/company IDs with AES-256 encryption
-- Cross-FY combined dashboard sales totals
-- Desktop Agent v7.3 with "Default" company fix and UTC timestamps
-
-## Key Technical Concepts
-- `_get_purchase_branch_set(ctx)`: Auto-detects branch parties in purchase vouchers using company name token matching (same logic as sales branch detection). Always applied to inward calculations regardless of toggle state.
-- `_get_branch_set(request, ctx)`: Returns branch parties from `branch_ledgers` collection only when `X-Exclude-Branches: true` header is set.
+- SuperAdmin Seller Panel, Customer Item-wise Analytics, UUID IDs, Cross-FY totals
+- Desktop Agent v7.3, Deployment Guide PDF, Setup page fix
 
 ## Upcoming Tasks
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)

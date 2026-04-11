@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#fff; }
+.nav { display:flex; align-items:center; padding:8px 24px; border-bottom:1px solid #e2e8f0; gap:20px; }
+.logo { font-weight:800; font-size:16px; color:#0f172a; display:flex; align-items:center; gap:6px; }
+.logo-icon { width:28px; height:28px; background:#2563EB; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700; }
+.nav-item { font-size:12px; color:#64748b; padding:6px 12px; border-radius:8px; }
+.nav-item.active { background:#2563EB; color:#fff; }
+.comp { font-size:9px; color:#64748b; }
+.right { margin-left:auto; display:flex; align-items:center; gap:12px; font-size:11px; color:#64748b; }
+.badge { background:#dcfce7; color:#16a34a; padding:2px 8px; border-radius:10px; font-size:10px; }
+.content { padding:24px; }
+h1 { font-size:22px; color:#0f172a; margin-bottom:4px; }
+.subtitle { font-size:13px; color:#64748b; margin-bottom:20px; }
+.search { width:100%; padding:10px 16px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; margin-bottom:16px; color:#64748b; }
+.filters { display:flex; gap:12px; margin-bottom:20px; }
+.filter { padding:8px 16px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; color:#64748b; background:#f8fafc; }
+.export-btns { float:right; display:flex; gap:8px; margin-bottom:16px; }
+.export-btn { padding:6px 14px; border-radius:8px; font-size:11px; border:1px solid #e2e8f0; background:#fff; color:#64748b; cursor:pointer; }
+table { width:100%; font-size:11px; border-collapse:collapse; }
+th { text-align:left; color:#64748b; font-weight:500; padding:8px 10px; border-bottom:2px solid #e2e8f0; background:#f8fafc; }
+td { padding:8px 10px; color:#0f172a; border-bottom:1px solid #f1f5f9; }
+.amount { color:#2563EB; font-weight:600; }
+.status { padding:2px 8px; border-radius:10px; font-size:9px; font-weight:600; }
+.in-stock { background:#f0fdf4; color:#16a34a; }
+.low { background:#fef2f2; color:#ef4444; }
+</style></head><body>
+<div class="nav">
+  <div class="logo"><div class="logo-icon">F</div>FLOWRA</div>
+  <div class="comp">SHARMA AUTO PARTS PVT LTD</div>
+  <div class="nav-item">Dashboard</div>
+  <div class="nav-item">Sales</div>
+  <div class="nav-item">CRM</div>
+  <div class="nav-item active">Inventory</div>
+  <div class="nav-item">Analytics</div>
+  <div class="nav-item">AI Reports</div>
+  <div class="nav-item">Setup</div>
+  <div class="right"><span>FY 2025-26</span><span class="badge">Synced</span><span>Admin</span></div>
+</div>
+<div class="content">
+  <h1>Inventory</h1>
+  <div class="subtitle">Manage your stock items</div>
+  <div class="export-btns"><button class="export-btn">AI Purchase Order</button><button class="export-btn">PDF</button><button class="export-btn">Excel</button><button class="export-btn">CSV</button></div>
+  <input class="search" placeholder="Search items..." />
+  <div class="filters"><div class="filter">All Stock Groups</div><div class="filter">All Categories</div></div>
+  <table>
+    <tr><th>Item Name</th><th>Stock Group</th><th>Category</th><th>Quantity</th><th>Unit</th><th>Price</th><th>Value</th><th>Reorder</th><th>Status</th></tr>
+    <tr><td>Engine Oil 5W30 SN 1L (20pc)</td><td>Engine Oils</td><td>Engine Oils</td><td>60</td><td>Nos</td><td>Rs.425</td><td class="amount">Rs.25,500</td><td>20</td><td><span class="status in-stock">In Stock</span></td></tr>
+    <tr><td>Hydraulic Oil 68 AW 26L Bucket</td><td>Hydraulic</td><td>Hydraulic</td><td>30</td><td>Nos</td><td>Rs.1,850</td><td class="amount">Rs.55,500</td><td>10</td><td><span class="status in-stock">In Stock</span></td></tr>
+    <tr><td>Gear Oil 85W140 GL5 1L (20pc)</td><td>Gear Oils</td><td>Gear Oils</td><td>50</td><td>Nos</td><td>Rs.380</td><td class="amount">Rs.19,000</td><td>15</td><td><span class="status in-stock">In Stock</span></td></tr>
+    <tr><td>Brake Fluid DOT4 500ml (30pc)</td><td>Brake Fluids</td><td>Brake Fluids</td><td>70</td><td>Nos</td><td>Rs.180</td><td class="amount">Rs.12,600</td><td>20</td><td><span class="status in-stock">In Stock</span></td></tr>
+    <tr><td>Coolant Green 1:5 1L (20pc)</td><td>Coolants</td><td>Coolants</td><td>220</td><td>Nos</td><td>Rs.95</td><td class="amount">Rs.20,900</td><td>50</td><td><span class="status in-stock">In Stock</span></td></tr>
+    <tr><td>ATF Dex-III 1L (12pc)</td><td>Transmission</td><td>Transmission</td><td>8</td><td>Nos</td><td>Rs.520</td><td class="amount">Rs.4,160</td><td>10</td><td><span class="status low">Low Stock</span></td></tr>
+    <tr><td>Grease AP3 500g (24pc)</td><td>Greases</td><td>Greases</td><td>5</td><td>Nos</td><td>Rs.210</td><td class="amount">Rs.1,050</td><td>10</td><td><span class="status low">Low Stock</span></td></tr>
+    <tr><td>Compressor Oil 5L (4pc)</td><td>Speciality</td><td>Speciality</td><td>0</td><td>Nos</td><td>Rs.890</td><td class="amount">Rs.0</td><td>5</td><td><span class="status low">Low Stock</span></td></tr>
+    <tr><td>Spindle Oil 10 20L</td><td>Industrial</td><td>Industrial</td><td>0</td><td>Nos</td><td>Rs.2,400</td><td class="amount">Rs.0</td><td>3</td><td><span class="status low">Low Stock</span></td></tr>
+    <tr><td>Chain Lubricant Spray 500ml</td><td>Speciality</td><td>Speciality</td><td>3</td><td>Nos</td><td>Rs.320</td><td class="amount">Rs.960</td><td>10</td><td><span class="status low">Low Stock</span></td></tr>
+  </table>
+</div>
+</body></html>

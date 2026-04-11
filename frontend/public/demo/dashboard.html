@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#fff; }
+.nav { display:flex; align-items:center; padding:8px 24px; border-bottom:1px solid #e2e8f0; gap:20px; }
+.logo { font-weight:800; font-size:16px; color:#0f172a; display:flex; align-items:center; gap:6px; }
+.logo-icon { width:28px; height:28px; background:#2563EB; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700; }
+.nav-item { font-size:12px; color:#64748b; cursor:pointer; padding:6px 12px; border-radius:8px; }
+.nav-item.active { background:#2563EB; color:#fff; }
+.comp { font-size:9px; color:#64748b; }
+.right { margin-left:auto; display:flex; align-items:center; gap:12px; font-size:11px; color:#64748b; }
+.badge { background:#dcfce7; color:#16a34a; padding:2px 8px; border-radius:10px; font-size:10px; }
+.badge-amber { background:#fef3c7; color:#d97706; }
+.content { padding:24px; }
+h1 { font-size:22px; color:#0f172a; margin-bottom:4px; }
+.subtitle { font-size:13px; color:#64748b; margin-bottom:20px; }
+.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+.card { padding:16px; border:1px solid #e2e8f0; border-radius:12px; }
+.card-label { font-size:11px; color:#64748b; margin-bottom:4px; }
+.card-value { font-size:22px; font-weight:700; }
+.card-value.blue { color:#2563EB; }
+.card-value.green { color:#16a34a; }
+.card-value.red { color:#ef4444; }
+.card-value.amber { color:#d97706; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.section { border:1px solid #e2e8f0; border-radius:12px; padding:16px; }
+.section-title { font-size:13px; font-weight:600; color:#0f172a; margin-bottom:12px; }
+table { width:100%; font-size:11px; border-collapse:collapse; }
+th { text-align:left; color:#64748b; font-weight:500; padding:6px 8px; border-bottom:1px solid #e2e8f0; }
+td { padding:6px 8px; color:#0f172a; border-bottom:1px solid #f1f5f9; }
+.amount { color:#2563EB; font-weight:600; }
+.overdue { color:#ef4444; }
+.chart { height:120px; display:flex; align-items:flex-end; gap:3px; padding:0 8px; }
+.bar { background:#2563EB; border-radius:3px 3px 0 0; flex:1; min-width:20px; }
+</style></head><body>
+<div class="nav">
+  <div class="logo"><div class="logo-icon">F</div>FLOWRA</div>
+  <div class="comp">SHARMA AUTO PARTS PVT LTD</div>
+  <div class="nav-item active">Dashboard</div>
+  <div class="nav-item">Sales</div>
+  <div class="nav-item">CRM</div>
+  <div class="nav-item">Inventory</div>
+  <div class="nav-item">Analytics</div>
+  <div class="nav-item">AI Reports</div>
+  <div class="nav-item">Setup</div>
+  <div class="right">
+    <span>FY 2025-26</span>
+    <span class="badge">Synced</span>
+    <span>Branch</span>
+    <span class="badge badge-amber">Excluded</span>
+    <span>Admin</span>
+  </div>
+</div>
+<div class="content">
+  <h1>Business Overview</h1>
+  <div class="subtitle">FY 2025-26 | Last synced: 11 Apr 2026, 3:45 PM</div>
+  <div class="cards">
+    <div class="card"><div class="card-label">Total Sales</div><div class="card-value blue">Rs.2,45,80,000</div></div>
+    <div class="card"><div class="card-label">Total Items</div><div class="card-value green">156</div></div>
+    <div class="card"><div class="card-label">Low Stock Alerts</div><div class="card-value red">23</div></div>
+    <div class="card"><div class="card-label">Overdue Amount</div><div class="card-value amber">Rs.12,40,000</div></div>
+  </div>
+  <div class="grid2">
+    <div class="section">
+      <div class="section-title">Top Customers (by Revenue)</div>
+      <table>
+        <tr><th>Customer</th><th>Sales</th></tr>
+        <tr><td>Mehta Motors, Indore</td><td class="amount">Rs.38,50,000</td></tr>
+        <tr><td>Gupta Enterprises, Raipur</td><td class="amount">Rs.27,20,000</td></tr>
+        <tr><td>Verma Auto Spares, Bhopal</td><td class="amount">Rs.22,15,000</td></tr>
+        <tr><td>Singh Trading Co., Nagpur</td><td class="amount">Rs.18,90,000</td></tr>
+        <tr><td>Patel Lubricants, Jabalpur</td><td class="amount">Rs.15,60,000</td></tr>
+      </table>
+    </div>
+    <div class="section">
+      <div class="section-title">Overdue Payments (>55 days)</div>
+      <table>
+        <tr><th>Customer</th><th>Overdue</th><th>Days</th></tr>
+        <tr><td>Agarwal Auto Parts</td><td class="overdue">Rs.4,80,000</td><td>92</td></tr>
+        <tr><td>Joshi Hardware</td><td class="overdue">Rs.3,50,000</td><td>78</td></tr>
+        <tr><td>Kumar Distributors</td><td class="overdue">Rs.2,10,000</td><td>65</td></tr>
+        <tr><td>Sharma & Sons</td><td class="overdue">Rs.1,00,000</td><td>58</td></tr>
+        <tr><td>Tiwari Motors</td><td class="overdue">Rs.1,00,000</td><td>56</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="section" style="margin-top:20px">
+    <div class="section-title">Monthly Sales Trend</div>
+    <div class="chart">
+      <div class="bar" style="height:45%"></div>
+      <div class="bar" style="height:62%"></div>
+      <div class="bar" style="height:55%"></div>
+      <div class="bar" style="height:78%"></div>
+      <div class="bar" style="height:90%"></div>
+      <div class="bar" style="height:85%"></div>
+      <div class="bar" style="height:100%"></div>
+      <div class="bar" style="height:72%"></div>
+      <div class="bar" style="height:88%"></div>
+      <div class="bar" style="height:65%"></div>
+      <div class="bar" style="height:50%"></div>
+      <div class="bar" style="height:40%"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:9px;color:#94a3b8;padding:4px 8px;"><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span></div>
+  </div>
+</div>
+</body></html>

@@ -127,7 +127,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
                   <div className="w-3 h-3 rounded-full bg-amber-400" />
                   <div className="w-3 h-3 rounded-full bg-green-400" />
                 </div>
-                <span className="text-[10px] text-zinc-400 font-mono">flowra.in/dashboard</span>
+                <span className="text-[10px] text-zinc-400 font-mono">flowralive.in/dashboard</span>
                 <div className="w-12" />
               </div>
               <div className="flex">
@@ -346,7 +346,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
           <div>
             <h4 className="text-white font-bold text-sm mb-4">Contact</h4>
             <div className="space-y-3 text-sm">
-              <p className="flex items-center gap-2"><Mail size={14} /> support@flowra.in</p>
+              <p className="flex items-center gap-2"><Mail size={14} /> support@flowralive.in</p>
               <p className="flex items-center gap-2"><Phone size={14} /> +91-XXX-XXX-XXXX</p>
               <p className="flex items-center gap-2"><MapPin size={14} /> India</p>
             </div>

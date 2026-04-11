@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#fff; }
+.nav { display:flex; align-items:center; padding:8px 24px; border-bottom:1px solid #e2e8f0; gap:20px; }
+.logo { font-weight:800; font-size:16px; color:#0f172a; display:flex; align-items:center; gap:6px; }
+.logo-icon { width:28px; height:28px; background:#2563EB; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:700; }
+.nav-item { font-size:12px; color:#64748b; cursor:pointer; padding:6px 12px; border-radius:8px; }
+.nav-item.active { background:#2563EB; color:#fff; }
+.comp { font-size:9px; color:#64748b; }
+.right { margin-left:auto; display:flex; align-items:center; gap:12px; font-size:11px; color:#64748b; }
+.badge { background:#dcfce7; color:#16a34a; padding:2px 8px; border-radius:10px; font-size:10px; }
+.content { padding:24px; }
+h1 { font-size:22px; color:#0f172a; margin-bottom:4px; }
+.subtitle { font-size:13px; color:#64748b; margin-bottom:20px; }
+.tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:0; margin-bottom:24px; }
+.tab { text-align:center; padding:12px; font-size:13px; color:#64748b; border-bottom:2px solid #e2e8f0; cursor:pointer; }
+.tab.active { color:#2563EB; border-bottom-color:#2563EB; font-weight:600; }
+table { width:100%; font-size:11px; border-collapse:collapse; }
+th { text-align:left; color:#64748b; font-weight:500; padding:8px 10px; border-bottom:2px solid #e2e8f0; background:#f8fafc; }
+td { padding:8px 10px; color:#0f172a; border-bottom:1px solid #f1f5f9; }
+.amount { color:#2563EB; font-weight:600; }
+.status { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:500; }
+.behind { background:#fef2f2; color:#ef4444; }
+.on-track { background:#f0fdf4; color:#16a34a; }
+.bar-bg { width:100px; height:6px; background:#e2e8f0; border-radius:3px; }
+.bar-fill { height:6px; background:#2563EB; border-radius:3px; }
+.bar-fill.green { background:#16a34a; }
+.btn { background:#2563EB; color:#fff; padding:4px 10px; border-radius:6px; font-size:10px; border:none; cursor:pointer; }
+</style></head><body>
+<div class="nav">
+  <div class="logo"><div class="logo-icon">F</div>FLOWRA</div>
+  <div class="comp">SHARMA AUTO PARTS PVT LTD</div>
+  <div class="nav-item">Dashboard</div>
+  <div class="nav-item">Sales</div>
+  <div class="nav-item active">CRM</div>
+  <div class="nav-item">Inventory</div>
+  <div class="nav-item">Analytics</div>
+  <div class="nav-item">AI Reports</div>
+  <div class="nav-item">Setup</div>
+  <div class="right">
+    <span>FY 2025-26</span>
+    <span class="badge">Synced</span>
+    <span>Admin</span>
+  </div>
+</div>
+<div class="content">
+  <h1>Customer CRM</h1>
+  <div class="subtitle">Manage customers, targets, follow-ups, and export ledgers</div>
+  <div class="tabs">
+    <div class="tab active">Targets</div>
+    <div class="tab">Outstanding</div>
+    <div class="tab">Follow-ups</div>
+    <div class="tab">Payment Behavior</div>
+  </div>
+  <table>
+    <tr><th>Customer Name</th><th>Prev FY Sales</th><th>Target</th><th>Current FY Achieved</th><th>Achievement %</th><th>Remaining</th><th>Status</th><th>Actions</th></tr>
+    <tr><td>Agarwal Auto Parts, Raipur</td><td>Rs.18,50,000</td><td>Rs.20,00,000</td><td class="amount">Rs.14,20,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:71%"></div></div> 71%</td><td>Rs.5,80,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Gupta Enterprises, Raipur</td><td>Rs.27,20,000</td><td>Rs.30,00,000</td><td class="amount">Rs.22,50,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:75%"></div></div> 75%</td><td>Rs.7,50,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Joshi Hardware, Nagpur</td><td>Rs.8,90,000</td><td>Rs.10,00,000</td><td class="amount">Rs.3,20,000</td><td><div class="bar-bg"><div class="bar-fill" style="width:32%"></div></div> 32%</td><td>Rs.6,80,000</td><td><span class="status behind">Behind</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Kumar Distributors, Bhopal</td><td>Rs.12,60,000</td><td>Rs.15,00,000</td><td class="amount">Rs.4,50,000</td><td><div class="bar-bg"><div class="bar-fill" style="width:30%"></div></div> 30%</td><td>Rs.10,50,000</td><td><span class="status behind">Behind</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Mehta Motors, Indore</td><td>Rs.38,50,000</td><td>Rs.42,00,000</td><td class="amount">Rs.35,00,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:83%"></div></div> 83%</td><td>Rs.7,00,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Patel Lubricants, Jabalpur</td><td>Rs.15,60,000</td><td>Rs.18,00,000</td><td class="amount">Rs.12,80,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:71%"></div></div> 71%</td><td>Rs.5,20,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Sharma & Sons, Dewas</td><td>Rs.6,40,000</td><td>Rs.8,00,000</td><td class="amount">Rs.2,10,000</td><td><div class="bar-bg"><div class="bar-fill" style="width:26%"></div></div> 26%</td><td>Rs.5,90,000</td><td><span class="status behind">Behind</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Singh Trading Co., Nagpur</td><td>Rs.18,90,000</td><td>Rs.22,00,000</td><td class="amount">Rs.15,40,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:70%"></div></div> 70%</td><td>Rs.6,60,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Tiwari Motors, Satna</td><td>Rs.4,20,000</td><td>Rs.5,00,000</td><td class="amount">Rs.1,80,000</td><td><div class="bar-bg"><div class="bar-fill" style="width:36%"></div></div> 36%</td><td>Rs.3,20,000</td><td><span class="status behind">Behind</span></td><td><button class="btn">Set Target</button></td></tr>
+    <tr><td>Verma Auto Spares, Bhopal</td><td>Rs.22,15,000</td><td>Rs.25,00,000</td><td class="amount">Rs.19,00,000</td><td><div class="bar-bg"><div class="bar-fill green" style="width:76%"></div></div> 76%</td><td>Rs.6,00,000</td><td><span class="status on-track">On Track</span></td><td><button class="btn">Set Target</button></td></tr>
+  </table>
+</div>
+</body></html>
