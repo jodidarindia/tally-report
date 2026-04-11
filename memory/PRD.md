@@ -109,10 +109,36 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - MongoDB with AES-256 encryption at rest
 
 ## Upcoming Tasks
-- P1: Compile Desktop Agent into .exe installer
+- P1: Desktop Agent — One-Click Installer (see details below)
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders (email/WhatsApp)
 - P3: Refactor App.js into smaller routing/layout components
+
+### Desktop Agent Installer — Detailed Requirements (P1)
+**Goal:** Non-technical user downloads one file, double-clicks, and everything works.
+
+**Package Requirements:**
+- Single `.exe` installer (PyInstaller/Nuitka compiled) — no Python installation needed
+- All dependencies bundled inside (requests, xmltodict, schedule, websockets, python-dotenv)
+- Auto-detects if Tally Prime is running on localhost:9000 (or prompts for custom port)
+- First-run wizard: Login with email/password → auto-configures everything → starts syncing
+- System tray icon for background operation (start/stop/status)
+- Auto-start on Windows boot (optional, user can toggle)
+- Logs saved to `%APPDATA%/FLOWRA/` for troubleshooting
+
+**User Experience (zero technical knowledge):**
+1. Download `FLOWRA-Setup.exe` from the Setup page
+2. Double-click to install (standard Windows installer with Next/Next/Finish)
+3. App opens → Login screen (email + password)
+4. Auto-detects Tally → selects companies → starts syncing
+5. Minimizes to system tray — runs silently in background
+6. Tray icon shows sync status (green = connected, yellow = syncing, red = error)
+
+**Build Process:**
+- Use PyInstaller `--onefile` with `--windowed` flag for no console window
+- Wrap in Inno Setup or NSIS for proper Windows installer (Start Menu shortcut, uninstall support)
+- Batch file alternative: `install.bat` that checks Python, installs if missing via embedded portable Python, then runs agent
+- Sign the exe if possible (to avoid Windows SmartScreen warnings)
 
 ## Future Roadmap (User's Vision — April 2026)
 
