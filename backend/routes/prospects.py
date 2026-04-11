@@ -82,11 +82,11 @@ async def prospect_signup(request: Request):
 
         existing = await db.users.find_one({"username": email})
         if existing:
-            return APIResponse(success=False, error="This email is already registered. Please login instead.")
+            return APIResponse(success=False, error="This email is already registered as a user. Please login instead or use a different email address.")
 
         existing_prospect = await db.prospects.find_one({"email_hash": _hash_email(email)})
         if existing_prospect:
-            return APIResponse(success=False, error="You have already submitted an enquiry. Our team will contact you soon.")
+            return APIResponse(success=False, error="This email already has a pending enquiry. Our team will contact you soon. Please use a different email if this is a new request.")
 
         now = datetime.now(timezone.utc).isoformat()
         prospect_id = f"PRO-{uuid.uuid4().hex[:8].upper()}"
@@ -300,7 +300,7 @@ async def convert_prospect_to_admin(prospect_id: str, request: Request):
 
         existing = await db.users.find_one({"username": email})
         if existing:
-            return APIResponse(success=False, error="This email is already an active user")
+            return APIResponse(success=False, error="This email is already registered as an active user. Cannot convert — use a different email or delete the existing user first.")
 
         clean_name = re.sub(r'[^a-z0-9]', '_', email.lower().split('@')[0])
         tenant_id = f"tenant_{clean_name}"

@@ -52,6 +52,11 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - AES-256 field-level encryption for all PII (names, phones, emails)
 - SHA-256 email hashing for prospect data
 - Complete audit trail
+- **Global email uniqueness enforced** across users + prospects in all creation flows:
+  - Prospect Signup: checks users + prospects
+  - SuperAdmin Create Admin: checks users + prospects (with redirect to Convert flow)
+  - Admin Create Employee: checks users + prospects + validates email format
+  - Convert Prospect: checks users
 
 ### Marketing & Prospecting (April 2026)
 - Public Landing Page with animated dashboard mockup

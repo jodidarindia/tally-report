@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Response, Request
 from datetime import datetime, timezone
 import logging
+import re
 
 from db import db
 from models import (
@@ -227,9 +228,23 @@ async def create_user(req: CreateUserRequest, request: Request):
         user = await get_current_user(request, db)
         if not user or user["role"] not in ("admin", "super_admin"):
             return APIResponse(success=False, error="Admin access required")
+
+        # Validate email format
+        email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+        if not re.match(email_pattern, req.username):
+            return APIResponse(success=False, error="Username must be a valid email address")
+
+        # Check uniqueness across users collection
         existing = await db.users.find_one({"username": req.username})
         if existing:
-            return APIResponse(success=False, error="Username already exists")
+            return APIResponse(success=False, error="This email is already registered. Please use a different email address.")
+
+        # Check uniqueness across prospects collection
+        import hashlib
+        email_hash = hashlib.sha256(req.username.lower().encode()).hexdigest()
+        existing_prospect = await db.prospects.find_one({"email_hash": email_hash})
+        if existing_prospect:
+            return APIResponse(success=False, error="This email already has a pending enquiry. Please use a different email address.")
 
         tenant_id = user.get("tenant_id")
 

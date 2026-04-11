@@ -103,7 +103,14 @@ async def create_admin(request: Request):
 
         existing = await db.users.find_one({"username": username})
         if existing:
-            return APIResponse(success=False, error="Username already exists")
+            return APIResponse(success=False, error="This email is already registered as a user. Please use a different email address.")
+
+        # Also check prospects collection for cross-collection uniqueness
+        import hashlib
+        email_hash = hashlib.sha256(username.lower().encode()).hexdigest()
+        existing_prospect = await db.prospects.find_one({"email_hash": email_hash})
+        if existing_prospect:
+            return APIResponse(success=False, error="This email already has a pending enquiry. Use the 'Convert Prospect' flow from the Enquiries tab, or use a different email.")
 
         # Get plan config
         from routes.prospects import SUBSCRIPTION_PLANS
