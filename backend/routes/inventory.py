@@ -319,14 +319,13 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         # Try to get purchase data (if synced)
         raw_purchase_vouchers = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
 
-        # ALWAYS filter purchase vouchers to sundry creditors only
-        # (exclude branch-like parties from purchases regardless of toggle)
+        # Detect branch-like parties in purchases (non-sundry-creditor)
         purchase_branch_set = await _get_purchase_branch_set(ctx)
         sundry_creditor_purchases = _filter_branch_vouchers(raw_purchase_vouchers, purchase_branch_set)
 
-        # UNFILTERED sales FY vouchers + sundry-creditor purchases — for opening stock
+        # ALL sales and ALL purchases for opening stock (must use full data for balance)
         all_sales_fy = filter_vouchers_by_fy(raw_sales_vouchers, fy)
-        sc_purchases_fy = filter_vouchers_by_fy(sundry_creditor_purchases, fy) if sundry_creditor_purchases else []
+        all_purchases_fy = filter_vouchers_by_fy(raw_purchase_vouchers, fy) if raw_purchase_vouchers else []
 
         # Compute unfiltered item totals for opening stock
         all_item_sales_qty = {}
@@ -338,8 +337,9 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                     key = item_name.lower()
                     all_item_sales_qty[key] = all_item_sales_qty.get(key, 0) + qty
 
+        # ALL purchases (including branch) for opening stock calculation
         all_item_purchase_qty = {}
-        for voucher in sc_purchases_fy:
+        for voucher in all_purchases_fy:
             for item in voucher.get("items", []):
                 item_name = item.get("item", "").strip()
                 qty = safe_num(item.get("quantity"))
@@ -347,10 +347,13 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                     key = item_name.lower()
                     all_item_purchase_qty[key] = all_item_purchase_qty.get(key, 0) + qty
 
-        # FILTERED FY vouchers — for display columns (branch toggle affects sales only)
+        # Sundry creditor purchases only — for Inward display column
+        sc_purchases_fy = filter_vouchers_by_fy(sundry_creditor_purchases, fy) if sundry_creditor_purchases else []
+
+        # FILTERED sales for display (branch toggle affects sales only)
         filtered_sales = _filter_branch_vouchers(raw_sales_vouchers, branch_set)
         sales_vouchers = filter_vouchers_by_fy(filtered_sales, fy)
-        # Inward always uses sundry creditor purchases only
+        # Inward display = sundry creditor purchases only
         purchase_vouchers = sc_purchases_fy
 
         # Calculate FY duration in days for rate calculations
@@ -682,13 +685,13 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
         branch_set = await _get_branch_set(request, ctx)
         raw_purchases = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(10000)
 
-        # Filter purchases to sundry creditors only (always, regardless of toggle)
+        # Filter purchases to sundry creditors only for inward display
         purchase_branch_set = await _get_purchase_branch_set(ctx)
         sc_purchases = _filter_branch_vouchers(raw_purchases, purchase_branch_set)
 
-        # Unfiltered sales + sundry creditor purchases for opening stock
+        # ALL sales + ALL purchases for opening stock (must balance)
         all_sales_fy = filter_vouchers_by_fy(raw_sales, fy)
-        sc_purchases_fy = filter_vouchers_by_fy(sc_purchases, fy) if sc_purchases else []
+        all_purchases_fy = filter_vouchers_by_fy(raw_purchases, fy) if raw_purchases else []
         all_item_sales_qty = {}
         for v in all_sales_fy:
             for item in v.get("items", []):
@@ -697,15 +700,16 @@ async def export_movement_analysis(request: Request, fy: Optional[str] = None, c
                     k = n.lower()
                     all_item_sales_qty[k] = all_item_sales_qty.get(k, 0) + safe_num(item.get("quantity"))
         all_item_purchase_qty = {}
-        for v in sc_purchases_fy:
+        for v in all_purchases_fy:
             for item in v.get("items", []):
                 n = item.get("item", "").strip()
                 if n:
                     k = n.lower()
                     all_item_purchase_qty[k] = all_item_purchase_qty.get(k, 0) + safe_num(item.get("quantity"))
 
-        # Filtered sales for display; inward always uses sundry creditor purchases
+        # Filtered sales for display; inward uses sundry creditor purchases only
         sales_vouchers = filter_vouchers_by_fy(_filter_branch_vouchers(raw_sales, branch_set), fy)
+        sc_purchases_fy = filter_vouchers_by_fy(sc_purchases, fy) if sc_purchases else []
         purchase_vouchers = sc_purchases_fy
 
         # Build item sales and purchases maps
