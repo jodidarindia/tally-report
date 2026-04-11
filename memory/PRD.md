@@ -57,6 +57,13 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
   - SuperAdmin Create Admin: checks users + prospects (with redirect to Convert flow)
   - Admin Create Employee: checks users + prospects + validates email format
   - Convert Prospect: checks users
+- **Employee tenant isolation**: Employees inherit parent admin's tenant_id, can only see data within their own tenant
+
+### Employee Management (April 2026)
+- Admin Profile > Employees tab: Add/Delete employees with plan-based limits
+- Email format validation required for all new employees
+- Employee count display with max limit and slots available
+- Plan-based max_employees enforcement (Starter: 2, Professional: 5, Enterprise: 20)
 
 ### Marketing & Prospecting (April 2026)
 - Public Landing Page with animated dashboard mockup
