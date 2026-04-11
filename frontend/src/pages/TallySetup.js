@@ -96,22 +96,14 @@ const TallySetup = ({ companyId }) => {
       <div className="max-w-2xl space-y-6">
         {/* Desktop Agent Download */}
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6" data-testid="agent-download-card">
-          <div className="flex items-start gap-4">
+          <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
               <Download size={24} className="text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="text-base font-semibold text-blue-900 mb-1">FLOWRA Desktop Agent v7.0</h3>
-              <p className="text-sm text-blue-700 mb-3">Download and run the desktop agent on your computer where Tally Prime is installed. The agent syncs your Tally data securely to FLOWRA cloud.</p>
-              <div className="flex flex-wrap gap-2">
-                <a href="/tally_sync_agent_v7.py" download className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
-                  <Download size={14} /> Download Agent (Python)
-                </a>
-              </div>
-              <div className="mt-3 text-xs text-blue-600 space-y-1">
-                <p>Prerequisites: Python 3.8+, pip install requests xmltodict python-dotenv schedule websockets</p>
-                <p>Run: <code className="bg-blue-100 px-1.5 py-0.5 rounded">python tally_sync_agent_v7.py</code></p>
-              </div>
+              <a href="/tally_sync_agent_v7.py" download className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
+                <Download size={14} /> Download Desktop Connector
+              </a>
             </div>
           </div>
         </div>
@@ -151,7 +143,9 @@ const TallySetup = ({ companyId }) => {
                 <div className="text-xs text-slate-500 flex items-center gap-1 mb-2"><Building2 size={12} /> Linked Companies</div>
                 <div className="flex flex-wrap gap-2" data-testid="linked-companies">
                   {syncStatus.companies?.length > 0 ? syncStatus.companies.map((c, i) => (
-                    <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-700">{c}</span>
+                    <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-700">
+                      {typeof c === 'object' ? (c.company_name || c.company_id || '') : c}
+                    </span>
                   )) : (
                     <span className="text-xs text-slate-400">No companies synced yet. Run the Desktop Agent to start syncing.</span>
                   )}
