@@ -27,7 +27,7 @@ const PLANS = [
     monthly: 2499,
     annual: 24990,
     desc: 'For growing businesses needing deeper insights',
-    features: ['Everything in Starter', 'Customer CRM & Outstanding', 'Inventory Movement Analytics', 'Salesman Performance Tracking', 'Multi-Company Support (3)', 'Excel & PDF Exports'],
+    features: ['Everything in Starter', 'Customer CRM & Outstanding', 'Inventory Movement Analytics', 'Multi-Company Support (3)', 'Excel & PDF Exports'],
     maxCompanies: 3,
     maxEmployees: 5,
     popular: true
@@ -35,10 +35,10 @@ const PLANS = [
   {
     id: 'enterprise',
     name: 'Enterprise',
-    monthly: 4999,
+    monthly: 3799,
     annual: 37990,
     desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'Sales Forecast & SPIP Analysis', 'Multi-Company Support (10)', 'Priority Support & Training'],
+    features: ['Everything in Professional', 'Salesman Performance Tracking', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'Sales Forecast & SPIP Analysis', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,
     maxEmployees: 20,
     popular: false

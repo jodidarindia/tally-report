@@ -44,8 +44,8 @@ const SuperAdminDashboard = ({ token }) => {
 
   const PLANS = {
     starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
-    professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'salesman', 'sync_history', 'setup'] },
-    enterprise: { name: 'Enterprise', monthly: 4999, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
+    professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'sync_history', 'setup'] },
+    enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
   };
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -103,6 +103,8 @@ const SuperAdminDashboard = ({ token }) => {
     setEditAdmin({
       username: admin.username,
       name: admin.name || '',
+      plan: admin.plan || 'enterprise',
+      billing_cycle: admin.billing_cycle || 'annual',
       features: [...(admin.features || [])],
       subscription_months: admin.subscription_months || 12,
       subscription_start: admin.subscription_start || admin.created_at || ''
@@ -113,13 +115,11 @@ const SuperAdminDashboard = ({ token }) => {
   const saveEditAdmin = async () => {
     if (!editAdmin) return;
     try {
-      // Update features
-      await axios.put(`${API}/super-admin/admins/${editAdmin.username}/features`, {
-        features: editAdmin.features
-      }, { headers });
-      // Update subscription & name
+      // Update subscription with plan
       await axios.put(`${API}/super-admin/admins/${editAdmin.username}/subscription`, {
         name: editAdmin.name,
+        plan: editAdmin.plan,
+        billing_cycle: editAdmin.billing_cycle,
         subscription_months: editAdmin.subscription_months
       }, { headers });
       toast.success('Admin updated successfully');
@@ -784,7 +784,7 @@ const SuperAdminDashboard = ({ token }) => {
       {/* Edit Admin Modal */}
       {showEditModal && editAdmin && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="edit-admin-modal" onClick={e => { if (e.target === e.currentTarget) { setShowEditModal(null); setEditAdmin(null); } }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-slate-900">Edit Admin</h3>
               <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -804,6 +804,40 @@ const SuperAdminDashboard = ({ token }) => {
                   data-testid="edit-admin-name"
                 />
               </div>
+
+              {/* Plan Selection */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(PLANS).map(([id, plan]) => (
+                    <button key={id} onClick={() => setEditAdmin(prev => ({ ...prev, plan: id, features: [...plan.features] }))}
+                      className={`p-3 border rounded-lg text-left transition-all ${editAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
+                      data-testid={`edit-plan-${id}`}>
+                      <p className="text-sm font-bold text-slate-900">{plan.name}</p>
+                      <p className="text-xs text-blue-600 font-medium mt-0.5">
+                        {editAdmin.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
+                      </p>
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        {plan.maxCompanies} co. | {plan.maxEmployees} emp | {plan.features.length} feat
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Billing Cycle */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
+                <div className="flex gap-2">
+                  {['monthly', 'annual'].map(cycle => (
+                    <button key={cycle} onClick={() => setEditAdmin(prev => ({ ...prev, billing_cycle: cycle }))}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg border ${editAdmin.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
+                      {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Period</label>
                 <select
@@ -820,26 +854,13 @@ const SuperAdminDashboard = ({ token }) => {
                   <option value={36}>36 Months (3 Years)</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Features</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {ALL_FEATURES.map(f => (
-                    <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editAdmin.features.includes(f.id)}
-                        onChange={() => {
-                          setEditAdmin(prev => ({
-                            ...prev,
-                            features: prev.features.includes(f.id)
-                              ? prev.features.filter(x => x !== f.id)
-                              : [...prev.features, f.id]
-                          }));
-                        }}
-                        className="rounded border-slate-300"
-                      />
-                      {f.label}
-                    </label>
+
+              {/* Features preview */}
+              <div className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs font-medium text-slate-500 mb-1">Included Features ({PLANS[editAdmin.plan]?.features.length || 0}):</p>
+                <div className="flex flex-wrap gap-1">
+                  {(PLANS[editAdmin.plan]?.features || []).map(f => (
+                    <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
                   ))}
                 </div>
               </div>

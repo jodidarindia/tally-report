@@ -34,14 +34,14 @@ SUBSCRIPTION_PLANS = {
         "name": "Professional",
         "monthly_price": 2499,
         "annual_price": 24990,
-        "features": ["dashboard", "sales", "crm", "inventory", "analytics", "salesman", "sync_history", "setup"],
+        "features": ["dashboard", "sales", "crm", "inventory", "analytics", "sync_history", "setup"],
         "max_companies": 3,
         "max_employees": 5,
         "description": "For growing businesses needing CRM and advanced analytics"
     },
     "enterprise": {
         "name": "Enterprise",
-        "monthly_price": 4999,
+        "monthly_price": 3799,
         "annual_price": 37990,
         "features": ALL_FEATURES,
         "max_companies": 10,

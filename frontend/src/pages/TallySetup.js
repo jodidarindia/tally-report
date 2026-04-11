@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -94,6 +94,28 @@ const TallySetup = ({ companyId }) => {
       </div>
 
       <div className="max-w-2xl space-y-6">
+        {/* Desktop Agent Download */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6" data-testid="agent-download-card">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Download size={24} className="text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-base font-semibold text-blue-900 mb-1">FLOWRA Desktop Agent v7.0</h3>
+              <p className="text-sm text-blue-700 mb-3">Download and run the desktop agent on your computer where Tally Prime is installed. The agent syncs your Tally data securely to FLOWRA cloud.</p>
+              <div className="flex flex-wrap gap-2">
+                <a href="/tally_sync_agent_v7.py" download className="inline-flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
+                  <Download size={14} /> Download Agent (Python)
+                </a>
+              </div>
+              <div className="mt-3 text-xs text-blue-600 space-y-1">
+                <p>Prerequisites: Python 3.8+, pip install requests xmltodict python-dotenv schedule websockets</p>
+                <p>Run: <code className="bg-blue-100 px-1.5 py-0.5 rounded">python tally_sync_agent_v7.py</code></p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Connection Status Card */}
         <div className="bg-white border border-slate-200 rounded-xl p-6" data-testid="connection-status-card">
           <div className="flex items-center justify-between mb-5">

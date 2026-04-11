@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { X, Eye, EyeOff, User, Lock, Key } from 'lucide-react';
+import { X, Eye, EyeOff, User, Lock, Key, CreditCard, Calendar, Shield, Package } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -106,6 +106,15 @@ const ProfileModal = ({ user, token, onClose }) => {
               className={`px-5 py-3 text-sm font-medium border-b-2 ${activeTab === 'reset' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
             >
               <Key size={14} className="inline mr-1.5" />Reset Employee
+            </button>
+          )}
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => setActiveTab('subscription')}
+              className={`px-5 py-3 text-sm font-medium border-b-2 ${activeTab === 'subscription' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              data-testid="profile-tab-subscription"
+            >
+              <CreditCard size={14} className="inline mr-1.5" />Subscription
             </button>
           )}
         </div>
@@ -227,6 +236,65 @@ const ProfileModal = ({ user, token, onClose }) => {
               >
                 {loading ? 'Resetting...' : 'Reset Employee Password'}
               </button>
+            </div>
+          )}
+
+          {activeTab === 'subscription' && user?.role === 'admin' && (
+            <div className="space-y-4" data-testid="subscription-section">
+              <div className={`p-5 rounded-xl border-2 ${
+                user.plan === 'enterprise' ? 'border-purple-200 bg-purple-50/50' :
+                user.plan === 'professional' ? 'border-blue-200 bg-blue-50/50' :
+                'border-slate-200 bg-slate-50'
+              }`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                    user.plan === 'enterprise' ? 'bg-purple-100 text-purple-700' :
+                    user.plan === 'professional' ? 'bg-blue-100 text-blue-700' :
+                    'bg-slate-200 text-slate-700'
+                  }`}>{(user.plan || 'enterprise').toUpperCase()} PLAN</span>
+                  <Shield size={20} className="text-green-500" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white rounded-lg p-3">
+                    <p className="text-[10px] text-slate-500 uppercase font-medium">Max Companies</p>
+                    <p className="text-lg font-bold text-slate-900">{user.max_companies || 10}</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-3">
+                    <p className="text-[10px] text-slate-500 uppercase font-medium">Max Employees</p>
+                    <p className="text-lg font-bold text-slate-900">{user.max_employees || 20}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-slate-800">Subscription Details</h4>
+                {[
+                  { label: 'Start Date', value: user.subscription_start ? new Date(user.subscription_start).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A' },
+                  { label: 'Validity', value: `${user.subscription_months || 12} months` },
+                  { label: 'Active Features', value: `${(user.features || []).length} features enabled` },
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-lg">
+                    <span className="text-sm text-slate-600"><Calendar size={14} className="inline mr-2 text-slate-400" />{label}</span>
+                    <span className="text-sm font-medium text-slate-900">{value}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-lg">
+                  <span className="text-sm text-slate-600"><Calendar size={14} className="inline mr-2 text-slate-400" />Expires On</span>
+                  <span className="text-sm font-medium">{(() => {
+                    if (!user.subscription_start) return 'N/A';
+                    const start = new Date(user.subscription_start);
+                    start.setMonth(start.getMonth() + (user.subscription_months || 12));
+                    const isActive = start > new Date();
+                    return <span className={isActive ? 'text-green-600' : 'text-red-600'}>{start.toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })} {isActive ? '(Active)' : '(Expired)'}</span>;
+                  })()}</span>
+                </div>
+              </div>
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-center">
+                <p className="text-sm text-blue-800 mb-2">Need to renew or upgrade?</p>
+                <button className="bg-[#2563EB] text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-[#1D4ED8]" data-testid="renewal-btn"
+                  onClick={() => toast.info('Please contact support@flowra.in or your account manager for renewal.')}>
+                  Request Renewal
+                </button>
+              </div>
             </div>
           )}
         </div>
