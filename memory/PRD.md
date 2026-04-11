@@ -7,61 +7,54 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - Frontend: React + Shadcn UI (port 3000)
 - Backend: FastAPI + Motor (port 8001)
 - Database: MongoDB
-- Desktop Agent: Python script syncing Tally -> FLOWRA cloud (v7.3)
-- Security: AES-256 PII encryption, bcrypt passwords, JWT auth, UUID-format tenant/company IDs
+- Desktop Agent: Python v7.3 syncing Tally -> FLOWRA cloud
+- Security: AES-256 PII encryption, bcrypt passwords, JWT auth, UUID-format IDs
 
-## Key DB Collections
-- `users`: tenant users with UUID tenant_id and UUID company list
-- `company_mappings`: UUID company_id -> encrypted company name mapping per tenant
-- `sales_vouchers`, `inventory_items`, `customers`, etc.: all use UUID tenant_id + company_id
-- `deleted_users`: archived user data for audit trails
-- `prospects`: signup requests with returning_user flag
-- `migration_log`: tracks completed data migrations
+## Subscription Plans (INR)
+| Plan | Monthly | Annual | Companies | Employees |
+|------|---------|--------|-----------|-----------|
+| Starter | Rs.999 | Rs.9,990 | 1 | 2 |
+| Professional | Rs.2,499 | Rs.24,990 | 3 | 5 |
+| Enterprise | Rs.3,799 | Rs.37,990 | 10 | 20 |
 
 ## What's Been Implemented
 
-### Core Features
-- Multi-tenant authentication (JWT + bcrypt) with role-based access
-- Tally Prime sync via Desktop Agent (v7.3) with login-based auth
-- Dashboard with real-time sales/inventory/overdue data
-- Sales, CRM, Inventory, Analytics, Salesman, AI Reports, Insider BI
-- Sync History with detailed cycle tracking
-- Multi-company & Multi-FY support
-
-### Security (April 2026)
-- AES-256 field-level encryption for all PII
-- UUID-format tenant_id and company_id (migrated from plain-text)
-- Company name -> UUID mapping stored encrypted in `company_mappings` collection
-- Global email uniqueness across users + prospects
-- Soft-delete with archive to `deleted_users`
+### SuperAdmin Seller Panel (April 11, 2026)
+**Business backbone for FLOWRA operations:**
+- **Overview Dashboard**: MRR, ARR, ARPU, Collections, Outstanding, Plan Distribution, Recent Payments
+- **Subscription Management**: All customer subscriptions with plan, billing cycle, value, status, expiry tracking
+- **Payment Ledger**: Manual payment recording (bank_transfer, UPI, cash, cheque), per-customer totals, mode-wise breakdown
+- **Invoice System**: Generate invoices (FLW-YYYYMM-NNNN format), PDF download (reportlab), mark paid/unpaid/cancelled
+- **Customer Ledger**: Per-customer view — total billed vs paid vs balance due, payment history, invoice history
+- **Customer Health Monitor**: Sync status (active/moderate/inactive/never_synced), data volume, payment totals, subscription expiry
+- **Prospect Management**: Lead funnel, status tracking, prospect-to-admin conversion
+- **Admin CRUD**: Create/edit/toggle/delete admins, password reset, plan management
+- **Renewals**: Expired & near-expiry tracking, renewal processing
+- **Activity Log**: Audit trail of all operations
 
 ### Customer Item-wise Sales Analytics (April 11, 2026)
-- New "Customer Items" tab in Analytics page
-- Searchable combobox to select customer from synced customer list
-- Item-wise sales breakdown: Item Name, Quantity, Avg Rate, Amount, Invoice Count
-- Summary cards: Unique Items, Total Quantity, Total Amount, Total Invoices
-- Excel export with formatted headers, data rows, and totals
-- Backend APIs: `/api/sales/customer-names`, `/api/sales/customer-item-sales`, `/api/sales/customer-item-sales-export`
-- Proper FY, tenant_id and company_id filtering
+- "Customer Items" tab in Analytics: searchable combobox, item-wise table, summary cards, Excel export
+- APIs: `/api/sales/customer-names`, `/api/sales/customer-item-sales`, `/api/sales/customer-item-sales-export`
 
 ### UUID ID System (April 11, 2026)
-- All tenant_id and company_id values are UUID format
-- `company_mappings` collection maps UUID -> encrypted actual company name
+- All tenant_id and company_id use UUID format
+- `company_mappings` collection: UUID -> AES-256 encrypted company name
 - Desktop Agent v7.3 resolves company names to UUIDs
-- Backend auto-resolves company names to UUIDs if agent sends plain name
-- Frontend receives company_mappings on login and displays readable names
 - Seed function uses UUID for new tenants
 
-### IST Timezone Fix (April 11, 2026)
-- Agent sends timestamps with UTC timezone marker
-- Frontend normalizes naive timestamps as UTC before IST conversion
+### Core Features (Prior)
+- Multi-tenant auth (JWT + bcrypt) with role-based access
+- Tally Prime sync via Desktop Agent with login-based auth
+- Dashboard, Sales, CRM, Inventory, Analytics, Salesman, AI Reports, Insider BI
+- Plan enforcement, feature gating, multi-company & multi-FY support
+- Soft-delete archival, global email uniqueness, IST timezone normalization
+- Landing page, demo signup flow, SEO meta tags
 
-### Desktop Agent (v7.3)
-- Full sync every cycle (no incremental — Tally has no change-detection API)
-- Hash-based skip on upload prevents unnecessary DB writes
-- SVCurrentCompany "Default" fix
-- UUID company mapping resolution
-- Subscription enforcement
+## Key Collections
+- `users`, `company_mappings`, `payments`, `invoices`, `migration_log`
+- `sales_vouchers`, `inventory_items`, `customers`, `receipt_vouchers`, `credit_notes`
+- `journal_vouchers`, `purchase_vouchers`, `debit_notes`, `stock_journals`, `sundry_creditors`
+- `sync_status`, `sync_history`, `audit_logs`, `prospects`, `deleted_users`
 
 ## Upcoming Tasks
 - P1: Update Desktop Agent URL to production domain (after deployment)
