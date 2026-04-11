@@ -345,6 +345,7 @@ function App() {
             <button onClick={() => setPublicView('signup')} className="text-sm text-[#2563EB] hover:underline" data-testid="go-to-signup">New Customer? Sign Up</button>
           </div>
           <p className="text-center text-xs text-slate-400 mt-6">FLOWRA by Jodidar India</p>
+          <p className="text-center text-[9px] text-slate-400 mt-2 max-w-lg mx-auto leading-relaxed">Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
         </div>
       </div>
     );
@@ -410,7 +411,8 @@ function App() {
         </main>
 
         <footer className="text-center py-4 text-xs text-slate-400">
-          copyright: Jodidar India
+          <p>&copy; {new Date().getFullYear()} Jodidar India. All rights reserved.</p>
+          <p className="text-[9px] text-slate-400 mt-1 max-w-xl mx-auto leading-relaxed">Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
         </footer>
 
         {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
@@ -587,7 +589,8 @@ function App() {
 
       {/* Footer */}
       <footer className="text-center py-4 text-xs text-slate-400">
-        copyright: Jodidar India
+        <p>&copy; {new Date().getFullYear()} Jodidar India. All rights reserved.</p>
+        <p className="text-[9px] text-slate-400 mt-1 max-w-xl mx-auto leading-relaxed">Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
       </footer>
 
       {/* Modals */}

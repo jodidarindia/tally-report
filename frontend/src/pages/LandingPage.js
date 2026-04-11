@@ -355,6 +355,9 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
         <div className="max-w-7xl mx-auto px-6 mt-12 pt-8 border-t border-zinc-800 text-xs text-zinc-500 text-center">
           &copy; {new Date().getFullYear()} Jodidar India. All rights reserved. FLOWRA is a registered trademark.
         </div>
+        <div className="max-w-7xl mx-auto px-6 mt-4 text-[10px] text-zinc-600 text-center leading-relaxed" data-testid="tally-disclaimer">
+          Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same is used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademark's distinct character or harm the holder's reputation.
+        </div>
       </footer>
     </div>
   );
