@@ -41,12 +41,20 @@ const Dashboard = ({ selectedFY }) => {
     setLoading(true);
     try {
       const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
-      const [inventoryRes, salesRes] = await Promise.all([
+      const [inventoryRes, salesRes, allSalesRes] = await Promise.all([
         axios.get(`${API}/inventory/summary${fyParam}`),
-        axios.get(`${API}/sales/summary${fyParam}`)
+        axios.get(`${API}/sales/summary${fyParam}`),
+        axios.get(`${API}/sales/summary`)  // All FYs combined
       ]);
       setInventorySummary(inventoryRes.data?.data || null);
-      setSalesSummary(salesRes.data?.data || null);
+      const salesData = salesRes.data?.data || null;
+      const allSalesData = allSalesRes.data?.data || {};
+      // Attach all-FY totals to sales summary
+      if (salesData) {
+        salesData.all_fy_total_sales = allSalesData.total_sales || 0;
+        salesData.all_fy_total_vouchers = allSalesData.total_vouchers || 0;
+      }
+      setSalesSummary(salesData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -194,8 +202,8 @@ const Dashboard = ({ selectedFY }) => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Sales"
-            value={`Rs.${(salesSummary?.total_sales || 0).toLocaleString('en-IN')}`}
-            subtitle={`${salesSummary?.total_vouchers || 0} vouchers`}
+            value={`Rs.${(salesSummary?.all_fy_total_sales || salesSummary?.total_sales || 0).toLocaleString('en-IN')}`}
+            subtitle={`${salesSummary?.all_fy_total_vouchers || salesSummary?.total_vouchers || 0} vouchers (All FYs)`}
             icon={TrendingUp}
             color="bg-blue-50 text-blue-600"
           />
