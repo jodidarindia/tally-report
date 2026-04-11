@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Inventory = ({ selectedFY }) => {
+const Inventory = ({ selectedFY, excludeBranches }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,7 +23,7 @@ const Inventory = ({ selectedFY }) => {
 
   useEffect(() => {
     fetchInventory();
-  }, [selectedGroups]);
+  }, [selectedGroups, excludeBranches]);
 
   const fetchInventory = async () => {
     setLoading(true);

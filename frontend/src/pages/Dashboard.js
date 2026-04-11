@@ -7,7 +7,7 @@ import SyncStatusBar from '../components/SyncStatusBar';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Dashboard = ({ selectedFY }) => {
+const Dashboard = ({ selectedFY, excludeBranches }) => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [reminders, setReminders] = useState(null);

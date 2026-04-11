@@ -487,18 +487,18 @@ function App() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'dashboard': return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'inventory': return renderFeatureGated('inventory', <Inventory selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'sales': return renderFeatureGated('sales', <Sales selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'crm': return renderFeatureGated('crm', <CustomerCRM selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'analytics': return renderFeatureGated('analytics', <InventoryAnalytics selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'ai-reports': return renderFeatureGated('ai_reports', <EnhancedAIReports selectedFY={selectedFY} companyId={selectedCompany} />);
-      case 'salesman': return renderFeatureGated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'dashboard': return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'inventory': return renderFeatureGated('inventory', <Inventory selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'sales': return renderFeatureGated('sales', <Sales selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'crm': return renderFeatureGated('crm', <CustomerCRM selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'analytics': return renderFeatureGated('analytics', <InventoryAnalytics selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'ai-reports': return renderFeatureGated('ai_reports', <EnhancedAIReports selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      case 'salesman': return renderFeatureGated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
       case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
       case 'activity': return <ActivityLog token={token} role={user?.role} />;
-      case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} />);
-      default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} />);
+      case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+      default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     }
   };
 

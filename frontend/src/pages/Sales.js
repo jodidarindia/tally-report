@@ -152,7 +152,7 @@ const InvoiceModal = ({ voucherId, onClose }) => {
   );
 };
 
-const Sales = ({ selectedFY }) => {
+const Sales = ({ selectedFY, excludeBranches }) => {
   const [vouchers, setVouchers] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -168,7 +168,7 @@ const Sales = ({ selectedFY }) => {
 
   useEffect(() => {
     fetchSalesData();
-  }, [selectedFY, filterParty, filterMonth]);
+  }, [selectedFY, filterParty, filterMonth, excludeBranches]);
 
   const fetchSalesData = async () => {
     setLoading(true);

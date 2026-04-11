@@ -24,9 +24,10 @@ def _build_query(ctx, company_id=None, extra=None):
     return q
 
 
-async def _apply_branch_filter(q, ctx, exclude_branches: bool):
-    """Add $nin filter for branch party names if exclude_branches is True."""
-    if not exclude_branches:
+async def _apply_branch_filter(q, ctx, request: Request):
+    """Add $nin filter for branch party names if X-Exclude-Branches header is set."""
+    exclude = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+    if not exclude:
         return q
     tenant_id = ctx.get("tenant_id", "") if ctx else ""
     company_id = ctx.get("company_id", "") if ctx else ""
@@ -39,7 +40,7 @@ async def _apply_branch_filter(q, ctx, exclude_branches: bool):
 
 
 @router.get("/sales/vouchers")
-async def get_sales_vouchers(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None, exclude_branches: Optional[bool] = False):
+async def get_sales_vouchers(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None):
     try:
         ctx = await get_tenant_context(request)
         extra = {}
@@ -47,7 +48,7 @@ async def get_sales_vouchers(request: Request, start_date: Optional[str] = None,
             extra["party_name"] = {"$regex": party_name, "$options": "i"}
 
         query = _build_query(ctx, company_id, extra)
-        query = await _apply_branch_filter(query, ctx, exclude_branches)
+        query = await _apply_branch_filter(query, ctx, request)
         vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
 
         if fy:
@@ -156,11 +157,11 @@ async def get_voucher_detail(voucher_id: str, request: Request):
 
 
 @router.get("/sales/summary")
-async def get_sales_summary(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None, exclude_branches: Optional[bool] = False):
+async def get_sales_summary(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
-        q = await _apply_branch_filter(q, ctx, exclude_branches)
+        q = await _apply_branch_filter(q, ctx, request)
         vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)
@@ -213,6 +214,7 @@ async def get_sales_analytics(request: Request, fy: Optional[str] = None, party_
         if party_name:
             extra["party_name"] = {"$regex": party_name, "$options": "i"}
         q = _build_query(ctx, company_id, extra)
+        q = await _apply_branch_filter(q, ctx, request)
         vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(vouchers, fy)
 
@@ -243,12 +245,12 @@ async def get_sales_analytics(request: Request, fy: Optional[str] = None, party_
 
 
 @router.get("/sales/customer-names")
-async def get_customer_names(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None, exclude_branches: Optional[bool] = False):
+async def get_customer_names(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     """Get distinct customer (party) names from sales vouchers for combobox."""
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
-        q = await _apply_branch_filter(q, ctx, exclude_branches)
+        q = await _apply_branch_filter(q, ctx, request)
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(50000)
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)

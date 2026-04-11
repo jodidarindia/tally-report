@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const InventoryAnalytics = ({ selectedFY }) => {
+const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
   const [activeTab, setActiveTab] = useState('movement');
   const [movementData, setMovementData] = useState([]);
   const [belowCostData, setBelowCostData] = useState({ items: [], summary: {} });
@@ -43,21 +43,21 @@ const InventoryAnalytics = ({ selectedFY }) => {
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, dateFilter, selectedFY]);
+  }, [activeTab, dateFilter, selectedFY, excludeBranches]);
 
   // Fetch customer names when switching to customer-items tab
   useEffect(() => {
     if (activeTab === 'customer-items') {
       fetchCustomerNames();
     }
-  }, [activeTab, selectedFY]);
+  }, [activeTab, selectedFY, excludeBranches]);
 
   // Fetch customer item data when customer is selected
   useEffect(() => {
     if (selectedCustomer && activeTab === 'customer-items') {
       fetchCustomerItemSales(selectedCustomer);
     }
-  }, [selectedCustomer, selectedFY]);
+  }, [selectedCustomer, selectedFY, excludeBranches]);
 
   const fetchCustomerNames = async () => {
     try {

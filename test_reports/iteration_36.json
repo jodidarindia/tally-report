@@ -1,0 +1,125 @@
+{
+  "summary": "Iteration 36: Branch/Division Exclusion Toggle Feature Testing. Backend: 15/15 tests passed (100%). Frontend: Toggle UI works, but Dashboard does NOT auto-refresh when toggle is clicked - requires manual Refresh button click.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dashboard.js",
+        "issue": "Dashboard does NOT auto-refresh when branch toggle is clicked. useEffect on line 38 has [autoRefresh, selectedFY] but missing 'excludeBranches' dependency",
+        "selector": "[data-testid='branch-toggle']",
+        "priority": "HIGH",
+        "workaround": "User must click Refresh button manually after toggling"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "App.js FY selector",
+        "issues": ["Minor React hydration warning: span inside option element (cosmetic, doesn't affect functionality)"]
+      }
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: GET /api/settings/branch-ledgers returns branch party names",
+    "Backend: GET /api/settings/branch-ledgers/detect auto-detects branch parties (found 'ASA Autotech India Pvt Ltd Raipur DEPOT')",
+    "Backend: GET /api/sales/summary without X-Exclude-Branches returns all sales (Rs.5,06,53,832)",
+    "Backend: GET /api/sales/summary with X-Exclude-Branches: true filters branch sales (Rs.3,16,80,724)",
+    "Backend: Sales exclusion reduces total by ~Rs.1.9Cr (branch sales amount)",
+    "Backend: GET /api/sales/vouchers with X-Exclude-Branches filters branch parties from vouchers",
+    "Backend: GET /api/sales/customer-names excludes branch parties when header set",
+    "Backend: GET /api/inventory/summary respects X-Exclude-Branches header",
+    "Backend: GET /api/customers/outstanding respects X-Exclude-Branches header (outstanding drops from Rs.2Cr to Rs.1.4Cr)",
+    "Backend: Admin login (admin/admin123) works correctly",
+    "Backend: SuperAdmin login (superadmin/superadmin123) works correctly",
+    "Backend: Top customers list excludes branch parties when X-Exclude-Branches: true",
+    "Frontend: Branch toggle visible in navbar with data-testid='branch-toggle'",
+    "Frontend: Toggle text shows 'With Branch' when OFF and 'W/o Branch' when ON",
+    "Frontend: Toggle state persists via localStorage",
+    "Frontend: Toggle state preserved across page navigation (Dashboard, Sales, CRM, Inventory)",
+    "Frontend: Toggle state preserved after FY selector change",
+    "Frontend: FY selector works correctly with 6 FY options",
+    "Frontend: Manual Refresh button correctly applies branch exclusion filter",
+    "Frontend: After manual refresh with exclusion ON, 'ASA Autotech India Pvt Ltd Raipur DEPOT' disappears from Top Customers"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration36_branch_exclusion.py",
+    "/app/test_reports/pytest/iteration36_results.xml"
+  ],
+  
+  "action_items": [
+    "CRITICAL: Add 'excludeBranches' to Dashboard.js useEffect dependency array on line 38. Change from [autoRefresh, selectedFY] to [autoRefresh, selectedFY, excludeBranches]"
+  ],
+  
+  "critical_code_review_comments": [
+    "Dashboard.js line 38: useEffect missing 'excludeBranches' in dependency array - data doesn't auto-refresh when toggle clicked",
+    "Backend branch filtering works correctly via X-Exclude-Branches header in sales.py, inventory.py, customers.py",
+    "App.js correctly sets axios.defaults.headers.common['X-Exclude-Branches'] when toggle changes (lines 98-106)",
+    "App.js correctly passes excludeBranches prop to all page components (lines 490-501)"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration36_branch_exclusion.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (15/15 tests passed)",
+    "frontend": "90% (toggle UI works, auto-refresh broken)"
+  },
+  
+  "test_credentials": {
+    "admin": {
+      "username": "admin",
+      "password": "admin123",
+      "tenant_id": "3079b0af-e899-44b4-ae7c-c35d113fe296",
+      "company_uuid": "03f638d1-eab0-47ee-aed6-59049ebb5207"
+    },
+    "superadmin": {
+      "username": "superadmin",
+      "password": "superadmin123"
+    }
+  },
+  
+  "seed_data_creation": "None - used existing data",
+  
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  
+  "context_for_next_testing_agent": "Iteration 36 tested the Branch/Division Exclusion Toggle feature. Backend APIs all work correctly - X-Exclude-Branches header properly filters branch parties from sales, inventory, and customer data. The branch party 'ASA Autotech India Pvt Ltd Raipur DEPOT' is correctly detected and filtered. CRITICAL BUG: Dashboard.js useEffect on line 38 is missing 'excludeBranches' in its dependency array, so the dashboard doesn't auto-refresh when the toggle is clicked. Users must click the Refresh button manually. Fix: Change line 38 from [autoRefresh, selectedFY] to [autoRefresh, selectedFY, excludeBranches]. Toggle state correctly persists via localStorage and is preserved across page navigation.",
+  
+  "branch_exclusion_feature_details": {
+    "toggle_location": "Navbar, right side, data-testid='branch-toggle'",
+    "toggle_states": {
+      "OFF": "With Branch (includes branch sales)",
+      "ON": "W/o Branch (excludes branch sales)"
+    },
+    "detected_branch_party": "ASA Autotech India Pvt Ltd Raipur DEPOT",
+    "sales_impact": {
+      "with_branch": "Rs.5,06,53,832",
+      "without_branch": "Rs.3,16,80,724",
+      "difference": "~Rs.1.9Cr (branch sales)"
+    },
+    "backend_header": "X-Exclude-Branches: true",
+    "localStorage_key": "flowra_exclude_branches"
+  },
+  
+  "rca_of_the_issue": {
+    "issue": "Dashboard doesn't auto-refresh when branch toggle is clicked",
+    "root_cause": "Dashboard.js useEffect on line 38 has dependency array [autoRefresh, selectedFY] but is missing 'excludeBranches'. The excludeBranches prop is received but not used to trigger re-fetch.",
+    "reproduction_steps": [
+      "1. Login as admin",
+      "2. Observe Total Sales value (Rs.5,06,53,832)",
+      "3. Click branch toggle to enable exclusion",
+      "4. Observe Total Sales value - it does NOT change",
+      "5. Click Refresh button manually",
+      "6. Now Total Sales changes to Rs.3,16,80,724"
+    ],
+    "fix": "Add 'excludeBranches' to useEffect dependency array on line 38 of Dashboard.js"
+  }
+}

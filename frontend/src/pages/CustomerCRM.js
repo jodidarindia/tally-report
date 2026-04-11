@@ -8,7 +8,7 @@ import SearchableSelect from '../components/SearchableSelect';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const CustomerCRM = ({ user, selectedFY }) => {
+const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   const [activeTab, setActiveTab] = useState('outstanding');
   const [outstanding, setOutstanding] = useState([]);
   const [followups, setFollowups] = useState([]);
@@ -39,11 +39,11 @@ const CustomerCRM = ({ user, selectedFY }) => {
 
   useEffect(() => {
     fetchCustomerNames();
-  }, [selectedFY]);
+  }, [selectedFY, excludeBranches]);
 
   useEffect(() => {
     fetchData();
-  }, [activeTab, selectedFY]);
+  }, [activeTab, selectedFY, excludeBranches]);
 
   const fetchCustomerNames = async () => {
     try {
