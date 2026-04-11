@@ -310,8 +310,9 @@ class TallyCollectionClient:
                     # NAME might have TYPE attribute: {'#text': 'name', '@TYPE': 'String'}
                     if isinstance(name, dict):
                         name = name.get('#text', '')
-                    if name and str(name).strip():
-                        self.company = self.company or str(name).strip()
+                    name = str(name).strip() if name else ''
+                    if name and name.lower() not in ('default', '##default'):
+                        self.company = self.company or name
                         break
             if self.company:
                 logger.info(f"  Tally company: {self.company}")
@@ -1324,15 +1325,53 @@ class FlowraSyncAgent:
         logger.info("=" * 60)
 
     def detect_companies(self):
-        """Detect available companies in Tally."""
+        """Detect available companies in Tally using Collection request (most reliable)."""
         try:
+            # Method 1: Collection-based request (same as test_connection)
+            xml_req = """<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraCompanyList</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraCompanyList" ISINITIALIZE="Yes">
+<TYPE>Company</TYPE>
+<FETCH>NAME</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+            resp = requests.post(TALLY_URL, data=xml_req.encode('utf-8'),
+                                 headers={'Content-Type': 'application/xml'},
+                                 timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                parsed = xmltodict.parse(resp.text)
+                companies = []
+                items = self._get_collection_items(parsed, 'COMPANY')
+                for item in items:
+                    if isinstance(item, dict):
+                        name = item.get('NAME', item.get('@NAME', ''))
+                        if isinstance(name, dict):
+                            name = name.get('#text', '')
+                        name = str(name).strip() if name else ''
+                        if name and name.lower() not in ('default', '##default'):
+                            companies.append(name)
+                if companies:
+                    return companies
+        except Exception as e:
+            logger.warning(f"Collection-based company detect failed: {e}")
+
+        try:
+            # Method 2: Export Data format (fallback)
             xml_req = '<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Companies</REPORTNAME></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>'
             resp = requests.post(TALLY_URL, data=xml_req.encode('utf-8'),
                                  headers={'Content-Type': 'application/xml'},
                                  timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
-                text = resp.text
-                parsed = xmltodict.parse(text)
+                parsed = xmltodict.parse(resp.text)
                 companies = []
                 collection = parsed.get('ENVELOPE', {}).get('BODY', {}).get('DATA', {}).get('COLLECTION', {})
                 if collection:
@@ -1341,11 +1380,51 @@ class FlowraSyncAgent:
                         items = [items]
                     for item in items:
                         name = item.get('NAME', {}).get('#text', '') if isinstance(item.get('NAME'), dict) else item.get('NAME', '')
-                        if name:
+                        name = str(name).strip() if name else ''
+                        if name and name.lower() not in ('default', '##default'):
                             companies.append(name)
-                return companies
+                if companies:
+                    return companies
         except Exception as e:
-            logger.warning(f"Could not detect companies: {e}")
+            logger.warning(f"Export-based company detect failed: {e}")
+
+        try:
+            # Method 3: Get currently active company via CompanyInfo
+            xml_req = """<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraActiveCompany</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraActiveCompany" ISINITIALIZE="Yes">
+<TYPE>Company</TYPE>
+<FETCH>NAME, BASICCOMPANYFORMALNAME</FETCH>
+<FILTER>ActiveCompanyFilter</FILTER>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="ActiveCompanyFilter">$$IsCurrentCompany</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+            resp = requests.post(TALLY_URL, data=xml_req.encode('utf-8'),
+                                 headers={'Content-Type': 'application/xml'},
+                                 timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                parsed = xmltodict.parse(resp.text)
+                items = self._get_collection_items(parsed, 'COMPANY')
+                for item in items:
+                    if isinstance(item, dict):
+                        name = item.get('NAME', item.get('@NAME', ''))
+                        if isinstance(name, dict):
+                            name = name.get('#text', '')
+                        name = str(name).strip() if name else ''
+                        if name and name.lower() not in ('default', '##default'):
+                            return [name]
+        except Exception as e:
+            logger.warning(f"Active company detect failed: {e}")
+
         return []
 
     def select_companies(self):
@@ -1356,8 +1435,16 @@ class FlowraSyncAgent:
 
         companies = self.detect_companies()
         if not companies:
-            # Fallback: use current company from Tally
-            self._companies_to_sync = [self.tally.company or 'Default']
+            # Fallback: use current company from Tally (if valid)
+            current = self.tally.company
+            if current and current.lower() not in ('default', '##default', ''):
+                self._companies_to_sync = [current]
+            else:
+                logger.error("Could not detect any companies from Tally!")
+                logger.error("Please ensure a company is open in TallyPrime and restart the agent.")
+                print("\n  ERROR: No company detected in Tally.")
+                print("  Please open a company in TallyPrime and restart the FLOWRA agent.")
+                self._companies_to_sync = []
             return
 
         if len(companies) == 1:
@@ -1511,6 +1598,10 @@ class FlowraSyncAgent:
 
             if not self._companies_to_sync:
                 self.select_companies()
+            if not self._companies_to_sync:
+                logger.error("No companies to sync. Skipping this cycle.")
+                self.report_progress('sync_error', error='No companies detected in Tally')
+                return
             for company in self._companies_to_sync:
                 self._active_company = company
                 self.tally.company = company
@@ -1566,13 +1657,13 @@ class FlowraSyncAgent:
 
             for fy in fys_to_sync:
                 self.financial_year = fy
+                fy_start, fy_end = fy_to_dates(fy)
 
                 if sync_mode == 'incremental':
                     today = date.today()
                     months = []
                     m_start = today.replace(day=1)
                     m_end = min((m_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), today)
-                    fy_start, fy_end = fy_to_dates(fy)
                     if m_start >= fy_start and m_start <= fy_end:
                         months.append((m_start, m_end))
                     prev_end = m_start - timedelta(days=1)
