@@ -299,7 +299,7 @@ async def delete_user(username: str, request: Request):
         if username == user["username"]:
             return APIResponse(success=False, error="Cannot delete yourself")
 
-        target = await db.users.find_one({"username": username})
+        target = await db.users.find_one({"username": username}, {"_id": 0})
         if not target:
             return APIResponse(success=False, error="User not found")
 
@@ -309,10 +309,33 @@ async def delete_user(username: str, request: Request):
         if target.get("role") in ("super_admin", "admin") and user["role"] != "super_admin":
             return APIResponse(success=False, error="Only super admin can delete admins")
 
+        now = now_ist_iso()
+
+        # Archive the user record before deletion
+        archive_record = {
+            **{k: v for k, v in target.items() if k != "password_hash"},
+            "deleted_at": now,
+            "deleted_by": user["username"],
+            "deletion_reason": "employee_removed_by_admin",
+            "original_tenant_id": target.get("tenant_id", ""),
+            "original_role": target.get("role", ""),
+        }
+        await db.deleted_users.insert_one(archive_record)
+
+        # Remove the user
         result = await db.users.delete_one({"username": username})
         if result.deleted_count == 0:
             return APIResponse(success=False, error="User not found")
-        return APIResponse(success=True, message=f"User '{username}' deleted")
+
+        await log_audit(
+            "employee_deleted", user["username"],
+            tenant_id=user.get("tenant_id", ""),
+            target=username,
+            details=f"Role: {target.get('role')}, Tenant: {target.get('tenant_id')}",
+            ip_address=get_client_ip(request)
+        )
+
+        return APIResponse(success=True, message=f"User '{username}' removed. Record archived for audit.")
     except Exception as e:
         return APIResponse(success=False, error=str(e))
 

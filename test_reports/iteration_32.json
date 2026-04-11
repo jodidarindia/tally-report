@@ -1,0 +1,155 @@
+{
+  "summary": "Iteration 32: All 15 requested features verified. Backend: 19/19 tests passed. Frontend: All UI features working correctly including Employee deletion archiving, Admin deletion archiving, Re-signup with returning_user flag, SuperAdmin deleted-users endpoint, Employee management, and Renewals tab.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  
+  "passed_tests": [
+    "Backend: Admin login works (admin/admin123)",
+    "Backend: SuperAdmin login works (superadmin/superadmin123)",
+    "Backend: Employee deletion archives to deleted_users collection",
+    "Backend: Admin deletion archives admin + employees to deleted_users",
+    "Backend: Admin deletion archives tenant data to archived_tenant_data",
+    "Backend: SuperAdmin /api/super-admin/deleted-users returns archived records",
+    "Backend: deleted_users has required fields (deleted_at, deleted_by, deletion_reason, original_tenant_id, original_role)",
+    "Backend: Re-signup with new email works",
+    "Backend: Re-signup with deleted email gets returning_user flag",
+    "Backend: Employee inherits parent admin tenant_id",
+    "Backend: Add employee with valid unique email works",
+    "Backend: Add employee with duplicate email blocked",
+    "Backend: Add employee with invalid email format blocked",
+    "Backend: Employee max limit enforced per plan",
+    "Backend: deleted-users endpoint requires superadmin access",
+    "Backend: deleted-users endpoint returns correct structure",
+    "Backend: SuperAdmin renewals endpoint works",
+    "Backend: Sync status endpoint returns timestamps",
+    "Backend: Brute force protection working (rate limit after 5 attempts)",
+    "Frontend: Admin login successful with company selector",
+    "Frontend: Dashboard shows IST time format (9/4/2026, 7:28:43 pm IST)",
+    "Frontend: Tally disclaimer in footer on all pages",
+    "Frontend: Profile modal opens with Profile, Password, Employees, Subscription tabs",
+    "Frontend: Employees tab shows count vs max limit (1/20, 19 slots available)",
+    "Frontend: Add Employee form validates email format client-side",
+    "Frontend: Invalid email shows 'Please enter a valid email address' toast",
+    "Frontend: SuperAdmin dashboard shows stats (5 Total Admins, 4 Active, 1 Inactive)",
+    "Frontend: SuperAdmin Renewals tab shows Pending Requests, Near Expiry, Expired, Total Requests",
+    "Frontend: Renewals tab shows near-expiry users with Extend button",
+    "Frontend: Renewals tab shows renewal requests with Approve/Reject buttons"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration32_deletion_archive.py",
+    "/app/test_reports/pytest/iteration32_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "auth.py: DELETE /auth/users/{username} archives to deleted_users before deletion (line ~314-323)",
+    "auth.py: Archive record includes deleted_at, deleted_by, deletion_reason, original_tenant_id, original_role",
+    "super_admin.py: DELETE /super-admin/admins/{username} archives admin + employees to deleted_users (line ~231-256)",
+    "super_admin.py: Archives tenant data to archived_tenant_data collection (line ~259-287)",
+    "super_admin.py: GET /super-admin/deleted-users returns deleted_users and archived_tenants (line ~311-334)",
+    "prospects.py: Re-signup checks deleted_users for returning_user flag (line ~92-93)",
+    "prospects.py: Sets returning_user=true and previous_tenant_id if email was previously deleted (line ~109-110)",
+    "ProfileModal.js: Employees tab shows count vs max limit with slots available",
+    "ProfileModal.js: Add Employee form validates email format client-side with regex"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration32_deletion_archive.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "superadmin": {"username": "superadmin", "password": "superadmin123"},
+    "admin": {"username": "admin", "password": "admin123", "plan": "enterprise", "companies": ["ASA AUTOTECH INDIA PRIVATE LIMITED", "Demo Trading Co"]},
+    "employee": {"username": "emp1", "password": "emp123", "role": "employee", "inherits_from": "admin"}
+  },
+  
+  "seed_data_creation": "Test created and deleted test employees and admins during testing - all cleaned up",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 32 validated all 15 requested features related to user deletion archiving and data integrity: 1) Employee deletion archives to deleted_users collection with audit trail. 2) Admin deletion archives admin + employees to deleted_users. 3) Admin deletion archives tenant data to archived_tenant_data. 4) Re-signup with deleted email gets returning_user=true flag. 5) SuperAdmin /api/super-admin/deleted-users returns archived records. 6) Employee inherits parent admin tenant_id. 7) Employee max limit enforced per plan. 8) Profile Employees tab validates email format. 9) Duplicate email blocked. 10) Invalid email format blocked. 11) SuperAdmin Renewals tab working. 12) Dashboard IST formatting. 13) Tally disclaimer in footer. The deleted_users collection has records from manual testing (testdelete@demo.com, testemp@demo.com) plus test records created during this iteration.",
+  
+  "features_validated": {
+    "employee_deletion_archive": {
+      "status": "WORKING",
+      "details": [
+        "DELETE /api/auth/users/{username} archives to deleted_users before deletion",
+        "Archive record includes: deleted_at, deleted_by, deletion_reason, original_tenant_id, original_role",
+        "Message confirms 'Record archived for audit'"
+      ]
+    },
+    "admin_deletion_archive": {
+      "status": "WORKING",
+      "details": [
+        "DELETE /api/super-admin/admins/{username} archives admin to deleted_users",
+        "Archives all employees of admin to deleted_users with deletion_reason='parent_admin_deleted'",
+        "Archives tenant data to archived_tenant_data collection"
+      ]
+    },
+    "re_signup_returning_user": {
+      "status": "WORKING",
+      "details": [
+        "POST /api/public/signup checks deleted_users for email",
+        "Sets returning_user=true if email was previously deleted",
+        "Stores previous_tenant_id for audit trail"
+      ]
+    },
+    "superadmin_deleted_users_endpoint": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/super-admin/deleted-users requires super_admin role",
+        "Returns deleted_users array with audit fields",
+        "Returns archived_tenants array with data summaries",
+        "Returns total_deleted_users and total_archived_tenants counts"
+      ]
+    },
+    "employee_management": {
+      "status": "WORKING",
+      "details": [
+        "Employee inherits tenant_id from parent admin",
+        "Max employees enforced per plan (Starter=2, Professional=5, Enterprise=20)",
+        "Email format validation (regex: ^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$)",
+        "Duplicate email blocked across users and prospects collections"
+      ]
+    },
+    "superadmin_renewals_tab": {
+      "status": "WORKING",
+      "details": [
+        "Shows Pending Requests, Near Expiry (30d), Expired, Total Requests stats",
+        "Lists near-expiry admins with Extend button",
+        "Lists renewal requests with Approve/Reject buttons"
+      ]
+    },
+    "dashboard_ist_formatting": {
+      "status": "WORKING",
+      "details": [
+        "Dashboard subtitle shows IST time: '9/4/2026, 7:28:43 pm IST'",
+        "Uses toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })"
+      ]
+    },
+    "tally_disclaimer_footer": {
+      "status": "WORKING",
+      "details": [
+        "Footer shows Tally trademark disclaimer on all pages",
+        "Text: 'Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.'"
+      ]
+    }
+  }
+}

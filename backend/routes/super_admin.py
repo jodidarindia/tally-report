@@ -216,40 +216,123 @@ async def toggle_admin_active(username: str, request: Request):
 
 @router.delete("/super-admin/admins/{username}")
 async def delete_admin(username: str, request: Request):
-    """Delete an admin tenant and all their data."""
+    """Delete an admin tenant — archives all data for audit, then removes active records."""
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
-        admin = await db.users.find_one({"username": username, "role": "admin"})
+        admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0})
         if not admin:
             return APIResponse(success=False, error="Admin not found")
 
         tenant_id = admin.get("tenant_id")
+        now = now_ist_iso()
 
-        # Delete all employees of this admin
+        # 1. Archive admin user record
+        admin_archive = {
+            **{k: v for k, v in admin.items() if k != "password_hash"},
+            "deleted_at": now,
+            "deleted_by": sa["username"],
+            "deletion_reason": "admin_deleted_by_superadmin",
+            "original_tenant_id": tenant_id,
+            "original_role": "admin",
+        }
+        await db.deleted_users.insert_one(admin_archive)
+
+        # 2. Archive all employees of this admin
+        employees = await db.users.find(
+            {"tenant_id": tenant_id, "role": "employee"},
+            {"_id": 0, "password_hash": 0}
+        ).to_list(500)
+        for emp in employees:
+            emp_archive = {
+                **emp,
+                "deleted_at": now,
+                "deleted_by": sa["username"],
+                "deletion_reason": "parent_admin_deleted",
+                "original_tenant_id": tenant_id,
+                "original_role": "employee",
+            }
+            await db.deleted_users.insert_one(emp_archive)
         await db.users.delete_many({"tenant_id": tenant_id, "role": "employee"})
 
-        # Delete all tenant data
-        collections = [
+        # 3. Archive all tenant data into archived_tenant_data collection
+        data_collections = [
             "inventory_items", "sales_vouchers", "receipt_vouchers",
             "credit_notes", "journal_vouchers", "customers",
             "sync_status", "sync_history", "stock_journals",
             "customer_followups", "customer_targets",
             "overdue_digest", "ai_query_history"
         ]
-        for coll_name in collections:
-            await db[coll_name].delete_many({"tenant_id": tenant_id})
 
-        # Delete the admin user
+        total_archived = 0
+        for coll_name in data_collections:
+            docs = await db[coll_name].find(
+                {"tenant_id": tenant_id}, {"_id": 0}
+            ).to_list(50000)
+            if docs:
+                # Store as a batch archive record
+                await db.archived_tenant_data.insert_one({
+                    "tenant_id": tenant_id,
+                    "admin_username": username,
+                    "collection": coll_name,
+                    "record_count": len(docs),
+                    "archived_at": now,
+                    "archived_by": sa["username"],
+                    "data_sample_count": min(len(docs), 5),
+                    "data_summary": f"{len(docs)} records from {coll_name}",
+                })
+                total_archived += len(docs)
+                # Delete from active collection
+                await db[coll_name].delete_many({"tenant_id": tenant_id})
+
+        # 4. Clean up renewal_requests and prospects for this tenant
+        await db.renewal_requests.delete_many({"tenant_id": tenant_id})
+
+        # 5. Delete the admin user
         await db.users.delete_one({"username": username})
 
-        await log_audit("admin_deleted", sa["username"], target=username, details=f"Tenant: {tenant_id}", ip_address=get_client_ip(request))
+        await log_audit(
+            "admin_deleted", sa["username"],
+            target=username,
+            details=f"Tenant: {tenant_id}, Employees: {len(employees)}, Data records archived: {total_archived}",
+            ip_address=get_client_ip(request)
+        )
 
-        return APIResponse(success=True, message=f"Admin '{username}' and all data deleted")
+        return APIResponse(
+            success=True,
+            message=f"Admin '{username}' deleted. {len(employees)} employees and {total_archived} data records archived for audit."
+        )
     except Exception as e:
         logger.error(f"Error deleting admin: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@router.get("/super-admin/deleted-users")
+async def get_deleted_users(request: Request):
+    """View archived/deleted users for audit purposes."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        deleted = await db.deleted_users.find(
+            {}, {"_id": 0}
+        ).sort("deleted_at", -1).to_list(500)
+
+        archived_tenants = await db.archived_tenant_data.find(
+            {}, {"_id": 0}
+        ).sort("archived_at", -1).to_list(500)
+
+        return APIResponse(success=True, data={
+            "deleted_users": deleted,
+            "archived_tenants": archived_tenants,
+            "total_deleted_users": len(deleted),
+            "total_archived_tenants": len(archived_tenants)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching deleted users: {e}")
+        return APIResponse(success=False, error=str(e))
+
 
 
 @router.post("/super-admin/admins/{username}/reset-password")

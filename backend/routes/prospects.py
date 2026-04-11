@@ -88,6 +88,9 @@ async def prospect_signup(request: Request):
         if existing_prospect:
             return APIResponse(success=False, error="This email already has a pending enquiry. Our team will contact you soon. Please use a different email if this is a new request.")
 
+        # Check if this email was previously deleted (audit awareness)
+        was_deleted = await db.deleted_users.find_one({"username": email}, {"_id": 0, "deleted_at": 1, "original_tenant_id": 1})
+
         now = datetime.now(timezone.utc).isoformat()
         prospect_id = f"PRO-{uuid.uuid4().hex[:8].upper()}"
 
@@ -103,6 +106,8 @@ async def prospect_signup(request: Request):
             "message": message,
             "status": "new",
             "demo_requested": False,
+            "returning_user": bool(was_deleted),
+            "previous_tenant_id": was_deleted.get("original_tenant_id", "") if was_deleted else "",
             "demo_completed": False,
             "requirements": [],
             "notes": "",
