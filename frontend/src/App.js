@@ -64,6 +64,9 @@ function App() {
   const [companyMappings, setCompanyMappings] = useState({});  // UUID -> display name
   const [syncStatus, setSyncStatus] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [excludeBranches, setExcludeBranches] = useState(() => {
+    return localStorage.getItem('flowra_exclude_branches') === 'true';
+  });
   const [showProfile, setShowProfile] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [publicView, setPublicView] = useState('landing'); // landing, login, signup
@@ -91,6 +94,23 @@ function App() {
       delete axios.defaults.headers.common['X-Company-ID'];
     }
   }, [selectedCompany]);
+
+  // Set branch exclusion header
+  useEffect(() => {
+    if (excludeBranches) {
+      axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
+    } else {
+      delete axios.defaults.headers.common['X-Exclude-Branches'];
+    }
+    localStorage.setItem('flowra_exclude_branches', excludeBranches ? 'true' : 'false');
+  }, [excludeBranches]);
+
+  // Auto-detect branch ledgers on company change
+  useEffect(() => {
+    if (selectedCompany && isAuthenticated) {
+      axios.get(`${API}/settings/branch-ledgers/detect`).catch(() => {});
+    }
+  }, [selectedCompany, isAuthenticated]);
 
   // Check auth on mount
   useEffect(() => {
@@ -547,6 +567,19 @@ function App() {
                 <RefreshCw size={12} className={`${syncStatus ? 'text-green-500' : 'text-slate-300'}`} />
                 <span className="text-[10px] text-slate-400 hidden sm:inline">{syncStatus?.last_sync ? 'Synced' : 'No sync'}</span>
               </div>
+
+              {/* Branch toggle */}
+              <button
+                onClick={() => setExcludeBranches(prev => !prev)}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}
+                title={excludeBranches ? 'Branch sales excluded — click to include' : 'Branch sales included — click to exclude'}
+                data-testid="branch-toggle"
+              >
+                <div className={`w-6 h-3.5 rounded-full relative transition-colors ${excludeBranches ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                  <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform ${excludeBranches ? 'translate-x-3' : 'translate-x-0.5'}`} />
+                </div>
+                <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? 'W/o Branch' : 'With Branch'}</span>
+              </button>
 
               <div className="relative" ref={userMenuRef}>
                 <button

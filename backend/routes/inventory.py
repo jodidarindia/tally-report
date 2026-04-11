@@ -11,6 +11,7 @@ from models import (
 from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
 from services.purchase_order_ai import PurchaseOrderAI
 from services.tenant_context import get_tenant_context
+from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,7 +86,13 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
         # Low stock: use movement-based analysis
         # Items with qty=0 but that had sales activity are out-of-stock (genuinely low)
         # Items with qty=0 and no sales data: skip (master data only)
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+        # Apply branch filter if header set
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        if exclude_branches:
+            bp = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+            if bp:
+                all_vouchers = [v for v in all_vouchers if v.get("party_name") not in bp]
         fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
 
         # Build set of items that had sales (i.e. actively traded)

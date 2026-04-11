@@ -14,6 +14,7 @@ from services.export_service import ExportService
 from services.tenant_context import get_tenant_context
 
 from services.audit_service import log_audit, get_client_ip
+from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,15 +42,31 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         q = _build_query(ctx, company_id)
 
         synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
-        # Filter out Branch/Divisions
-        synced_customers = [c for c in synced_customers if 'branch' not in (c.get('ledger_group', '') or '').lower() and 'division' not in (c.get('ledger_group', '') or '').lower()]
+
+        # Determine branch exclusion from header
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        branch_parties = []
+        if exclude_branches:
+            branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+
+        # Filter branch customers from synced list
+        if branch_parties:
+            branch_set = set(p.lower() for p in branch_parties)
+            synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
         synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # Fetch ALL vouchers (not FY filtered) for opening balance calculation
-        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
-        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
-        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
-        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(50000)
+        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(50000)
+
+        # Filter branch parties from vouchers
+        if branch_parties:
+            all_sales = [v for v in all_sales if v.get("party_name") not in branch_parties]
+            all_receipts = [v for v in all_receipts if v.get("party_name") not in branch_parties]
+            all_credit_notes = [v for v in all_credit_notes if v.get("party_name") not in branch_parties]
+            all_journals = [v for v in all_journals if v.get("party_name") not in branch_parties]
 
         # Compute FY boundaries
         fy_start_str = None
