@@ -569,28 +569,31 @@ function App() {
               </div>
 
               {/* Branch toggle */}
-              <button
-                onClick={() => {
-                  setExcludeBranches(prev => {
-                    const next = !prev;
-                    if (next) {
-                      axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
-                    } else {
-                      delete axios.defaults.headers.common['X-Exclude-Branches'];
-                    }
-                    localStorage.setItem('flowra_exclude_branches', next ? 'true' : 'false');
-                    return next;
-                  });
-                }}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}
-                title={excludeBranches ? 'Branch sales excluded — click to include' : 'Branch sales included — click to exclude'}
-                data-testid="branch-toggle"
-              >
-                <div className={`w-6 h-3.5 rounded-full relative transition-colors ${excludeBranches ? 'bg-blue-500' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform ${excludeBranches ? 'translate-x-3' : 'translate-x-0.5'}`} />
-                </div>
-                <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? 'W/o Branch' : 'With Branch'}</span>
-              </button>
+              <div className="flex items-center gap-1.5" data-testid="branch-toggle-wrapper">
+                <span className="text-[10px] text-slate-400 hidden sm:inline">Branch</span>
+                <button
+                  onClick={() => {
+                    setExcludeBranches(prev => {
+                      const next = !prev;
+                      if (next) {
+                        axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
+                      } else {
+                        delete axios.defaults.headers.common['X-Exclude-Branches'];
+                      }
+                      localStorage.setItem('flowra_exclude_branches', next ? 'true' : 'false');
+                      return next;
+                    });
+                  }}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-green-200 bg-green-50 text-green-700'}`}
+                  title={excludeBranches ? 'Branch/Depot sales excluded — click to include' : 'Branch/Depot sales included — click to exclude'}
+                  data-testid="branch-toggle"
+                >
+                  <div className={`w-6 h-3.5 rounded-full relative transition-colors ${excludeBranches ? 'bg-amber-500' : 'bg-green-500'}`}>
+                    <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform ${excludeBranches ? 'translate-x-3' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? 'Excluded' : 'Included'}</span>
+                </button>
+              </div>
 
               <div className="relative" ref={userMenuRef}>
                 <button

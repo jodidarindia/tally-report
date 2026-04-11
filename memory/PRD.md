@@ -10,60 +10,33 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - Desktop Agent: Python v7.3 syncing Tally -> FLOWRA cloud
 - Security: AES-256 PII encryption, bcrypt passwords, JWT auth, UUID-format IDs
 
-## Subscription Plans (INR)
-| Plan | Monthly | Annual | Companies | Employees |
-|------|---------|--------|-----------|-----------|
-| Starter | Rs.999 | Rs.9,990 | 1 | 2 |
-| Professional | Rs.2,499 | Rs.24,990 | 3 | 5 |
-| Enterprise | Rs.3,799 | Rs.37,990 | 10 | 20 |
-
 ## What's Been Implemented
 
-### Branch/Division Exclusion Toggle (April 11, 2026)
-- Global toggle in navbar to exclude inter-branch transfer ledgers from all analytics
-- Auto-detects branch parties by matching company name tokens in sales data
-- Toggle sets `X-Exclude-Branches: true` Axios header globally
-- Backend reads header in sales.py, inventory.py, customers.py to filter branch party names
-- Dashboard, Sales, CRM, Inventory, Analytics pages all re-fetch on toggle change
-- Toggle state persists via localStorage (`flowra_exclude_branches`)
-- Impact: Filters ~Rs.1.9Cr of internal transfers, removes branch depot from Top Customers
-- APIs: `/api/settings/branch-ledgers`, `/api/settings/branch-ledgers/detect`
+### Branch/Division Exclusion Toggle — Full Coverage (April 11, 2026)
+- Global navbar toggle with label ("Branch Included" / "Branch Excluded")
+- Green/amber color scheme indicates toggle state clearly
+- Filters applied to ALL endpoints: Dashboard (sales, overdue, top-customers), Sales, CRM (outstanding, targets, followups, payment-behavior), Inventory, Analytics (movement, below-cost, sales-frequency, customer-items)
+- Overdue digest: fresh computation when branches excluded (not cached), unfiltered result cached normally
+- Toggle state persists via localStorage
 
-### SuperAdmin Seller Panel (April 11, 2026)
-- Overview Dashboard: MRR, ARR, ARPU, Collections, Outstanding, Plan Distribution
-- Subscription Management, Payment Ledger, Invoice System (PDF via reportlab)
-- Customer Ledger, Customer Health Monitor, Prospect Management
-- Admin CRUD, Renewals, Activity Log
+### CRM Tab Updates (April 11, 2026)
+- Tab order: Targets, Outstanding, Follow-ups, Payment Behavior
+- Default tab: Targets
+- All customer lists sorted alphabetically by default across all 4 tabs
+- Branch filtering active on all 4 tabs when toggle is on
 
-### Customer Item-wise Sales Analytics (April 11, 2026)
-- "Customer Items" tab in Analytics with searchable combobox, item-wise table, Excel export
-- APIs: `/api/sales/customer-names`, `/api/sales/customer-item-sales`, `/api/sales/customer-item-sales-export`
-
-### UUID ID System (April 11, 2026)
-- All tenant_id and company_id use UUID format
-- `company_mappings` collection: UUID -> AES-256 encrypted company name
-- Desktop Agent v7.3 resolves company names to UUIDs
-
-### Core Features (Prior)
-- Multi-tenant auth (JWT + bcrypt) with role-based access
-- Tally Prime sync via Desktop Agent with login-based auth
-- Dashboard, Sales, CRM, Inventory, Analytics, Salesman, AI Reports, Insider BI
-- Plan enforcement, feature gating, multi-company & multi-FY support
-- Soft-delete archival, global email uniqueness, IST timezone normalization
-- Landing page, demo signup flow, SEO meta tags
-
-## Key Collections
-- `users`, `company_mappings`, `branch_ledgers`, `payments`, `invoices`, `migration_log`
-- `sales_vouchers`, `inventory_items`, `customers`, `receipt_vouchers`, `credit_notes`
-- `journal_vouchers`, `purchase_vouchers`, `debit_notes`, `stock_journals`, `sundry_creditors`
-- `sync_status`, `sync_history`, `audit_logs`, `prospects`, `deleted_users`
+### Previous Completions
+- SuperAdmin Seller Panel (subscriptions, invoices, MRR, revenue)
+- Customer Item-wise Sales Analytics with combobox and Excel export
+- UUID-based tenant/company IDs with AES-256 encryption
+- Cross-FY combined dashboard sales totals
+- Desktop Agent v7.3 with "Default" company fix and UTC timestamps
+- Digital Ocean Deployment Guide PDF
 
 ## Upcoming Tasks
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)
-- P1: Update Desktop Agent URL to production domain (after deployment)
-- P2: Extended Tally Sync (sale/cost prices, expenses)
 - P2: Salesman Order Management System (Enterprise only)
-- P2: AI Expense Insights in Insider Result page (GPT-5.2)
+- P2: AI Expense Insights with GPT-5.2
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders
-- P3: Refactor App.js into smaller routing/layout components
+- P3: Refactor App.js into smaller components

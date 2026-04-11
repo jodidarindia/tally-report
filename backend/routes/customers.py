@@ -276,7 +276,7 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 cust["status"] = "normal"
                 cust["status_label"] = "Normal"
 
-        customers.sort(key=lambda c: c["outstanding_amount"], reverse=True)
+        customers.sort(key=lambda c: c.get("customer_name", "").lower())
 
         all_groups = list(set(c.get("ledger_group", "") for c in customers if c.get("ledger_group")))
         all_states = list(set(c.get("state", "") for c in customers if c.get("state")))
@@ -446,7 +446,7 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
                 "current_fy": fy or ""
             })
 
-        targets.sort(key=lambda x: x["achievement_percentage"], reverse=True)
+        targets.sort(key=lambda x: x["customer_name"].lower())
 
         return APIResponse(
             success=True,
@@ -974,7 +974,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
 
-        customers.sort(key=lambda c: c["credit_score"], reverse=True)
+        customers.sort(key=lambda c: c.get("customer_name", "").lower())
 
         return APIResponse(success=True, data={
             "customers": customers,

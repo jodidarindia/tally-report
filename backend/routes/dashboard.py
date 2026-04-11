@@ -6,6 +6,7 @@ from db import db
 from models import APIResponse
 from utils import safe_num, compute_overdue_digest, filter_vouchers_by_fy
 from services.tenant_context import get_tenant_context
+from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,16 +31,23 @@ async def get_overdue_digest(request: Request, company_id: Optional[str] = None)
         tid = ctx.get("tenant_id") if ctx else None
         cid = company_id or (ctx.get("company_id") if ctx else None)
 
-        q = {"_type": "latest"}
-        if tid:
-            q["tenant_id"] = tid
-        if cid:
-            q["company_id"] = cid
+        # Get branch parties if exclusion header is set
+        bp = []
+        if request.headers.get("X-Exclude-Branches", "").lower() == "true":
+            bp = await get_branch_parties(tid or "", cid or "")
 
-        digest = await db.overdue_digest.find_one(q, {"_id": 0})
-
-        if not digest:
-            digest = await compute_overdue_digest(db, tid, cid)
+        # When branch exclusion is active, always compute fresh (don't use cached)
+        if bp:
+            digest = await compute_overdue_digest(db, tid, cid, branch_parties=bp)
+        else:
+            q = {"_type": "latest"}
+            if tid:
+                q["tenant_id"] = tid
+            if cid:
+                q["company_id"] = cid
+            digest = await db.overdue_digest.find_one(q, {"_id": 0})
+            if not digest:
+                digest = await compute_overdue_digest(db, tid, cid)
 
         return APIResponse(success=True, data=digest)
     except Exception as e:
@@ -54,6 +62,12 @@ async def get_top_customers(request: Request, fy: Optional[str] = None, company_
         q = _build_query(ctx, company_id)
         vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         vouchers = filter_vouchers_by_fy(vouchers, fy) if fy else vouchers
+
+        # Apply branch exclusion
+        if request.headers.get("X-Exclude-Branches", "").lower() == "true":
+            bp = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+            if bp:
+                vouchers = [v for v in vouchers if v.get("party_name") not in bp]
 
         customer_sales = {}
         for v in vouchers:

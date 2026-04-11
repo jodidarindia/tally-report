@@ -84,7 +84,7 @@ def is_fy_completed(fy: str):
 OVERDUE_THRESHOLD_DAYS = 55
 
 
-async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None):
+async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch_parties=None):
     """Compute overdue invoices (>55 days from invoice date) considering receipts,
     credit notes, and journal vouchers. Stores result in overdue_digest collection."""
     from datetime import date as date_type
@@ -102,6 +102,17 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None):
     credit_notes = await db_ref.credit_notes.find(q, {"_id": 0}).to_list(20000)
     journals = await db_ref.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
     synced_customers = await db_ref.customers.find(q, {"_id": 0}).to_list(5000)
+
+    # Apply branch exclusion if provided
+    if branch_parties:
+        bp_set = set(branch_parties)
+        bp_lower = set(p.lower() for p in branch_parties)
+        sales = [v for v in sales if v.get("party_name") not in bp_set]
+        receipts = [v for v in receipts if v.get("party_name") not in bp_set]
+        credit_notes = [v for v in credit_notes if v.get("party_name") not in bp_set]
+        journals = [v for v in journals if v.get("party_name") not in bp_set]
+        synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in bp_lower]
+
     synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
     # Build per-customer credit totals (receipts + credit notes + journal credits)
@@ -264,11 +275,13 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None):
         digest["company_id"] = company_id
         digest_filter["company_id"] = company_id
 
-    await db_ref.overdue_digest.update_one(
-        digest_filter,
-        {"$set": {**digest, "_type": "latest"}},
-        upsert=True
-    )
+    # Only cache the unfiltered (no branch exclusion) result
+    if not branch_parties:
+        await db_ref.overdue_digest.update_one(
+            digest_filter,
+            {"$set": {**digest, "_type": "latest"}},
+            upsert=True
+        )
 
     return digest
 

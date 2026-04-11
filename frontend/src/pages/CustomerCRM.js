@@ -9,7 +9,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
-  const [activeTab, setActiveTab] = useState('followups');
+  const [activeTab, setActiveTab] = useState('targets');
   const [outstanding, setOutstanding] = useState([]);
   const [followups, setFollowups] = useState([]);
   const [targets, setTargets] = useState([]);
@@ -23,8 +23,8 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   const [showSetTarget, setShowSetTarget] = useState(null);
   const [expandedTarget, setExpandedTarget] = useState(null);
   const [exportingLedger, setExportingLedger] = useState(null);
-  const [sortField, setSortField] = useState('outstanding_amount');
-  const [sortDir, setSortDir] = useState('desc');
+  const [sortField, setSortField] = useState('customer_name');
+  const [sortDir, setSortDir] = useState('asc');
   const [newFollowup, setNewFollowup] = useState({
     customer_name: '',
     followup_date: '',
@@ -190,10 +190,10 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   };
 
   const tabs = [
-    { id: 'followups', label: 'Follow-ups', icon: Calendar },
+    { id: 'targets', label: 'Targets', icon: TrendingUp },
     { id: 'outstanding', label: 'Outstanding', icon: AlertTriangle },
-    { id: 'behavior', label: 'Payment Behavior', icon: Users },
-    { id: 'targets', label: 'Targets', icon: TrendingUp }
+    { id: 'followups', label: 'Follow-ups', icon: Calendar },
+    { id: 'behavior', label: 'Payment Behavior', icon: Users }
   ];
 
   const getFollowupDateColor = (dateStr) => {
