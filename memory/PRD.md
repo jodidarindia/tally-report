@@ -113,3 +113,46 @@ Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inve
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders (email/WhatsApp)
 - P3: Refactor App.js into smaller routing/layout components
+
+## Future Roadmap (User's Vision — April 2026)
+
+### F1: Extended Tally Sync — Sale Price, Cost Price & Expenses (P1)
+- Desktop Agent to sync **standard sale price** and **standard cost price** per item from Tally
+- Sync **indirect & direct expense accounts** with their vouchers from Tally
+- New collections: `expense_accounts`, `expense_vouchers` with tenant_id, company_id, FY scoping
+- Sale/cost price fields to be added to `inventory_items` for margin analysis
+
+### F2: Salesman Order Management System — Enterprise Only (P1)
+**Salesman Login & Role:**
+- New role: `salesman` (follows all existing user creation rules — unique email, tenant_id from parent admin, plan limits)
+- Salesman can view: mapped customers (outstanding, ledger), warehouse inventory with sale prices
+- Salesman CANNOT see other salesmen's customers or admin-level reports
+
+**Order Workflow:**
+- Salesman browses available inventory (with sale price) → selects customer → adds items + quantities → submits Sales Order
+- Submitted order appears in **User Admin's Sales Order menu tab** for review/approval/dispatch
+- Full order lifecycle: Draft → Submitted → Approved → Dispatched → Completed/Cancelled
+- Order history with status tracking on both salesman and admin side
+
+**Beat Plan System:**
+- Admin creates beat plans (daily/weekly route schedule for salesman visits)
+- Customers assigned to beat plans and mapped to specific salesmen
+- Salesman sees daily beat plan with customer list, address, contact
+- Salesman marks visit status (visited/skipped/rescheduled) with notes
+
+**Beat Working Analysis:**
+- End-of-day report: planned visits vs actual visits, orders placed, order value
+- Weekly/monthly performance: beat adherence %, order conversion rate, average order value
+- Admin dashboard view of all salesmen's beat performance
+
+**Rules:**
+- Enterprise plan only (feature-gated)
+- All salesman user creation follows existing rules: unique email, email format validation, tenant_id from parent admin, max_employees limit applies
+- Data isolation: salesman sees only their mapped customers and inventory within their tenant
+
+### F3: AI Expense Insights — Part of Insider Result (P2)
+- Expense accounts and vouchers imported from Tally analyzed by AI (GPT-5.2)
+- AI generates insights on: spending patterns, expense reduction opportunities, category-wise trends, YoY comparison
+- Displayed as a new section within the existing **Insider Result** page
+- Covers: direct expenses, indirect expenses, category breakdown, anomaly detection
+- Actionable suggestions for cost optimization
