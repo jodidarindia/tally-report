@@ -3,93 +3,66 @@
 ## Product Overview
 Multi-tenant SaaS platform that syncs with Tally Prime to provide real-time inventory analytics, sales tracking, CRM, AI reports, and business intelligence.
 
-## User Personas
-- **Super Admin**: FLOWRA operator managing all tenants, subscriptions, prospects
-- **Admin (Tenant Owner)**: Business owner with Tally Prime, subscribes to a plan
-- **Employee**: Staff added by Admin with restricted feature access
-
 ## Core Architecture
 - Frontend: React + Shadcn UI (port 3000)
 - Backend: FastAPI + Motor (port 8001)
 - Database: MongoDB
 - Desktop Agent: Python script syncing Tally -> FLOWRA cloud
-- Security: AES-256 PII encryption, bcrypt passwords, JWT auth
+- Security: AES-256 PII encryption, bcrypt passwords, JWT auth, UUID-format tenant/company IDs
 
-## Subscription Plans (INR)
-| Feature | Starter (Rs.999/mo) | Professional (Rs.2,499/mo) | Enterprise (Rs.3,799/mo) |
-|---------|------|--------------|------------|
-| Dashboard | Yes | Yes | Yes |
-| Sales | Yes | Yes | Yes |
-| Inventory | Yes | Yes | Yes |
-| CRM | No | Yes | Yes |
-| Analytics | No | Yes | Yes |
-| Salesman | No | No | Yes |
-| AI Reports | No | No | Yes |
-| Insider BI | No | No | Yes |
-| Max Companies | 1 | 3 | 10 |
-| Max Employees | 2 | 5 | 20 |
+## Key DB Collections
+- `users`: tenant users with UUID tenant_id and UUID company list
+- `company_mappings`: UUID company_id -> encrypted company name mapping per tenant
+- `sales_vouchers`, `inventory_items`, `customers`, etc.: all use UUID tenant_id + company_id
+- `deleted_users`: archived user data for audit trails
+- `prospects`: signup requests with returning_user flag
+- `migration_log`: tracks completed data migrations
 
-## What's Been Implemented (Completed)
+## What's Been Implemented
 
 ### Core Features
 - Multi-tenant authentication (JWT + bcrypt) with role-based access
-- Tally Prime sync via Desktop Agent (v7) with login-based auth
+- Tally Prime sync via Desktop Agent (v7.3) with login-based auth
 - Dashboard with real-time sales/inventory/overdue data
-- Sales tracking with voucher details
-- Customer CRM with payment behavior, followups, targets
-- Inventory management with stock analytics
-- Movement analytics with AI-powered insights
-- Salesman performance tracking (Enterprise only)
-- AI Reports (GPT-5.2 powered) (Enterprise only)
-- Insider BI Result page (Enterprise only)
+- Sales, CRM, Inventory, Analytics, Salesman, AI Reports, Insider BI
 - Sync History with detailed cycle tracking
-- Tally Setup page with connection config
-- Activity/Audit logging
-- Multi-company support with company selector
-- Multi-FY support with FY selector
+- Multi-company & Multi-FY support
 
 ### Security (April 2026)
-- AES-256 field-level encryption for all PII (names, phones, emails)
-- SHA-256 email hashing for prospect data
-- Complete audit trail
-- Global email uniqueness enforced across users + prospects
-- Employee tenant isolation
+- AES-256 field-level encryption for all PII
+- **UUID-format tenant_id and company_id** (migrated from plain-text)
+- Company name -> UUID mapping stored encrypted in `company_mappings` collection
+- Global email uniqueness across users + prospects
+- Soft-delete with archive to `deleted_users`
 
-### User Lifecycle & Data Integrity (April 2026)
-- Soft-delete with archive to `deleted_users` collection
-- Admin deletion archives tenant data
-- Re-signup detection (returning_user flag)
-- SuperAdmin audit view for deleted users
-- Employee management with plan-based limits
+### UUID ID System (April 11, 2026)
+- All tenant_id values are UUID format (e.g., `3079b0af-e899-44b4-ae7c-c35d113fe296`)
+- All company_id values are UUID format (e.g., `03f638d1-eab0-47ee-aed6-59049ebb5207`)
+- `company_mappings` collection maps UUID -> encrypted actual company name
+- Desktop Agent resolves company names to UUIDs before syncing
+- Backend auto-resolves company names to UUIDs if agent sends plain name (backward compat)
+- Frontend receives company_mappings on login/me and displays readable names
+- SuperAdmin sees resolved company names, not raw UUIDs
 
-### Marketing & Prospecting (April 2026)
-- Public Landing Page with animated dashboard mockup
-- Signup Page with demo request flow
-- Prospect management in SuperAdmin
-- Convert Prospect to Admin with plan selection
+### IST Timezone Fix (April 11, 2026)
+- Agent sends timestamps with UTC timezone marker (`+00:00`)
+- Frontend normalizes naive timestamps as UTC before IST conversion
+- Dashboard and Sync History display correct IST times
 
-### Subscription Management (April 2026)
-- Plan enforcement with feature gating
-- Company and employee limits per plan
-- Subscription dates stored and displayed
-- Renewal popup, SuperAdmin renewals tab
-- Desktop Agent subscription & company limit enforcement
-
-### Documentation (April 2026)
-- Digital Ocean Production Deployment Guide (43-page PDF) — covers domain, server, MongoDB, Nginx, SSL, PM2, backups, monitoring, troubleshooting
+### Desktop Agent (v7.3)
+- Full sync every cycle (no incremental — Tally has no change-detection API)
+- Hash-based skip on upload prevents unnecessary DB writes
+- SVCurrentCompany "Default" fix — omits tag when company name is Default
+- UUID company mapping resolution
+- Subscription enforcement
 
 ## Upcoming Tasks
-- P1: Update Desktop Agent URL to production domain (after user deploys)
+- P1: Update Desktop Agent URL to production domain (after deployment)
 - P1: Desktop Agent — One-Click `.exe` Installer (PyInstaller/Inno Setup)
+- P1: Customer-wise Item-wise Sales Analytics tab (combobox + Excel export)
 - P2: Extended Tally Sync (sale/cost prices, expenses)
 - P2: Salesman Order Management System (Enterprise only)
 - P2: AI Expense Insights in Insider Result page
 - P2: Export Audit Logs to CSV
-- P2: Automated payment follow-up reminders (email/WhatsApp)
+- P2: Automated payment follow-up reminders
 - P3: Refactor App.js into smaller routing/layout components
-
-## Tech Stack
-- React 18, Shadcn UI, Lucide Icons, Sonner toasts
-- FastAPI, Motor (MongoDB async), bcrypt, cryptography, PyJWT
-- OpenAI GPT-5.2 (via Emergent LLM Key)
-- MongoDB with AES-256 encryption at rest
