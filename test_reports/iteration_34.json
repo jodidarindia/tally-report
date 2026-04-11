@@ -1,0 +1,141 @@
+{
+  "summary": "Iteration 34: Customer Items Feature + UUID Migration Regression Testing Complete. Backend: 13/13 tests passed. Frontend: All Customer Items features working correctly including customer search combobox, item-wise data table, summary cards, FY selector integration, and Export Excel button.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "App.js",
+        "issues": ["Minor React hydration warning about span inside option element (cosmetic, doesn't affect functionality) - same as iteration 33"]
+      }
+    ]
+  },
+  
+  "passed_tests": [
+    "Backend: Admin login returns UUID-format tenant_id (3079b0af-e899-44b4-ae7c-c35d113fe296)",
+    "Backend: Login response includes company_mappings array with company_id (UUID) and company_name (readable)",
+    "Backend: Auth/me endpoint returns same UUID tenant_id and company_mappings",
+    "Backend: /api/sales/customer-names returns list of customer names for selected FY",
+    "Backend: /api/sales/customer-names contains test customer 'Sharma Parts,Korndagaon,9993651416'",
+    "Backend: /api/sales/customer-names works without FY filter",
+    "Backend: /api/sales/customer-item-sales requires customer parameter",
+    "Backend: /api/sales/customer-item-sales returns item-wise breakdown with correct structure",
+    "Backend: /api/sales/customer-item-sales item structure includes item_name, quantity, amount, avg_rate, voucher_count",
+    "Backend: /api/sales/customer-item-sales-export requires customer parameter",
+    "Backend: /api/sales/customer-item-sales-export returns valid Excel file (.xlsx)",
+    "Backend: Sales summary works with UUID company_id",
+    "Backend: Inventory summary works with UUID company_id",
+    "Frontend: Customer Items tab visible in Analytics page",
+    "Frontend: Customer search combobox filters customer names correctly",
+    "Frontend: Customer dropdown shows filtered results",
+    "Frontend: Selecting customer loads item-wise sales data in table",
+    "Frontend: Summary cards show correct totals (2 items, 16 qty, Rs.45,646.7 amount, 2 invoices for Sharma Parts in FY 2026-27)",
+    "Frontend: Data table shows item details with columns: #, Item Name, Quantity, Avg Rate, Amount, Invoices",
+    "Frontend: Export Excel button visible and functional",
+    "Frontend: FY selector works with customer items data (FY 2025-26 shows 53 items, 3,595 qty, Rs.15,86,369.91)",
+    "Frontend: Company name displays correctly in header (ASA AUTOTECH INDIA PRIVATE LIMITED, not UUID)",
+    "Frontend: Dashboard loads correctly with UUID-based tenant/company IDs"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration34_customer_items.py",
+    "/app/test_reports/pytest/iteration34_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "sales.py: customer-names endpoint correctly filters by FY and returns sorted unique party names (lines 227-240)",
+    "sales.py: customer-item-sales endpoint correctly aggregates item-wise data with quantity, amount, avg_rate, voucher_count (lines 243-307)",
+    "sales.py: customer-item-sales-export endpoint returns properly formatted Excel with headers, data rows, and totals (lines 310-444)",
+    "InventoryAnalytics.js: Customer Items tab correctly implemented with searchable combobox (lines 581-729)",
+    "InventoryAnalytics.js: Summary cards correctly display total_items, total_quantity, total_amount, total_vouchers (lines 636-655)",
+    "InventoryAnalytics.js: Data table correctly renders item rows with all required columns (lines 676-708)",
+    "InventoryAnalytics.js: Export button triggers Excel download correctly (lines 96-117)",
+    "App.js: companyMappings state correctly stores UUID->name mappings (lines 64, 109-111, 211-215)"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration34_customer_items.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {
+      "username": "admin",
+      "password": "admin123",
+      "tenant_id": "3079b0af-e899-44b4-ae7c-c35d113fe296",
+      "company_uuid": "03f638d1-eab0-47ee-aed6-59049ebb5207",
+      "company_name": "ASA AUTOTECH INDIA PRIVATE LIMITED"
+    },
+    "superadmin": {
+      "username": "super_admin",
+      "password": "super_admin123"
+    }
+  },
+  
+  "seed_data_creation": "No new seed data created - used existing data. Test customer 'Sharma Parts,Korndagaon,9993651416' has 2 items in FY 2026-27 and 53 items in FY 2025-26",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 34 validated both UUID migration (regression) and new Customer Items feature. UUID migration: Login returns UUID tenant_id (3079b0af-e899-44b4-ae7c-c35d113fe296), company_mappings array with UUID->name mappings. Customer Items feature: 1) /api/sales/customer-names returns list of customers for FY. 2) /api/sales/customer-item-sales returns item-wise breakdown with quantity, amount, avg_rate, voucher_count. 3) /api/sales/customer-item-sales-export returns Excel file. 4) Frontend Customer Items tab in Analytics page with searchable combobox, summary cards, data table, and Export Excel button. Test customer 'Sharma Parts,Korndagaon,9993651416' has data in both FY 2025-26 (53 items) and FY 2026-27 (2 items).",
+  
+  "features_validated": {
+    "uuid_migration_regression": {
+      "status": "WORKING",
+      "details": [
+        "Login returns UUID-format tenant_id: 3079b0af-e899-44b4-ae7c-c35d113fe296",
+        "Login returns company_mappings array with UUID company_id and readable company_name",
+        "Auth/me returns same UUID tenant_id and company_mappings",
+        "Company name displayed in header (not UUID)"
+      ]
+    },
+    "customer_names_api": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/sales/customer-names returns list of customer names",
+        "Supports FY filter parameter",
+        "Returns sorted unique party names from sales vouchers"
+      ]
+    },
+    "customer_item_sales_api": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/sales/customer-item-sales returns item-wise breakdown",
+        "Requires customer parameter",
+        "Returns items array with item_name, quantity, amount, avg_rate, voucher_count",
+        "Returns totals: total_items, total_quantity, total_amount, total_vouchers"
+      ]
+    },
+    "customer_item_sales_export": {
+      "status": "WORKING",
+      "details": [
+        "GET /api/sales/customer-item-sales-export returns Excel file",
+        "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "File is valid xlsx format (starts with PK signature)"
+      ]
+    },
+    "frontend_customer_items_tab": {
+      "status": "WORKING",
+      "details": [
+        "Customer Items tab visible in Analytics page",
+        "Searchable customer combobox with dropdown",
+        "Summary cards: Unique Items, Total Quantity, Total Amount, Total Invoices",
+        "Data table with columns: #, Item Name, Quantity, Avg Rate, Amount, Invoices",
+        "Export Excel button functional",
+        "FY selector integration working"
+      ]
+    }
+  }
+}

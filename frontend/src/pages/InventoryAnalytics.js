@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { TrendingUp, TrendingDown, AlertTriangle, BarChart3, Download, Filter as FilterIcon } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, BarChart3, Download, Filter as FilterIcon, Users, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -13,6 +13,26 @@ const InventoryAnalytics = ({ selectedFY }) => {
   const [salesFrequency, setSalesFrequency] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+
+  // Customer Items tab state
+  const [customerNames, setCustomerNames] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [customerItemsData, setCustomerItemsData] = useState(null);
+  const [customerItemsLoading, setCustomerItemsLoading] = useState(false);
+  const dropdownRef = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowCustomerDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
   const [sortField, setSortField] = useState('movement_rate');
   const [sortDir, setSortDir] = useState('desc');
   const [classFilter, setClassFilter] = useState('all');
@@ -24,6 +44,77 @@ const InventoryAnalytics = ({ selectedFY }) => {
   useEffect(() => {
     fetchData();
   }, [activeTab, dateFilter, selectedFY]);
+
+  // Fetch customer names when switching to customer-items tab
+  useEffect(() => {
+    if (activeTab === 'customer-items') {
+      fetchCustomerNames();
+    }
+  }, [activeTab, selectedFY]);
+
+  // Fetch customer item data when customer is selected
+  useEffect(() => {
+    if (selectedCustomer && activeTab === 'customer-items') {
+      fetchCustomerItemSales(selectedCustomer);
+    }
+  }, [selectedCustomer, selectedFY]);
+
+  const fetchCustomerNames = async () => {
+    try {
+      const fyParam = selectedFY ? `fy=${selectedFY}` : '';
+      const res = await axios.get(`${API}/sales/customer-names?${fyParam}`);
+      setCustomerNames(res.data?.data?.customers || []);
+    } catch { /* ignore */ }
+  };
+
+  const fetchCustomerItemSales = async (customer) => {
+    setCustomerItemsLoading(true);
+    try {
+      const fyParam = selectedFY ? `&fy=${selectedFY}` : '';
+      const res = await axios.get(`${API}/sales/customer-item-sales?customer=${encodeURIComponent(customer)}${fyParam}`);
+      if (res.data?.success) {
+        setCustomerItemsData(res.data.data);
+      } else {
+        toast.error(res.data?.error || 'Failed to load data');
+      }
+    } catch { toast.error('Failed to load customer item sales'); }
+    finally { setCustomerItemsLoading(false); }
+  };
+
+  const handleCustomerSelect = (name) => {
+    setSelectedCustomer(name);
+    setCustomerSearch(name);
+    setShowCustomerDropdown(false);
+  };
+
+  const filteredCustomerNames = useMemo(() => {
+    if (!customerSearch.trim()) return customerNames;
+    const q = customerSearch.toLowerCase();
+    return customerNames.filter(n => n.toLowerCase().includes(q));
+  }, [customerNames, customerSearch]);
+
+  const handleExportCustomerItems = async () => {
+    if (!selectedCustomer) return;
+    setExporting(true);
+    try {
+      const fyParam = selectedFY ? `&fy=${selectedFY}` : '';
+      const res = await axios.get(
+        `${API}/sales/customer-item-sales-export?customer=${encodeURIComponent(selectedCustomer)}${fyParam}`,
+        { responseType: 'blob' }
+      );
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const safeName = selectedCustomer.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+      link.setAttribute('download', `customer_items_${safeName}_${selectedFY || 'all'}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Customer item sales exported');
+    } catch { toast.error('Export failed'); }
+    finally { setExporting(false); }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -136,7 +227,8 @@ const InventoryAnalytics = ({ selectedFY }) => {
   const tabs = [
     { id: 'movement', label: 'Movement Analysis', icon: TrendingUp },
     { id: 'below-cost', label: 'Below Cost Sales', icon: AlertTriangle },
-    { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 }
+    { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 },
+    { id: 'customer-items', label: 'Customer Items', icon: Users }
   ];
 
   return (
@@ -480,6 +572,158 @@ const InventoryAnalytics = ({ selectedFY }) => {
                       ₹{salesFrequency.reduce((sum, item) => sum + item.total_revenue, 0).toLocaleString('en-IN')}
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Customer Items Tab */}
+          {activeTab === 'customer-items' && (
+            <div data-testid="customer-items-tab">
+              {/* Customer Search Combobox */}
+              <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6" data-testid="customer-search-section">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  <div className="relative flex-1 w-full" ref={dropdownRef}>
+                    <label className="text-sm font-medium text-slate-700 mb-1 block">Select Customer</label>
+                    <div className="relative">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={(e) => {
+                          setCustomerSearch(e.target.value);
+                          setShowCustomerDropdown(true);
+                          if (!e.target.value) { setSelectedCustomer(''); setCustomerItemsData(null); }
+                        }}
+                        onFocus={() => setShowCustomerDropdown(true)}
+                        placeholder="Type customer name to search..."
+                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-[#2563EB]"
+                        data-testid="customer-search-input"
+                      />
+                      {showCustomerDropdown && filteredCustomerNames.length > 0 && (
+                        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto" data-testid="customer-dropdown">
+                          {filteredCustomerNames.map((name, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleCustomerSelect(name)}
+                              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors ${
+                                selectedCustomer === name ? 'bg-blue-50 text-[#2563EB] font-medium' : 'text-slate-700'
+                              }`}
+                              data-testid={`customer-option-${idx}`}
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {selectedCustomer && customerItemsData && (
+                    <button
+                      onClick={handleExportCustomerItems}
+                      disabled={exporting}
+                      className="mt-5 sm:mt-0 self-end flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                      data-testid="export-customer-items-btn"
+                    >
+                      <Download size={16} />
+                      {exporting ? 'Exporting...' : 'Export Excel'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Summary Cards */}
+              {selectedCustomer && customerItemsData && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4" data-testid="ci-total-items">
+                    <div className="text-xs text-slate-500 mb-1">Unique Items</div>
+                    <div className="text-2xl font-bold text-slate-900">{customerItemsData.total_items}</div>
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4" data-testid="ci-total-qty">
+                    <div className="text-xs text-slate-500 mb-1">Total Quantity</div>
+                    <div className="text-2xl font-bold text-slate-900">{customerItemsData.total_quantity?.toLocaleString('en-IN')}</div>
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4" data-testid="ci-total-amount">
+                    <div className="text-xs text-slate-500 mb-1">Total Amount</div>
+                    <div className="text-2xl font-bold text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN')}</div>
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4" data-testid="ci-total-vouchers">
+                    <div className="text-xs text-slate-500 mb-1">Total Invoices</div>
+                    <div className="text-2xl font-bold text-slate-900">{customerItemsData.total_vouchers}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Loading state */}
+              {customerItemsLoading && (
+                <div className="flex items-center justify-center h-40">
+                  <div className="loading-spinner" />
+                </div>
+              )}
+
+              {/* Items Table */}
+              {selectedCustomer && customerItemsData && !customerItemsLoading && (
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="customer-items-table">
+                  <div className="p-4 border-b border-slate-100">
+                    <h3 className="font-semibold text-slate-900">
+                      Items purchased by {selectedCustomer.split(',')[0]}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      FY {selectedFY || 'All'} — {customerItemsData.total_items} items across {customerItemsData.total_vouchers} invoices
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm" data-testid="customer-items-data-table">
+                      <thead>
+                        <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                          <th className="py-3 px-4 text-left w-10">#</th>
+                          <th className="py-3 px-4 text-left">Item Name</th>
+                          <th className="py-3 px-4 text-right">Quantity</th>
+                          <th className="py-3 px-4 text-right">Avg Rate</th>
+                          <th className="py-3 px-4 text-right">Amount</th>
+                          <th className="py-3 px-4 text-right">Invoices</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customerItemsData.items?.map((item, idx) => (
+                          <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`customer-item-row-${idx}`}>
+                            <td className="py-3 px-4 text-slate-400">{idx + 1}</td>
+                            <td className="py-3 px-4 font-medium text-slate-800">{item.item_name}</td>
+                            <td className="py-3 px-4 text-right text-slate-700">{item.quantity?.toLocaleString('en-IN')}</td>
+                            <td className="py-3 px-4 text-right text-slate-600">Rs.{item.avg_rate?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            <td className="py-3 px-4 text-right font-medium text-[#2563EB]">Rs.{item.amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            <td className="py-3 px-4 text-right text-slate-500">{item.voucher_count}</td>
+                          </tr>
+                        ))}
+                        {/* Totals row */}
+                        <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
+                          <td className="py-3 px-4" colSpan={2}>TOTAL</td>
+                          <td className="py-3 px-4 text-right">{customerItemsData.total_quantity?.toLocaleString('en-IN')}</td>
+                          <td className="py-3 px-4 text-right"></td>
+                          <td className="py-3 px-4 text-right text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-4 text-right">{customerItemsData.total_vouchers}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Empty State */}
+              {!selectedCustomer && !customerItemsLoading && (
+                <div className="bg-white border border-slate-200 rounded-xl p-12 text-center" data-testid="customer-items-empty">
+                  <Users size={48} className="mx-auto text-slate-300 mb-4" />
+                  <h3 className="text-lg font-medium text-slate-600 mb-1">Select a Customer</h3>
+                  <p className="text-sm text-slate-400">Search and select a customer above to see their item-wise purchase details</p>
+                </div>
+              )}
+
+              {/* No data for customer */}
+              {selectedCustomer && customerItemsData && customerItemsData.total_items === 0 && (
+                <div className="bg-white border border-slate-200 rounded-xl p-12 text-center" data-testid="customer-items-no-data">
+                  <AlertTriangle size={48} className="mx-auto text-amber-300 mb-4" />
+                  <h3 className="text-lg font-medium text-slate-600 mb-1">No Sales Found</h3>
+                  <p className="text-sm text-slate-400">No item sales found for {selectedCustomer} in FY {selectedFY || 'selected period'}</p>
                 </div>
               )}
             </div>

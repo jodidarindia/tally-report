@@ -120,9 +120,10 @@ async def seed_admin(db):
     admin_username = os.environ.get("ADMIN_USERNAME", "admin")
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
     existing_admin = await db.users.find_one({"username": admin_username})
-    tenant_id = f"tenant_{admin_username}"
 
     if existing_admin is None:
+        import uuid
+        tenant_id = str(uuid.uuid4())
         await db.users.insert_one({
             "username": admin_username,
             "password_hash": hash_password(admin_password),
@@ -136,9 +137,12 @@ async def seed_admin(db):
         })
         logger.info(f"Admin '{admin_username}' seeded with tenant '{tenant_id}'")
     else:
+        tenant_id = existing_admin.get("tenant_id", "")
         # Migrate existing admin: add tenant_id and features if missing
         update_fields = {}
-        if not existing_admin.get("tenant_id"):
+        if not tenant_id:
+            import uuid
+            tenant_id = str(uuid.uuid4())
             update_fields["tenant_id"] = tenant_id
         if not existing_admin.get("features"):
             update_fields["features"] = list(ALL_FEATURES)
@@ -161,13 +165,14 @@ async def seed_admin(db):
             await db.users.update_one({"username": admin_username}, {"$set": update_fields})
             logger.info(f"Admin '{admin_username}' migrated with tenant fields")
 
-    # Migrate any existing employee users to the default tenant
-    await db.users.update_many(
-        {"role": "employee", "tenant_id": {"$exists": False}},
-        {"$set": {"tenant_id": tenant_id}}
-    )
+    # Migrate any existing employee users to the admin's tenant
+    if tenant_id:
+        await db.users.update_many(
+            {"role": "employee", "tenant_id": {"$exists": False}},
+            {"$set": {"tenant_id": tenant_id}}
+        )
 
-    # Migrate existing data to default tenant if no tenant_id yet
+    # Migrate existing data to admin's tenant if no tenant_id yet
     collections = [
         "inventory_items", "sales_vouchers", "receipt_vouchers",
         "credit_notes", "journal_vouchers", "customers",
@@ -175,15 +180,16 @@ async def seed_admin(db):
         "customer_followups", "customer_targets",
         "overdue_digest", "ai_query_history"
     ]
-    for coll_name in collections:
-        coll = db[coll_name]
-        count = await coll.count_documents({"tenant_id": {"$exists": False}})
-        if count > 0:
-            await coll.update_many(
-                {"tenant_id": {"$exists": False}},
-                {"$set": {"tenant_id": tenant_id}}
-            )
-            logger.info(f"Migrated {count} docs in '{coll_name}' to tenant '{tenant_id}'")
+    if tenant_id:
+        for coll_name in collections:
+            coll = db[coll_name]
+            count = await coll.count_documents({"tenant_id": {"$exists": False}})
+            if count > 0:
+                await coll.update_many(
+                    {"tenant_id": {"$exists": False}},
+                    {"$set": {"tenant_id": tenant_id}}
+                )
+                logger.info(f"Migrated {count} docs in '{coll_name}' to tenant '{tenant_id}'")
 
     await db.users.create_index("username", unique=True)
     await db.users.create_index("tenant_id")
