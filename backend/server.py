@@ -25,6 +25,7 @@ from routes.super_admin import router as super_admin_router
 from routes.audit import router as audit_router
 from routes.insights import router as insights_router
 from routes.prospects import router as prospects_router
+from routes.seller_panel import router as seller_panel_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -49,6 +50,7 @@ api_router.include_router(customers_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(salesman_router)
 api_router.include_router(super_admin_router)
+api_router.include_router(seller_panel_router)
 api_router.include_router(audit_router)
 api_router.include_router(insights_router)
 api_router.include_router(prospects_router)

@@ -5,7 +5,9 @@ import {
   Users, Shield, ToggleLeft, ToggleRight, Trash2, Key,
   Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
-  UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check
+  UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check,
+  IndianRupee, TrendingUp, CreditCard, Receipt, Heart, Download,
+  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 
@@ -24,10 +26,31 @@ const ALL_FEATURES = [
   { id: 'setup', label: 'Setup', desc: 'Tally connection settings' },
 ];
 
+const PLANS = {
+  starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
+  professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'sync_history', 'setup'] },
+  enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
+};
+
+const formatINR = (n) => `Rs.${(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—';
+
 const SuperAdminDashboard = ({ token }) => {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [loading, setLoading] = useState(true);
+
+  // Data states
   const [stats, setStats] = useState(null);
   const [admins, setAdmins] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [businessData, setBusinessData] = useState(null);
+  const [payments, setPayments] = useState({ payments: [], total_amount: 0, by_mode: {} });
+  const [invoices, setInvoices] = useState({ invoices: [], total_invoiced: 0 });
+  const [healthData, setHealthData] = useState([]);
+  const [prospects, setProspects] = useState([]);
+  const [prospectStats, setProspectStats] = useState({});
+  const [renewals, setRenewals] = useState({ renewal_requests: [], near_expiry: [], expired: [], stats: {} });
+
+  // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
@@ -36,923 +59,1095 @@ const SuperAdminDashboard = ({ token }) => {
   const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState('admins');
-  const [prospects, setProspects] = useState([]);
-  const [prospectStats, setProspectStats] = useState({});
   const [convertModal, setConvertModal] = useState(null);
   const [convertData, setConvertData] = useState({ password: '', plan: 'professional', billing_cycle: 'annual', subscription_months: 12 });
-  const [renewals, setRenewals] = useState({ renewal_requests: [], near_expiry: [], expired: [], stats: {} });
   const [processModal, setProcessModal] = useState(null);
   const [processData, setProcessData] = useState({ action: 'approve', plan: '', subscription_months: 12, notes: '' });
 
-  const PLANS = {
-    starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
-    professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'sync_history', 'setup'] },
-    enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
-  };
+  // Payment modal
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' });
+
+  // Invoice modal
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceForm, setInvoiceForm] = useState({ customer_username: '', amount: '', description: '', period_from: '', period_to: '' });
+
+  // Customer ledger
+  const [ledgerModal, setLedgerModal] = useState(null);
+  const [ledgerData, setLedgerData] = useState(null);
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [statsRes, adminsRes, prospectsRes, renewalsRes] = await Promise.all([
+      const [statsRes, adminsRes, prospectsRes, renewalsRes, bizRes, paymentsRes, invoicesRes, healthRes] = await Promise.all([
         axios.get(`${API}/super-admin/stats`, { headers }),
         axios.get(`${API}/super-admin/admins`, { headers }),
         axios.get(`${API}/super-admin/prospects`, { headers }).catch(() => ({ data: { data: { prospects: [], stats: {} } } })),
-        axios.get(`${API}/super-admin/renewals`, { headers }).catch(() => ({ data: { data: { renewal_requests: [], near_expiry: [], expired: [], stats: {} } } }))
+        axios.get(`${API}/super-admin/renewals`, { headers }).catch(() => ({ data: { data: { renewal_requests: [], near_expiry: [], expired: [], stats: {} } } })),
+        axios.get(`${API}/super-admin/business-dashboard`, { headers }).catch(() => ({ data: { data: null } })),
+        axios.get(`${API}/super-admin/payments`, { headers }).catch(() => ({ data: { data: { payments: [], total_amount: 0 } } })),
+        axios.get(`${API}/super-admin/invoices`, { headers }).catch(() => ({ data: { data: { invoices: [], total_invoiced: 0 } } })),
+        axios.get(`${API}/super-admin/customer-health`, { headers }).catch(() => ({ data: { data: { customers: [] } } })),
       ]);
       setStats(statsRes.data?.data);
       setAdmins(adminsRes.data?.data?.admins || []);
       setProspects(prospectsRes.data?.data?.prospects || []);
       setProspectStats(prospectsRes.data?.data?.stats || {});
       setRenewals(renewalsRes.data?.data || { renewal_requests: [], near_expiry: [], expired: [], stats: {} });
-    } catch (err) {
-      toast.error('Failed to fetch data');
-    } finally {
-      setLoading(false);
-    }
+      setBusinessData(bizRes.data?.data);
+      setPayments(paymentsRes.data?.data || { payments: [], total_amount: 0, by_mode: {} });
+      setInvoices(invoicesRes.data?.data || { invoices: [], total_invoiced: 0 });
+      setHealthData(healthRes.data?.data?.customers || []);
+    } catch { toast.error('Failed to fetch data'); }
+    finally { setLoading(false); }
   }, [token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // --- CRUD functions (kept from original) ---
   const createAdmin = async () => {
-    if (!newAdmin.username || !newAdmin.password) {
-      toast.error('Email and password are required');
-      return;
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(newAdmin.username)) {
-      toast.error('Please enter a valid email address');
-      return;
-    }
+    if (!newAdmin.username || !newAdmin.password) { toast.error('Email and password are required'); return; }
     try {
+      const plan = PLANS[newAdmin.plan];
       const res = await axios.post(`${API}/super-admin/admins`, {
-        ...newAdmin,
-        subscription_months: newAdmin.subscription_months || 12
+        ...newAdmin, features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
       }, { headers });
-      if (res.data?.success) {
-        toast.success(`Admin '${newAdmin.username}' created with ${newAdmin.plan} plan`);
-        setShowCreateModal(false);
-        setNewAdmin({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
-        fetchData();
-      } else {
-        toast.error(res.data?.error || 'Failed to create admin');
-      }
-    } catch (err) {
-      toast.error('Failed to create admin');
-    }
-  };
-
-  const openEditAdmin = (admin) => {
-    setEditAdmin({
-      username: admin.username,
-      name: admin.name || '',
-      plan: admin.plan || 'enterprise',
-      billing_cycle: admin.billing_cycle || 'annual',
-      features: [...(admin.features || [])],
-      subscription_months: admin.subscription_months || 12,
-      subscription_start: admin.subscription_start || admin.created_at || ''
-    });
-    setShowEditModal(admin.username);
-  };
-
-  const saveEditAdmin = async () => {
-    if (!editAdmin) return;
-    try {
-      // Update subscription with plan
-      await axios.put(`${API}/super-admin/admins/${editAdmin.username}/subscription`, {
-        name: editAdmin.name,
-        plan: editAdmin.plan,
-        billing_cycle: editAdmin.billing_cycle,
-        subscription_months: editAdmin.subscription_months
-      }, { headers });
-      toast.success('Admin updated successfully');
-      setShowEditModal(null);
-      setEditAdmin(null);
-      fetchData();
-    } catch (err) {
-      toast.error('Failed to update admin');
-    }
-  };
-
-  const toggleFeature = async (username, currentFeatures, featureId) => {
-    const updated = currentFeatures.includes(featureId)
-      ? currentFeatures.filter(f => f !== featureId)
-      : [...currentFeatures, featureId];
-    try {
-      const res = await axios.put(`${API}/super-admin/admins/${username}/features`, { features: updated }, { headers });
-      if (res.data?.success) {
-        setAdmins(prev => prev.map(a =>
-          a.username === username ? { ...a, features: updated } : a
-        ));
-        toast.success('Feature updated');
-      }
-    } catch (err) {
-      toast.error('Failed to update feature');
-    }
+      if (res.data?.success) { toast.success(res.data.message); setShowCreateModal(false); setNewAdmin({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 }); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to create admin'); }
   };
 
   const toggleActive = async (username) => {
     try {
-      const res = await axios.put(`${API}/super-admin/admins/${username}/toggle-active`, {}, { headers });
-      if (res.data?.success) {
-        toast.success(res.data.message);
-        fetchData(); // Refresh all data including stats
-      }
-    } catch (err) {
-      toast.error('Failed to toggle status');
-    }
+      const res = await axios.put(`${API}/super-admin/admins/${username}/toggle`, {}, { headers });
+      if (res.data?.success) { toast.success(res.data.message); fetchData(); }
+    } catch { toast.error('Failed to toggle status'); }
   };
 
   const deleteAdmin = async (username) => {
-    if (!window.confirm(`DELETE admin '${username}' and ALL their data? This cannot be undone.`)) return;
+    if (!window.confirm(`DELETE admin '${username}' and ALL their data?`)) return;
     try {
       const res = await axios.delete(`${API}/super-admin/admins/${username}`, { headers });
-      if (res.data?.success) {
-        toast.success(res.data.message);
-        fetchData();
-      } else {
-        toast.error(res.data?.error || 'Failed to delete');
-      }
-    } catch (err) {
-      toast.error('Failed to delete admin');
-    }
+      if (res.data?.success) { toast.success(res.data.message); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to delete admin'); }
   };
 
   const handleResetPassword = async () => {
-    if (!resetPassword || resetPassword.length < 4) {
-      toast.error('Password must be at least 4 characters');
-      return;
-    }
+    if (!resetPassword || resetPassword.length < 4) { toast.error('Password must be at least 4 characters'); return; }
     try {
-      const res = await axios.post(
-        `${API}/super-admin/admins/${showResetModal}/reset-password`,
-        { new_password: resetPassword },
-        { headers }
-      );
-      if (res.data?.success) {
-        toast.success(res.data.message);
-        setShowResetModal(null);
-        setResetPassword('');
-      } else {
-        toast.error(res.data?.error || 'Failed to reset');
-      }
-    } catch (err) {
-      toast.error('Failed to reset password');
-    }
+      const res = await axios.post(`${API}/super-admin/admins/${showResetModal}/reset-password`, { new_password: resetPassword }, { headers });
+      if (res.data?.success) { toast.success(res.data.message); setShowResetModal(null); setResetPassword(''); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to reset password'); }
   };
 
-  const toggleAllFeatures = async (username, currentFeatures) => {
-    const allIds = ALL_FEATURES.map(f => f.id);
-    const allActive = allIds.every(id => currentFeatures.includes(id));
-    const updated = allActive ? [] : allIds;
-    try {
-      const res = await axios.put(`${API}/super-admin/admins/${username}/features`, { features: updated }, { headers });
-      if (res.data?.success) {
-        setAdmins(prev => prev.map(a =>
-          a.username === username ? { ...a, features: updated } : a
-        ));
-        toast.success(allActive ? 'All features deactivated' : 'All features activated');
-      }
-    } catch (err) {
-      toast.error('Failed to update features');
-    }
+  const openEditAdmin = (admin) => {
+    setEditAdmin({ username: admin.username, name: admin.name || '', plan: admin.plan || 'enterprise', billing_cycle: admin.billing_cycle || 'annual', subscription_months: admin.subscription_months || 12, features: admin.features || [] });
+    setShowEditModal(admin.username);
   };
 
-  const updateProspectStatus = async (prospectId, status, notes = '') => {
+  const saveEditAdmin = async () => {
     try {
-      const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status, notes }, { headers });
-      if (res.data?.success) {
-        toast.success(`Status updated to "${status}"`);
-        fetchData();
-      }
-    } catch (err) { toast.error('Failed to update status'); }
+      const plan = PLANS[editAdmin.plan];
+      const res = await axios.put(`${API}/super-admin/admins/${editAdmin.username}/edit`, {
+        name: editAdmin.name, plan: editAdmin.plan, billing_cycle: editAdmin.billing_cycle, subscription_months: editAdmin.subscription_months,
+        features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+      }, { headers });
+      if (res.data?.success) { toast.success(res.data.message); setShowEditModal(null); setEditAdmin(null); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to save changes'); }
+  };
+
+  const updateProspectStatus = async (prospectId, status) => {
+    try {
+      const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status }, { headers });
+      if (res.data?.success) { toast.success(`Status updated`); fetchData(); }
+    } catch { toast.error('Failed to update status'); }
   };
 
   const convertProspect = async () => {
-    if (!convertModal) return;
-    if (!convertData.password || convertData.password.length < 6) {
-      toast.error('Password must be at least 6 characters');
-      return;
+    if (!convertData.password || convertData.password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    try {
+      const plan = PLANS[convertData.plan];
+      const res = await axios.post(`${API}/super-admin/prospects/${convertModal}/convert`, {
+        ...convertData, features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+      }, { headers });
+      if (res.data?.success) { toast.success(res.data.message); setConvertModal(null); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to convert'); }
+  };
+
+  // --- NEW: Payment & Invoice functions ---
+  const recordPayment = async () => {
+    if (!paymentForm.customer_username || !paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+      toast.error('Customer and valid amount required'); return;
     }
     try {
-      const res = await axios.post(`${API}/super-admin/prospects/${convertModal}/convert`, {
-        password: convertData.password,
-        plan: convertData.plan,
-        billing_cycle: convertData.billing_cycle,
-        subscription_months: convertData.subscription_months
-      }, { headers });
-      if (res.data?.success) {
-        toast.success(`Converted to admin: ${res.data.data.username}`);
-        setConvertModal(null);
-        setConvertData({ password: '', plan: 'professional', billing_cycle: 'annual', subscription_months: 12 });
-        fetchData();
-      } else {
-        toast.error(res.data?.error);
-      }
-    } catch (err) { toast.error(err.response?.data?.error || 'Conversion failed'); }
+      const res = await axios.post(`${API}/super-admin/payments`, { ...paymentForm, amount: parseFloat(paymentForm.amount) }, { headers });
+      if (res.data?.success) { toast.success(res.data.message); setShowPaymentModal(false); setPaymentForm({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' }); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to record payment'); }
   };
 
-  const statusColors = {
-    new: 'bg-blue-50 text-blue-700',
-    contacted: 'bg-amber-50 text-amber-700',
-    demo_given: 'bg-purple-50 text-purple-700',
-    requirements_submitted: 'bg-indigo-50 text-indigo-700',
-    negotiating: 'bg-cyan-50 text-cyan-700',
-    converted: 'bg-green-50 text-green-700',
-    lost: 'bg-red-50 text-red-700'
+  const generateInvoice = async () => {
+    if (!invoiceForm.customer_username || !invoiceForm.amount || parseFloat(invoiceForm.amount) <= 0) {
+      toast.error('Customer and valid amount required'); return;
+    }
+    try {
+      const res = await axios.post(`${API}/super-admin/invoices/generate`, { ...invoiceForm, amount: parseFloat(invoiceForm.amount) }, { headers });
+      if (res.data?.success) { toast.success(res.data.message); setShowInvoiceModal(false); setInvoiceForm({ customer_username: '', amount: '', description: '', period_from: '', period_to: '' }); fetchData(); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to generate invoice'); }
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>;
-  }
+  const downloadInvoicePDF = async (invoiceId) => {
+    try {
+      const res = await axios.get(`${API}/super-admin/invoices/${invoiceId}/pdf`, { headers, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Invoice_${invoiceId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch { toast.error('Failed to download PDF'); }
+  };
+
+  const markInvoiceStatus = async (invoiceId, status) => {
+    try {
+      await axios.put(`${API}/super-admin/invoices/${invoiceId}/status`, { status }, { headers });
+      toast.success(`Invoice marked as ${status}`);
+      fetchData();
+    } catch { toast.error('Failed to update'); }
+  };
+
+  const openLedger = async (username) => {
+    try {
+      const res = await axios.get(`${API}/super-admin/customer-ledger/${username}`, { headers });
+      if (res.data?.success) { setLedgerData(res.data.data); setLedgerModal(username); }
+    } catch { toast.error('Failed to load ledger'); }
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>;
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'subscriptions', label: 'Subscriptions', icon: CreditCard },
+    { id: 'payments', label: 'Payments', icon: Wallet },
+    { id: 'invoices', label: 'Invoices', icon: Receipt },
+    { id: 'prospects', label: 'Prospects', icon: UserPlus },
+    { id: 'health', label: 'Customer Health', icon: Heart },
+    { id: 'admins', label: 'Admin Mgmt', icon: Shield },
+    { id: 'renewals', label: 'Renewals', icon: Calendar },
+    { id: 'activity', label: 'Activity', icon: Activity },
+  ];
 
   return (
-    <div className="max-w-7xl mx-auto" data-testid="super-admin-dashboard">
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-blue-50"><Users size={20} className="text-blue-600" /></div>
-            <div>
-              <div className="text-2xl font-bold text-slate-900">{stats?.total_admins || 0}</div>
-              <div className="text-xs text-slate-500">Total Admins</div>
-            </div>
-          </div>
+    <div className="max-w-[1400px] mx-auto p-4 sm:p-6" data-testid="super-admin-dashboard">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">FLOWRA Command Center</h1>
+          <p className="text-sm text-slate-500">Business operations & subscription management</p>
         </div>
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-green-50"><Activity size={20} className="text-green-600" /></div>
-            <div>
-              <div className="text-2xl font-bold text-green-600">{stats?.active_admins || 0}</div>
-              <div className="text-xs text-slate-500">Active</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-red-50"><Shield size={20} className="text-red-600" /></div>
-            <div>
-              <div className="text-2xl font-bold text-red-600">{stats?.inactive_admins || 0}</div>
-              <div className="text-xs text-slate-500">Inactive</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-xl p-5">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-purple-50"><Users size={20} className="text-purple-600" /></div>
-            <div>
-              <div className="text-2xl font-bold text-purple-600">{stats?.total_employees || 0}</div>
-              <div className="text-xs text-slate-500">Total Employees</div>
-            </div>
-          </div>
-        </div>
+        <button onClick={fetchData} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5" data-testid="refresh-all">
+          <RefreshCw size={14} /> Refresh
+        </button>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex items-center gap-1 mb-6 border-b border-slate-200">
-        <button
-          onClick={() => setActiveTab('admins')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'admins' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          data-testid="tab-admins"
-        >
-          <span className="flex items-center gap-1.5"><Users size={14} /> Admin Management</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('activity')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'activity' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          data-testid="tab-activity"
-        >
-          <span className="flex items-center gap-1.5"><Activity size={14} /> Activity Log</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('enquiries')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'enquiries' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          data-testid="tab-enquiries"
-        >
-          <span className="flex items-center gap-1.5"><UserPlus size={14} /> Enquiries {prospectStats.new > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{prospectStats.new}</span>}</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('renewals')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === 'renewals' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          data-testid="tab-renewals"
-        >
-          <span className="flex items-center gap-1.5"><RefreshCw size={14} /> Renewals {(renewals.stats?.pending_renewals > 0 || renewals.stats?.expired_count > 0) && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{(renewals.stats?.pending_renewals || 0) + (renewals.stats?.expired_count || 0)}</span>}</span>
-        </button>
+      <div className="flex gap-1 overflow-x-auto mb-6 bg-slate-100 rounded-xl p-1" data-testid="seller-tabs">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-white text-[#2563EB] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              data-testid={`tab-${tab.id}`}>
+              <Icon size={14} /> {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      {activeTab === 'activity' && (
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <ActivityLog token={token} role="super_admin" />
+      {/* ===== OVERVIEW TAB ===== */}
+      {activeTab === 'overview' && businessData && (
+        <div data-testid="overview-tab">
+          {/* Revenue Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-5 text-white">
+              <div className="flex items-center gap-2 text-blue-200 text-xs mb-1"><IndianRupee size={14} /> Monthly Recurring</div>
+              <div className="text-2xl font-bold" data-testid="mrr-value">{formatINR(businessData.mrr)}</div>
+              <div className="text-blue-200 text-xs mt-1">MRR</div>
+            </div>
+            <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-5 text-white">
+              <div className="flex items-center gap-2 text-emerald-200 text-xs mb-1"><TrendingUp size={14} /> Annual Revenue</div>
+              <div className="text-2xl font-bold" data-testid="arr-value">{formatINR(businessData.arr)}</div>
+              <div className="text-emerald-200 text-xs mt-1">ARR</div>
+            </div>
+            <div className="bg-gradient-to-br from-violet-600 to-violet-700 rounded-xl p-5 text-white">
+              <div className="flex items-center gap-2 text-violet-200 text-xs mb-1"><CircleDollarSign size={14} /> Collections</div>
+              <div className="text-2xl font-bold" data-testid="collected-value">{formatINR(businessData.total_received)}</div>
+              <div className="text-violet-200 text-xs mt-1">{businessData.collection_rate}% collected</div>
+            </div>
+            <div className="bg-gradient-to-br from-rose-600 to-rose-700 rounded-xl p-5 text-white">
+              <div className="flex items-center gap-2 text-rose-200 text-xs mb-1"><AlertTriangle size={14} /> Outstanding</div>
+              <div className="text-2xl font-bold" data-testid="outstanding-value">{formatINR(businessData.outstanding)}</div>
+              <div className="text-rose-200 text-xs mt-1">Balance due</div>
+            </div>
+          </div>
+
+          {/* Customer & Plan metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Customers</div>
+              <div className="text-xl font-bold text-slate-900" data-testid="total-customers">{businessData.total_customers}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Active</div>
+              <div className="text-xl font-bold text-emerald-600">{businessData.active_customers}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">ARPU</div>
+              <div className="text-xl font-bold text-blue-600">{formatINR(businessData.arpu)}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Contract Value</div>
+              <div className="text-xl font-bold text-slate-900">{formatINR(businessData.total_contract_value)}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Payments</div>
+              <div className="text-xl font-bold text-slate-900">{businessData.total_payments}</div>
+            </div>
+          </div>
+
+          {/* Plan Distribution */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Plan Distribution</h3>
+              {Object.entries(businessData.plan_distribution || {}).map(([plan, count]) => {
+                const total = businessData.active_customers || 1;
+                const pct = Math.round((count / total) * 100);
+                const colors = { starter: 'bg-slate-400', professional: 'bg-blue-500', enterprise: 'bg-purple-500' };
+                return (
+                  <div key={plan} className="mb-3">
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="capitalize font-medium">{plan}</span>
+                      <span className="text-slate-500">{count} ({pct}%)</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2">
+                      <div className={`${colors[plan] || 'bg-blue-500'} h-2 rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Recent Payments</h3>
+              {businessData.recent_payments?.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-4">No payments recorded yet</p>
+              ) : (
+                <div className="space-y-3">
+                  {businessData.recent_payments?.map((p, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
+                      <div>
+                        <div className="text-sm font-medium text-slate-800">{p.customer_name || p.customer_username}</div>
+                        <div className="text-xs text-slate-400">{formatDate(p.payment_date)} · {p.payment_mode?.replace('_', ' ')}</div>
+                      </div>
+                      <div className="text-sm font-bold text-emerald-600">{formatINR(p.amount)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex flex-wrap gap-3">
+            <button onClick={() => setShowPaymentModal(true)} className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-2" data-testid="quick-record-payment">
+              <IndianRupee size={16} /> Record Payment
+            </button>
+            <button onClick={() => setShowInvoiceModal(true)} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2" data-testid="quick-generate-invoice">
+              <Receipt size={16} /> Generate Invoice
+            </button>
+            <button onClick={() => setShowCreateModal(true)} className="px-4 py-2.5 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 flex items-center gap-2" data-testid="quick-new-admin">
+              <Plus size={16} /> New Customer
+            </button>
+          </div>
         </div>
       )}
 
-      {activeTab === 'enquiries' && (
-        <div data-testid="enquiries-section">
-          {/* Enquiry Stats */}
+      {/* ===== SUBSCRIPTIONS TAB ===== */}
+      {activeTab === 'subscriptions' && (
+        <div data-testid="subscriptions-tab">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Subscription Management</h2>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="subscriptions-table">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <th className="py-3 px-4 text-left">Customer</th>
+                    <th className="py-3 px-4 text-left">Plan</th>
+                    <th className="py-3 px-4 text-left">Billing</th>
+                    <th className="py-3 px-4 text-left">Started</th>
+                    <th className="py-3 px-4 text-left">Expires</th>
+                    <th className="py-3 px-4 text-right">Value</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admins.map(admin => {
+                    const plan = admin.plan || 'enterprise';
+                    const cycle = admin.billing_cycle || 'annual';
+                    const months = admin.subscription_months || 12;
+                    const pricing = PLANS[plan] || PLANS.enterprise;
+                    const value = cycle === 'annual' ? pricing.annual * (months / 12) : pricing.monthly * months;
+                    const start = admin.subscription_start || admin.created_at;
+                    let expires = '—'; let daysLeft = null; let isExpired = false;
+                    if (start) {
+                      const end = new Date(start); end.setMonth(end.getMonth() + months);
+                      expires = formatDate(end.toISOString());
+                      daysLeft = Math.ceil((end - new Date()) / 86400000);
+                      isExpired = daysLeft < 0;
+                    }
+                    return (
+                      <tr key={admin.username} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`sub-row-${admin.username}`}>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-slate-800">{admin.name || admin.username}</div>
+                          <div className="text-xs text-slate-400">{admin.username}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {plan}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 capitalize">{cycle} · {months}mo</td>
+                        <td className="py-3 px-4 text-slate-600">{formatDate(start)}</td>
+                        <td className="py-3 px-4 text-slate-600">{expires}</td>
+                        <td className="py-3 px-4 text-right font-medium text-slate-800">{formatINR(value)}</td>
+                        <td className="py-3 px-4 text-center">
+                          {isExpired ? (
+                            <span className="text-[10px] bg-red-50 text-red-700 px-2 py-0.5 rounded-full font-bold">EXPIRED</span>
+                          ) : daysLeft !== null && daysLeft <= 30 ? (
+                            <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold">{daysLeft}d LEFT</span>
+                          ) : admin.active ? (
+                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                          ) : (
+                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">INACTIVE</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => openLedger(admin.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View Ledger" data-testid={`ledger-${admin.username}`}>
+                              <FileText size={14} />
+                            </button>
+                            <button onClick={() => openEditAdmin(admin)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit" data-testid={`edit-sub-${admin.username}`}>
+                              <Pencil size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PAYMENTS TAB ===== */}
+      {activeTab === 'payments' && (
+        <div data-testid="payments-tab">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Payment Ledger</h2>
+            <button onClick={() => setShowPaymentModal(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-2" data-testid="record-payment-btn">
+              <Plus size={14} /> Record Payment
+            </button>
+          </div>
+          {/* Summary */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Collected</div>
+              <div className="text-xl font-bold text-emerald-600" data-testid="total-collected">{formatINR(payments.total_amount)}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Transactions</div>
+              <div className="text-xl font-bold text-slate-900">{payments.payments?.length || 0}</div>
+            </div>
+            {Object.entries(payments.by_mode || {}).slice(0, 2).map(([mode, amt]) => (
+              <div key={mode} className="bg-white border border-slate-200 rounded-xl p-4">
+                <div className="text-xs text-slate-500 mb-1 capitalize">{mode.replace('_', ' ')}</div>
+                <div className="text-xl font-bold text-slate-900">{formatINR(amt)}</div>
+              </div>
+            ))}
+          </div>
+          {/* Payment list */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="payments-table">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <th className="py-3 px-4 text-left">Customer</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4 text-left">Mode</th>
+                    <th className="py-3 px-4 text-left">Reference</th>
+                    <th className="py-3 px-4 text-left">Period</th>
+                    <th className="py-3 px-4 text-left">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.payments?.map((p, i) => (
+                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`payment-row-${i}`}>
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-slate-800">{p.customer_name || p.customer_username}</div>
+                        <div className="text-xs text-slate-400">{p.customer_username}</div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-bold text-emerald-600">{formatINR(p.amount)}</td>
+                      <td className="py-3 px-4 text-slate-600 capitalize">{(p.payment_mode || '').replace('_', ' ')}</td>
+                      <td className="py-3 px-4 text-slate-600 font-mono text-xs">{p.reference_no || '—'}</td>
+                      <td className="py-3 px-4 text-slate-600">{p.period_description || '—'}</td>
+                      <td className="py-3 px-4 text-slate-600">{formatDate(p.payment_date)}</td>
+                    </tr>
+                  ))}
+                  {(!payments.payments || payments.payments.length === 0) && (
+                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">No payments recorded yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== INVOICES TAB ===== */}
+      {activeTab === 'invoices' && (
+        <div data-testid="invoices-tab">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Invoices</h2>
+            <button onClick={() => setShowInvoiceModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2" data-testid="generate-invoice-btn">
+              <Plus size={14} /> Generate Invoice
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Invoiced</div>
+              <div className="text-xl font-bold text-blue-600">{formatINR(invoices.total_invoiced)}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Invoices</div>
+              <div className="text-xl font-bold text-slate-900">{invoices.total}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Paid</div>
+              <div className="text-xl font-bold text-emerald-600">{invoices.paid_count}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500 mb-1">Unpaid</div>
+              <div className="text-xl font-bold text-red-600">{invoices.unpaid_count}</div>
+            </div>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="invoices-table">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <th className="py-3 px-4 text-left">Invoice #</th>
+                    <th className="py-3 px-4 text-left">Customer</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4 text-left">Date</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.invoices?.map((inv, i) => (
+                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`invoice-row-${i}`}>
+                      <td className="py-3 px-4 font-mono text-sm font-medium text-slate-800">{inv.invoice_number}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-slate-800">{inv.customer_name}</div>
+                        <div className="text-xs text-slate-400">{inv.description?.substring(0, 40)}</div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-bold text-blue-600">{formatINR(inv.amount)}</td>
+                      <td className="py-3 px-4 text-slate-600">{formatDate(inv.invoice_date)}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : inv.status === 'cancelled' ? 'bg-slate-100 text-slate-500' : 'bg-red-50 text-red-700'}`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => downloadInvoicePDF(inv.invoice_id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download PDF" data-testid={`download-invoice-${i}`}>
+                            <Download size={14} />
+                          </button>
+                          {inv.status === 'unpaid' && (
+                            <button onClick={() => markInvoiceStatus(inv.invoice_id, 'paid')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Mark Paid" data-testid={`mark-paid-${i}`}>
+                              <BadgeCheck size={14} />
+                            </button>
+                          )}
+                          {inv.status === 'paid' && (
+                            <button onClick={() => markInvoiceStatus(inv.invoice_id, 'unpaid')} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Mark Unpaid">
+                              <XCircle size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {(!invoices.invoices || invoices.invoices.length === 0) && (
+                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">No invoices generated yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PROSPECTS TAB ===== */}
+      {activeTab === 'prospects' && (
+        <div data-testid="prospects-tab">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
             {[
               { label: 'Total', value: prospectStats.total || 0, color: 'text-slate-700' },
               { label: 'New', value: prospectStats.new || 0, color: 'text-blue-600' },
               { label: 'Contacted', value: prospectStats.contacted || 0, color: 'text-amber-600' },
-              { label: 'Demo Given', value: prospectStats.demo_given || 0, color: 'text-purple-600' },
-              { label: 'Converted', value: prospectStats.converted || 0, color: 'text-green-600' },
+              { label: 'Converted', value: prospectStats.converted || 0, color: 'text-emerald-600' },
+              { label: 'Lost', value: prospectStats.lost || 0, color: 'text-red-600' },
             ].map(s => (
               <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
-                <div className={`text-xl font-bold ${s.color}`}>{s.value}</div>
-                <div className="text-xs text-slate-500">{s.label}</div>
+                <p className="text-xs text-slate-500">{s.label}</p>
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
               </div>
             ))}
           </div>
-
-          {/* Enquiry List */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">Customer Enquiries</h2>
-            <button onClick={fetchData} className="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5">
-              <RefreshCw size={14} /> Refresh
-            </button>
-          </div>
-
-          {prospects.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400">
-              <UserPlus size={32} className="mx-auto mb-3 opacity-50" />
-              <p className="font-medium">No enquiries yet</p>
-              <p className="text-sm">New prospect signups will appear here</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {prospects.map(p => (
-                <div key={p.prospect_id} className="bg-white border border-slate-200 rounded-xl p-5" data-testid={`prospect-${p.prospect_id}`}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Building2 size={15} className="text-slate-400" />
-                        <span className="font-semibold text-slate-900">{p.company_name}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColors[p.status] || 'bg-slate-100 text-slate-600'}`}>
-                          {(p.status || 'new').replace(/_/g, ' ').toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-slate-500">
-                        <span className="flex items-center gap-1"><Mail size={11} /> {p.email}</span>
-                        <span className="flex items-center gap-1"><Phone size={11} /> {p.phone}</span>
-                        <span>{p.prospect_id}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <select value={p.status}
-                        onChange={e => updateProspectStatus(p.prospect_id, e.target.value)}
-                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        data-testid={`prospect-status-${p.prospect_id}`}>
-                        <option value="new">New</option>
-                        <option value="contacted">Contacted</option>
-                        <option value="demo_given">Demo Given</option>
-                        <option value="negotiating">Negotiating</option>
-                        <option value="converted">Converted</option>
-                        <option value="lost">Lost</option>
-                      </select>
-                      {p.status !== 'converted' && p.status !== 'lost' && (
-                        <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 }); }}
-                          className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
-                          data-testid={`convert-${p.prospect_id}`}>
-                          <ArrowRightCircle size={12} /> Convert
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                    <div>
-                      <span className="text-slate-400">Contact:</span>
-                      <span className="ml-1 text-slate-700">{p.contact_person}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Plan:</span>
-                      <span className="ml-1 text-slate-700 capitalize">{p.selected_plan || 'Not selected'}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Demo:</span>
-                      <span className={`ml-1 ${p.demo_completed ? 'text-green-600' : p.demo_requested ? 'text-amber-600' : 'text-slate-400'}`}>
-                        {p.demo_completed ? 'Completed' : p.demo_requested ? 'Requested' : 'Not requested'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Date:</span>
-                      <span className="ml-1 text-slate-700">{p.created_at ? new Date(p.created_at).toLocaleDateString('en-IN') : '—'}</span>
-                    </div>
-                  </div>
-                  {(p.requirements && p.requirements.length > 0) && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <p className="text-xs text-slate-400 mb-1">Required Features:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {p.requirements.map(r => (
-                          <span key={r} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">{r}</span>
-                        ))}
-                      </div>
-                      {p.requirement_notes && <p className="text-xs text-slate-500 mt-1 italic">"{p.requirement_notes}"</p>}
-                    </div>
-                  )}
-                  {p.message && (
-                    <p className="text-xs text-slate-500 mt-2 italic border-l-2 border-slate-200 pl-2">"{p.message}"</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Convert Modal */}
-          {convertModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" data-testid="convert-modal">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-lg font-semibold text-slate-900">Convert Prospect to Admin</h3>
-                  <button onClick={() => setConvertModal(null)}><X size={20} className="text-slate-400" /></button>
-                </div>
-                <div className="space-y-4">
+          <div className="space-y-3">
+            {prospects.map(p => (
+              <div key={p.prospect_id} className="bg-white border border-slate-200 rounded-xl p-4" data-testid={`prospect-${p.prospect_id}`}>
+                <div className="flex items-center justify-between mb-2">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Password for new admin *</label>
-                    <input type="text" value={convertData.password}
-                      onChange={e => setConvertData(prev => ({ ...prev, password: e.target.value }))}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Min 6 characters" data-testid="convert-password" />
+                    <h4 className="font-medium text-slate-900">{p.company_name || p.email}</h4>
+                    <p className="text-xs text-slate-500">{p.email} · {p.contact_person}</p>
                   </div>
-
-                  {/* Plan Selection */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan *</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {Object.entries(PLANS).map(([id, plan]) => (
-                        <button key={id} onClick={() => setConvertData(prev => ({ ...prev, plan: id }))}
-                          className={`p-3 border rounded-lg text-left transition-all ${convertData.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
-                          data-testid={`plan-select-${id}`}>
-                          <p className="text-sm font-bold text-slate-900">{plan.name}</p>
-                          <p className="text-xs text-blue-600 font-medium mt-0.5">
-                            {convertData.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
-                          </p>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {plan.maxCompanies} co. | {plan.maxEmployees} emp
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Billing Cycle */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
-                    <div className="flex gap-2">
-                      {['monthly', 'annual'].map(cycle => (
-                        <button key={cycle} onClick={() => setConvertData(prev => ({ ...prev, billing_cycle: cycle }))}
-                          className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${convertData.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
-                          {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Duration</label>
-                    <select value={convertData.subscription_months}
-                      onChange={e => setConvertData(prev => ({ ...prev, subscription_months: parseInt(e.target.value) }))}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      data-testid="convert-subscription">
-                      <option value={1}>1 month</option>
-                      <option value={3}>3 months</option>
-                      <option value={6}>6 months</option>
-                      <option value={12}>12 months</option>
-                      <option value={24}>24 months</option>
+                  <div className="flex items-center gap-2">
+                    <select value={p.status} onChange={e => updateProspectStatus(p.prospect_id, e.target.value)}
+                      className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" data-testid={`prospect-status-${p.prospect_id}`}>
+                      <option value="new">New</option>
+                      <option value="contacted">Contacted</option>
+                      <option value="demo_given">Demo Given</option>
+                      <option value="negotiating">Negotiating</option>
+                      <option value="converted">Converted</option>
+                      <option value="lost">Lost</option>
                     </select>
+                    {p.status !== 'converted' && p.status !== 'lost' && (
+                      <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 }); }}
+                        className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
+                        data-testid={`convert-${p.prospect_id}`}>
+                        <ArrowRightCircle size={12} /> Convert
+                      </button>
+                    )}
                   </div>
-
-                  {/* Plan features preview */}
-                  <div className="bg-slate-50 rounded-lg p-3">
-                    <p className="text-xs font-medium text-slate-500 mb-2">Included Features ({PLANS[convertData.plan]?.features.length || 0}):</p>
-                    <div className="flex flex-wrap gap-1">
-                      {(PLANS[convertData.plan]?.features || []).map(f => (
-                        <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
-                      ))}
-                    </div>
-                    <div className="flex gap-4 mt-2 text-[10px] text-slate-500">
-                      <span>Max Companies: <strong>{PLANS[convertData.plan]?.maxCompanies}</strong></span>
-                      <span>Max Employees: <strong>{PLANS[convertData.plan]?.maxEmployees}</strong></span>
-                    </div>
-                  </div>
-
-                  <button onClick={convertProspect} data-testid="convert-confirm-btn"
-                    className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700 flex items-center justify-center gap-2">
-                    <ArrowRightCircle size={16} /> Convert to Admin — {PLANS[convertData.plan]?.name} Plan
-                  </button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div><span className="text-slate-400">Plan:</span> <span className="ml-1 capitalize">{p.selected_plan || '—'}</span></div>
+                  <div><span className="text-slate-400">Demo:</span> <span className={`ml-1 ${p.demo_completed ? 'text-green-600' : p.demo_requested ? 'text-amber-600' : 'text-slate-400'}`}>{p.demo_completed ? 'Done' : p.demo_requested ? 'Requested' : '—'}</span></div>
+                  <div><span className="text-slate-400">Phone:</span> <span className="ml-1">{p.phone || '—'}</span></div>
+                  <div><span className="text-slate-400">Date:</span> <span className="ml-1">{formatDate(p.created_at)}</span></div>
                 </div>
               </div>
-            </div>
-          )}
+            ))}
+            {prospects.length === 0 && <p className="text-center text-slate-400 py-8">No prospects yet</p>}
+          </div>
         </div>
       )}
 
+      {/* ===== CUSTOMER HEALTH TAB ===== */}
+      {activeTab === 'health' && (
+        <div data-testid="health-tab">
+          <h2 className="text-lg font-semibold text-slate-900 mb-4">Customer Health Monitor</h2>
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="health-table">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <th className="py-3 px-4 text-left">Customer</th>
+                    <th className="py-3 px-4 text-center">Health</th>
+                    <th className="py-3 px-4 text-left">Last Sync</th>
+                    <th className="py-3 px-4 text-right">Items</th>
+                    <th className="py-3 px-4 text-right">Sales</th>
+                    <th className="py-3 px-4 text-right">Customers</th>
+                    <th className="py-3 px-4 text-right">Paid</th>
+                    <th className="py-3 px-4 text-left">Sub Expires</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {healthData.map((h, i) => {
+                    const statusColors = { active: 'bg-emerald-50 text-emerald-700', moderate: 'bg-amber-50 text-amber-700', inactive: 'bg-red-50 text-red-700', never_synced: 'bg-slate-100 text-slate-500' };
+                    return (
+                      <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`health-row-${i}`}>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-slate-800">{h.name || h.username}</div>
+                          <div className="text-xs text-slate-400">{h.plan} · {h.employee_count} emp · {h.companies?.join(', ') || '—'}</div>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusColors[h.health_status] || 'bg-slate-100 text-slate-500'}`}>
+                            {h.health_status?.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 text-xs">
+                          {h.last_sync ? (
+                            <div>
+                              <div>{formatDate(h.last_sync)}</div>
+                              <div className="text-slate-400">{h.days_since_sync === 0 ? 'Today' : `${h.days_since_sync}d ago`}</div>
+                            </div>
+                          ) : 'Never'}
+                        </td>
+                        <td className="py-3 px-4 text-right text-slate-700">{h.inventory_items?.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-slate-700">{h.sales_vouchers?.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-slate-700">{h.customers}</td>
+                        <td className="py-3 px-4 text-right font-medium text-emerald-600">{formatINR(h.total_paid)}</td>
+                        <td className="py-3 px-4 text-slate-600 text-xs">{formatDate(h.subscription_expires)}<br/><span className={h.days_left < 0 ? 'text-red-600 font-bold' : h.days_left <= 30 ? 'text-amber-600' : 'text-slate-400'}>{h.days_left < 0 ? `Exp ${Math.abs(h.days_left)}d` : `${h.days_left}d left`}</span></td>
+                        <td className="py-3 px-4 text-center">
+                          <button onClick={() => openLedger(h.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Ledger">
+                            <FileText size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== ADMINS TAB ===== */}
+      {activeTab === 'admins' && (
+        <div data-testid="admins-tab">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-semibold text-slate-900">Admin Management</h2>
+            <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5" data-testid="create-admin-btn">
+              <Plus size={14} /> New Admin
+            </button>
+          </div>
+          <div className="space-y-4">
+            {admins.map(admin => {
+              const subMonths = admin.subscription_months || 12;
+              const subStart = admin.subscription_start || admin.created_at || '';
+              let subEndDate = '—'; let subActive = false;
+              if (subStart) { const s = new Date(subStart); const e = new Date(s); e.setMonth(e.getMonth() + subMonths); subEndDate = formatDate(e.toISOString()); subActive = e > new Date(); }
+              return (
+                <div key={admin.username} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`admin-card-${admin.username}`}>
+                  <div className="p-5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)}>
+                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
+                          <div className="text-xs text-slate-500">@{admin.username} · {admin.employee_count || 0}/{admin.max_employees || 20} employees</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${admin.plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : admin.plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{admin.plan || 'enterprise'}</span>
+                        <button onClick={e => { e.stopPropagation(); toggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`} data-testid={`toggle-active-${admin.username}`}>
+                          {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} {admin.active ? 'Active' : 'Inactive'}
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); openEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`edit-admin-${admin.username}`}><Pencil size={14} /></button>
+                        <button onClick={e => { e.stopPropagation(); setShowResetModal(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`reset-pwd-${admin.username}`}><Key size={14} /></button>
+                        <button onClick={e => { e.stopPropagation(); deleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" data-testid={`delete-admin-${admin.username}`}><Trash2 size={14} /></button>
+                        <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
+                          {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {expandedAdmin === admin.username && (
+                    <div className="border-t border-slate-100 p-5 bg-slate-50 space-y-4">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div><span className="text-slate-400 text-xs">Companies:</span><div className="font-medium">{admin.companies?.join(', ') || 'None'}</div></div>
+                        <div><span className="text-slate-400 text-xs">Subscription:</span><div className="font-medium">{formatDate(subStart)} → {subEndDate}</div></div>
+                        <div><span className="text-slate-400 text-xs">Billing:</span><div className="font-medium capitalize">{admin.billing_cycle || 'annual'} · {subMonths}mo</div></div>
+                        <div><span className="text-slate-400 text-xs">Features:</span><div className="font-medium">{admin.features?.length || 0}/{ALL_FEATURES.length}</div></div>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {ALL_FEATURES.map(f => (
+                          <span key={f.id} className={`text-[10px] px-2 py-0.5 rounded ${admin.features?.includes(f.id) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{f.label}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ===== RENEWALS TAB ===== */}
       {activeTab === 'renewals' && (
-        <div data-testid="renewals-section">
-          {/* Renewal Stats */}
+        <div data-testid="renewals-tab">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             {[
-              { label: 'Pending Requests', value: renewals.stats?.pending_renewals || 0, color: 'text-amber-600' },
-              { label: 'Near Expiry (30d)', value: renewals.stats?.near_expiry_count || 0, color: 'text-orange-600' },
+              { label: 'Pending', value: renewals.stats?.pending_renewals || 0, color: 'text-amber-600' },
+              { label: 'Near Expiry', value: renewals.stats?.near_expiry_count || 0, color: 'text-orange-600' },
               { label: 'Expired', value: renewals.stats?.expired_count || 0, color: 'text-red-600' },
               { label: 'Total Requests', value: renewals.stats?.total_requests || 0, color: 'text-slate-700' },
             ].map(s => (
               <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
                 <p className="text-xs text-slate-500">{s.label}</p>
-                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
               </div>
             ))}
           </div>
-
-          {/* Expired Users */}
           {renewals.expired?.length > 0 && (
             <div className="mb-6">
-              <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} /> Expired Subscriptions</h3>
-              <div className="space-y-2">
-                {renewals.expired.map(u => (
-                  <div key={u.username} className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-red-900">{u.name || u.username}</p>
-                      <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()} Plan</p>
-                      <p className="text-xs text-red-600 mt-1">Expired {Math.abs(u.days_left)} days ago | Was: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
-                    </div>
-                    <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700" data-testid={`renew-${u.username}`}>
-                      Renew
-                    </button>
+              <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} /> Expired</h3>
+              {renewals.expired.map(u => (
+                <div key={u.username} className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between mb-2">
+                  <div>
+                    <p className="font-medium text-red-900">{u.name || u.username}</p>
+                    <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()}</p>
+                    <p className="text-xs text-red-600 mt-1">Expired {Math.abs(u.days_left)} days ago</p>
                   </div>
-                ))}
-              </div>
+                  <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700" data-testid={`renew-${u.username}`}>Renew</button>
+                </div>
+              ))}
             </div>
           )}
-
-          {/* Near Expiry Users */}
           {renewals.near_expiry?.length > 0 && (
             <div className="mb-6">
-              <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-1.5"><Clock size={14} /> Expiring Within 30 Days</h3>
-              <div className="space-y-2">
-                {renewals.near_expiry.map(u => (
-                  <div key={u.username} className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-amber-900">{u.name || u.username}</p>
-                      <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()} Plan</p>
-                      <p className="text-xs text-amber-600 mt-1">{u.days_left} days left | Expires: {new Date(u.subscription_expires).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}</p>
-                    </div>
-                    <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
-                      className="px-4 py-2 bg-[#2563EB] text-white rounded-lg text-xs font-medium hover:bg-[#1D4ED8]" data-testid={`extend-${u.username}`}>
-                      Extend
-                    </button>
+              <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-1.5"><Clock size={14} /> Expiring Soon</h3>
+              {renewals.near_expiry.map(u => (
+                <div key={u.username} className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between mb-2">
+                  <div>
+                    <p className="font-medium text-amber-900">{u.name || u.username}</p>
+                    <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()}</p>
+                    <p className="text-xs text-amber-600 mt-1">{u.days_left} days left</p>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Renewal Requests */}
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-1.5"><FileText size={14} /> Renewal Requests</h3>
-            {(renewals.renewal_requests || []).length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-400 text-sm">No renewal requests yet</div>
-            ) : (
-              <div className="space-y-2">
-                {renewals.renewal_requests.map((r, i) => (
-                  <div key={i} className="bg-white border border-slate-200 rounded-xl p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-slate-900">{r.name || r.username}</p>
-                        <p className="text-xs text-slate-500">{r.username} | Current: {r.current_plan?.toUpperCase()} | Interested: {r.plan_interest?.toUpperCase()}</p>
-                        {r.message && <p className="text-xs text-slate-600 mt-1 italic">"{r.message}"</p>}
-                        <p className="text-xs text-slate-400 mt-1">{new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {r.status === 'pending' ? (
-                          <>
-                            <button onClick={() => { setProcessModal(r.username); setProcessData({ action: 'approve', plan: r.plan_interest || r.current_plan, subscription_months: 12, notes: '' }); }}
-                              className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700">Approve</button>
-                            <button onClick={async () => {
-                              try {
-                                await axios.put(`${API}/super-admin/renewals/${r.username}/process`, { action: 'reject', notes: 'Rejected by admin' }, { headers });
-                                toast.success('Request rejected');
-                                fetchData();
-                              } catch { toast.error('Failed to reject'); }
-                            }}
-                              className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-medium hover:bg-red-100">Reject</button>
-                          </>
-                        ) : (
-                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${r.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {r.status}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {renewals.expired?.length === 0 && renewals.near_expiry?.length === 0 && (renewals.renewal_requests || []).length === 0 && (
-            <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-              <Check size={32} className="mx-auto text-green-500 mb-3" />
-              <p className="text-slate-600 font-medium">All subscriptions are healthy</p>
-              <p className="text-sm text-slate-400 mt-1">No pending renewals or near-expiry users</p>
-            </div>
-          )}
-
-          {/* Process Renewal Modal */}
-          {processModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-2xl w-full max-w-md mx-4 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-semibold text-slate-900">Process Renewal: {processModal}</h3>
-                  <button onClick={() => setProcessModal(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                  <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700">Renew</button>
                 </div>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-xs text-slate-600 font-medium">Plan</label>
-                    <div className="flex gap-2 mt-1">
-                      {['starter', 'professional', 'enterprise'].map(id => (
-                        <button key={id} onClick={() => setProcessData(prev => ({ ...prev, plan: id }))}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${processData.plan === id ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                          {PLANS[id]?.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-600 font-medium">Duration (months)</label>
-                    <input type="number" min="1" max="60" value={processData.subscription_months}
-                      onChange={e => setProcessData(prev => ({ ...prev, subscription_months: parseInt(e.target.value) || 12 }))}
-                      className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-600 font-medium">Notes</label>
-                    <textarea value={processData.notes} onChange={e => setProcessData(prev => ({ ...prev, notes: e.target.value }))}
-                      rows={2} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none" placeholder="Optional notes..." />
-                  </div>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const res = await axios.put(`${API}/super-admin/renewals/${processModal}/process`, processData, { headers });
-                        if (res.data?.success) {
-                          toast.success(res.data.message);
-                          setProcessModal(null);
-                          fetchData();
-                        } else { toast.error(res.data?.error || 'Failed'); }
-                      } catch { toast.error('Failed to process renewal'); }
-                    }}
-                    className="w-full py-2.5 bg-green-600 text-white rounded-lg font-medium text-sm hover:bg-green-700"
-                    data-testid="process-renewal-btn">
-                    Approve & Renew Subscription
-                  </button>
-                </div>
-              </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {activeTab === 'admins' && <>
-      {/* Admin Management Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-slate-900">Admin Management</h2>
-        <div className="flex gap-2">
-          <button onClick={fetchData} className="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5" data-testid="refresh-admins">
-            <RefreshCw size={14} /> Refresh
-          </button>
-          <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5" data-testid="create-admin-btn">
-            <Plus size={14} /> New Admin
-          </button>
-        </div>
-      </div>
+      {/* ===== ACTIVITY TAB ===== */}
+      {activeTab === 'activity' && <ActivityLog />}
 
-      {/* Admin List */}
-      <div className="space-y-4">
-        {admins.map((admin) => {
-          const joinDate = admin.created_at ? new Date(admin.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A';
-          const subMonths = admin.subscription_months || 12;
-          const subStart = admin.subscription_start || admin.created_at || '';
-          let subEndDate = 'N/A';
-          let subActive = false;
-          if (subStart) {
-            const start = new Date(subStart);
-            const end = new Date(start);
-            end.setMonth(end.getMonth() + subMonths);
-            subEndDate = end.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-            subActive = end > new Date();
-          }
+      {/* ===== MODALS ===== */}
 
-          return (
-          <div key={admin.username} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`admin-card-${admin.username}`}>
-            {/* Admin Header */}
-            <div className="p-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)}>
-                  <div className={`w-3 h-3 rounded-full flex-shrink-0 ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
-                  <div className="min-w-0">
-                    <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
-                    <div className="text-xs text-slate-500 truncate">@{admin.username} &middot; {admin.employee_count || 0}/{admin.max_employees || 20} employees</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${admin.plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : admin.plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                    {admin.plan || 'enterprise'}
-                  </span>
-                  <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
-                    {admin.features?.length || 0}/{ALL_FEATURES.length} features
-                  </span>
-                  <button onClick={(e) => { e.stopPropagation(); toggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-700 hover:bg-red-100'}`} data-testid={`toggle-active-${admin.username}`}>
-                    {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                    {admin.active ? 'Active' : 'Inactive'}
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); openEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit Admin" data-testid={`edit-admin-${admin.username}`}>
-                    <Pencil size={14} />
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); setShowResetModal(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Reset Password" data-testid={`reset-pwd-${admin.username}`}>
-                    <Key size={14} />
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); deleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete Admin" data-testid={`delete-admin-${admin.username}`}>
-                    <Trash2 size={14} />
-                  </button>
-                  <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
-                    {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Subscription Summary Row */}
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                <span className="flex items-center gap-1"><Calendar size={12} /> Joined: {joinDate}</span>
-                <span className="flex items-center gap-1"><Clock size={12} /> Plan: {subMonths} months</span>
-                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${subActive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-                  {subActive ? 'Active' : 'Expired'} until {subEndDate}
-                </span>
-                {admin.companies?.length > 0 && (
-                  <span className="flex items-center gap-1"><Building2 size={12} /> {admin.companies.length}/{admin.max_companies || 10} companies</span>
-                )}
-              </div>
-            </div>
-
-            {/* Feature Toggles (expanded) */}
-            {expandedAdmin === admin.username && (
-              <div className="border-t border-slate-100 p-5 bg-slate-50/50">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-sm font-semibold text-slate-700">Feature Activation</h4>
-                  <button
-                    onClick={() => toggleAllFeatures(admin.username, admin.features || [])}
-                    className="text-xs text-[#2563EB] hover:underline"
-                  >
-                    {ALL_FEATURES.every(f => (admin.features || []).includes(f.id)) ? 'Deactivate All' : 'Activate All'}
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {ALL_FEATURES.map((feature) => {
-                    const isActive = (admin.features || []).includes(feature.id);
-                    return (
-                      <div key={feature.id} className={`flex items-center justify-between p-3 rounded-lg border ${isActive ? 'bg-white border-green-200' : 'bg-slate-50 border-slate-200'}`}>
-                        <div>
-                          <div className="text-sm font-medium text-slate-800">{feature.label}</div>
-                          <div className="text-xs text-slate-500">{feature.desc}</div>
-                        </div>
-                        <button
-                          onClick={() => toggleFeature(admin.username, admin.features || [], feature.id)}
-                          className={`p-1 rounded-lg transition-colors ${isActive ? 'text-green-600 hover:bg-green-100' : 'text-slate-400 hover:bg-slate-100'}`}
-                          data-testid={`toggle-feature-${admin.username}-${feature.id}`}
-                        >
-                          {isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-                {admin.companies?.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                    <h4 className="text-sm font-semibold text-slate-700 mb-2">Synced Companies</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {admin.companies.map((c, i) => (
-                        <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-700">{c}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          );
-        })}
-        {admins.length === 0 && (
-          <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-500">
-            No admin accounts yet. Create one to get started.
-          </div>
-        )}
-      </div>
-      </>}
-
-      {/* Create Admin Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="create-admin-modal" onClick={e => { if (e.target === e.currentTarget) setShowCreateModal(false); }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      {/* Record Payment Modal */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowPaymentModal(false)}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="payment-modal">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-slate-900">Create New Admin</h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              <h3 className="text-lg font-semibold text-slate-900">Record Payment</h3>
+              <button onClick={() => setShowPaymentModal(false)}><X size={20} className="text-slate-400" /></button>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Email (Login ID)</label>
-                <input
-                  type="email"
-                  value={newAdmin.username}
-                  onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value.toLowerCase().trim() })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  placeholder="e.g. admin@company.com"
-                  data-testid="new-admin-username"
-                />
+                <label className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
+                <select value={paymentForm.customer_username} onChange={e => setPaymentForm(p => ({ ...p, customer_username: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="payment-customer-select">
+                  <option value="">Select customer</option>
+                  {admins.map(a => <option key={a.username} value={a.username}>{a.name || a.username} ({a.plan})</option>)}
+                </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
-                <input
-                  type="text"
-                  value={newAdmin.name}
-                  onChange={e => setNewAdmin({ ...newAdmin, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  placeholder="e.g. XYZ Traders"
-                  data-testid="new-admin-name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={newAdmin.password}
-                    onChange={e => setNewAdmin({ ...newAdmin, password: e.target.value })}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] pr-10"
-                    placeholder="Min 4 characters"
-                    data-testid="new-admin-password"
-                  />
-                  <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Amount (Rs.) *</label>
+                  <input type="number" value={paymentForm.amount} onChange={e => setPaymentForm(p => ({ ...p, amount: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="0" data-testid="payment-amount" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Payment Mode</label>
+                  <select value={paymentForm.payment_mode} onChange={e => setPaymentForm(p => ({ ...p, payment_mode: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="payment-mode">
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="upi">UPI</option>
+                    <option value="cash">Cash</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="other">Other</option>
+                  </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Period</label>
-                <select
-                  value={newAdmin.subscription_months}
-                  onChange={e => setNewAdmin({ ...newAdmin, subscription_months: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  data-testid="new-admin-subscription"
-                >
-                  <option value={1}>1 Month</option>
-                  <option value={3}>3 Months</option>
-                  <option value={6}>6 Months</option>
-                  <option value={12}>12 Months (1 Year)</option>
-                  <option value={24}>24 Months (2 Years)</option>
-                  <option value={36}>36 Months (3 Years)</option>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Reference No.</label>
+                <input type="text" value={paymentForm.reference_no} onChange={e => setPaymentForm(p => ({ ...p, reference_no: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="UTR / Cheque No." data-testid="payment-reference" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Period Description</label>
+                <input type="text" value={paymentForm.period_description} onChange={e => setPaymentForm(p => ({ ...p, period_description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="e.g., Annual 2026-27" data-testid="payment-period" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                <textarea value={paymentForm.notes} onChange={e => setPaymentForm(p => ({ ...p, notes: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" rows={2} placeholder="Optional notes" />
+              </div>
+              <button onClick={recordPayment} className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700" data-testid="confirm-payment">
+                Record Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generate Invoice Modal */}
+      {showInvoiceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowInvoiceModal(false)}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="invoice-modal">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Generate Invoice</h3>
+              <button onClick={() => setShowInvoiceModal(false)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
+                <select value={invoiceForm.customer_username} onChange={e => {
+                  const admin = admins.find(a => a.username === e.target.value);
+                  const plan = admin?.plan || 'enterprise'; const cycle = admin?.billing_cycle || 'annual';
+                  const pricing = PLANS[plan] || PLANS.enterprise;
+                  const amt = cycle === 'annual' ? pricing.annual : pricing.monthly;
+                  setInvoiceForm(p => ({ ...p, customer_username: e.target.value, amount: amt.toString(), description: `${pricing.name || 'Enterprise'} Plan - ${cycle === 'annual' ? 'Annual' : 'Monthly'} Subscription` }));
+                }}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-customer-select">
+                  <option value="">Select customer</option>
+                  {admins.map(a => <option key={a.username} value={a.username}>{a.name || a.username} ({a.plan})</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Amount (Rs.) *</label>
+                <input type="number" value={invoiceForm.amount} onChange={e => setInvoiceForm(p => ({ ...p, amount: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-amount" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                <input type="text" value={invoiceForm.description} onChange={e => setInvoiceForm(p => ({ ...p, description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="Subscription description" data-testid="invoice-description" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Period From</label>
+                  <input type="date" value={invoiceForm.period_from} onChange={e => setInvoiceForm(p => ({ ...p, period_from: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-period-from" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Period To</label>
+                  <input type="date" value={invoiceForm.period_to} onChange={e => setInvoiceForm(p => ({ ...p, period_to: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-period-to" />
+                </div>
+              </div>
+              <button onClick={generateInvoice} className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700" data-testid="confirm-invoice">
+                Generate Invoice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Ledger Modal */}
+      {ledgerModal && ledgerData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setLedgerModal(null)}>
+          <div className="bg-white rounded-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto" data-testid="ledger-modal">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">{ledgerData.customer?.name || ledgerModal} — Ledger</h3>
+                <p className="text-xs text-slate-500">{ledgerData.customer?.plan?.toUpperCase()} Plan · {ledgerData.customer?.billing_cycle} · Expires {formatDate(ledgerData.customer?.subscription_expires)}</p>
+              </div>
+              <button onClick={() => setLedgerModal(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-blue-50 rounded-lg p-3">
+                <div className="text-xs text-blue-600">Total Billed</div>
+                <div className="text-lg font-bold text-blue-700">{formatINR(ledgerData.total_billed)}</div>
+              </div>
+              <div className="bg-emerald-50 rounded-lg p-3">
+                <div className="text-xs text-emerald-600">Total Paid</div>
+                <div className="text-lg font-bold text-emerald-700">{formatINR(ledgerData.total_paid)}</div>
+              </div>
+              <div className="bg-red-50 rounded-lg p-3">
+                <div className="text-xs text-red-600">Balance Due</div>
+                <div className="text-lg font-bold text-red-700">{formatINR(ledgerData.balance_due)}</div>
+              </div>
+            </div>
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Payment History</h4>
+            {ledgerData.payments?.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">No payments recorded</p>
+            ) : (
+              <div className="space-y-2 mb-6">
+                {ledgerData.payments?.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                    <div>
+                      <div className="text-sm font-medium">{formatINR(p.amount)}</div>
+                      <div className="text-xs text-slate-400">{p.payment_mode?.replace('_', ' ')} · {p.reference_no || '—'}</div>
+                    </div>
+                    <div className="text-xs text-slate-500">{formatDate(p.payment_date)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {ledgerData.invoices?.length > 0 && (
+              <>
+                <h4 className="text-sm font-semibold text-slate-700 mb-3">Invoices</h4>
+                <div className="space-y-2">
+                  {ledgerData.invoices.map((inv, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div>
+                        <div className="text-sm font-medium font-mono">{inv.invoice_number}</div>
+                        <div className="text-xs text-slate-400">{inv.description?.substring(0, 50)}</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{inv.status}</span>
+                        <span className="text-sm font-bold">{formatINR(inv.amount)}</span>
+                        <button onClick={() => downloadInvoicePDF(inv.invoice_id)} className="p-1 text-slate-400 hover:text-blue-600"><Download size={14} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Convert Prospect Modal */}
+      {convertModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setConvertModal(null)}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" data-testid="convert-modal">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Convert Prospect</h3>
+              <button onClick={() => setConvertModal(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
+                <input type="text" value={convertData.password} onChange={e => setConvertData(p => ({ ...p, password: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="Min 6 characters" data-testid="convert-password" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(PLANS).map(([id, plan]) => (
+                    <button key={id} onClick={() => setConvertData(p => ({ ...p, plan: id }))}
+                      className={`p-3 border rounded-lg text-left ${convertData.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`} data-testid={`plan-select-${id}`}>
+                      <p className="text-sm font-bold">{plan.name}</p>
+                      <p className="text-xs text-blue-600">{formatINR(convertData.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly)}/mo</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {['monthly', 'annual'].map(c => (
+                  <button key={c} onClick={() => setConvertData(p => ({ ...p, billing_cycle: c }))}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border ${convertData.billing_cycle === c ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>
+                    {c === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                  </button>
+                ))}
+              </div>
+              <select value={convertData.subscription_months} onChange={e => setConvertData(p => ({ ...p, subscription_months: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="convert-subscription">
+                <option value={1}>1 month</option><option value={3}>3 months</option><option value={6}>6 months</option>
+                <option value={12}>12 months</option><option value={24}>24 months</option>
+              </select>
+              <button onClick={convertProspect} className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700" data-testid="convert-confirm-btn">
+                Convert to Admin — {PLANS[convertData.plan]?.name}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Process Renewal Modal */}
+      {processModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setProcessModal(null)}>
+          <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="process-renewal-modal">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Renew: {processModal}</h3>
+              <button onClick={() => setProcessModal(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(PLANS).map(([id, plan]) => (
+                    <button key={id} onClick={() => setProcessData(p => ({ ...p, plan: id }))}
+                      className={`p-3 border rounded-lg text-left ${processData.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`}>
+                      <p className="text-sm font-bold">{plan.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <select value={processData.subscription_months} onChange={e => setProcessData(p => ({ ...p, subscription_months: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm">
+                <option value={1}>1 month</option><option value={3}>3 months</option><option value={6}>6 months</option>
+                <option value={12}>12 months</option><option value={24}>24 months</option>
+              </select>
+              <button onClick={async () => {
+                try {
+                  const res = await axios.put(`${API}/super-admin/renewals/${processModal}/process`, processData, { headers });
+                  if (res.data?.success) { toast.success(res.data.message); setProcessModal(null); fetchData(); }
+                  else toast.error(res.data?.error || 'Failed');
+                } catch { toast.error('Failed to process'); }
+              }} className="w-full py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700" data-testid="process-renewal-btn">
+                Approve & Renew
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Admin Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={e => e.target === e.currentTarget && setShowCreateModal(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" data-testid="create-admin-modal">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Create Admin</h3>
+              <button onClick={() => setShowCreateModal(false)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-4">
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Email *</label><input type="email" value={newAdmin.username} onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-email" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Password *</label><input type="text" value={newAdmin.password} onChange={e => setNewAdmin({ ...newAdmin, password: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-password" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input type="text" value={newAdmin.name} onChange={e => setNewAdmin({ ...newAdmin, name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-name" /></div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
                 <div className="grid grid-cols-3 gap-2">
                   {Object.entries(PLANS).map(([id, plan]) => (
                     <button key={id} onClick={() => setNewAdmin({ ...newAdmin, plan: id })}
-                      className={`p-3 border rounded-lg text-left transition-all ${newAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
-                      data-testid={`new-plan-${id}`}>
-                      <p className="text-sm font-bold text-slate-900">{plan.name}</p>
-                      <p className="text-xs text-blue-600 font-medium mt-0.5">
-                        {newAdmin.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
-                      </p>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        {plan.maxCompanies} co. | {plan.maxEmployees} emp | {plan.features.length} features
-                      </div>
+                      className={`p-3 border rounded-lg text-left ${newAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`} data-testid={`new-plan-${id}`}>
+                      <p className="text-sm font-bold">{plan.name}</p>
+                      <p className="text-xs text-blue-600">{formatINR(newAdmin.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly)}/mo</p>
+                      <div className="text-[10px] text-slate-500 mt-1">{plan.maxCompanies} co | {plan.maxEmployees} emp</div>
                     </button>
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
-                <div className="flex gap-2">
-                  {['monthly', 'annual'].map(cycle => (
-                    <button key={cycle} onClick={() => setNewAdmin({ ...newAdmin, billing_cycle: cycle })}
-                      className={`flex-1 py-2 text-sm font-medium rounded-lg border ${newAdmin.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
-                      {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex gap-2">
+                {['monthly', 'annual'].map(c => (
+                  <button key={c} onClick={() => setNewAdmin({ ...newAdmin, billing_cycle: c })}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border ${newAdmin.billing_cycle === c ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>
+                    {c === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                  </button>
+                ))}
               </div>
-              <div className="bg-slate-50 rounded-lg p-3">
-                <p className="text-xs font-medium text-slate-500 mb-1">Plan includes:</p>
-                <div className="flex flex-wrap gap-1">
-                  {(PLANS[newAdmin.plan]?.features || []).map(f => (
-                    <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-              <button onClick={createAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8]" data-testid="confirm-create-admin">Create Admin</button>
+              <select value={newAdmin.subscription_months} onChange={e => setNewAdmin({ ...newAdmin, subscription_months: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-subscription">
+                <option value={1}>1 Month</option><option value={3}>3 Months</option><option value={6}>6 Months</option>
+                <option value={12}>12 Months</option><option value={24}>24 Months</option><option value={36}>36 Months</option>
+              </select>
+              <button onClick={createAdmin} className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]" data-testid="confirm-create-admin">Create Admin</button>
             </div>
           </div>
         </div>
@@ -960,91 +1155,44 @@ const SuperAdminDashboard = ({ token }) => {
 
       {/* Edit Admin Modal */}
       {showEditModal && editAdmin && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="edit-admin-modal" onClick={e => { if (e.target === e.currentTarget) { setShowEditModal(null); setEditAdmin(null); } }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={e => e.target === e.currentTarget && setShowEditModal(null)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" data-testid="edit-admin-modal">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-slate-900">Edit Admin</h3>
-              <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }}><X size={20} className="text-slate-400" /></button>
             </div>
             <div className="space-y-4">
-              <div className="p-3 bg-slate-50 rounded-lg">
-                <div className="text-xs text-slate-500">Email (cannot change)</div>
-                <div className="font-medium text-slate-800">{editAdmin.username}</div>
-              </div>
+              <div className="p-3 bg-slate-50 rounded-lg"><div className="text-xs text-slate-500">Email</div><div className="font-medium">{editAdmin.username}</div></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input type="text" value={editAdmin.name} onChange={e => setEditAdmin({ ...editAdmin, name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="edit-admin-name" /></div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
-                <input
-                  type="text"
-                  value={editAdmin.name}
-                  onChange={e => setEditAdmin({ ...editAdmin, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  data-testid="edit-admin-name"
-                />
-              </div>
-
-              {/* Plan Selection */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Subscription Plan</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
                 <div className="grid grid-cols-3 gap-2">
                   {Object.entries(PLANS).map(([id, plan]) => (
-                    <button key={id} onClick={() => setEditAdmin(prev => ({ ...prev, plan: id, features: [...plan.features] }))}
-                      className={`p-3 border rounded-lg text-left transition-all ${editAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-slate-300'}`}
-                      data-testid={`edit-plan-${id}`}>
-                      <p className="text-sm font-bold text-slate-900">{plan.name}</p>
-                      <p className="text-xs text-blue-600 font-medium mt-0.5">
-                        {editAdmin.billing_cycle === 'annual' ? `Rs.${Math.round(plan.annual / 12).toLocaleString('en-IN')}/mo` : `Rs.${plan.monthly.toLocaleString('en-IN')}/mo`}
-                      </p>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        {plan.maxCompanies} co. | {plan.maxEmployees} emp | {plan.features.length} feat
-                      </div>
+                    <button key={id} onClick={() => setEditAdmin(p => ({ ...p, plan: id, features: [...plan.features] }))}
+                      className={`p-3 border rounded-lg text-left ${editAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`} data-testid={`edit-plan-${id}`}>
+                      <p className="text-sm font-bold">{plan.name}</p>
+                      <p className="text-xs text-blue-600">{formatINR(editAdmin.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly)}/mo</p>
                     </button>
                   ))}
                 </div>
               </div>
-
-              {/* Billing Cycle */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
-                <div className="flex gap-2">
-                  {['monthly', 'annual'].map(cycle => (
-                    <button key={cycle} onClick={() => setEditAdmin(prev => ({ ...prev, billing_cycle: cycle }))}
-                      className={`flex-1 py-2 text-sm font-medium rounded-lg border ${editAdmin.billing_cycle === cycle ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>
-                      {cycle === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex gap-2">
+                {['monthly', 'annual'].map(c => (
+                  <button key={c} onClick={() => setEditAdmin(p => ({ ...p, billing_cycle: c }))}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border ${editAdmin.billing_cycle === c ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>
+                    {c === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                  </button>
+                ))}
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Period</label>
-                <select
-                  value={editAdmin.subscription_months}
-                  onChange={e => setEditAdmin({ ...editAdmin, subscription_months: parseInt(e.target.value) })}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                  data-testid="edit-admin-subscription"
-                >
-                  <option value={1}>1 Month</option>
-                  <option value={3}>3 Months</option>
-                  <option value={6}>6 Months</option>
-                  <option value={12}>12 Months (1 Year)</option>
-                  <option value={24}>24 Months (2 Years)</option>
-                  <option value={36}>36 Months (3 Years)</option>
-                </select>
+              <select value={editAdmin.subscription_months} onChange={e => setEditAdmin({ ...editAdmin, subscription_months: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="edit-admin-subscription">
+                <option value={1}>1 Mo</option><option value={3}>3 Mo</option><option value={6}>6 Mo</option>
+                <option value={12}>12 Mo</option><option value={24}>24 Mo</option><option value={36}>36 Mo</option>
+              </select>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
+                <button onClick={saveEditAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="confirm-edit-admin">Save</button>
               </div>
-
-              {/* Features preview */}
-              <div className="bg-slate-50 rounded-lg p-3">
-                <p className="text-xs font-medium text-slate-500 mb-1">Included Features ({PLANS[editAdmin.plan]?.features.length || 0}):</p>
-                <div className="flex flex-wrap gap-1">
-                  {(PLANS[editAdmin.plan]?.features || []).map(f => (
-                    <span key={f} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">{f.replace('_', ' ')}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-              <button onClick={saveEditAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8]" data-testid="confirm-edit-admin">Save Changes</button>
             </div>
           </div>
         </div>
@@ -1053,28 +1201,22 @@ const SuperAdminDashboard = ({ token }) => {
       {/* Reset Password Modal */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="reset-password-modal">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm mx-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-sm mx-4">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">Reset Password</h3>
-              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }}><X size={20} className="text-slate-400" /></button>
             </div>
-            <p className="text-sm text-slate-500 mb-4">Reset password for <strong>{showResetModal}</strong></p>
+            <p className="text-sm text-slate-500 mb-4">Reset for <strong>{showResetModal}</strong></p>
             <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={resetPassword}
-                onChange={e => setResetPassword(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] pr-10"
-                placeholder="New password (min 4 chars)"
-                data-testid="reset-password-input"
-              />
+              <input type={showPassword ? "text" : "password"} value={resetPassword} onChange={e => setResetPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg pr-10" placeholder="New password" data-testid="reset-password-input" />
               <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
             <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-              <button onClick={handleResetPassword} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8]" data-testid="confirm-reset-password">Reset</button>
+              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
+              <button onClick={handleResetPassword} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="confirm-reset-password">Reset</button>
             </div>
           </div>
         </div>
