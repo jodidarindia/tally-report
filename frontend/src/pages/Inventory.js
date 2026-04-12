@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Download, Search, Filter, Sparkles, ChevronDown } from 'lucide-react';
+import { Download, Search, Filter, Sparkles, ChevronDown, RefreshCw, Edit2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -20,6 +20,9 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   const [generatingPO, setGeneratingPO] = useState(false);
   const [sortField, setSortField] = useState('item_name');
   const [sortDir, setSortDir] = useState('asc');
+  const [editingReorder, setEditingReorder] = useState(null);
+  const [reorderValue, setReorderValue] = useState('');
+  const [autoReorderLoading, setAutoReorderLoading] = useState(false);
 
   useEffect(() => {
     fetchInventory();
@@ -87,6 +90,29 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
     }
   };
 
+  const autoSetReorderLevels = async () => {
+    setAutoReorderLoading(true);
+    try {
+      const res = await axios.post(`${API}/inventory/auto-reorder-levels`, {});
+      if (res.data?.success) {
+        toast.success(res.data.message);
+        fetchInventory();
+      } else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to set auto reorder levels'); }
+    finally { setAutoReorderLoading(false); }
+  };
+
+  const saveReorderLevel = async (itemId) => {
+    try {
+      const res = await axios.post(`${API}/inventory/set-reorder-level`, { item_id: itemId, reorder_level: parseFloat(reorderValue) || 0 });
+      if (res.data?.success) {
+        toast.success('Reorder level updated');
+        setEditingReorder(null);
+        fetchInventory();
+      } else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to update reorder level'); }
+  };
+
   const filteredItems = items.filter(item => {
     const matchesSearch = (item.item_name || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
@@ -146,6 +172,16 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
           </button>
           <button data-testid="export-excel-button" onClick={() => exportData('excel')} className="btn-secondary flex items-center gap-1.5 text-xs sm:text-sm">
             <Download size={14} /> Excel
+          </button>
+          <button
+            onClick={autoSetReorderLevels}
+            disabled={autoReorderLoading}
+            className="flex items-center gap-1.5 text-xs sm:text-sm px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50"
+            data-testid="auto-reorder-btn"
+            title="Set reorder levels based on 2-month average sales"
+          >
+            <RefreshCw size={14} className={autoReorderLoading ? 'animate-spin' : ''} />
+            {autoReorderLoading ? 'Calculating...' : 'Auto Reorder'}
           </button>
           <button data-testid="export-csv-button" onClick={() => exportData('csv')} className="btn-primary flex items-center gap-1.5 text-xs sm:text-sm">
             <Download size={14} /> CSV
@@ -246,7 +282,24 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                       <td>{item.unit}</td>
                       <td className="numeric">₹{item.price?.toLocaleString('en-IN') || 0}</td>
                       <td className="numeric font-semibold">₹{itemValue.toLocaleString('en-IN')}</td>
-                      <td className="numeric">{item.reorder_level || '-'}</td>
+                      <td className="numeric">
+                        {editingReorder === item.item_id ? (
+                          <div className="flex items-center gap-1 justify-end">
+                            <input type="number" value={reorderValue} onChange={e => setReorderValue(e.target.value)}
+                              className="w-16 px-1.5 py-1 border border-slate-300 rounded text-xs text-right" autoFocus
+                              onKeyDown={e => { if (e.key === 'Enter') saveReorderLevel(item.item_id); if (e.key === 'Escape') setEditingReorder(null); }}
+                              data-testid={`reorder-input-${item.item_id}`} />
+                            <button onClick={() => saveReorderLevel(item.item_id)} className="text-green-600 hover:text-green-800" data-testid={`reorder-save-${item.item_id}`}><Check size={14} /></button>
+                            <button onClick={() => setEditingReorder(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
+                          </div>
+                        ) : (
+                          <span className="cursor-pointer hover:text-[#2563EB] group" onClick={() => { setEditingReorder(item.item_id); setReorderValue(item.reorder_level || ''); }}
+                            data-testid={`reorder-edit-${item.item_id}`} title="Click to edit">
+                            {item.reorder_level || '-'}
+                            <Edit2 size={10} className="inline ml-1 opacity-0 group-hover:opacity-100 text-slate-400" />
+                          </span>
+                        )}
+                      </td>
                       <td>
                         {isLowStock ? (
                           <span className="status-badge" style={{ background: '#FEE2E2', color: '#991B1B' }}>

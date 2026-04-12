@@ -991,3 +991,109 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
     except Exception as e:
         logger.error(f"Error analyzing payment behavior: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@router.post("/customers/outstanding/export")
+async def export_outstanding_excel(request: Request):
+    """Export outstanding data to Excel."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    try:
+        body = await request.json()
+        data = body.get("data", [])
+        fy = body.get("fy", "")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Outstanding"
+
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        header_fill = PatternFill("solid", fgColor="2563EB")
+        headers = ["Customer Name", "Group", "Opening Bal", "Total Sales", "Paid", "Outstanding", "0-30d", "30-60d", "60-90d", "90+d"]
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        for i, row in enumerate(data, 2):
+            ws.cell(row=i, column=1, value=row.get("customer_name", ""))
+            ws.cell(row=i, column=2, value=row.get("ledger_group", ""))
+            ws.cell(row=i, column=3, value=round(row.get("opening_balance", 0), 2))
+            ws.cell(row=i, column=4, value=round(row.get("total_sales", 0), 2))
+            ws.cell(row=i, column=5, value=round(row.get("paid_amount", 0), 2))
+            ws.cell(row=i, column=6, value=round(row.get("outstanding_amount", 0), 2))
+            aging = row.get("aging_buckets", {})
+            ws.cell(row=i, column=7, value=round(aging.get("0_30", 0), 2))
+            ws.cell(row=i, column=8, value=round(aging.get("30_60", 0), 2))
+            ws.cell(row=i, column=9, value=round(aging.get("60_90", 0), 2))
+            ws.cell(row=i, column=10, value=round(aging.get("90_plus", 0), 2))
+
+        for col in range(1, 11):
+            ws.column_dimensions[chr(64 + col)].width = 16
+        ws.column_dimensions['A'].width = 30
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"outstanding_{fy or 'all'}.xlsx"
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except Exception as e:
+        logger.error(f"Error exporting outstanding: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/customers/targets/export")
+async def export_targets_excel(request: Request):
+    """Export targets data to Excel."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    try:
+        body = await request.json()
+        data = body.get("data", [])
+        fy = body.get("fy", "")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Targets"
+
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        header_fill = PatternFill("solid", fgColor="2563EB")
+        headers = ["Customer Name", "Prev FY Sales", "Target", "Current FY Achieved", "Achievement %"]
+        # Add monthly columns
+        months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+        headers.extend(months)
+
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        for i, row in enumerate(data, 2):
+            ws.cell(row=i, column=1, value=row.get("customer_name", ""))
+            ws.cell(row=i, column=2, value=round(row.get("previous_fy_sales", 0), 2))
+            ws.cell(row=i, column=3, value=round(row.get("target", 0), 2))
+            ws.cell(row=i, column=4, value=round(row.get("current_fy_sales", 0), 2))
+            pct = row.get("achievement_pct", 0)
+            ws.cell(row=i, column=5, value=f"{round(pct, 1)}%")
+            monthly = row.get("monthly_sales", {})
+            for j, m in enumerate(months):
+                ws.cell(row=i, column=6 + j, value=round(monthly.get(m, 0), 2))
+
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[chr(64 + col) if col <= 26 else 'A' + chr(64 + col - 26)].width = 14
+        ws.column_dimensions['A'].width = 30
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"targets_{fy or 'all'}.xlsx"
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except Exception as e:
+        logger.error(f"Error exporting targets: {e}")
+        return APIResponse(success=False, error=str(e))

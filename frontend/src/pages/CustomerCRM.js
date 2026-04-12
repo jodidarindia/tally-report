@@ -180,6 +180,34 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
     }
   };
 
+  const exportOutstandingExcel = async (data) => {
+    try {
+      const response = await axios.post(`${API}/customers/outstanding/export`, { data, fy: selectedFY || '' }, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `outstanding_${selectedFY || 'all'}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success('Outstanding exported to Excel');
+    } catch { toast.error('Export failed'); }
+  };
+
+  const exportTargetsExcel = async (data) => {
+    try {
+      const response = await axios.post(`${API}/customers/targets/export`, { data, fy: selectedFY || '' }, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `targets_${selectedFY || 'all'}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success('Targets exported to Excel');
+    } catch { toast.error('Export failed'); }
+  };
+
   const openTargetForm = (customer) => {
     setTargetForm({
       customer_name: customer.customer_name,
@@ -286,6 +314,12 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 return dir * ((a[sortField] || 0) - (b[sortField] || 0));
               });
             return (
+            <div>
+              <div className="flex justify-end mb-3">
+                <button onClick={() => exportOutstandingExcel(sorted)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-outstanding-excel">
+                  <Download size={14} /> Export Excel
+                </button>
+              </div>
             <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
                 <table className="data-table min-w-[700px]" data-testid="outstanding-table">
                   <thead>
@@ -352,6 +386,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                     })}
                   </tbody>
                 </table>
+            </div>
             </div>
             );
           })()}
@@ -469,6 +504,11 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
           {/* Targets with Set Target & Monthly Sales */}
           {activeTab === 'targets' && (
             <div>
+              <div className="flex justify-end mb-3">
+                <button onClick={() => exportTargetsExcel(targets)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-targets-excel">
+                  <Download size={14} /> Export Excel
+                </button>
+              </div>
               <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="data-table min-w-[800px]" data-testid="targets-table">
                     <thead>

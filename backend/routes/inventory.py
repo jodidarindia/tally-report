@@ -11,6 +11,8 @@ from models import (
 from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
 from services.purchase_order_ai import PurchaseOrderAI
 from services.tenant_context import get_tenant_context
+from services.auth_service import get_current_user
+from services.audit_service import log_audit, get_client_ip
 from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ async def _get_purchase_branch_set(ctx):
     These are internal transfers, not actual procurement from external suppliers."""
     from services.id_mapping_service import get_company_name
     import re
+    if not ctx:
+        return set()
     tenant_id = ctx.get("tenant_id", "")
     company_id = ctx.get("company_id", "")
     company_name = await get_company_name(tenant_id, company_id)
@@ -1011,4 +1015,95 @@ async def export_sales_frequency(request: Request, start_date: Optional[str] = N
         )
     except Exception as e:
         logger.error(f"Error exporting sales frequency: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/inventory/set-reorder-level")
+async def set_reorder_level(request: Request):
+    """Set manual reorder level for an inventory item."""
+    try:
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        item_id = body.get("item_id", "")
+        reorder_level = float(body.get("reorder_level", 0))
+
+        if not item_id:
+            return APIResponse(success=False, error="Item ID required")
+
+        q = _build_query(ctx, None, {"item_id": item_id})
+        result = await db.inventory_items.update_one(q, {"$set": {"reorder_level": reorder_level}})
+        if result.matched_count == 0:
+            return APIResponse(success=False, error="Item not found")
+
+        user = await get_current_user(request, db)
+        await log_audit("reorder_level_set", user.get("username", ""),
+                         tenant_id=ctx.get("tenant_id", ""), company_id=ctx.get("company_id", ""),
+                         target=item_id, details=f"Reorder level: {reorder_level}",
+                         ip_address=get_client_ip(request))
+
+        return APIResponse(success=True, message=f"Reorder level set to {reorder_level}")
+    except Exception as e:
+        logger.error(f"Error setting reorder level: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/inventory/auto-reorder-levels")
+async def auto_set_reorder_levels(request: Request):
+    """Auto-calculate reorder levels based on 2-month average sales consumption."""
+    try:
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        company_id = body.get("company_id")
+        q = _build_query(ctx, company_id)
+
+        items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+
+        if not sales:
+            return APIResponse(success=False, error="No sales data to calculate reorder levels")
+
+        # Calculate per-item monthly average sales qty
+        from collections import defaultdict
+        from datetime import datetime as dt
+        item_sales_qty = defaultdict(float)
+        dates = []
+        for v in sales:
+            vdate = v.get("date", "")
+            if vdate:
+                try:
+                    dates.append(dt.fromisoformat(vdate.replace("Z", "")))
+                except Exception:
+                    pass
+            for vi in v.get("items", []):
+                iname = (vi.get("item", "") or "").strip()
+                qty = abs(safe_num(vi.get("quantity", 0)))
+                if iname and qty > 0:
+                    item_sales_qty[iname.lower()] += qty
+
+        if not dates:
+            return APIResponse(success=False, error="No valid sales dates found")
+
+        min_date = min(dates)
+        max_date = max(dates)
+        months_span = max(1, (max_date - min_date).days / 30)
+
+        updated = 0
+        for item in items:
+            iname = (item.get("item_name") or "").strip()
+            total_sold = item_sales_qty.get(iname.lower(), 0)
+            if total_sold > 0:
+                monthly_avg = total_sold / months_span
+                reorder_level = round(monthly_avg * 2, 2)  # 2-month stock
+                item_q = _build_query(ctx, company_id, {"item_id": item["item_id"]})
+                await db.inventory_items.update_one(item_q, {"$set": {"reorder_level": reorder_level}})
+                updated += 1
+
+        user = await get_current_user(request, db)
+        await log_audit("auto_reorder_levels", user.get("username", ""),
+                         tenant_id=ctx.get("tenant_id", ""), company_id=ctx.get("company_id", ""),
+                         details=f"Updated {updated} items", ip_address=get_client_ip(request))
+
+        return APIResponse(success=True, message=f"Reorder levels set for {updated} items (2-month stock)", data={"updated": updated})
+    except Exception as e:
+        logger.error(f"Error auto-setting reorder levels: {e}")
         return APIResponse(success=False, error=str(e))
