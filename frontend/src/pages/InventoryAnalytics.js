@@ -256,7 +256,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
               }`}
             >
               <Icon size={16} />
-              <span className="text-xs sm:text-sm font-medium whitespace-nowrap">{tab.label}</span>
+              <span className="text-xs sm:text-sm font-medium text-center leading-tight sm:whitespace-nowrap">{tab.label}</span>
             </button>
           );
         })}
@@ -667,35 +667,35 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                     </p>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm min-w-[600px]" data-testid="customer-items-data-table">
+                    <table className="data-table min-w-[600px]" data-testid="customer-items-data-table">
                       <thead>
-                        <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                          <th className="py-3 px-4 text-left w-10">#</th>
-                          <th className="py-3 px-4 text-left">Item Name</th>
-                          <th className="py-3 px-4 text-right">Quantity</th>
-                          <th className="py-3 px-4 text-right">Avg Rate</th>
-                          <th className="py-3 px-4 text-right">Amount</th>
-                          <th className="py-3 px-4 text-right">Invoices</th>
+                        <tr>
+                          <th>Item Name</th>
+                          <th className="numeric">Quantity</th>
+                          <th className="numeric">Avg Rate</th>
+                          <th className="numeric">Amount</th>
+                          <th className="numeric">Invoices</th>
                         </tr>
                       </thead>
                       <tbody>
                         {customerItemsData.items?.map((item, idx) => (
                           <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`customer-item-row-${idx}`}>
-                            <td className="py-3 px-4 text-slate-400">{idx + 1}</td>
-                            <td className="py-3 px-4 font-medium text-slate-800">{item.item_name}</td>
-                            <td className="py-3 px-4 text-right text-slate-700">{item.quantity?.toLocaleString('en-IN')}</td>
-                            <td className="py-3 px-4 text-right text-slate-600">Rs.{item.avg_rate?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                            <td className="py-3 px-4 text-right font-medium text-[#2563EB]">Rs.{item.amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                            <td className="py-3 px-4 text-right text-slate-500">{item.voucher_count}</td>
+                            <td className="font-medium text-slate-800">
+                              <span className="text-slate-400 mr-2 text-xs">{idx + 1}.</span>{item.item_name}
+                            </td>
+                            <td className="numeric text-slate-700">{item.quantity?.toLocaleString('en-IN')}</td>
+                            <td className="numeric text-slate-600">Rs.{item.avg_rate?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            <td className="numeric font-medium text-[#2563EB]">Rs.{item.amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                            <td className="numeric text-slate-500">{item.voucher_count}</td>
                           </tr>
                         ))}
                         {/* Totals row */}
                         <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
-                          <td className="py-3 px-4" colSpan={2}>TOTAL</td>
-                          <td className="py-3 px-4 text-right">{customerItemsData.total_quantity?.toLocaleString('en-IN')}</td>
-                          <td className="py-3 px-4 text-right"></td>
-                          <td className="py-3 px-4 text-right text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                          <td className="py-3 px-4 text-right">{customerItemsData.total_vouchers}</td>
+                          <td>TOTAL</td>
+                          <td className="numeric">{customerItemsData.total_quantity?.toLocaleString('en-IN')}</td>
+                          <td className="numeric"></td>
+                          <td className="numeric text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                          <td className="numeric">{customerItemsData.total_vouchers}</td>
                         </tr>
                       </tbody>
                     </table>

@@ -228,7 +228,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
               }`}
             >
               <Icon size={16} />
-              <span className="text-xs sm:text-sm font-medium whitespace-nowrap">{tab.label}</span>
+              <span className="text-xs sm:text-sm font-medium text-center leading-tight sm:whitespace-nowrap">{tab.label}</span>
             </button>
           );
         })}
@@ -721,7 +721,6 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
           <table className="data-table min-w-[900px]" data-testid="payment-behavior-table">
             <thead>
               <tr>
-                <th className="w-6"></th>
                 <th className="cursor-pointer" onClick={() => toggleSort('customer_name')}>Customer {sortBy === 'customer_name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
                 <th className="numeric cursor-pointer" onClick={() => toggleSort('total_amount')}>Sales {sortBy === 'total_amount' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</th>
                 <th className="numeric cursor-pointer" onClick={() => toggleSort('paid_amount')}>Receipts</th>
@@ -736,10 +735,14 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
               {filtered.map((c, idx) => (
                 <React.Fragment key={idx}>
                   <tr className="cursor-pointer hover:bg-blue-50/30" onClick={() => setExpanded(expanded === idx ? null : idx)} data-testid={`behavior-row-${idx}`}>
-                    <td className="w-6 text-slate-400">{expanded === idx ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
                     <td className="font-medium text-slate-900">
-                      <div>{c.customer_name}</div>
-                      <div className="text-xs text-slate-400">{c.total_transactions} txns &middot; {c.relationship_months || 0}mo</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400 flex-shrink-0">{expanded === idx ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                        <div>
+                          <div>{c.customer_name}</div>
+                          <div className="text-xs text-slate-400">{c.total_transactions} txns &middot; {c.relationship_months || 0}mo</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="numeric">{fmtRs(c.total_amount)}</td>
                     <td className="numeric text-emerald-600">{fmtRs(c.paid_amount)}</td>
@@ -759,7 +762,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
                   </tr>
                   {expanded === idx && (
                     <tr>
-                      <td colSpan="9" className="p-0">
+                      <td colSpan="8" className="p-0">
                         <CustomerPaymentDetail customer={c} />
                       </td>
                     </tr>
