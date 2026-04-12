@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import axios from 'axios';
 import { toast, Toaster } from 'sonner';
+import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
   Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
-  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb
+  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -214,13 +215,58 @@ function App() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Idle timeout — auto-logout after 15 minutes of inactivity
+  const [idleWarning, setIdleWarning] = useState(false);
+  const idleTimerRef = useRef(null);
+  const warningTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setIdleWarning(false);
+      return;
+    }
+
+    const IDLE_LIMIT = 14 * 60 * 1000; // 14 min — show warning
+    const LOGOUT_DELAY = 1 * 60 * 1000; // 1 min after warning — logout
+
+    const resetIdle = () => {
+      clearTimeout(idleTimerRef.current);
+      clearTimeout(warningTimerRef.current);
+      setIdleWarning(false);
+      idleTimerRef.current = setTimeout(() => {
+        setIdleWarning(true);
+        warningTimerRef.current = setTimeout(() => {
+          handleLogout();
+          toast.info('You were logged out due to inactivity.');
+        }, LOGOUT_DELAY);
+      }, IDLE_LIMIT);
+    };
+
+    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach(ev => window.addEventListener(ev, resetIdle, { passive: true }));
+    resetIdle();
+
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, resetIdle));
+      clearTimeout(idleTimerRef.current);
+      clearTimeout(warningTimerRef.current);
+    };
+  }, [isAuthenticated]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     if (!username.trim()) { toast.error('Please enter your User ID'); return; }
     if (!password.trim()) { toast.error('Please enter your Password'); return; }
     setLoginLoading(true);
     try {
-      const res = await axios.post(`${API}/auth/login`, { username, password });
+      // Get reCAPTCHA v3 token
+      let captchaToken = '';
+      if (window.grecaptcha?.execute) {
+        try {
+          captchaToken = await window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'login' });
+        } catch { /* fail open if captcha fails to load */ }
+      }
+      const res = await axios.post(`${API}/auth/login`, { username, password, captcha_token: captchaToken });
       if (res.data?.success) {
         const data = res.data.data;
         setToken(data.token);
@@ -398,6 +444,7 @@ function App() {
             >
               {loginLoading ? 'Signing in...' : 'Sign In'}
             </button>
+            <p className="text-[10px] text-slate-400 text-center mt-1">Protected by reCAPTCHA</p>
           </form>
           <div className="flex items-center justify-between mt-4">
             <button onClick={() => setPublicView('landing')} className="text-sm text-[#2563EB] hover:underline" data-testid="back-to-home">Back to Home</button>
@@ -691,8 +738,34 @@ function App() {
           onOpenSubscription={() => { setShowRenewalPopup(false); setShowProfile(true); }}
         />
       )}
+
+      {/* Idle Warning Modal */}
+      {idleWarning && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" data-testid="idle-warning-modal">
+          <div className="bg-white rounded-2xl max-w-sm w-full mx-4 p-8 text-center shadow-2xl">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Clock size={32} className="text-amber-600" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Session Expiring</h2>
+            <p className="text-slate-600 text-sm mb-6">You've been idle for a while. Your session will expire in <strong className="text-red-600">1 minute</strong>.</p>
+            <button
+              onClick={() => setIdleWarning(false)}
+              className="w-full py-3 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8] transition-colors"
+              data-testid="stay-logged-in-btn"
+            >
+              Stay Logged In
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-export default App;
+const AppWithCaptcha = () => (
+  <GoogleReCaptchaProvider reCaptchaKey={process.env.REACT_APP_RECAPTCHA_SITE_KEY}>
+    <App />
+  </GoogleReCaptchaProvider>
+);
+
+export default AppWithCaptcha;

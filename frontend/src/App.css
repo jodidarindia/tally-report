@@ -221,3 +221,8 @@
   background: #FEE2E2;
   color: #991B1B;
 }
+
+/* Hide reCAPTCHA v3 badge — attribution provided in login form text */
+.grecaptcha-badge {
+  visibility: hidden !important;
+}

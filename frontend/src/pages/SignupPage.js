@@ -52,7 +52,14 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
     }
     setLoading(true);
     try {
-      const res = await axios.post(`${API}/public/signup`, form);
+      // Get reCAPTCHA v3 token
+      let captchaToken = '';
+      if (window.grecaptcha?.execute) {
+        try {
+          captchaToken = await window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'signup' });
+        } catch { /* fail open */ }
+      }
+      const res = await axios.post(`${API}/public/signup`, { ...form, captcha_token: captchaToken });
       if (res.data?.success) {
         toast.success(res.data.message);
         setProspectId(res.data.data.prospect_id);

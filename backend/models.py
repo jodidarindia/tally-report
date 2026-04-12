@@ -150,6 +150,7 @@ class APIResponse(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    captcha_token: str = ""
 
 class ChangePasswordRequest(BaseModel):
     current_password: str

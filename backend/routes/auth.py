@@ -18,6 +18,8 @@ from services.ist_utils import (
     days_until_expiry
 )
 
+from services.recaptcha import verify_recaptcha
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -25,6 +27,10 @@ router = APIRouter()
 @router.post("/auth/login")
 async def login(request: LoginRequest, raw_request: Request, response: Response):
     try:
+        # Verify reCAPTCHA
+        if not await verify_recaptcha(request.captcha_token):
+            return APIResponse(success=False, error="CAPTCHA verification failed. Please try again.")
+
         user = await db.users.find_one({"username": request.username}, {"_id": 0})
         if not user:
             await log_audit("login_failed", request.username, ip_address=get_client_ip(raw_request), details="Invalid username")

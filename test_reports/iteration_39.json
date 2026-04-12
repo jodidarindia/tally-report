@@ -1,0 +1,143 @@
+{
+  "summary": "Iteration 39: reCAPTCHA v3 and Idle Timeout Testing - All features working correctly. reCAPTCHA v3 is implemented on login and signup forms with invisible verification. Backend correctly rejects requests without valid captcha tokens. Idle timeout logic is implemented with 14-min warning and 15-min auto-logout. All data-testid attributes are in place.",
+  
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "App.js FY selector",
+        "issues": ["Minor React hydration warning: span inside option element (cosmetic, doesn't affect functionality) - same as previous iterations"]
+      }
+    ]
+  },
+  
+  "passed_tests": [
+    "BACKEND: Login without captcha_token returns 'CAPTCHA verification failed'",
+    "BACKEND: Login with empty captcha_token returns 'CAPTCHA verification failed'",
+    "BACKEND: Login with invalid captcha_token returns 'CAPTCHA verification failed'",
+    "BACKEND: Signup without captcha_token returns 'CAPTCHA verification failed'",
+    "BACKEND: Signup with invalid captcha_token returns 'CAPTCHA verification failed'",
+    "BACKEND: LoginRequest model accepts captcha_token field",
+    "BACKEND: RECAPTCHA_SECRET_KEY is configured and working",
+    "FRONTEND: Login form shows 'Protected by reCAPTCHA' text below Sign In button",
+    "FRONTEND: reCAPTCHA badge is hidden via CSS (.grecaptcha-badge visibility:hidden)",
+    "FRONTEND: Login with admin/admin123 succeeds (reCAPTCHA v3 runs invisibly)",
+    "FRONTEND: Dashboard shows 'Welcome, Admin!' toast after login",
+    "FRONTEND: Validation error shown when submitting login without credentials",
+    "FRONTEND: Signup form loads correctly with all fields",
+    "FRONTEND: Signup form submission triggers reCAPTCHA v3 invisibly",
+    "FRONTEND: Signup success shows 'Thank you! Your enquiry has been submitted' toast",
+    "FRONTEND: Logout functionality works correctly",
+    "CODE REVIEW: Idle warning modal has data-testid='idle-warning-modal' (line 744)",
+    "CODE REVIEW: Stay Logged In button has data-testid='stay-logged-in-btn' (line 755)",
+    "CODE REVIEW: Idle timeout: 14 min warning, 15 min logout (lines 229-230)",
+    "CODE REVIEW: Events tracked: mousedown, mousemove, keydown, scroll, touchstart, click (line 245)"
+  ],
+  
+  "test_report_links": [
+    "/app/backend/tests/test_iteration39_recaptcha_idle.py",
+    "/app/test_reports/pytest/iteration39_results.xml"
+  ],
+  
+  "action_items": [],
+  
+  "critical_code_review_comments": [
+    "App.js lines 218-254: Idle timeout logic correctly implemented with useEffect, useRef for timers, and proper cleanup",
+    "App.js line 229: IDLE_LIMIT = 14 * 60 * 1000 (14 minutes) - correct",
+    "App.js line 230: LOGOUT_DELAY = 1 * 60 * 1000 (1 minute after warning) - correct",
+    "App.js line 245: Events tracked include all user activity types",
+    "App.js lines 743-760: Idle warning modal with correct data-testid attributes",
+    "App.js lines 263-268: handleLogin gets reCAPTCHA token via window.grecaptcha.execute()",
+    "App.js line 447: 'Protected by reCAPTCHA' text displayed below Sign In button",
+    "App.css lines 225-228: .grecaptcha-badge visibility:hidden - badge correctly hidden",
+    "SignupPage.js lines 55-61: handleSignup gets reCAPTCHA token via window.grecaptcha.execute()",
+    "backend/services/recaptcha.py: verify_recaptcha() checks score >= 0.3 (lenient threshold)",
+    "backend/routes/auth.py line 31: Login endpoint calls verify_recaptcha() before credential check",
+    "backend/routes/prospects.py line 71: Signup endpoint calls verify_recaptcha() before processing",
+    "backend/models.py line 153: LoginRequest model has captcha_token field with default empty string"
+  ],
+  
+  "updated_files": [
+    "/app/backend/tests/test_iteration39_recaptcha_idle.py"
+  ],
+  
+  "success_rate": {
+    "backend": "100% (8/8 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  
+  "test_credentials": {
+    "admin": {
+      "username": "admin",
+      "password": "admin123"
+    }
+  },
+  
+  "seed_data_creation": "None - used existing data",
+  
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  
+  "context_for_next_testing_agent": "Iteration 39 validated reCAPTCHA v3 and idle timeout features. Key findings: 1) reCAPTCHA v3 is implemented using GoogleReCaptchaProvider from 'react-google-recaptcha-v3'. 2) Token obtained via window.grecaptcha.execute() before form submission - invisible to users. 3) Backend verifies with Google API and checks score >= 0.3. 4) Idle timeout: 14 min = show warning modal, 15 min = auto-logout. 5) Events tracked: mousedown, mousemove, keydown, scroll, touchstart, click. 6) Idle warning modal cannot be tested in real-time (requires 14 min idle) but code structure is verified. 7) reCAPTCHA badge hidden via CSS (.grecaptcha-badge visibility:hidden). 8) 'Protected by reCAPTCHA' text shown below Sign In button.",
+  
+  "features_validated": {
+    "recaptcha_v3_login": {
+      "status": "WORKING",
+      "details": [
+        "GoogleReCaptchaProvider wraps App component (App.js line 766)",
+        "Token obtained via window.grecaptcha.execute() in handleLogin (lines 263-268)",
+        "captcha_token sent in login request body",
+        "Backend verifies token with Google API (services/recaptcha.py)",
+        "Score threshold: 0.3 (lenient)",
+        "'Protected by reCAPTCHA' text shown below Sign In button"
+      ]
+    },
+    "recaptcha_v3_signup": {
+      "status": "WORKING",
+      "details": [
+        "Token obtained via window.grecaptcha.execute() in handleSignup (SignupPage.js lines 55-61)",
+        "captcha_token sent in signup request body",
+        "Backend verifies token (routes/prospects.py line 71)"
+      ]
+    },
+    "recaptcha_badge_hidden": {
+      "status": "WORKING",
+      "details": [
+        "CSS: .grecaptcha-badge { visibility: hidden !important; } (App.css lines 225-228)",
+        "Attribution provided via 'Protected by reCAPTCHA' text"
+      ]
+    },
+    "idle_timeout": {
+      "status": "WORKING (code verified)",
+      "details": [
+        "14 min idle = show warning modal (IDLE_LIMIT = 14 * 60 * 1000)",
+        "15 min idle (1 min after warning) = auto-logout (LOGOUT_DELAY = 1 * 60 * 1000)",
+        "Events tracked: mousedown, mousemove, keydown, scroll, touchstart, click",
+        "Modal has data-testid='idle-warning-modal'",
+        "Stay Logged In button has data-testid='stay-logged-in-btn'",
+        "Clicking Stay Logged In sets idleWarning to false and resets timer",
+        "Cannot test in real-time (requires 14 min idle)"
+      ]
+    },
+    "backend_captcha_verification": {
+      "status": "WORKING",
+      "details": [
+        "RECAPTCHA_SECRET_KEY configured in backend/.env",
+        "Empty token rejected with 'CAPTCHA verification failed'",
+        "Invalid token rejected with 'CAPTCHA verification failed'",
+        "Missing token rejected with 'CAPTCHA verification failed'",
+        "Captcha check happens before credential check"
+      ]
+    }
+  },
+  
+  "limitations": {
+    "idle_timeout_testing": "Cannot test real-time idle timeout (requires 14 min wait). Code structure and logic verified through code review."
+  }
+}

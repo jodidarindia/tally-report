@@ -16,6 +16,7 @@ from services.auth_service import (
 )
 from services.encryption_service import encrypt_pii, decrypt_pii, PROSPECT_PII_FIELDS
 from services.audit_service import log_audit, get_client_ip
+from services.recaptcha import verify_recaptcha
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,6 +65,12 @@ async def prospect_signup(request: Request):
     """New customer signup — stores prospect for SuperAdmin review."""
     try:
         body = await request.json()
+
+        # Verify reCAPTCHA
+        captcha_token = (body.get("captcha_token") or "").strip()
+        if not await verify_recaptcha(captcha_token):
+            return APIResponse(success=False, error="CAPTCHA verification failed. Please try again.")
+
         company_name = (body.get("company_name") or "").strip()
         contact_person = (body.get("contact_person") or "").strip()
         email = (body.get("email") or "").strip().lower()
