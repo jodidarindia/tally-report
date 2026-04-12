@@ -22,50 +22,53 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 - Sales reports and AI-powered reports
 - Salesman Performance tracking
 - Tally Sync with status monitoring
-- Branch/Division exclusion toggle (global across all modules)
-- PDF Ledger export (Tally-format)
-- Marketing PDFs (Presentation, Training Booklet, Social Media Kit) with demo data
-- Multi-company support with company switching
-- Super Admin panel
+- Branch/Division exclusion toggle (global)
+- PDF Ledger export, Marketing PDFs
+- Multi-company support, Super Admin panel
+
+## Refer & Earn System (Apr 2026)
+- **Auto-generated referral codes** (REF-XXXXXX format) for admin and employee users
+- **Referral Code field** on signup/enquiry form (optional)
+- **3% commission** on subscription amount when referred prospect subscribes
+- **User Panel**: Referral code card, stats (Total Referrals, Earned, Balance, Redeemed), referral history table, earnings ledger with credit/debit entries
+- **Super Admin Panel**: Referrals tab with overview stats, referrers table, recent referrals, Credit Commission action, Redeem/Payout action, per-user ledger view
+- **Collections**: `referral_codes`, `referrals`, `referral_ledger`
+- **Commission flow**: Prospect signs up with code → Referral record created (pending) → SA credits commission when prospect subscribes → Commission appears in referrer's ledger → SA processes payout when requested
 
 ## Security Features (Apr 2026)
-- **Google reCAPTCHA v3**: Invisible bot protection on Login and Signup forms. Backend verifies token with Google API, rejects scores below 0.3.
-- **Idle Auto-Logout**: 15-minute inactivity timeout. Warning popup at 14 min with "Stay Logged In" button. Auto-logout at 15 min. Tracks mouse, keyboard, scroll, touch activity.
-- **JWT-based Auth**: Token-based authentication with role-based access control.
+- **Google reCAPTCHA v3**: Invisible bot protection on Login and Signup (score threshold 0.3)
+- **Idle Auto-Logout**: 15-minute inactivity timeout with warning at 14 min
+- **JWT-based Auth**: Token-based with role-based access control
 
 ## Public Pages (Apr 2026)
-- Privacy Policy (DPDP Act 2023, IT Act 2000), Terms of Service, Refund Policy, Contact Us, Social Media
-- WhatsApp floating button on public pages only (+91 81204 70018)
-- Footer: "FLOWRA is a brand owned by JODIDAR INDIA"
+- Privacy Policy, Terms of Service, Refund Policy, Contact Us, Social Media
+- WhatsApp floating button on public pages (+91 81204 70018)
+- JODIDAR INDIA branding in all footers
 
 ## Mobile Responsiveness (Apr 2026)
-- Horizontally scrollable data tables with sticky first column (Item Name / Customer Name)
-- Tab labels wrap into two lines on mobile
-- CSS: `border-collapse: separate` for `position: sticky` support
+- Horizontally scrollable tables with sticky first column
+- Tab labels wrap on mobile, responsive layouts
 
 ## Architecture
 ```
 /app/
 ├── backend/
-│   ├── routes/ (auth.py, super_admin.py, sales.py, inventory.py, customers.py, dashboard.py, sync.py, prospects.py)
+│   ├── routes/ (auth.py, referrals.py, prospects.py, super_admin.py, sales.py, inventory.py, customers.py, dashboard.py, sync.py, ...)
 │   ├── services/ (auth_service.py, recaptcha.py, audit_service.py, encryption_service.py, ist_utils.py)
-│   ├── utils.py
-│   └── scripts/ (generate_materials.py)
+│   └── models.py, server.py, db.py
 ├── frontend/
-│   ├── public/ (demo/, screenshots/, FLOWRA_*.pdf)
 │   └── src/
 │       ├── App.js (routing, auth, idle timeout, reCAPTCHA provider)
-│       ├── App.css (.data-table, sticky columns, reCAPTCHA badge hidden)
-│       ├── components/ (SearchableSelect, SyncStatusBar, RenewalPopup, ui/)
-│       └── pages/ (PublicPages.js, LandingPage.js, SignupPage.js, Dashboard.js, etc.)
+│       ├── App.css (.data-table, sticky columns)
+│       └── pages/ (ReferAndEarn.js, PublicPages.js, LandingPage.js, SignupPage.js, SuperAdminDashboard.js, Dashboard.js, ...)
 ```
 
 ## Upcoming Tasks
-- P1: Compile Desktop Agent into one-click `.exe` installer (PyInstaller/Inno Setup)
+- P1: Compile Desktop Agent into one-click `.exe` installer
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders (email/WhatsApp)
 
 ## Future/Backlog
-- Salesman Order System (Enterprise): Login, customer mapping, order workflow, beat plans
-- AI Expense Insights (GPT-5.2): Analyze Tally expense data for reduction suggestions
-- P3: Refactor App.js (extract routing, auth, layout into separate modules)
+- Salesman Order System (Enterprise)
+- AI Expense Insights (GPT-5.2)
+- Refactor App.js
