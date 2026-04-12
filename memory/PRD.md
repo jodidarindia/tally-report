@@ -3,18 +3,16 @@
 ## Overview
 FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime for business analytics, inventory management, CRM, and reporting.
 
-## Domain
-`www.flowralive.in`
-
-## Ownership
+## Domain & Ownership
+- **Domain**: `www.flowralive.in`
 - **Brand**: FLOWRA is owned by **JODIDAR INDIA**
 - **Contact**: support@flowralive.in | +91 81204 70018
 - **Registered Address**: KK Road, Raipur, Chhattisgarh (used only in legal pages)
 
 ## Tech Stack
-- **Frontend**: React, Tailwind CSS, Shadcn UI, Recharts
+- **Frontend**: React, Tailwind CSS, Shadcn UI, Recharts, react-google-recaptcha-v3
 - **Backend**: FastAPI, MongoDB
-- **Integration**: Tally Prime (desktop sync agent), OpenAI GPT-5.2 (AI features via Emergent LLM Key)
+- **Integration**: Tally Prime (desktop sync), OpenAI GPT-5.2 (AI features via Emergent LLM Key), Google reCAPTCHA v3
 
 ## Core Features (Implemented)
 - Dashboard with overdue digest, sales analytics
@@ -30,47 +28,37 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 - Multi-company support with company switching
 - Super Admin panel
 
-## Public Pages (Implemented - Apr 2026)
-- **Privacy Policy** — DPDP Act 2023, IT Act 2000 compliant. Grievance Officer details with address.
-- **Terms of Service** — 12 sections covering eligibility, payments, IP, data ownership, governing law (Raipur, CG jurisdiction).
-- **Refund & Cancellation Policy** — 7-day refund window, 15 days for annual, 7-10 business days processing.
-- **Contact Us** — Email, WhatsApp, Phone cards. Registered office details.
-- **Social Media** — Placeholder pages for Instagram, Facebook, LinkedIn, X (Twitter), YouTube. "Coming Soon" with WhatsApp notification CTA.
-- **WhatsApp Floating Button** — On all public pages, links to +918120470018. NOT on authenticated app pages.
-- **Footer** — Every public page footer shows "FLOWRA is a brand owned by JODIDAR INDIA" with legal links.
+## Security Features (Apr 2026)
+- **Google reCAPTCHA v3**: Invisible bot protection on Login and Signup forms. Backend verifies token with Google API, rejects scores below 0.3.
+- **Idle Auto-Logout**: 15-minute inactivity timeout. Warning popup at 14 min with "Stay Logged In" button. Auto-logout at 15 min. Tracks mouse, keyboard, scroll, touch activity.
+- **JWT-based Auth**: Token-based authentication with role-based access control.
 
-## Mobile Responsiveness (Implemented - Apr 2026)
-- All data tables horizontally scrollable on mobile (375px viewport)
-- Sticky/frozen first column (Item Name / Customer Name) stays visible while scrolling
-- Tab labels wrap into two lines on mobile for readability
-- CSS: `border-collapse: separate` required for `position: sticky` on table cells
+## Public Pages (Apr 2026)
+- Privacy Policy (DPDP Act 2023, IT Act 2000), Terms of Service, Refund Policy, Contact Us, Social Media
+- WhatsApp floating button on public pages only (+91 81204 70018)
+- Footer: "FLOWRA is a brand owned by JODIDAR INDIA"
+
+## Mobile Responsiveness (Apr 2026)
+- Horizontally scrollable data tables with sticky first column (Item Name / Customer Name)
+- Tab labels wrap into two lines on mobile
+- CSS: `border-collapse: separate` for `position: sticky` support
 
 ## Architecture
 ```
 /app/
 ├── backend/
-│   ├── routes/ (auth.py, super_admin.py, sales.py, inventory.py, customers.py, dashboard.py, sync.py)
-│   ├── utils.py (compute_overdue_digest)
+│   ├── routes/ (auth.py, super_admin.py, sales.py, inventory.py, customers.py, dashboard.py, sync.py, prospects.py)
+│   ├── services/ (auth_service.py, recaptcha.py, audit_service.py, encryption_service.py, ist_utils.py)
+│   ├── utils.py
 │   └── scripts/ (generate_materials.py)
 ├── frontend/
 │   ├── public/ (demo/, screenshots/, FLOWRA_*.pdf)
 │   └── src/
-│       ├── App.js (main layout, routing, auth, nav, public page routing)
-│       ├── App.css (.data-table styles, sticky columns, loading states)
+│       ├── App.js (routing, auth, idle timeout, reCAPTCHA provider)
+│       ├── App.css (.data-table, sticky columns, reCAPTCHA badge hidden)
 │       ├── components/ (SearchableSelect, SyncStatusBar, RenewalPopup, ui/)
-│       └── pages/
-│           ├── PublicPages.js (PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage)
-│           ├── LandingPage.js, SignupPage.js
-│           ├── Dashboard.js, CustomerCRM.js, InventoryAnalytics.js, Inventory.js
-│           └── ... (other app pages)
+│       └── pages/ (PublicPages.js, LandingPage.js, SignupPage.js, Dashboard.js, etc.)
 ```
-
-## Key Technical Notes
-- **App.css must be imported in App.js** — contains .data-table styling including sticky columns
-- **Naive timestamps**: Always append 'Z' before `new Date()` in frontend
-- **Accounting**: Opening = Closing + AllSales - AllPurchases; Inward display = Sundry Creditor purchases only
-- **MongoDB**: Always exclude `_id` from responses
-- **Public page routing**: `publicView` state in App.js controls which public page shows (landing, login, signup, privacy, terms, refund, contact, social)
 
 ## Upcoming Tasks
 - P1: Compile Desktop Agent into one-click `.exe` installer (PyInstaller/Inno Setup)
