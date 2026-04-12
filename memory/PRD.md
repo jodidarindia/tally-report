@@ -7,51 +7,28 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally* for bu
 - **Domain**: `www.flowralive.in`
 - **Brand**: FLOWRA is owned by **JODIDAR INDIA**
 - **Contact**: support@flowralive.in | +91 81204 70018
-- **Registered Address**: KK Road, Raipur, Chhattisgarh (legal pages only)
 
 ## Tech Stack
 - Frontend: React, Tailwind CSS, Shadcn UI, Recharts, react-google-recaptcha-v3
 - Backend: FastAPI, MongoDB
-- Integrations: Tally* (desktop sync), OpenAI GPT-5.2 (Emergent LLM Key), Google reCAPTCHA v3
+- Integrations: Tally* (desktop sync), OpenAI GPT-5.2, Google reCAPTCHA v3
 
-## Core Features
-- Dashboard with overdue digest, sales analytics
-- Inventory: stock tracking, reorder alerts, AI Purchase Orders, auto/manual reorder levels (2-month stock)
-- Inventory Analytics: Movement Analysis, Below Cost Sales, Sales Frequency, Customer Items
-- Customer CRM: Outstanding/Aging (Excel export), Targets (Excel export), Follow-ups, Payment Behavior
-- Sales reports, AI-powered reports, Insider Result
-- Salesman Performance tracking
-- Tally* Sync with status monitoring, Sync History
-- Branch/Division exclusion toggle (global)
-- PDF Ledger export
-- Refer & Earn: auto-generated codes, 3% commission, user dashboard, SA management
-- Multi-company support, Super Admin panel
-- Marketing PDFs (Presentation, Training Booklet, Social Media Kit)
+## Implemented Features
+- Dashboard, Inventory (auto/manual reorder), Inventory Analytics, CRM (Excel export), Sales, AI Reports
+- Salesman Performance, Tally* Sync, Branch/Division exclusion, PDF Ledger export
+- Refer & Earn system (3% commission), Multi-company, Super Admin panel
+- Public pages (Privacy, Terms, Refund, Contact, Social), WhatsApp button
+- reCAPTCHA v3 on login/signup, 15-min idle auto-logout
+- Onboarding tour for first-time users (7 steps, persisted via DB flag)
+- Mobile responsive with sticky first columns and text wrapping
 
-## Security
-- Google reCAPTCHA v3 on Login and Signup (score threshold 0.3)
-- 15-minute idle auto-logout with warning
-- JWT auth with role-based access control
-- Field-level encryption (AES) for PII
-
-## Public Pages
-- Privacy Policy, Terms of Service, Refund Policy, Contact Us, Social Media
-- WhatsApp floating button on public pages (+91 81204 70018)
-- JODIDAR INDIA branding in all footers
-
-## Mobile Responsiveness
-- Horizontally scrollable tables with sticky first column (max-width:180px, text wrapping)
-- Tab labels wrap on mobile, responsive layouts
-
-## Branding
-- All "Tally" / "Tally Prime" references display as "Tally*" throughout the app
-
-## Architecture
-```
-/app/backend/routes/ — auth, referrals, prospects, super_admin, sales, inventory, customers, dashboard, sync
-/app/backend/services/ — auth_service, recaptcha, audit_service, encryption_service, export_service, tenant_context
-/app/frontend/src/pages/ — ReferAndEarn, PublicPages, LandingPage, SignupPage, SuperAdminDashboard, Dashboard, CustomerCRM, InventoryAnalytics, Inventory, TallySetup, etc.
-```
+## Onboarding Tour (Apr 2026)
+- Custom-built spotlight tour (no external library dependency)
+- 7 steps: Dashboard, Inventory, CRM, Analytics, Refer & Earn, Setup, FY Selector
+- Shows on first login when `onboarding_completed: false` in user record
+- Skip/Back/Next navigation with progress dots
+- Backend: `POST /api/auth/complete-onboarding` sets flag to true
+- Won't show again once completed or skipped
 
 ## Upcoming Tasks
 - P1: Compile Desktop Agent into `.exe` installer

@@ -173,7 +173,8 @@ async def get_me(request: Request):
             "subscription_start": sub_start or None,
             "subscription_months": sub_months,
             "subscription_expires": sub_expires_iso,
-            "subscription_days_left": sub_days_left
+            "subscription_days_left": sub_days_left,
+            "onboarding_completed": user.get("onboarding_completed", False)
         })
     except Exception as e:
         return APIResponse(success=False, error=str(e))
@@ -183,6 +184,21 @@ async def get_me(request: Request):
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
     return APIResponse(success=True, message="Logged out successfully")
+
+
+@router.post("/auth/complete-onboarding")
+async def complete_onboarding(request: Request):
+    try:
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Not authenticated")
+        await db.users.update_one(
+            {"username": user["username"]},
+            {"$set": {"onboarding_completed": True}}
+        )
+        return APIResponse(success=True, message="Onboarding completed")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
 
 
 @router.post("/auth/change-password")

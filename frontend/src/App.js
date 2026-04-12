@@ -23,6 +23,7 @@ import ProfileModal from './pages/ProfileModal';
 import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
 import ReferAndEarn from './pages/ReferAndEarn';
+import OnboardingTour from './components/OnboardingTour';
 import LandingPage from './pages/LandingPage';
 import SignupPage from './pages/SignupPage';
 import { PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage } from './pages/PublicPages';
@@ -75,6 +76,7 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [publicView, setPublicView] = useState('landing'); // landing, login, signup, privacy, terms, refund, contact, social
   const [showRenewalPopup, setShowRenewalPopup] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const wsRef = useRef(null);
   const userMenuRef = useRef(null);
 
@@ -139,6 +141,11 @@ function App() {
           const daysLeft = userData.subscription_days_left;
           if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30 && userData.role !== 'super_admin') {
             setShowRenewalPopup(true);
+          }
+
+          // Trigger onboarding for first-time users on session restore
+          if (!userData.onboarding_completed && userData.role !== 'super_admin') {
+            setTimeout(() => setShowOnboarding(true), 2000);
           }
 
           if (userData.role === 'super_admin') {
@@ -291,6 +298,11 @@ function App() {
 
         if (data.role === 'super_admin') {
           setCurrentPage('super-admin');
+        }
+
+        // Trigger onboarding tour for first-time users
+        if (!data.onboarding_completed && data.role !== 'super_admin') {
+          setTimeout(() => setShowOnboarding(true), 1500);
         } else {
           // Fetch latest FY from synced data
           try {
@@ -760,6 +772,14 @@ function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Onboarding Tour */}
+      {showOnboarding && (
+        <OnboardingTour
+          run={showOnboarding}
+          onComplete={() => setShowOnboarding(false)}
+        />
       )}
     </div>
   );
