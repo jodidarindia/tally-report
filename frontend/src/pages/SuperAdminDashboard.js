@@ -7,7 +7,7 @@ import {
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
   UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart, Download,
-  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle
+  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 
@@ -247,6 +247,7 @@ const SuperAdminDashboard = ({ token }) => {
     { id: 'health', label: 'Customer Health', icon: Heart },
     { id: 'admins', label: 'Admin Mgmt', icon: Shield },
     { id: 'renewals', label: 'Renewals', icon: Calendar },
+    { id: 'referrals', label: 'Referrals', icon: Gift },
     { id: 'activity', label: 'Activity', icon: Activity },
   ];
 
@@ -846,6 +847,9 @@ const SuperAdminDashboard = ({ token }) => {
         </div>
       )}
 
+      {/* ===== REFERRALS TAB ===== */}
+      {activeTab === 'referrals' && <ReferralManagement token={token} />}
+
       {/* ===== ACTIVITY TAB ===== */}
       {activeTab === 'activity' && <ActivityLog />}
 
@@ -1230,3 +1234,216 @@ const SuperAdminDashboard = ({ token }) => {
 };
 
 export default SuperAdminDashboard;
+
+/* ─── Referral Management Component ─────────────────── */
+const ReferralManagement = () => {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [showRedeem, setShowRedeem] = useState(null);
+  const [redeemAmount, setRedeemAmount] = useState('');
+  const [redeemNotes, setRedeemNotes] = useState('');
+  const [showCreditModal, setShowCreditModal] = useState(null);
+  const [creditAmount, setCreditAmount] = useState('');
+  const [selectedLedger, setSelectedLedger] = useState(null);
+  const [ledgerData, setLedgerData] = useState(null);
+
+  useEffect(() => { fetchData(); }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/referrals/admin/overview`);
+      if (res.data?.success) setData(res.data.data);
+    } catch { toast.error('Failed to load referral data'); }
+    finally { setLoading(false); }
+  };
+
+  const handleRedeem = async () => {
+    if (!showRedeem || !redeemAmount) return;
+    try {
+      const res = await axios.post(`${API}/referrals/admin/redeem`, {
+        username: showRedeem, amount: parseFloat(redeemAmount), notes: redeemNotes
+      });
+      if (res.data?.success) {
+        toast.success(res.data.message);
+        setShowRedeem(null); setRedeemAmount(''); setRedeemNotes('');
+        fetchData();
+      } else toast.error(res.data?.error);
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
+  };
+
+  const handleCredit = async () => {
+    if (!showCreditModal || !creditAmount) return;
+    try {
+      const res = await axios.post(`${API}/referrals/admin/credit-commission`, {
+        prospect_id: showCreditModal.prospect_id, subscription_amount: parseFloat(creditAmount)
+      });
+      if (res.data?.success) {
+        toast.success(res.data.message);
+        setShowCreditModal(null); setCreditAmount('');
+        fetchData();
+      } else toast.error(res.data?.error);
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
+  };
+
+  const viewLedger = async (username) => {
+    try {
+      const res = await axios.get(`${API}/referrals/admin/user-ledger?username=${encodeURIComponent(username)}`);
+      if (res.data?.success) { setLedgerData(res.data.data); setSelectedLedger(username); }
+    } catch { toast.error('Failed to load ledger'); }
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-40"><div className="loading-spinner" /></div>;
+
+  const stats = data?.stats || {};
+  const referrers = data?.referrers || [];
+  const recent = data?.recent_referrals || [];
+
+  return (
+    <div data-testid="referral-management">
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+        {[
+          { label: 'Referral Codes', value: stats.total_referral_codes, color: 'text-slate-900' },
+          { label: 'Total Referrals', value: stats.total_referrals, color: 'text-blue-700' },
+          { label: 'Subscribed', value: stats.total_subscribed, color: 'text-green-700' },
+          { label: 'Total Commission', value: formatINR(stats.total_commission), color: 'text-emerald-700' },
+          { label: 'Redeemed', value: formatINR(stats.total_redeemed), color: 'text-purple-700' },
+          { label: 'Pending Payout', value: formatINR(stats.total_pending_payout), color: 'text-amber-700' },
+        ].map(s => (
+          <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-3 text-center">
+            <div className="text-xs text-slate-500 mb-1">{s.label}</div>
+            <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Referrers Table */}
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">Referrers</h3>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto mb-6">
+        <table className="data-table min-w-[700px]" data-testid="referrers-table">
+          <thead><tr>
+            <th>User</th><th>Role</th><th className="numeric">Referrals</th>
+            <th className="numeric">Subscribed</th><th className="numeric">Earned</th>
+            <th className="numeric">Redeemed</th><th className="numeric">Balance</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            {referrers.length > 0 ? referrers.map((r, i) => {
+              const balance = (r.total_earned || 0) - (r.total_redeemed || 0);
+              return (
+                <tr key={i}>
+                  <td className="font-medium text-slate-900">{r.name || r.username}<div className="text-xs text-slate-400">{r.username}</div></td>
+                  <td><span className={`px-2 py-0.5 rounded text-xs font-medium ${r.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{r.role}</span></td>
+                  <td className="numeric">{r.total_referrals}</td>
+                  <td className="numeric text-green-700">{r.subscribed}</td>
+                  <td className="numeric font-medium text-emerald-700">{formatINR(r.total_earned)}</td>
+                  <td className="numeric text-purple-600">{formatINR(r.total_redeemed)}</td>
+                  <td className="numeric font-bold text-amber-700">{formatINR(balance)}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      <button onClick={() => viewLedger(r.username)} className="px-2 py-1 text-xs bg-slate-100 rounded hover:bg-slate-200">Ledger</button>
+                      {balance > 0 && <button onClick={() => setShowRedeem(r.username)} className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200" data-testid={`redeem-${i}`}>Redeem</button>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            }) : <tr><td colSpan="8" className="text-center py-8 text-slate-400">No referrers yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Recent Referrals */}
+      <h3 className="text-sm font-semibold text-slate-700 mb-3">Recent Referrals</h3>
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+        <table className="data-table min-w-[700px]" data-testid="recent-referrals-table">
+          <thead><tr>
+            <th>Referred Company</th><th>Referrer</th><th>Code</th><th>Date</th>
+            <th>Status</th><th className="numeric">Commission</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            {recent.length > 0 ? recent.map((r, i) => (
+              <tr key={i}>
+                <td className="font-medium">{r.referred_company}</td>
+                <td className="text-slate-600 text-sm">{r.referrer_name || r.referrer_username}</td>
+                <td className="font-mono text-xs text-slate-500">{r.referral_code}</td>
+                <td className="text-slate-600">{formatDate(r.created_at)}</td>
+                <td><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${r.status === 'subscribed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{r.status}</span></td>
+                <td className="numeric">{r.commission_amount > 0 ? formatINR(r.commission_amount) : '-'}</td>
+                <td>{r.status === 'pending' && <button onClick={() => setShowCreditModal(r)} className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200" data-testid={`credit-${i}`}>Credit Commission</button>}</td>
+              </tr>
+            )) : <tr><td colSpan="7" className="text-center py-8 text-slate-400">No referrals yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Redeem Modal */}
+      {showRedeem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowRedeem(null)}>
+          <div className="bg-white rounded-xl max-w-md w-full p-6" data-testid="redeem-modal">
+            <h3 className="text-lg font-semibold mb-4">Process Payout: {showRedeem}</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700">Amount (Rs.)</label>
+                <input type="number" value={redeemAmount} onChange={e => setRedeemAmount(e.target.value)} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg" placeholder="Enter amount" data-testid="redeem-amount" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700">Notes</label>
+                <input type="text" value={redeemNotes} onChange={e => setRedeemNotes(e.target.value)} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg" placeholder="Payment reference, mode, etc." />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleRedeem} className="flex-1 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700" data-testid="confirm-redeem">Process Payout</button>
+              <button onClick={() => setShowRedeem(null)} className="flex-1 py-2.5 border border-slate-200 rounded-lg">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Credit Commission Modal */}
+      {showCreditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowCreditModal(null)}>
+          <div className="bg-white rounded-xl max-w-md w-full p-6" data-testid="credit-modal">
+            <h3 className="text-lg font-semibold mb-2">Credit Commission</h3>
+            <p className="text-sm text-slate-500 mb-4">Company: <strong>{showCreditModal.referred_company}</strong> | Referrer: <strong>{showCreditModal.referrer_name}</strong></p>
+            <div>
+              <label className="text-sm font-medium text-slate-700">Subscription Amount (Rs.)</label>
+              <input type="number" value={creditAmount} onChange={e => setCreditAmount(e.target.value)} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-lg" placeholder="Final subscription amount" data-testid="credit-amount" />
+              {creditAmount > 0 && <p className="text-sm text-green-600 mt-1">Commission (3%): <strong>Rs.{(parseFloat(creditAmount) * 0.03).toFixed(2)}</strong></p>}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={handleCredit} className="flex-1 py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]" data-testid="confirm-credit">Credit Commission</button>
+              <button onClick={() => setShowCreditModal(null)} className="flex-1 py-2.5 border border-slate-200 rounded-lg">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Ledger Modal */}
+      {selectedLedger && ledgerData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setSelectedLedger(null)}>
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6" data-testid="ledger-modal">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Ledger: {selectedLedger}</h3>
+              <button onClick={() => setSelectedLedger(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+            <table className="data-table w-full">
+              <thead><tr><th>Date</th><th>Type</th><th>Description</th><th className="numeric">Amount</th><th className="numeric">Balance</th></tr></thead>
+              <tbody>
+                {(ledgerData.ledger || []).map((e, i) => (
+                  <tr key={i}>
+                    <td className="text-sm">{formatDate(e.created_at)}</td>
+                    <td><span className={`px-2 py-0.5 rounded text-xs font-medium ${e.type === 'credit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{e.type}</span></td>
+                    <td className="text-sm text-slate-600">{e.description}</td>
+                    <td className={`numeric font-medium ${e.type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>{e.type === 'credit' ? '+' : '-'}{formatINR(e.amount)}</td>
+                    <td className="numeric font-semibold">{formatINR(e.balance_after)}</td>
+                  </tr>
+                ))}
+                {(ledgerData.ledger || []).length === 0 && <tr><td colSpan="5" className="text-center py-6 text-slate-400">No ledger entries</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

@@ -6,7 +6,7 @@ import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recapt
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
   Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
-  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock
+  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock, Gift
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -22,6 +22,7 @@ import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
 import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
+import ReferAndEarn from './pages/ReferAndEarn';
 import LandingPage from './pages/LandingPage';
 import SignupPage from './pages/SignupPage';
 import { PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage } from './pages/PublicPages';
@@ -357,10 +358,11 @@ function App() {
     // Insert Activity after Sync History but before Setup
     const setupIdx = items.findIndex(i => i.id === 'setup');
     const activityItem = { id: 'activity', label: 'Activity', icon: History };
+    const referralItem = { id: 'referral', label: 'Refer & Earn', icon: Gift };
     if (setupIdx >= 0) {
-      items.splice(setupIdx, 0, activityItem);
+      items.splice(setupIdx, 0, activityItem, referralItem);
     } else {
-      items.push(activityItem);
+      items.push(activityItem, referralItem);
     }
     return items;
   }, [user]);
@@ -556,6 +558,7 @@ function App() {
       case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
       case 'activity': return <ActivityLog token={token} role={user?.role} />;
+      case 'referral': return <ReferAndEarn />;
       case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
       default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     }

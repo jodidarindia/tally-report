@@ -79,6 +79,7 @@ async def prospect_signup(request: Request):
         address = (body.get("address") or "").strip()
         selected_plan = (body.get("selected_plan") or "").strip()
         message = (body.get("message") or "").strip()
+        referral_code = (body.get("referral_code") or "").strip().upper()
 
         if not company_name or not email or not contact_person or not phone:
             return APIResponse(success=False, error="Company name, contact person, email, and phone are required")
@@ -111,6 +112,7 @@ async def prospect_signup(request: Request):
             "address": address,
             "selected_plan": selected_plan,
             "message": message,
+            "referral_code": referral_code,
             "status": "new",
             "demo_requested": False,
             "returning_user": bool(was_deleted),
@@ -128,6 +130,26 @@ async def prospect_signup(request: Request):
 
         await db.prospects.insert_one(encrypted)
         logger.info(f"New prospect signup: {prospect_id}")
+
+        # Link referral if code provided
+        if referral_code:
+            referrer = await db.referral_codes.find_one({"referral_code": referral_code}, {"_id": 0})
+            if referrer:
+                await db.referrals.insert_one({
+                    "referrer_username": referrer["username"],
+                    "referrer_name": referrer.get("name", ""),
+                    "referrer_role": referrer.get("role", ""),
+                    "referrer_tenant_id": referrer.get("tenant_id", ""),
+                    "referral_code": referral_code,
+                    "prospect_id": prospect_id,
+                    "referred_company": company_name,
+                    "referred_email": email,
+                    "status": "pending",
+                    "subscription_amount": 0,
+                    "commission_amount": 0,
+                    "created_at": now,
+                })
+                logger.info(f"Referral linked: {referral_code} -> {prospect_id}")
 
         return APIResponse(success=True, message="Thank you! Your enquiry has been submitted. Our team will contact you shortly.", data={
             "prospect_id": prospect_id,

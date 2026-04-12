@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, Building2, User, Mail, Phone, MapPin,
   FileText, Loader, Check, Eye, Package, BarChart3, Users, Brain,
-  Truck, Shield, Lightbulb, ChevronRight, Play
+  Truck, Shield, Lightbulb, ChevronRight, Play, Gift
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -39,6 +39,7 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
     address: '',
     selected_plan: '',
     message: '',
+    referral_code: '',
   });
 
   const updateForm = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
@@ -243,6 +244,17 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                 <label className="block text-sm font-medium text-zinc-700 mb-1.5">Message (optional)</label>
                 <textarea value={form.message} onChange={e => updateForm('message', e.target.value)} rows={3}
                   className="w-full px-4 py-2.5 border border-zinc-200 rounded-sm text-sm focus:outline-none focus:ring-2 focus:ring-[#0052FF] focus:border-transparent resize-none" placeholder="Tell us about your business needs..." data-testid="signup-message" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1.5">Referral Code (optional)</label>
+                <div className="relative">
+                  <Gift size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                  <input type="text" value={form.referral_code} onChange={e => updateForm('referral_code', e.target.value.toUpperCase())}
+                    className="w-full pl-10 pr-4 py-2.5 border border-zinc-200 rounded-sm text-sm focus:outline-none focus:ring-2 focus:ring-[#0052FF] focus:border-transparent uppercase font-mono tracking-wider"
+                    placeholder="REF-XXXXXX" maxLength={10} data-testid="signup-referral-code" />
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">Have a referral code? Enter it to connect with your referrer.</p>
               </div>
 
               <div className="flex items-start gap-2 p-3 bg-zinc-50 rounded-sm">
