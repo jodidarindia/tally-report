@@ -1,70 +1,60 @@
 # FLOWRA - Product Requirements Document
 
 ## Overview
-FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime for business analytics, inventory management, CRM, and reporting.
+FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally* for business analytics, inventory management, CRM, and reporting.
 
 ## Domain & Ownership
 - **Domain**: `www.flowralive.in`
 - **Brand**: FLOWRA is owned by **JODIDAR INDIA**
 - **Contact**: support@flowralive.in | +91 81204 70018
-- **Registered Address**: KK Road, Raipur, Chhattisgarh (used only in legal pages)
+- **Registered Address**: KK Road, Raipur, Chhattisgarh (legal pages only)
 
 ## Tech Stack
-- **Frontend**: React, Tailwind CSS, Shadcn UI, Recharts, react-google-recaptcha-v3
-- **Backend**: FastAPI, MongoDB
-- **Integration**: Tally Prime (desktop sync), OpenAI GPT-5.2 (AI features via Emergent LLM Key), Google reCAPTCHA v3
+- Frontend: React, Tailwind CSS, Shadcn UI, Recharts, react-google-recaptcha-v3
+- Backend: FastAPI, MongoDB
+- Integrations: Tally* (desktop sync), OpenAI GPT-5.2 (Emergent LLM Key), Google reCAPTCHA v3
 
-## Core Features (Implemented)
+## Core Features
 - Dashboard with overdue digest, sales analytics
-- Inventory management with stock tracking, reorder alerts
+- Inventory: stock tracking, reorder alerts, AI Purchase Orders, auto/manual reorder levels (2-month stock)
 - Inventory Analytics: Movement Analysis, Below Cost Sales, Sales Frequency, Customer Items
-- Customer CRM: Outstanding/Aging, Targets, Follow-ups, Payment Behavior (credit scoring)
-- Sales reports and AI-powered reports
+- Customer CRM: Outstanding/Aging (Excel export), Targets (Excel export), Follow-ups, Payment Behavior
+- Sales reports, AI-powered reports, Insider Result
 - Salesman Performance tracking
-- Tally Sync with status monitoring
+- Tally* Sync with status monitoring, Sync History
 - Branch/Division exclusion toggle (global)
-- PDF Ledger export, Marketing PDFs
+- PDF Ledger export
+- Refer & Earn: auto-generated codes, 3% commission, user dashboard, SA management
 - Multi-company support, Super Admin panel
+- Marketing PDFs (Presentation, Training Booklet, Social Media Kit)
 
-## Refer & Earn System (Apr 2026)
-- **Auto-generated referral codes** (REF-XXXXXX format) for admin and employee users
-- **Referral Code field** on signup/enquiry form (optional)
-- **3% commission** on subscription amount when referred prospect subscribes
-- **User Panel**: Referral code card, stats (Total Referrals, Earned, Balance, Redeemed), referral history table, earnings ledger with credit/debit entries
-- **Super Admin Panel**: Referrals tab with overview stats, referrers table, recent referrals, Credit Commission action, Redeem/Payout action, per-user ledger view
-- **Collections**: `referral_codes`, `referrals`, `referral_ledger`
-- **Commission flow**: Prospect signs up with code → Referral record created (pending) → SA credits commission when prospect subscribes → Commission appears in referrer's ledger → SA processes payout when requested
+## Security
+- Google reCAPTCHA v3 on Login and Signup (score threshold 0.3)
+- 15-minute idle auto-logout with warning
+- JWT auth with role-based access control
+- Field-level encryption (AES) for PII
 
-## Security Features (Apr 2026)
-- **Google reCAPTCHA v3**: Invisible bot protection on Login and Signup (score threshold 0.3)
-- **Idle Auto-Logout**: 15-minute inactivity timeout with warning at 14 min
-- **JWT-based Auth**: Token-based with role-based access control
-
-## Public Pages (Apr 2026)
+## Public Pages
 - Privacy Policy, Terms of Service, Refund Policy, Contact Us, Social Media
 - WhatsApp floating button on public pages (+91 81204 70018)
 - JODIDAR INDIA branding in all footers
 
-## Mobile Responsiveness (Apr 2026)
-- Horizontally scrollable tables with sticky first column
+## Mobile Responsiveness
+- Horizontally scrollable tables with sticky first column (max-width:180px, text wrapping)
 - Tab labels wrap on mobile, responsive layouts
+
+## Branding
+- All "Tally" / "Tally Prime" references display as "Tally*" throughout the app
 
 ## Architecture
 ```
-/app/
-├── backend/
-│   ├── routes/ (auth.py, referrals.py, prospects.py, super_admin.py, sales.py, inventory.py, customers.py, dashboard.py, sync.py, ...)
-│   ├── services/ (auth_service.py, recaptcha.py, audit_service.py, encryption_service.py, ist_utils.py)
-│   └── models.py, server.py, db.py
-├── frontend/
-│   └── src/
-│       ├── App.js (routing, auth, idle timeout, reCAPTCHA provider)
-│       ├── App.css (.data-table, sticky columns)
-│       └── pages/ (ReferAndEarn.js, PublicPages.js, LandingPage.js, SignupPage.js, SuperAdminDashboard.js, Dashboard.js, ...)
+/app/backend/routes/ — auth, referrals, prospects, super_admin, sales, inventory, customers, dashboard, sync
+/app/backend/services/ — auth_service, recaptcha, audit_service, encryption_service, export_service, tenant_context
+/app/frontend/src/pages/ — ReferAndEarn, PublicPages, LandingPage, SignupPage, SuperAdminDashboard, Dashboard, CustomerCRM, InventoryAnalytics, Inventory, TallySetup, etc.
 ```
 
 ## Upcoming Tasks
-- P1: Compile Desktop Agent into one-click `.exe` installer
+- P1: Compile Desktop Agent into `.exe` installer
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders (email/WhatsApp)
 
