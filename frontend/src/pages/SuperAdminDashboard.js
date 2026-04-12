@@ -23,7 +23,7 @@ const ALL_FEATURES = [
   { id: 'ai_reports', label: 'AI Reports', desc: 'AI-powered insights' },
   { id: 'insider', label: 'Insider Result', desc: 'BI analytics & forecasts' },
   { id: 'sync_history', label: 'Sync History', desc: 'Data sync logs' },
-  { id: 'setup', label: 'Setup', desc: 'Tally connection settings' },
+  { id: 'setup', label: 'Setup', desc: 'Tally* connection settings' },
 ];
 
 const PLANS = {

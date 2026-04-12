@@ -84,7 +84,7 @@ export const PrivacyPolicy = ({ onNavigate, onBack }) => (
     <h2 className="text-xl font-bold text-slate-900 mt-10 mb-3">1. Data We Collect</h2>
     <ul className="list-disc pl-6 space-y-1.5 text-slate-700">
       <li><strong>Account Information:</strong> Name, email address, phone number, business name provided during registration.</li>
-      <li><strong>Business Data:</strong> Inventory, sales, purchase, and customer records synced from your Tally Prime software via the FLOWRA Desktop Agent.</li>
+      <li><strong>Business Data:</strong> Inventory, sales, purchase, and customer records synced from your Tally* software via the FLOWRA Desktop Agent.</li>
       <li><strong>Usage Data:</strong> Login timestamps, feature access logs, browser type, and IP address collected automatically.</li>
       <li><strong>Payment Data:</strong> Billing details processed through our third-party payment gateway. We do not store card or bank account details.</li>
     </ul>
@@ -93,7 +93,7 @@ export const PrivacyPolicy = ({ onNavigate, onBack }) => (
     <p>We process your data for the following purposes:</p>
     <ul className="list-disc pl-6 space-y-1.5 text-slate-700">
       <li>Providing and maintaining the FLOWRA platform and its features.</li>
-      <li>Syncing and displaying your Tally Prime business data.</li>
+      <li>Syncing and displaying your Tally* business data.</li>
       <li>Generating analytics, reports, and AI-powered insights.</li>
       <li>Customer support and communication.</li>
       <li>Ensuring platform security and preventing unauthorized access.</li>
@@ -193,7 +193,7 @@ export const TermsOfService = ({ onNavigate, onBack }) => (
 
     <h2 className="text-xl font-bold text-slate-900 mt-10 mb-3">6. Data Ownership</h2>
     <ul className="list-disc pl-6 space-y-1.5 text-slate-700">
-      <li>Your business data synced through Tally Prime remains <strong>your property</strong>.</li>
+      <li>Your business data synced through Tally* remains <strong>your property</strong>.</li>
       <li>FLOWRA does not claim ownership over your data.</li>
       <li>We are granted a limited license to process your data solely for the purpose of delivering the service.</li>
     </ul>
@@ -268,7 +268,7 @@ export const RefundPolicy = ({ onNavigate, onBack }) => (
     <ul className="list-disc pl-6 space-y-1.5 text-slate-700">
       <li>Account suspension due to violation of Terms of Service.</li>
       <li>Failure to use the Platform during the subscription period does not entitle a refund.</li>
-      <li>Downtime caused by third-party services (e.g., Tally Prime, cloud providers).</li>
+      <li>Downtime caused by third-party services (e.g., Tally*, cloud providers).</li>
     </ul>
   </PageShell>
 );

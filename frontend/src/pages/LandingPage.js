@@ -16,7 +16,7 @@ const PLANS = [
     monthly: 999,
     annual: 9990,
     desc: 'Perfect for small businesses getting started',
-    features: ['Dashboard & Overview', 'Sales Voucher Tracking', 'Inventory Management', 'Tally Prime Sync', 'Setup & Configuration'],
+    features: ['Dashboard & Overview', 'Sales Voucher Tracking', 'Inventory Management', 'Tally* Sync', 'Setup & Configuration'],
     maxCompanies: 1,
     maxEmployees: 2,
     popular: false
@@ -49,7 +49,7 @@ const FEATURES = [
   { icon: BarChart3, title: 'Inventory Analytics', desc: 'Movement analysis, below-cost detection, stock classification with clickable filters and Excel exports.' },
   { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance.' },
   { icon: Truck, title: 'Salesman Performance', desc: 'FY-locked targets, customer mapping, monthly/quarterly breakdowns with best performer detection.' },
-  { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, natural language queries across your entire Tally data.' },
+  { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, natural language queries across your entire Tally* data.' },
   { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, and concentration risk with Pareto charts.' },
   { icon: Shield, title: 'Bank-Grade Security', desc: 'AES-256 encryption, bcrypt hashing, JWT auth, field-level PII encryption, multi-tenant data isolation.' },
 ];
@@ -57,7 +57,7 @@ const FEATURES = [
 const TESTIMONIALS = [
   { name: 'Rajesh Agarwal', company: 'Agarwal Auto Parts, Raipur', text: 'FLOWRA completely transformed how we track inventory. We identified 15 lakh in dead stock within the first week.', img: 'https://images.unsplash.com/photo-1695391396401-5fbb4bedafc1?w=120&h=120&fit=crop' },
   { name: 'Priya Sharma', company: 'Sharma Trading Co., Indore', text: 'The salesman performance module helped us increase collection efficiency by 40%. The FY-locked targets are brilliant.', img: 'https://images.unsplash.com/photo-1770627000564-3feb36aecbcd?w=120&h=120&fit=crop' },
-  { name: 'Vikram Patel', company: 'National Engineering Works', text: 'AI reports save us 3 hours daily. The Tally sync is seamless — our data is always up to date without any manual work.', img: 'https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?w=120&h=120&fit=crop' },
+  { name: 'Vikram Patel', company: 'National Engineering Works', text: 'AI reports save us 3 hours daily. The Tally* sync is seamless — our data is always up to date without any manual work.', img: 'https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?w=120&h=120&fit=crop' },
 ];
 
 const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
@@ -97,12 +97,12 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
       <section className="py-20 lg:py-28 bg-white" data-testid="hero-section">
         <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-12 items-center">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0052FF] mb-4">Tally Prime Analytics Platform</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0052FF] mb-4">Tally* Analytics Platform</p>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-zinc-950 tracking-tighter leading-[1.05] mb-6" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
-              Unlock the full power of your <span className="text-[#0052FF]">Tally Data</span>
+              Unlock the full power of your <span className="text-[#0052FF]">Tally* Data</span>
             </h1>
             <p className="text-lg text-zinc-600 leading-relaxed mb-8 max-w-lg">
-              Real-time inventory analytics, sales tracking, CRM, and AI-powered insights — synced directly from Tally Prime. Built for Indian SMEs with bank-grade security.
+              Real-time inventory analytics, sales tracking, CRM, and AI-powered insights — synced directly from Tally*. Built for Indian SMEs with bank-grade security.
             </p>
             <div className="flex flex-wrap gap-4">
               <button onClick={onNavigateToSignup} data-testid="hero-signup-btn" className="bg-[#0052FF] text-white rounded-sm px-8 py-3.5 font-bold text-base hover:bg-[#0039B3] transition-colors flex items-center gap-2">
@@ -173,7 +173,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
           <h2 className="text-3xl sm:text-4xl font-bold text-zinc-950 tracking-tight mb-4" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
             Everything you need to run your business smarter
           </h2>
-          <p className="text-zinc-600 text-lg mb-12 max-w-2xl">From inventory movement to AI-powered purchase orders, FLOWRA brings enterprise-grade analytics to every Tally user.</p>
+          <p className="text-zinc-600 text-lg mb-12 max-w-2xl">From inventory movement to AI-powered purchase orders, FLOWRA brings enterprise-grade analytics to every Tally* user.</p>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {FEATURES.map((f, i) => (
@@ -198,7 +198,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               Your data stays yours. Period.
             </h2>
             <p className="text-zinc-400 text-lg leading-relaxed mb-8">
-              FLOWRA is built with security-first architecture. Your Tally data is synced through an encrypted local agent — Tally is never exposed to the internet.
+              FLOWRA is built with security-first architecture. Your Tally* data is synced through an encrypted local agent — Tally* is never exposed to the internet.
             </p>
             <div className="space-y-5">
               {[
@@ -231,7 +231,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
             <h2 className="text-3xl sm:text-4xl font-bold text-zinc-950 tracking-tight mb-4" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
               Simple, transparent pricing
             </h2>
-            <p className="text-zinc-600 text-lg mb-8">Choose the plan that fits your business. All plans include Tally Prime sync and secure cloud analytics.</p>
+            <p className="text-zinc-600 text-lg mb-8">Choose the plan that fits your business. All plans include Tally* sync and secure cloud analytics.</p>
 
             <div className="inline-flex bg-zinc-100 rounded-sm p-1">
               <button onClick={() => setBillingCycle('monthly')} className={`px-5 py-2 text-sm font-bold rounded-sm transition-colors ${billingCycle === 'monthly' ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}>Monthly</button>
@@ -325,7 +325,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               <span className="text-white font-bold">FLOWRA</span>
             </div>
             <p className="text-sm leading-relaxed">Organize. Automate. Accelerate.</p>
-            <p className="text-xs mt-3">Tally Prime analytics platform for Indian SMEs.</p>
+            <p className="text-xs mt-3">Tally* analytics platform for Indian SMEs.</p>
             <p className="text-xs mt-2 text-zinc-500">A product by <strong className="text-zinc-300">JODIDAR INDIA</strong></p>
           </div>
           <div>
@@ -359,7 +359,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
           &copy; {new Date().getFullYear()} JODIDAR INDIA. All rights reserved. FLOWRA is a brand owned by JODIDAR INDIA.
         </div>
         <div className="max-w-7xl mx-auto px-6 mt-4 text-[10px] text-zinc-600 text-center leading-relaxed" data-testid="tally-disclaimer">
-          Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same is used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademark's distinct character or harm the holder's reputation.
+          Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same is used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademark's distinct character or harm the holder's reputation.
         </div>
       </footer>
 

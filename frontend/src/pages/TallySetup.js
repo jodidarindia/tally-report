@@ -63,13 +63,13 @@ const TallySetup = ({ companyId }) => {
 
       if (response.data?.success) {
         setIsConnected(true);
-        toast.success('Successfully connected to Tally!');
+        toast.success('Successfully connected to Tally*!');
       } else {
         toast.error(response.data?.error || 'Connection failed');
       }
     } catch (error) {
       console.error('Error connecting:', error);
-      toast.error('Failed to connect to Tally');
+      toast.error('Failed to connect to Tally*');
     } finally {
       setLoading(false);
     }
@@ -88,9 +88,9 @@ const TallySetup = ({ companyId }) => {
     <div data-testid="setup-page">
       <div className="mb-8">
         <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
-          Tally Setup
+          Tally* Setup
         </h1>
-        <p className="mt-2 text-base text-slate-600">Configure your TallyPrime connection</p>
+        <p className="mt-2 text-base text-slate-600">Configure your Tally* connection</p>
       </div>
 
       <div className="max-w-2xl space-y-6">
@@ -217,7 +217,7 @@ const TallySetup = ({ companyId }) => {
                   }`}
                 >
                   <div className="font-medium">XML/HTTP API</div>
-                  <div className="text-xs mt-1">Local TallyPrime</div>
+                  <div className="text-xs mt-1">Local Tally*</div>
                 </button>
                 <button
                   type="button"
@@ -278,7 +278,7 @@ const TallySetup = ({ companyId }) => {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
-                  placeholder="Enter your Tally API key"
+                  placeholder="Enter your Tally* API key"
                 />
               </div>
             )}
@@ -289,16 +289,16 @@ const TallySetup = ({ companyId }) => {
               disabled={loading}
               className="w-full btn-primary py-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Connecting...' : 'Connect to Tally'}
+              {loading ? 'Connecting...' : 'Connect to Tally*'}
             </button>
           </form>
 
           <div className="mt-6 p-4 bg-[#F0F4FF] rounded-lg">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">Setup Instructions</h3>
             <ul className="text-sm text-slate-600 space-y-1">
-              <li>• For XML/HTTP: Ensure TallyPrime is running on your local machine</li>
-              <li>• Default port is 9000 (can be configured in Tally settings)</li>
-              <li>• For REST API: Obtain your API key from Tally Developer portal</li>
+              <li>• For XML/HTTP: Ensure Tally* is running on your local machine</li>
+              <li>• Default port is 9000 (can be configured in Tally* settings)</li>
+              <li>• For REST API: Obtain your API key from Tally* Developer portal</li>
               <li>• This demo uses mock data for testing purposes</li>
             </ul>
           </div>

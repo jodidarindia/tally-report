@@ -41,7 +41,7 @@ const ReferAndEarn = () => {
   };
 
   const shareLink = () => {
-    const text = `Join FLOWRA — India's smartest Tally analytics platform! Use my referral code: ${data?.referral_code}\n\nSign up: https://www.flowralive.in`;
+    const text = `Join FLOWRA — India's smartest Tally* analytics platform! Use my referral code: ${data?.referral_code}\n\nSign up: https://www.flowralive.in`;
     if (navigator.share) {
       navigator.share({ title: 'FLOWRA Referral', text });
     } else {

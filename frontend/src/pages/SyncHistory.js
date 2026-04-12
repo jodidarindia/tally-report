@@ -79,7 +79,7 @@ const SyncHistory = () => {
         <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Sync History
         </h1>
-        <p className="mt-2 text-base text-slate-600">Timeline of all data sync cycles from Tally Prime</p>
+        <p className="mt-2 text-base text-slate-600">Timeline of all data sync cycles from Tally*</p>
       </div>
 
       {/* Current Status Card */}
@@ -90,7 +90,7 @@ const SyncHistory = () => {
               <div className={`w-3 h-3 rounded-full ${currentStatus.is_connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
               <div>
                 <div className="text-sm font-medium text-slate-900">
-                  {currentStatus.company_name || 'Tally Connection'}
+                  {currentStatus.company_name || 'Tally* Connection'}
                 </div>
                 <div className="text-xs text-slate-500">
                   Last sync: {formatDate(currentStatus.last_sync)} | Agent: {currentStatus.agent_version || 'N/A'}
@@ -115,7 +115,7 @@ const SyncHistory = () => {
         <div className="text-center py-16 text-slate-500">
           <Database size={48} className="mx-auto mb-4 opacity-30" />
           <p className="text-lg">No sync history yet</p>
-          <p className="text-sm mt-2">Run the desktop agent to start syncing data from Tally Prime</p>
+          <p className="text-sm mt-2">Run the desktop agent to start syncing data from Tally*</p>
         </div>
       ) : (
         <div className="space-y-3" data-testid="sync-timeline">

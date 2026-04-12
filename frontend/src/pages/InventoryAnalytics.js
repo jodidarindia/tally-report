@@ -423,7 +423,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       ) : (
                         <tr>
                           <td colSpan="8" className="text-center py-8">
-                            <div className="text-green-600 font-medium">No items sold below cost{belowCostData.summary?.total_items === undefined ? ' (sync purchase vouchers from Tally for cost data)' : ' - Great!'}</div>
+                            <div className="text-green-600 font-medium">No items sold below cost{belowCostData.summary?.total_items === undefined ? ' (sync purchase vouchers from Tally* for cost data)' : ' - Great!'}</div>
                           </td>
                         </tr>
                       )}

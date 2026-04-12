@@ -23,7 +23,7 @@ const RenewalPopup = ({ daysLeft, onDismiss, onOpenSubscription }) => {
         <p className="text-sm text-slate-600 mb-4">
           {isExpired
             ? 'Your FLOWRA subscription has expired. Data sync has been disabled. Please renew immediately to continue using all features.'
-            : `Your subscription expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Renew now to avoid any interruption to your Tally sync and analytics access.`
+            : `Your subscription expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Renew now to avoid any interruption to your Tally* sync and analytics access.`
           }
         </p>
         <div className="flex gap-3">

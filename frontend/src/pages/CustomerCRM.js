@@ -172,7 +172,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      toast.success(`Tally-format ledger exported for ${customerName}`);
+      toast.success(`Tally*-format ledger exported for ${customerName}`);
     } catch (error) {
       toast.error('Failed to export ledger');
     } finally {
