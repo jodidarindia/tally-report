@@ -15,6 +15,9 @@ from services.ist_utils import (
     now_ist_iso, subscription_expires_at, is_subscription_active,
     days_until_expiry
 )
+from services.email_service import (
+    send_subscription_started, send_subscription_renewed
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -149,6 +152,15 @@ async def create_admin(request: Request):
         sync_token = generate_sync_token(tenant_id)
 
         await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Plan: {plan_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
+
+        # Send subscription started email
+        try:
+            expires = subscription_expires_at(now, subscription_months)
+            from datetime import datetime as dt
+            exp_date = dt.fromisoformat(expires.replace("Z", "+00:00")).strftime("%d %b %Y")
+            await send_subscription_started(username, name or username, plan_id, subscription_months, exp_date)
+        except Exception as email_err:
+            logger.error(f"Failed to send welcome email: {email_err}")
 
         return APIResponse(success=True, message=f"Admin '{username}' created", data={
             "username": username,
@@ -556,6 +568,18 @@ async def process_renewal(username: str, request: Request):
                 {"username": username, "role": "admin"},
                 {"$set": update_fields}
             )
+
+            # Send renewal email
+            try:
+                expires = subscription_expires_at(now, new_months)
+                from datetime import datetime as dt
+                exp_date = dt.fromisoformat(expires.replace("Z", "+00:00")).strftime("%d %b %Y")
+                admin_doc = await db.users.find_one({"username": username}, {"_id": 0, "name": 1, "plan": 1})
+                plan = new_plan or (admin_doc.get("plan") if admin_doc else "starter")
+                admin_name = (admin_doc.get("name") if admin_doc else "") or username
+                await send_subscription_renewed(username, admin_name, plan, new_months, exp_date)
+            except Exception as email_err:
+                logger.error(f"Failed to send renewal email: {email_err}")
 
         await log_audit(
             f"renewal_{action}d", sa["username"],

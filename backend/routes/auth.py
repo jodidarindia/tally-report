@@ -17,7 +17,7 @@ from services.ist_utils import (
     now_ist_iso, subscription_expires_at, is_subscription_active,
     days_until_expiry
 )
-
+from services.email_service import send_subscription_expiry_warning
 from services.recaptcha import verify_recaptcha
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,21 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
             company_mappings = await get_all_company_mappings(tenant_id)
 
         await log_audit("login", user["username"], tenant_id=tenant_id or "", ip_address=get_client_ip(raw_request))
+
+        # Send expiry warning email (non-blocking, at most once per day)
+        if user.get("role") == "admin" and sub_days_left <= 30 and sub_days_left > 0:
+            try:
+                last_warning = user.get("last_expiry_email_sent", "")
+                today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if last_warning != today_str:
+                    import asyncio
+                    exp_date = datetime.fromisoformat(sub_expires_iso.replace("Z", "+00:00")).strftime("%d %b %Y") if sub_expires_iso else "soon"
+                    asyncio.create_task(send_subscription_expiry_warning(
+                        user["username"], user.get("name", user["username"]), sub_days_left, exp_date
+                    ))
+                    await db.users.update_one({"username": user["username"]}, {"$set": {"last_expiry_email_sent": today_str}})
+            except Exception as email_err:
+                logger.error(f"Expiry warning email error: {email_err}")
 
         return APIResponse(
             success=True,
