@@ -23,6 +23,7 @@ import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
 import LandingPage from './pages/LandingPage';
 import SignupPage from './pages/SignupPage';
+import { PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage } from './pages/PublicPages';
 import RenewalPopup from './components/RenewalPopup';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -70,7 +71,7 @@ function App() {
   });
   const [showProfile, setShowProfile] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [publicView, setPublicView] = useState('landing'); // landing, login, signup
+  const [publicView, setPublicView] = useState('landing'); // landing, login, signup, privacy, terms, refund, contact, social
   const [showRenewalPopup, setShowRenewalPopup] = useState(false);
   const wsRef = useRef(null);
   const userMenuRef = useRef(null);
@@ -327,17 +328,26 @@ function App() {
 
   // Public pages (not authenticated)
   if (!isAuthenticated) {
+    const publicNav = (view) => setPublicView(view);
+    const backToLanding = () => setPublicView('landing');
+
     if (publicView === 'signup') {
       return (
         <>
           <Toaster position="top-right" richColors />
           <SignupPage
             onNavigateToLogin={() => setPublicView('login')}
-            onNavigateToLanding={() => setPublicView('landing')}
+            onNavigateToLanding={backToLanding}
           />
         </>
       );
     }
+
+    if (publicView === 'privacy') return <><Toaster position="top-right" richColors /><PrivacyPolicy onNavigate={publicNav} onBack={backToLanding} /></>;
+    if (publicView === 'terms') return <><Toaster position="top-right" richColors /><TermsOfService onNavigate={publicNav} onBack={backToLanding} /></>;
+    if (publicView === 'refund') return <><Toaster position="top-right" richColors /><RefundPolicy onNavigate={publicNav} onBack={backToLanding} /></>;
+    if (publicView === 'contact') return <><Toaster position="top-right" richColors /><ContactPage onNavigate={publicNav} onBack={backToLanding} /></>;
+    if (publicView === 'social') return <><Toaster position="top-right" richColors /><SocialMediaPage onNavigate={publicNav} onBack={backToLanding} /></>;
 
     if (publicView === 'landing') {
       return (
@@ -346,6 +356,7 @@ function App() {
           <LandingPage
             onNavigateToLogin={() => setPublicView('login')}
             onNavigateToSignup={() => setPublicView('signup')}
+            onNavigate={publicNav}
           />
         </>
       );

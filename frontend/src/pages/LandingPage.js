@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   BarChart3, Shield, Package, Users, Brain, Truck, Zap,
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
-  Star, Clock, Globe, Phone, Mail, MapPin, Lightbulb
+  Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -60,7 +60,7 @@ const TESTIMONIALS = [
   { name: 'Vikram Patel', company: 'National Engineering Works', text: 'AI reports save us 3 hours daily. The Tally sync is seamless — our data is always up to date without any manual work.', img: 'https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?w=120&h=120&fit=crop' },
 ];
 
-const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
+const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
   const [billingCycle, setBillingCycle] = useState('annual');
 
   const scrollTo = (id) => {
@@ -326,6 +326,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
             </div>
             <p className="text-sm leading-relaxed">Organize. Automate. Accelerate.</p>
             <p className="text-xs mt-3">Tally Prime analytics platform for Indian SMEs.</p>
+            <p className="text-xs mt-2 text-zinc-500">A product by <strong className="text-zinc-300">JODIDAR INDIA</strong></p>
           </div>
           <div>
             <h4 className="text-white font-bold text-sm mb-4">Product</h4>
@@ -336,29 +337,43 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup }) => {
             </div>
           </div>
           <div>
-            <h4 className="text-white font-bold text-sm mb-4">Company</h4>
+            <h4 className="text-white font-bold text-sm mb-4">Legal</h4>
             <div className="space-y-2 text-sm">
-              <p>About Jodidar India</p>
-              <p>Terms of Service</p>
-              <p>Privacy Policy</p>
+              <button onClick={() => onNavigate?.('privacy')} className="block hover:text-white transition-colors">Privacy Policy</button>
+              <button onClick={() => onNavigate?.('terms')} className="block hover:text-white transition-colors">Terms of Service</button>
+              <button onClick={() => onNavigate?.('refund')} className="block hover:text-white transition-colors">Refund Policy</button>
+              <button onClick={() => onNavigate?.('contact')} className="block hover:text-white transition-colors">Contact Us</button>
+              <button onClick={() => onNavigate?.('social')} className="block hover:text-white transition-colors">Social Media</button>
             </div>
           </div>
           <div>
             <h4 className="text-white font-bold text-sm mb-4">Contact</h4>
             <div className="space-y-3 text-sm">
               <p className="flex items-center gap-2"><Mail size={14} /> support@flowralive.in</p>
-              <p className="flex items-center gap-2"><Phone size={14} /> +91-XXX-XXX-XXXX</p>
-              <p className="flex items-center gap-2"><MapPin size={14} /> India</p>
+              <a href="tel:+918120470018" className="flex items-center gap-2 hover:text-white transition-colors"><Phone size={14} /> +91 81204 70018</a>
+              <a href="https://wa.me/918120470018?text=Hi%2C%20I%20want%20to%20know%20about%20FLOWRA" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors"><MessageCircle size={14} /> WhatsApp</a>
             </div>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-6 mt-12 pt-8 border-t border-zinc-800 text-xs text-zinc-500 text-center">
-          &copy; {new Date().getFullYear()} Jodidar India. All rights reserved. FLOWRA is a registered trademark.
+          &copy; {new Date().getFullYear()} JODIDAR INDIA. All rights reserved. FLOWRA is a brand owned by JODIDAR INDIA.
         </div>
         <div className="max-w-7xl mx-auto px-6 mt-4 text-[10px] text-zinc-600 text-center leading-relaxed" data-testid="tally-disclaimer">
           Tally is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same is used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademark's distinct character or harm the holder's reputation.
         </div>
       </footer>
+
+      {/* WhatsApp Floating Button */}
+      <a
+        href="https://wa.me/918120470018?text=Hi%2C%20I%20want%20to%20know%20more%20about%20FLOWRA"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-[#25D366] rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+        data-testid="whatsapp-btn"
+        aria-label="Chat on WhatsApp"
+      >
+        <MessageCircle size={26} className="text-white" fill="white" />
+      </a>
     </div>
   );
 };
