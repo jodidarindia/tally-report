@@ -6,6 +6,11 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 ## Domain
 `www.flowralive.in`
 
+## Ownership
+- **Brand**: FLOWRA is owned by **JODIDAR INDIA**
+- **Contact**: support@flowralive.in | +91 81204 70018
+- **Registered Address**: KK Road, Raipur, Chhattisgarh (used only in legal pages)
+
 ## Tech Stack
 - **Frontend**: React, Tailwind CSS, Shadcn UI, Recharts
 - **Backend**: FastAPI, MongoDB
@@ -25,26 +30,20 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 - Multi-company support with company switching
 - Super Admin panel
 
-## Recent Enhancements (Completed)
-### Mobile Responsiveness (Apr 2026)
+## Public Pages (Implemented - Apr 2026)
+- **Privacy Policy** — DPDP Act 2023, IT Act 2000 compliant. Grievance Officer details with address.
+- **Terms of Service** — 12 sections covering eligibility, payments, IP, data ownership, governing law (Raipur, CG jurisdiction).
+- **Refund & Cancellation Policy** — 7-day refund window, 15 days for annual, 7-10 business days processing.
+- **Contact Us** — Email, WhatsApp, Phone cards. Registered office details.
+- **Social Media** — Placeholder pages for Instagram, Facebook, LinkedIn, X (Twitter), YouTube. "Coming Soon" with WhatsApp notification CTA.
+- **WhatsApp Floating Button** — On all public pages, links to +918120470018. NOT on authenticated app pages.
+- **Footer** — Every public page footer shows "FLOWRA is a brand owned by JODIDAR INDIA" with legal links.
+
+## Mobile Responsiveness (Implemented - Apr 2026)
 - All data tables horizontally scrollable on mobile (375px viewport)
-- **Sticky/frozen first column** (Item Name / Customer Name) stays visible while scrolling
+- Sticky/frozen first column (Item Name / Customer Name) stays visible while scrolling
 - Tab labels wrap into two lines on mobile for readability
-- Filter controls, buttons, and forms stack vertically on small screens
-- Responsive padding: 0.75rem mobile, 1rem desktop
 - CSS: `border-collapse: separate` required for `position: sticky` on table cells
-
-### Branch Exclusion (Apr 2026)
-- Global `X-Exclude-Branches` header filtering internal transfers
-- Applied to Dashboard, Analytics, CRM, and all report endpoints
-
-### Inventory Movement Analysis Fix (Apr 2026)
-- Opening stock = Closing + All Sales - All Purchases (accounting equation)
-- Inward display column isolates Sundry Creditor purchases only
-
-### Timestamp Fix (Apr 2026)
-- Backend stores naive UTC timestamps; frontend appends 'Z' suffix before JS Date parsing
-- All dates displayed in IST via `toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })`
 
 ## Architecture
 ```
@@ -56,10 +55,14 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 ├── frontend/
 │   ├── public/ (demo/, screenshots/, FLOWRA_*.pdf)
 │   └── src/
-│       ├── App.js (main layout, routing, auth, nav)
+│       ├── App.js (main layout, routing, auth, nav, public page routing)
 │       ├── App.css (.data-table styles, sticky columns, loading states)
-│       ├── components/ (SearchableSelect, ui/)
-│       └── pages/ (Dashboard, CustomerCRM, InventoryAnalytics, Inventory, TallySetup, etc.)
+│       ├── components/ (SearchableSelect, SyncStatusBar, RenewalPopup, ui/)
+│       └── pages/
+│           ├── PublicPages.js (PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage)
+│           ├── LandingPage.js, SignupPage.js
+│           ├── Dashboard.js, CustomerCRM.js, InventoryAnalytics.js, Inventory.js
+│           └── ... (other app pages)
 ```
 
 ## Key Technical Notes
@@ -67,6 +70,7 @@ FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally Prime f
 - **Naive timestamps**: Always append 'Z' before `new Date()` in frontend
 - **Accounting**: Opening = Closing + AllSales - AllPurchases; Inward display = Sundry Creditor purchases only
 - **MongoDB**: Always exclude `_id` from responses
+- **Public page routing**: `publicView` state in App.js controls which public page shows (landing, login, signup, privacy, terms, refund, contact, social)
 
 ## Upcoming Tasks
 - P1: Compile Desktop Agent into one-click `.exe` installer (PyInstaller/Inno Setup)
