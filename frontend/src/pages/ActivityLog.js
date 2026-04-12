@@ -34,7 +34,8 @@ const timeAgo = (ts) => {
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const dt = (ts.includes('+') || ts.includes('Z')) ? new Date(ts) : new Date(ts + 'Z');
+  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 };
 
 const ActivityLog = ({ token, role }) => {

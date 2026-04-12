@@ -33,7 +33,11 @@ const PLANS = {
 };
 
 const formatINR = (n) => `Rs.${(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—';
+const formatDate = (d) => {
+  if (!d) return '—';
+  const dt = (d.includes && (d.includes('+') || d.includes('Z'))) ? new Date(d) : new Date(d + 'Z');
+  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+};
 
 const SuperAdminDashboard = ({ token }) => {
   const [activeTab, setActiveTab] = useState('overview');

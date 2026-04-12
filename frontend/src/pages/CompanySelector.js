@@ -6,7 +6,9 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const timeAgo = (dateStr) => {
   if (!dateStr) return null;
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  const d = (dateStr.includes('+') || dateStr.includes('Z') || dateStr.endsWith('00:00'))
+    ? new Date(dateStr) : new Date(dateStr + 'Z');
+  const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;

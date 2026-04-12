@@ -334,7 +334,7 @@ const Dashboard = ({ selectedFY, excludeBranches }) => {
               {/* Last computed timestamp */}
               {overdueDigest.computed_at && (
                 <div className="px-5 pb-4 text-xs text-slate-400 text-right">
-                  Last computed: {new Date(overdueDigest.computed_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  Last computed: {(() => { const r = overdueDigest.computed_at; const d = (r.includes('+') || r.includes('Z')) ? new Date(r) : new Date(r + 'Z'); return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }); })()}
                 </div>
               )}
             </div>
