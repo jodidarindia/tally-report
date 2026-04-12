@@ -124,52 +124,37 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
   return (
     <div data-testid="inventory-page">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-3">
         <div>
-          <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+          <h1 className="text-2xl sm:text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
             Inventory
           </h1>
-          <p className="mt-2 text-base text-slate-600">Manage your stock items</p>
+          <p className="mt-1 text-sm text-slate-600">Manage your stock items</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={generatePurchaseOrder}
             disabled={generatingPO}
-            className="btn-primary flex items-center gap-2"
+            className="btn-primary flex items-center gap-1.5 text-xs sm:text-sm"
             data-testid="generate-po-button"
           >
-            <Sparkles size={16} />
-            {generatingPO ? 'Generating...' : 'AI Purchase Order'}
+            <Sparkles size={14} />
+            {generatingPO ? 'Generating...' : 'AI PO'}
           </button>
-          <button
-            data-testid="export-pdf-button"
-            onClick={() => exportData('pdf')}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <Download size={16} />
-            PDF
+          <button data-testid="export-pdf-button" onClick={() => exportData('pdf')} className="btn-secondary flex items-center gap-1.5 text-xs sm:text-sm">
+            <Download size={14} /> PDF
           </button>
-          <button
-            data-testid="export-excel-button"
-            onClick={() => exportData('excel')}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <Download size={16} />
-            Excel
+          <button data-testid="export-excel-button" onClick={() => exportData('excel')} className="btn-secondary flex items-center gap-1.5 text-xs sm:text-sm">
+            <Download size={14} /> Excel
           </button>
-          <button
-            data-testid="export-csv-button"
-            onClick={() => exportData('csv')}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Download size={16} />
-            CSV
+          <button data-testid="export-csv-button" onClick={() => exportData('csv')} className="btn-primary flex items-center gap-1.5 text-xs sm:text-sm">
+            <Download size={14} /> CSV
           </button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
-        <div className="flex flex-col md:flex-row gap-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-6 mb-6">
+        <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
             <input
@@ -231,9 +216,8 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="data-table" data-testid="inventory-table">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+          <table className="data-table min-w-[800px]" data-testid="inventory-table">
             <thead>
               <tr>
                 <SortHeader field="item_name" label="Item Name" />
@@ -284,7 +268,6 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       <div className="mt-4 text-sm text-slate-500">

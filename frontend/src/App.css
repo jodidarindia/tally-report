@@ -95,9 +95,6 @@
   width: 100%;
   border-collapse: collapse;
   background: white;
-  border-radius: 0.75rem;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .data-table thead {
@@ -109,18 +106,19 @@
 
 .data-table th {
   text-align: left;
-  padding: 1rem;
-  font-size: 0.75rem;
+  padding: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #64748B;
   border-bottom: 1px solid #E0E7FF;
+  white-space: nowrap;
 }
 
 .data-table td {
-  padding: 1rem;
-  font-size: 0.875rem;
+  padding: 0.75rem;
+  font-size: 0.8125rem;
   color: #334155;
   border-bottom: 1px solid #F0F4FF;
 }
@@ -140,6 +138,17 @@
 .data-table td.numeric {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 640px) {
+  .data-table th {
+    padding: 1rem;
+    font-size: 0.75rem;
+  }
+  .data-table td {
+    padding: 1rem;
+    font-size: 0.875rem;
+  }
 }
 
 /* Loading state */

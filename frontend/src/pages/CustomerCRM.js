@@ -208,14 +208,14 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
 
   return (
     <div data-testid="crm-page">
-      <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+      <div className="mb-6">
+        <h1 className="text-2xl sm:text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Customer CRM
         </h1>
-        <p className="mt-2 text-base text-slate-600">Manage customers, targets, follow-ups, and export ledgers</p>
+        <p className="mt-1 text-sm text-slate-600">Manage customers, targets, follow-ups, and export ledgers</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-2 mb-6 flex gap-2">
+      <div className="bg-white border border-slate-200 rounded-xl p-1.5 sm:p-2 mb-6 flex gap-1.5 sm:gap-2 overflow-x-auto">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
@@ -223,12 +223,12 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
               key={tab.id}
               data-testid={`tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
+              className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2.5 sm:py-3 rounded-lg transition-all ${
                 activeTab === tab.id ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <Icon size={18} />
-              <span className="text-sm font-medium">{tab.label}</span>
+              <Icon size={16} />
+              <span className="text-xs sm:text-sm font-medium whitespace-nowrap">{tab.label}</span>
             </button>
           );
         })}
@@ -286,9 +286,8 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 return dir * ((a[sortField] || 0) - (b[sortField] || 0));
               });
             return (
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="data-table" data-testid="outstanding-table">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                <table className="data-table min-w-[700px]" data-testid="outstanding-table">
                   <thead>
                     <tr>
                       <SortTh field="customer_name" label="Customer Name" />
@@ -353,7 +352,6 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                     })}
                   </tbody>
                 </table>
-              </div>
             </div>
             );
           })()}
@@ -372,12 +370,12 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
               </div>
 
               {showAddFollowup && (
-                <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-6 mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-medium">New Follow-up</h3>
                     <button onClick={() => setShowAddFollowup(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <SearchableSelect
                       options={customerNames}
                       value={newFollowup.customer_name}
@@ -407,7 +405,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                       placeholder="Notes"
                       value={newFollowup.notes}
                       onChange={(e) => setNewFollowup({...newFollowup, notes: e.target.value})}
-                      className="px-4 py-2 border border-slate-200 rounded-lg col-span-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                      className="px-4 py-2 border border-slate-200 rounded-lg col-span-1 sm:col-span-2 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                       rows="3"
                       data-testid="followup-notes-input"
                     />
@@ -471,9 +469,8 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
           {/* Targets with Set Target & Monthly Sales */}
           {activeTab === 'targets' && (
             <div>
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="targets-table">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="data-table min-w-[800px]" data-testid="targets-table">
                     <thead>
                       <tr>
                         <th>Customer Name</th>
@@ -575,7 +572,6 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                       ))}
                     </tbody>
                   </table>
-                </div>
               </div>
 
               {/* Set Target Modal */}
@@ -703,7 +699,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
       </div>
 
       {/* Search + Filter */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
         <input
           type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
           placeholder="Search customer..."
@@ -721,9 +717,8 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
       <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated for the selected financial year. Opening balance carries forward from prior FYs. Click a row for detailed breakdown.</p>
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="data-table" data-testid="payment-behavior-table">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+          <table className="data-table min-w-[900px]" data-testid="payment-behavior-table">
             <thead>
               <tr>
                 <th className="w-6"></th>
@@ -773,7 +768,6 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
               ))}
             </tbody>
           </table>
-        </div>
       </div>
     </div>
   );

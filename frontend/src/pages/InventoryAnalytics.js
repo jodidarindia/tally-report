@@ -233,15 +233,15 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
 
   return (
     <div data-testid="analytics-page">
-      <div className="mb-8">
-        <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+      <div className="mb-6">
+        <h1 className="text-2xl sm:text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Inventory Analytics
         </h1>
-        <p className="mt-2 text-base text-slate-600">Advanced inventory analysis and insights</p>
+        <p className="mt-1 text-sm text-slate-600">Advanced inventory analysis and insights</p>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white border border-slate-200 rounded-xl p-2 mb-6 flex gap-2">
+      <div className="bg-white border border-slate-200 rounded-xl p-1.5 sm:p-2 mb-6 flex gap-1.5 sm:gap-2 overflow-x-auto">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
@@ -249,14 +249,14 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               data-testid={`tab-${tab.id}`}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-all ${
+              className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2.5 sm:py-3 rounded-lg transition-all ${
                 activeTab === tab.id
                   ? 'bg-[#2563EB] text-white'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              <Icon size={18} />
-              <span className="text-sm font-medium">{tab.label}</span>
+              <Icon size={16} />
+              <span className="text-xs sm:text-sm font-medium whitespace-nowrap">{tab.label}</span>
             </button>
           );
         })}
@@ -272,7 +272,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
           {activeTab === 'movement' && (
             <div>
               {/* Classification Filter Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3 mb-5">
                 <button onClick={() => setClassFilter('all')} className={`bg-white border rounded-xl p-4 text-left transition-all ${classFilter === 'all' ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-slate-300'}`} data-testid="filter-all">
                   <div className="flex items-center gap-2 mb-1"><BarChart3 className="text-slate-600" size={16} /><span className="text-[10px] font-medium text-slate-500">All Items</span></div>
                   <div className="text-xl font-bold text-slate-900">{movementData.length}</div>
@@ -296,7 +296,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
               </div>
 
               {/* Export + Active filter indicator */}
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
                 {classFilter !== 'all' && (
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-500">Showing: <strong className="text-slate-700 capitalize">{classFilter.replace('-', ' ')}</strong> ({filteredMovement.length} items)</span>
@@ -309,9 +309,8 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 </button>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="movement-table">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="data-table min-w-[900px]" data-testid="movement-table">
                     <thead>
                       <tr>
                         <SortTh field="item_name" label="Item Name" />
@@ -356,7 +355,6 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       ))}
                     </tbody>
                   </table>
-                </div>
               </div>
             </div>
           )}
@@ -390,9 +388,8 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 </div>
               )}
 
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="below-cost-table">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="data-table min-w-[800px]" data-testid="below-cost-table">
                     <thead>
                       <tr>
                         <SortTh field="item_name" label="Item Name" />
@@ -432,7 +429,6 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       )}
                     </tbody>
                   </table>
-                </div>
               </div>
             </div>
           )}
@@ -441,14 +437,14 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
           {/* Sales Frequency Report */}
           {activeTab === 'sales-frequency' && (
             <div>
-              <div className="bg-white border border-slate-200 rounded-xl p-6 mb-6">
-                <div className="flex items-center justify-between">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <h3 className="text-lg font-medium text-slate-900">Date Filter</h3>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => exportSalesFrequency('excel')}
                       disabled={exporting || salesFrequency.length === 0}
-                      className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
+                      className="btn-primary flex items-center gap-2 text-xs sm:text-sm disabled:opacity-50"
                       data-testid="export-freq-excel"
                     >
                       <Download size={14} />
@@ -457,7 +453,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                     <button
                       onClick={() => exportSalesFrequency('pdf')}
                       disabled={exporting || salesFrequency.length === 0}
-                      className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50"
+                      className="btn-secondary flex items-center gap-2 text-xs sm:text-sm disabled:opacity-50"
                       data-testid="export-freq-pdf"
                     >
                       <Download size={14} />
@@ -465,13 +461,13 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                     </button>
                     <button
                       onClick={() => setDateFilter({ start_date: '', end_date: '' })}
-                      className="btn-secondary text-sm"
+                      className="btn-secondary text-xs sm:text-sm"
                     >
-                      Clear Filters
+                      Clear
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">Start Date</label>
                     <input
@@ -500,9 +496,8 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 )}
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="data-table" data-testid="sales-frequency-table">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="data-table min-w-[700px]" data-testid="sales-frequency-table">
                     <thead>
                       <tr>
                         <th>Item Name</th>
@@ -551,11 +546,10 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       )}
                     </tbody>
                   </table>
-                </div>
               </div>
 
               {salesFrequency.length > 0 && (
-                <div className="mt-4 grid grid-cols-3 gap-4">
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="bg-white border border-slate-200 rounded-xl p-4">
                     <div className="text-sm text-slate-600">Total Items</div>
                     <div className="text-2xl font-semibold text-slate-900">{salesFrequency.length}</div>
@@ -673,7 +667,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                     </p>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm" data-testid="customer-items-data-table">
+                    <table className="w-full text-sm min-w-[600px]" data-testid="customer-items-data-table">
                       <thead>
                         <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
                           <th className="py-3 px-4 text-left w-10">#</th>
