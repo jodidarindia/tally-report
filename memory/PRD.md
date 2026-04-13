@@ -1,39 +1,19 @@
 # FLOWRA - Product Requirements Document
 
 ## Overview
-FLOWRA is a React + FastAPI + MongoDB SaaS application synced with Tally* for business analytics, inventory management, CRM, and reporting.
+FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analytics, inventory management, CRM, and reporting. Owned by JODIDAR INDIA.
 
-## Domain & Ownership
-- **Domain**: `www.flowralive.in`
-- **Brand**: FLOWRA is owned by **JODIDAR INDIA**
-- **Contact**: support@flowralive.in | +91 81204 70018
+## Key Bug Fixes (Apr 13, 2026)
+1. **Inventory FY filtering**: Items API now accepts `?fy=` param, computes closing stock per FY using post-FY voucher adjustment
+2. **Sort on Quantity/Value**: SortHeader components on Quantity and Value columns (sorts entire rows)
+3. **Idle auto-logout fixed**: Used `handleLogoutRef.current` pattern to avoid stale closure in setTimeout
+4. **AI PO crash fixed**: All PO modal fields null-safe (`|| 0`, `?? '-'`)
+5. **Auto reorder fixed**: Changed `date` → `voucher_date` field lookup in sales_vouchers; fixed NoneType in audit logging
 
-## Tech Stack
-- Frontend: React, Tailwind CSS, Shadcn UI, Recharts, react-google-recaptcha-v3
-- Backend: FastAPI, MongoDB, Resend (email)
-- Integrations: Tally* (desktop sync), OpenAI GPT-5.2, Google reCAPTCHA v3, Resend Email API
-
-## Implemented Features
-- Dashboard, Inventory (auto/manual reorder), Inventory Analytics, CRM (Excel export), Sales, AI Reports
-- Salesman Performance, Tally* Sync, Branch/Division exclusion, PDF Ledger export
-- Refer & Earn (3% commission), Multi-company, Super Admin panel
-- Public pages (Privacy, Terms, Refund, Contact, Social), WhatsApp button
-- reCAPTCHA v3, 15-min idle auto-logout, Onboarding tour
-- Mobile responsive with sticky columns and text wrapping
-
-## Email Communication (Apr 2026)
-- **Subscription Started**: Welcome email with plan details, 3-step getting started guide, login CTA
-- **Subscription Renewed**: Confirmation with new expiry date, green "RENEWED" badge
-- **Expiry Warning**: Sent on login when <=30 days left (max once/day). Urgency levels: amber (8-30d), red (<=7d). Lists consequences + renew CTA
-- **Service**: Resend API, sender: support@flowralive.in
-- **Backend env**: `RESEND_API_KEY`, `SENDER_EMAIL`
-- **Trigger points**: Admin creation (SA panel), Renewal approval (SA panel), Login (auth/login)
+## Architecture Note
+- `sales_vouchers.voucher_date` (not `.date`) is the correct date field
+- Inventory closing stock for past FYs = current_stock + post_fy_sales - post_fy_purchases
 
 ## Upcoming Tasks
 - P1: Compile Desktop Agent into `.exe` installer
 - P2: Export Audit Logs to CSV
-
-## Future/Backlog
-- Salesman Order System (Enterprise)
-- AI Expense Insights (GPT-5.2)
-- Refactor App.js
