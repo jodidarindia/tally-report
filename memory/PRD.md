@@ -15,42 +15,38 @@ App.js (~160 lines) — Clean orchestrator composing hooks + components:
 - **Pages**: Dashboard, Sales, CRM, Inventory, InventoryAnalytics, EnhancedAIReports, CACorner, ReferAndEarn, QuestionnaireForm, etc.
 
 ## Key Features Implemented
-- Customer CRM with targets, follow-ups, payment behavior scoring
-- Inventory Analytics with movement analysis, below-cost sales detection
-- SuperAdmin controls with user/subscription management
-- Refer & Earn (3% commission, auto-generated codes, redemption approvals)
-- Resend email triggers (subscription start, renew, expiring)
-- 7-step onboarding tour for first-time users
-- reCAPTCHA v3 on login/signup + 15-minute idle auto-logout
-- Excel exports for CRM Outstanding and Targets
-- 2-month auto-reorder levels with math.ceil rounding
-- Public pages (Privacy, Terms, Refund, Contact, Social Media)
-- Branch toggle for excluding internal transfers
+- Customer CRM, Inventory Analytics, SuperAdmin controls
+- Refer & Earn (3%), Resend emails, Onboarding tour
+- reCAPTCHA v3, 15-min idle logout, Excel exports
+- Auto-reorder levels, Branch toggle, Public pages
 - CA Corner (Cash Flow, P&L, AI Expense Insights) — Enterprise
-- **Digital Questionnaire Form** — 6-step public needs assessment (Company Info, Tally Usage, Pain Points, Feature Priority 1-5, Decision & Budget, Next Steps)
-- **Resources Menu** on landing page (Needs Assessment Form, Product Presentation PDF, Questionnaire PDF download)
-- **SuperAdmin Leads Tab** — view/manage questionnaire submissions, status tracking (New/Contacted/Qualified/Closed), Excel export
+- Digital Questionnaire Form (6-step) + SuperAdmin Leads tab with Excel export
+- Resources menu on landing page (Presentation, Questionnaire PDF, Needs Assessment form)
 
-## Marketing Materials (Updated Apr 2026)
-All PDFs served from `/app/frontend/public/`:
-1. FLOWRA_Presentation.pdf — 12-slide deck
-2. FLOWRA_Training_Booklet.pdf — Employee training guide
-3. FLOWRA_Social_Media_Kit.pdf — Social posts + 30-day calendar
-4. FLOWRA_Customer_Questionnaire.pdf — 6-section printable questionnaire
-
-## API Endpoints (New)
-- `POST /api/questionnaire/submit` — Public, submits questionnaire
-- `GET /api/super-admin/questionnaires` — Lists all submissions
-- `GET /api/super-admin/questionnaires/export` — Excel download
-- `PUT /api/super-admin/questionnaires/{idx}/status` — Update lead status
+## Marketing Materials
+1. FLOWRA_Presentation.pdf (12 slides)
+2. FLOWRA_Training_Booklet.pdf
+3. FLOWRA_Social_Media_Kit.pdf (7 posts + 30-day calendar)
+4. FLOWRA_Customer_Questionnaire.pdf (6-section printable)
+5. **FLOWRA_Coming_Soon.pdf** (12 slides — Dispatch Terminal + Salesman Order System)
 
 ## Collections
 - `referrals`, `contra_vouchers`, `bank_cash_ledgers`, `profit_loss`
-- `users` (includes `onboarding_completed` flag)
-- `questionnaires` — Stores all needs assessment submissions
+- `users`, `questionnaires`
 
-## Upcoming
-- P1: Compile Desktop Agent v8 to `.exe`
-- P2: Export Audit Logs to CSV
-- P2: Automated payment follow-up reminders via email/WhatsApp
-- P2: Salesman Order System (Enterprise Plan Only)
+## Upcoming — P1 Priority
+- **Dispatch Terminal** (Enterprise) — see `/app/memory/DISPATCH_TERMINAL_SPEC.md`
+  - McDonald's KDS-style real-time dispatch board
+  - Invoice cards with full tracking (boxes, porter, transport, employee)
+  - Queue system, manual cards, physical verification
+  - Porter expense tracking with weekly settlement
+  - Close-of-day summary, admin drill-down for pending only
+- Compile Desktop Agent v8 to `.exe`
+
+## Upcoming — P2
+- **Salesman Order System** (Enterprise)
+  - Salesman login, mapped customers, inventory visibility
+  - Order creation → admin approval → dispatch
+  - Beat plans, performance analytics
+- Export Audit Logs to CSV
+- Automated payment follow-up reminders via email/WhatsApp
