@@ -26,14 +26,14 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
   useEffect(() => {
     fetchInventory();
-  }, [selectedGroups, excludeBranches]);
+  }, [selectedGroups, excludeBranches, selectedFY]);
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
       const params = {};
-      // Multi-select: send first selected group for API filtering (client-side handles multi-filter)
       if (selectedGroups.length > 0) params.stock_group = selectedGroups[0];
+      if (selectedFY) params.fy = selectedFY;
       const response = await axios.get(`${API}/inventory/items`, { params });
       const itemsData = response.data?.data?.items || [];
       setItems(itemsData);
@@ -280,7 +280,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                       <td>{item.category || '-'}</td>
                       <td className="numeric font-semibold">{item.quantity}</td>
                       <td>{item.unit}</td>
-                      <td className="numeric">₹{item.price?.toLocaleString('en-IN') || 0}</td>
+                      <td className="numeric">₹{(item.price || 0).toLocaleString('en-IN')}</td>
                       <td className="numeric font-semibold">₹{itemValue.toLocaleString('en-IN')}</td>
                       <td className="numeric">
                         {editingReorder === item.item_id ? (
@@ -373,29 +373,29 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                                 item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
                                 'bg-blue-100 text-blue-700'
                               }`}>
-                                {item.priority.toUpperCase()}
+                                {(item.priority || 'medium').toUpperCase()}
                               </span>
                             </div>
                             <p className="text-sm text-slate-600 mt-2">{item.reason}</p>
                             <div className="grid grid-cols-3 gap-4 mt-3">
                               <div>
                                 <div className="text-xs text-slate-500">Current Stock</div>
-                                <div className="text-sm font-semibold">{item.current_stock}</div>
+                                <div className="text-sm font-semibold">{item.current_stock ?? '-'}</div>
                               </div>
                               <div>
                                 <div className="text-xs text-slate-500">Reorder Level</div>
-                                <div className="text-sm font-semibold">{item.reorder_level}</div>
+                                <div className="text-sm font-semibold">{item.reorder_level ?? '-'}</div>
                               </div>
                               <div>
                                 <div className="text-xs text-slate-500">Recommended Qty</div>
-                                <div className="text-sm font-semibold text-[#2563EB]">{item.recommended_quantity}</div>
+                                <div className="text-sm font-semibold text-[#2563EB]">{item.recommended_quantity ?? '-'}</div>
                               </div>
                             </div>
                           </div>
                           <div className="text-right ml-4">
                             <div className="text-xs text-slate-500">Est. Cost</div>
                             <div className="text-lg font-semibold text-[#2563EB]">
-                              ₹{item.estimated_cost.toLocaleString('en-IN')}
+                              ₹{(item.estimated_cost || 0).toLocaleString('en-IN')}
                             </div>
                           </div>
                         </div>

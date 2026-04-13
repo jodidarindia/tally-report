@@ -144,7 +144,7 @@ function App() {
           }
 
           // Trigger onboarding for first-time users on session restore
-          if (!userData.onboarding_completed && userData.role !== 'super_admin') {
+          if (!userData.onboarding_completed && userData.role !== 'super_admin' && !localStorage.getItem('flowra_onboarding_done')) {
             setTimeout(() => setShowOnboarding(true), 2000);
           }
 
@@ -227,10 +227,13 @@ function App() {
   const [idleWarning, setIdleWarning] = useState(false);
   const idleTimerRef = useRef(null);
   const warningTimerRef = useRef(null);
+  const handleLogoutRef = useRef(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setIdleWarning(false);
+      clearTimeout(idleTimerRef.current);
+      clearTimeout(warningTimerRef.current);
       return;
     }
 
@@ -244,7 +247,7 @@ function App() {
       idleTimerRef.current = setTimeout(() => {
         setIdleWarning(true);
         warningTimerRef.current = setTimeout(() => {
-          handleLogout();
+          if (handleLogoutRef.current) handleLogoutRef.current();
           toast.info('You were logged out due to inactivity.');
         }, LOGOUT_DELAY);
       }, IDLE_LIMIT);
@@ -301,7 +304,7 @@ function App() {
         }
 
         // Trigger onboarding tour for first-time users
-        if (!data.onboarding_completed && data.role !== 'super_admin') {
+        if (!data.onboarding_completed && data.role !== 'super_admin' && !localStorage.getItem('flowra_onboarding_done')) {
           setTimeout(() => setShowOnboarding(true), 1500);
         } else {
           // Fetch latest FY from synced data
@@ -346,6 +349,7 @@ function App() {
     setUsername('');
     setPassword('');
   };
+  handleLogoutRef.current = handleLogout;
 
   const handleCompanySelect = (company) => {
     setSelectedCompany(company);

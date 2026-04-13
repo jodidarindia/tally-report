@@ -79,7 +79,7 @@ def _filter_branch_vouchers(vouchers, branch_set):
 
 
 @router.get("/inventory/items")
-async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None):
+async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None, fy: Optional[str] = None):
     try:
         ctx = await get_tenant_context(request)
         extra = {}
@@ -92,6 +92,78 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
 
         query = _build_query(ctx, company_id, extra)
         items = await db.inventory_items.find(query, {"_id": 0}).to_list(5000)
+
+        # If FY is specified, compute closing stock for that FY from vouchers
+        if fy:
+            base_q = _build_query(ctx, company_id)
+            sales_v = await db.sales_vouchers.find(base_q, {"_id": 0}).to_list(50000)
+            purchase_v = await db.purchase_vouchers.find(base_q, {"_id": 0}).to_list(50000)
+
+            # Apply branch filter
+            branch_set = await _get_branch_set(request, ctx)
+            sales_v = _filter_branch_vouchers(sales_v, branch_set)
+            purchase_v = _filter_branch_vouchers(purchase_v, branch_set)
+
+            fy_sales = filter_vouchers_by_fy(sales_v, fy) if fy else sales_v
+            fy_purchases = filter_vouchers_by_fy(purchase_v, fy) if fy else purchase_v
+
+            # Build per-item qty sold and purchased in this FY
+            from collections import defaultdict
+            item_sold = defaultdict(float)
+            item_purchased = defaultdict(float)
+            item_sold_value = defaultdict(float)
+            item_purchased_value = defaultdict(float)
+
+            for v in fy_sales:
+                for vi in v.get("items", []):
+                    iname = (vi.get("item", "") or "").strip().lower()
+                    item_sold[iname] += abs(safe_num(vi.get("quantity", 0)))
+                    item_sold_value[iname] += abs(safe_num(vi.get("amount", 0)))
+
+            for v in fy_purchases:
+                for vi in v.get("items", []):
+                    iname = (vi.get("item", "") or "").strip().lower()
+                    item_purchased[iname] += abs(safe_num(vi.get("quantity", 0)))
+                    item_purchased_value[iname] += abs(safe_num(vi.get("amount", 0)))
+
+            # Current stock = closing of latest sync
+            # Closing of selected FY = Current - sales_after_FY + purchases_after_FY
+            # But simpler: FY closing = opening + purchases - sales
+            # Opening = current_qty + all_sales_after_fy - all_purchases_after_fy
+            # We approximate: if FY is current, use current stock. Otherwise calculate.
+            from services.ist_utils import now_ist_iso
+            fy_end_year = int(fy.split('-')[0]) + 1 if '-' in fy else 2027
+            fy_end_date = f"{fy_end_year}-03-31"
+
+            # Get post-FY vouchers
+            all_sales = filter_vouchers_by_fy(sales_v, fy) if fy else []
+            all_purchases = filter_vouchers_by_fy(purchase_v, fy) if fy else []
+
+            # For the selected FY, closing = current_stock + sales_after_fy - purchases_after_fy
+            post_fy_sold = defaultdict(float)
+            post_fy_purchased = defaultdict(float)
+            for v in sales_v:
+                vdate = v.get("voucher_date", v.get("date", ""))
+                if vdate > fy_end_date:
+                    for vi in v.get("items", []):
+                        iname = (vi.get("item", "") or "").strip().lower()
+                        post_fy_sold[iname] += abs(safe_num(vi.get("quantity", 0)))
+            for v in purchase_v:
+                vdate = v.get("voucher_date", v.get("date", ""))
+                if vdate > fy_end_date:
+                    for vi in v.get("items", []):
+                        iname = (vi.get("item", "") or "").strip().lower()
+                        post_fy_purchased[iname] += abs(safe_num(vi.get("quantity", 0)))
+
+            for item in items:
+                iname = (item.get("item_name") or "").strip().lower()
+                current_qty = safe_num(item.get("quantity"))
+                # Closing of FY = current_qty + post_fy_sales - post_fy_purchases
+                fy_closing = current_qty + post_fy_sold.get(iname, 0) - post_fy_purchased.get(iname, 0)
+                item["quantity"] = round(fy_closing, 2)
+                # Recalc value
+                price = safe_num(item.get("price"))
+                item["closing_value"] = round(fy_closing * price, 2)
 
         base_q = _build_query(ctx, company_id)
         all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1}).to_list(5000)
@@ -1068,7 +1140,7 @@ async def auto_set_reorder_levels(request: Request):
         item_sales_qty = defaultdict(float)
         dates = []
         for v in sales:
-            vdate = v.get("date", "")
+            vdate = v.get("voucher_date", v.get("date", ""))
             if vdate:
                 try:
                     dates.append(dt.fromisoformat(vdate.replace("Z", "")))
@@ -1099,8 +1171,8 @@ async def auto_set_reorder_levels(request: Request):
                 updated += 1
 
         user = await get_current_user(request, db)
-        await log_audit("auto_reorder_levels", user.get("username", ""),
-                         tenant_id=ctx.get("tenant_id", ""), company_id=ctx.get("company_id", ""),
+        await log_audit("auto_reorder_levels", user.get("username", "") if user else "",
+                         tenant_id=ctx.get("tenant_id", "") if ctx else "", company_id=ctx.get("company_id", "") if ctx else "",
                          details=f"Updated {updated} items", ip_address=get_client_ip(request))
 
         return APIResponse(success=True, message=f"Reorder levels set for {updated} items (2-month stock)", data={"updated": updated})

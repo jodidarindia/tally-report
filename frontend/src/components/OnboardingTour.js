@@ -37,6 +37,7 @@ const OnboardingTour = ({ run, onComplete }) => {
 
   const finish = async () => {
     try { await axios.post(`${API}/auth/complete-onboarding`); } catch {}
+    localStorage.setItem('flowra_onboarding_done', 'true');
     onComplete();
   };
 
