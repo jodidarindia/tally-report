@@ -47,18 +47,18 @@ App.js (~160 lines) — Clean orchestrator composing hooks + components:
 - Public pages (Privacy, Terms, Refund, Contact, Social Media)
 - Branch toggle for excluding internal transfers
 
+## Marketing Materials (Updated Apr 2026)
+All PDFs served from `/app/frontend/public/`:
+1. **FLOWRA_Presentation.pdf** — 12-slide deck (CA Corner, Refer & Earn, Tally* branding, security updates)
+2. **FLOWRA_Training_Booklet.pdf** — Employee training guide (updated features, demo script, FAQ, quick ref)
+3. **FLOWRA_Social_Media_Kit.pdf** — Social posts (LinkedIn, Instagram, Twitter, WhatsApp, GMB) + 30-day calendar
+4. **FLOWRA_Customer_Questionnaire.pdf** — 6-section customer needs assessment (company info, Tally usage, pain points, feature priority, decision criteria, referral & next steps)
+
 ## Collections
 - `referrals`, `contra_vouchers`, `bank_cash_ledgers`, `profit_loss`
 - `users` (includes `onboarding_completed` flag)
 
-## Key Fixes
-- reCAPTCHA v3: Removed React provider, load via script tag, 3s timeout on execute
-- Login works reliably in all environments
-- Desktop agent download link updated to `/flowra-desktop-agent.py`
-- Onboarding tour updated with CA Corner step
-
 ## Upcoming
-- P0: Update PDF Marketing Materials (Presentation, Training Booklet, Social Media Kit) with new features
 - P1: Compile Desktop Agent v8 to `.exe`
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders via email/WhatsApp
