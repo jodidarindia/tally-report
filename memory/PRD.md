@@ -1,19 +1,37 @@
 # FLOWRA - Product Requirements Document
 
 ## Overview
-FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analytics, inventory management, CRM, and reporting. Owned by JODIDAR INDIA.
+FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analytics, inventory, CRM, and reporting. Owned by JODIDAR INDIA.
 
-## Key Bug Fixes (Apr 13, 2026)
-1. **Inventory FY filtering**: Items API now accepts `?fy=` param, computes closing stock per FY using post-FY voucher adjustment
-2. **Sort on Quantity/Value**: SortHeader components on Quantity and Value columns (sorts entire rows)
-3. **Idle auto-logout fixed**: Used `handleLogoutRef.current` pattern to avoid stale closure in setTimeout
-4. **AI PO crash fixed**: All PO modal fields null-safe (`|| 0`, `?? '-'`)
-5. **Auto reorder fixed**: Changed `date` → `voucher_date` field lookup in sales_vouchers; fixed NoneType in audit logging
+## Desktop Agent v8 (Apr 2026)
+### New Features:
+1. **FY Discovery & Selection**: On first connection, agent queries Tally* for all available FYs, presents list to user, who selects starting FY. Syncs from that FY to current. Saved in encrypted state file.
+2. **Contra Vouchers**: Bank-to-bank, cash-to-bank transfers synced per FY per month.
+3. **Bank & Cash Ledger Balances**: All Bank, Cash-in-Hand, Bank OD accounts with opening/closing balances, bank details (name, account no, IFSC).
+4. **Profit & Loss Data**: All Income and Expense group ledgers with balances. Totals computed.
+5. **Encrypted Config**: Auth token, tenant_id, company_id stored in Fernet-encrypted file (AES-128-CBC). Machine-specific key in hidden file.
+6. **Memory Optimization**: `gc.collect()` after sync phases, chunked processing.
 
-## Architecture Note
-- `sales_vouchers.voucher_date` (not `.date`) is the correct date field
-- Inventory closing stock for past FYs = current_stock + post_fy_sales - post_fy_purchases
+### Sync Phases (11 total):
+1. Stock Items, 2. Sales, 3. Receipts/Payments, 4. Credit Notes, 5a. Journals, 5b. Stock Journals, 6. Purchases, 7. Debit Notes, 8. Sundry Creditors, 9. Contra Vouchers, 10. Bank/Cash Ledgers, 11. P&L Data + Customer Ledgers
+
+### Backend Collections Added:
+- `contra_vouchers`, `bank_cash_ledgers`, `profit_loss`
+
+### Files:
+- `/app/desktop-agent/tally_sync_agent_v8.py` (main agent)
+- `/app/frontend/public/flowra-desktop-agent.py` (download copy)
+- `/app/backend/routes/sync.py` (sync handlers for new data types)
+
+## Recent Bug Fixes (Apr 13)
+- Inventory FY closing stock calculation (correct: current + post_fy_sales - post_fy_purchases)
+- Reorder levels rounded up to whole numbers (math.ceil)
+- AI PO crash fixed (null-safe toLocaleString)
+- Auto-reorder using voucher_date field
+- Idle timeout using handleLogoutRef pattern
 
 ## Upcoming Tasks
-- P1: Compile Desktop Agent into `.exe` installer
+- P1: Build Cash Flow dashboard (uses contra, bank/cash, receipts data)
+- P1: Build P&L report page (uses profit_loss data)
+- P2: Compile Desktop Agent v8 into `.exe` installer
 - P2: Export Audit Logs to CSV

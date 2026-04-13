@@ -394,6 +394,73 @@ async def receive_agent_sync(request: dict):
                     await db.sundry_creditors.bulk_write(operations)
             logger.info(f"Synced {len(data)} sundry creditors")
 
+        elif data_type == 'contra_vouchers':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for v in data:
+                    vid = v.get('voucher_id', '')
+                    if not vid:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": vid, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                **{k: v_val for k, v_val in v.items() if k != '_id'},
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.contra_vouchers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} contra vouchers")
+
+        elif data_type == 'bank_cash_ledgers':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for led in data:
+                    name = led.get('ledger_name', '')
+                    if not name:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"ledger_name": name, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                **{k: v_val for k, v_val in led.items() if k != '_id'},
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.bank_cash_ledgers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} bank/cash ledgers")
+
+        elif data_type == 'profit_loss':
+            if data:
+                pl = data[0] if isinstance(data, list) else data
+                await db.profit_loss.update_one(
+                    {"tenant_id": req_tenant_id, "company_id": req_company_id},
+                    {"$set": {
+                        "income": pl.get("income", []),
+                        "expense": pl.get("expense", []),
+                        "total_income": pl.get("total_income", 0),
+                        "total_expense": pl.get("total_expense", 0),
+                        "net_profit_loss": pl.get("net_profit_loss", 0),
+                        "last_synced": sync_time,
+                        "tenant_id": req_tenant_id,
+                        "company_id": req_company_id
+                    }},
+                    upsert=True
+                )
+            logger.info("Synced P&L data")
+
         # Update last sync time
         financial_year = request.get('financial_year', '')
         # Normalize sync_time to always have timezone info (UTC)

@@ -1,122 +1,55 @@
-============================================
- FLOWRA Desktop Sync Agent v6 — QUICK START
- Lightweight Collection Requests (No Freeze)
-============================================
+============================================================
+  FLOWRA Tally* Sync Agent v8.0 — Quick Start Guide
+============================================================
 
-WHY IT WON'T FREEZE TALLY:
-  Previous versions used heavy Day Book / Report requests that locked
-  Tally's UI for 30-120 seconds.
+REQUIREMENTS:
+  - Python 3.9+
+  - Tally* running on this machine (port 9000 default)
+  - Internet connection to sync with FLOWRA cloud
 
-  v6 uses lightweight COLLECTION requests:
-    - Stock Items    → 1-2 sec (master data only)
-    - Customer Ledgers → 1-2 sec (just balances)
-    - Sales per month → 2-5 sec each
-    - Receipts per month → 2-5 sec each
-  
-  Each request: 1-5 seconds with 2-second gaps.
-  Tally stays fully responsive.
+INSTALL:
+  pip install requests xmltodict python-dotenv schedule websockets cryptography
 
-============================================
- STEP 1: PREREQUISITES
-============================================
+SETUP:
+  1. Copy .env.example to .env
+  2. Set your BACKEND_URL (get from FLOWRA admin)
+  3. Run: python tally_sync_agent_v8.py
 
-  1. TallyPrime must be running with ODBC port enabled:
-     Gateway > F12 (Configure) > Connectivity:
-       - "Enable ODBC Server" → Yes (port 9000)
+FIRST RUN:
+  - Agent will ask for your FLOWRA email/password
+  - Credentials are encrypted locally (AES-256 via Fernet)
+  - Agent discovers all available FYs from Tally*
+  - You select the STARTING FY to sync from
+  - Sync runs automatically every 20 min
 
-  2. Install Python 3.8+ from https://python.org
-     (Check "Add to PATH" during installation)
+WHAT IT SYNCS:
+  Phase 1:  Stock Items (inventory)
+  Phase 2:  Sales Vouchers
+  Phase 3:  Receipts & Payment Vouchers
+  Phase 4:  Credit Notes
+  Phase 5a: Journal Vouchers
+  Phase 5b: Stock Journals
+  Phase 6:  Purchase Vouchers
+  Phase 7:  Debit Notes
+  Phase 8:  Sundry Creditors
+  Phase 9:  Contra Vouchers (bank transfers)
+  Phase 10: Bank & Cash Ledger Balances
+  Phase 11: Profit & Loss Data (income + expenses)
+  Customer Ledgers with opening balances
 
-============================================
- STEP 2: CONFIGURE
-============================================
+COMMANDS:
+  python tally_sync_agent_v8.py            # Normal run
+  python tally_sync_agent_v8.py --logout   # Clear saved credentials
 
-  1. Open Command Prompt in this folder
+SECURITY:
+  - Auth tokens encrypted with Fernet (AES-128-CBC)
+  - Encryption key stored in hidden file (.flowra_key)
+  - All data tagged with tenant_id + company_id
+  - Token auto-expires after 23 hours
+  - RAM optimized: chunked processing with gc.collect()
 
-  2. Copy the config template:
-     copy .env.example .env
-
-  3. Edit .env with Notepad:
-     BACKEND_URL=https://tally-report-ai.preview.emergentagent.com
-     FINANCIAL_YEAR=2025-26
-     TALLY_HOST=localhost
-     TALLY_PORT=9000
-     TALLY_COMPANY=           (leave empty for auto-detect)
-     SYNC_INTERVAL_MINUTES=20
-
-============================================
- STEP 3: RUN
-============================================
-
-  Option A: Double-click run_agent.bat
-
-  Option B: Command line:
-     pip install -r requirements.txt
-     python tally_sync_agent_v6.py
-
-  You'll see:
-     FLOWRA TALLY SYNC AGENT v6
-     Tally company: Your Company Name
-     --- Phase 1: Stock Items ---
-       Got 150 stock items
-       [OK] Synced 150 inventory to cloud
-     --- Phase 2: Sales Vouchers ---
-       Requesting sales: 01-Apr-2025 to 30-Apr-2025
-       ...
-     [DONE] Sync completed
-
-============================================
- HOW IT WORKS
-============================================
-
-  Every 20 minutes:
-
-  [Agent] --(Collection request, 1-5 sec)--> [Tally Port 9000]
-     ↓
-  [Parse XML response]
-     ↓
-  [Save to local JSON cache]
-     ↓
-  [POST to cloud backend]
-     ↓
-  [Dashboard updated via WebSocket]
-
-  Each request is small and fast.
-  2-second gap between requests.
-  Tally stays responsive throughout.
-
-============================================
- FILES
-============================================
-
-  tally_sync_agent_v6.py  - Sync agent (this version)
-  tally_sync_agent.py     - Old HTTP agent (v5, backup)
-  run_agent.bat           - Double-click to start
-  .env.example            - Config template
-  requirements.txt        - Python dependencies
-  export_cache/           - Local JSON cache (auto-created)
-  QUICK_START.txt         - This file
-
-============================================
- TROUBLESHOOTING
-============================================
-
-  "Cannot connect to Tally"
-  → Is TallyPrime running? Is port 9000 enabled?
-  → Check: Gateway > F12 > Connectivity > Enable ODBC Server = Yes
-
-  "Tally request timed out"
-  → Increase REQUEST_TIMEOUT in .env (default: 15 sec)
-  → Try: REQUEST_TIMEOUT=30
-
-  "No stock items / vouchers found"
-  → Check FINANCIAL_YEAR matches your Tally company FY
-  → Check TALLY_COMPANY matches exactly (or leave empty)
-  → Check export_cache/ for raw XML files:
-    stock_items_raw.xml, customers_raw.xml, sales_YYYYMM_raw.xml
-    Share first 50 lines with the developer for debugging
-
-  "XML parse error" in logs
-  → Usually caused by special characters in party names/addresses
-  → Agent auto-retries with aggressive cleanup
-  → If it persists, share the *_raw.xml file from export_cache/
+TROUBLESHOOTING:
+  - "Tally not responding": Ensure Tally* is running, check TALLY_PORT
+  - "Auth expired": Agent auto-refreshes, or run --logout to re-login
+  - "No FYs found": Ensure a company is open in Tally*
+============================================================
