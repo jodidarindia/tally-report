@@ -1,38 +1,25 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import './App.css';
-import axios from 'axios';
-import { toast, Toaster } from 'sonner';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
-  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock, Gift, Landmark
+  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark
 } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
-import Inventory from './pages/Inventory';
-import Sales from './pages/Sales';
-import CustomerCRM from './pages/CustomerCRM';
-import InventoryAnalytics from './pages/InventoryAnalytics';
-import EnhancedAIReports from './pages/EnhancedAIReports';
-import SalesmanPerformance from './pages/SalesmanPerformance';
-import SyncHistory from './pages/SyncHistory';
-import TallySetup from './pages/TallySetup';
-import SuperAdminDashboard from './pages/SuperAdminDashboard';
+import { toast } from 'sonner';
+import { useAuth } from './hooks/useAuth';
+import { useIdleTimeout } from './hooks/useIdleTimeout';
+import { useCompany } from './hooks/useCompany';
+import AppNavbar from './components/AppNavbar';
+import SuperAdminLayout from './components/SuperAdminLayout';
+import PublicRouter from './components/PublicRouter';
+import PageRenderer from './components/PageRenderer';
+import IdleWarningModal from './components/IdleWarningModal';
 import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
-import ActivityLog from './pages/ActivityLog';
-import InsiderResult from './pages/InsiderResult';
-import ReferAndEarn from './pages/ReferAndEarn';
-import CACorner from './pages/CACorner';
-import OnboardingTour from './components/OnboardingTour';
-import LandingPage from './pages/LandingPage';
-import SignupPage from './pages/SignupPage';
-import { PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage } from './pages/PublicPages';
 import RenewalPopup from './components/RenewalPopup';
+import OnboardingTour from './components/OnboardingTour';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
 
-// Feature to nav mapping
 const FEATURE_NAV_MAP = {
   dashboard: { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   sales: { id: 'sales', label: 'Sales', icon: ShoppingCart },
@@ -48,137 +35,57 @@ const FEATURE_NAV_MAP = {
 };
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  // Calculate default FY from current date (April start)
-  const getCurrentFY = () => {
-    const now = new Date();
-    const month = now.getMonth(); // 0-indexed, Jan=0
-    const year = now.getFullYear();
-    // Indian FY: April to March
-    if (month >= 3) { // April onwards
-      return `${year}-${String(year + 1).slice(2)}`;
-    }
-    return `${year - 1}-${String(year).slice(2)}`;
-  };
+  const { isAuthenticated, user, token, loginLoading, login, logout } = useAuth();
+  const company = useCompany(isAuthenticated);
+  const { idleWarning, dismissWarning } = useIdleTimeout(isAuthenticated, logout);
 
-  const [selectedFY, setSelectedFY] = useState(getCurrentFY());
-  const [selectedCompany, setSelectedCompany] = useState('');
-  const [showCompanySelector, setShowCompanySelector] = useState(false);
-  const [companyMappings, setCompanyMappings] = useState({});  // UUID -> display name
-  const [syncStatus, setSyncStatus] = useState(null);
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [publicView, setPublicView] = useState('landing');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [excludeBranches, setExcludeBranches] = useState(() => {
-    return localStorage.getItem('flowra_exclude_branches') === 'true';
-  });
   const [showProfile, setShowProfile] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [publicView, setPublicView] = useState('landing'); // landing, login, signup, privacy, terms, refund, contact, social
   const [showRenewalPopup, setShowRenewalPopup] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
   const wsRef = useRef(null);
-  const userMenuRef = useRef(null);
+  const initDoneRef = useRef(false);
 
-  // Login states
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginLoading, setLoginLoading] = useState(false);
-
-  // Set auth header
+  // After login / session restore: initialize company state and trigger UI side effects
   useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    if (!isAuthenticated || !user) { initDoneRef.current = false; return; }
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
+    company.initFromUser(user);
+
+    if (user.role === 'super_admin') {
+      setCurrentPage('super-admin');
+      return;
     }
-  }, [token]);
 
-  // Set company header
-  useEffect(() => {
-    if (selectedCompany) {
-      axios.defaults.headers.common['X-Company-ID'] = selectedCompany;
-    } else {
-      delete axios.defaults.headers.common['X-Company-ID'];
+    const daysLeft = user.subscription_days_left;
+    if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30) {
+      setShowRenewalPopup(true);
     }
-  }, [selectedCompany]);
 
-  // Set branch exclusion header
-  useEffect(() => {
-    if (excludeBranches) {
-      axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
-    } else {
-      delete axios.defaults.headers.common['X-Exclude-Branches'];
+    if (!user.onboarding_completed && !localStorage.getItem('flowra_onboarding_done')) {
+      setTimeout(() => setShowOnboarding(true), 1500);
     }
-    localStorage.setItem('flowra_exclude_branches', excludeBranches ? 'true' : 'false');
-  }, [excludeBranches]);
+  }, [isAuthenticated, user, company.initFromUser]);
 
-  // Auto-detect branch ledgers on company change
-  useEffect(() => {
-    if (selectedCompany && isAuthenticated) {
-      axios.get(`${API}/settings/branch-ledgers/detect`).catch(() => {});
-    }
-  }, [selectedCompany, isAuthenticated]);
+  // Login handler (side effects handled by useEffect above)
+  const handleLogin = useCallback(async (username, password) => {
+    await login(username, password);
+  }, [login]);
 
-  // Check auth on mount
-  useEffect(() => {
-    const savedToken = localStorage.getItem('flowra_token');
-    if (savedToken) {
-      setToken(savedToken);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
-      axios.get(`${API}/auth/me`).then(res => {
-        if (res.data?.success && res.data?.data) {
-          const userData = res.data.data;
-          setUser(userData);
-          setIsAuthenticated(true);
+  // Logout handler
+  const handleLogout = useCallback(() => {
+    logout();
+    company.resetCompany();
+    setCurrentPage('dashboard');
+    setPublicView('landing');
+  }, [logout, company.resetCompany]);
 
-          // Store company name mappings (UUID -> name)
-          if (userData.company_mappings) {
-            const map = {};
-            userData.company_mappings.forEach(m => { map[m.company_id] = m.company_name; });
-            setCompanyMappings(map);
-          }
-
-          // Check subscription expiry popup
-          const daysLeft = userData.subscription_days_left;
-          if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30 && userData.role !== 'super_admin') {
-            setShowRenewalPopup(true);
-          }
-
-          // Trigger onboarding for first-time users on session restore
-          if (!userData.onboarding_completed && userData.role !== 'super_admin' && !localStorage.getItem('flowra_onboarding_done')) {
-            setTimeout(() => setShowOnboarding(true), 2000);
-          }
-
-          if (userData.role === 'super_admin') {
-            setCurrentPage('super-admin');
-          } else {
-            // Fetch latest FY
-            axios.get(`${API}/sync/latest-fy`).then(fyRes => {
-              if (fyRes.data?.success && fyRes.data?.data?.latest_fy) {
-                setSelectedFY(fyRes.data.data.latest_fy);
-              }
-            }).catch(() => {});
-
-            const savedCompany = localStorage.getItem('flowra_company');
-            if (savedCompany && (userData.companies || []).includes(savedCompany)) {
-              setSelectedCompany(savedCompany);
-            } else if ((userData.companies || []).length > 1) {
-              setShowCompanySelector(true);
-            } else if ((userData.companies || []).length === 1) {
-              setSelectedCompany(userData.companies[0]);
-              localStorage.setItem('flowra_company', userData.companies[0]);
-            }
-          }
-        } else {
-          localStorage.removeItem('flowra_token');
-        }
-      }).catch(() => {
-        localStorage.removeItem('flowra_token');
-      });
-    }
-  }, []);
-
-  // WebSocket connection
+  // WebSocket for sync status
   useEffect(() => {
     if (!isAuthenticated || user?.role === 'super_admin') return;
     const connectWs = () => {
@@ -189,573 +96,106 @@ function App() {
             wsRef.current.send(JSON.stringify({
               action: 'get_status',
               tenant_id: user?.tenant_id || '',
-              company_id: selectedCompany || ''
+              company_id: company.selectedCompany || ''
             }));
           }
         };
         wsRef.current.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.event === 'status_response') {
-              setSyncStatus(msg.data?.sync_status);
-            }
-            if (msg.event === 'data_synced') {
-              toast.success(`${msg.data?.data_type}: ${msg.data?.count} items synced`);
-            }
+            if (msg.event === 'status_response') setSyncStatus(msg.data?.sync_status);
+            if (msg.event === 'data_synced') toast.success(`${msg.data?.data_type}: ${msg.data?.count} items synced`);
           } catch {}
         };
-        wsRef.current.onclose = () => {
-          setTimeout(connectWs, 5000);
-        };
+        wsRef.current.onclose = () => { setTimeout(connectWs, 5000); };
       } catch {}
     };
     connectWs();
     return () => { wsRef.current?.close(); };
-  }, [isAuthenticated, user?.role, selectedCompany]);
+  }, [isAuthenticated, user?.role, company.selectedCompany]);
 
-  // Close user menu on outside click
-  useEffect(() => {
-    const handler = (e) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
-        setShowUserMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+  // FY dropdown options
+  const fyOptions = useMemo(() => {
+    const yr = new Date().getFullYear();
+    return Array.from({ length: 6 }, (_, i) => {
+      const y = yr - i;
+      return `${y}-${String(y + 1).slice(2)}`;
+    });
   }, []);
 
-  // Idle timeout — auto-logout after 15 minutes of inactivity
-  const [idleWarning, setIdleWarning] = useState(false);
-  const idleTimerRef = useRef(null);
-  const warningTimerRef = useRef(null);
-  const handleLogoutRef = useRef(null);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setIdleWarning(false);
-      clearTimeout(idleTimerRef.current);
-      clearTimeout(warningTimerRef.current);
-      return;
-    }
-
-    const IDLE_LIMIT = 14 * 60 * 1000; // 14 min — show warning
-    const LOGOUT_DELAY = 1 * 60 * 1000; // 1 min after warning — logout
-
-    const resetIdle = () => {
-      clearTimeout(idleTimerRef.current);
-      clearTimeout(warningTimerRef.current);
-      setIdleWarning(false);
-      idleTimerRef.current = setTimeout(() => {
-        setIdleWarning(true);
-        warningTimerRef.current = setTimeout(() => {
-          if (handleLogoutRef.current) handleLogoutRef.current();
-          toast.info('You were logged out due to inactivity.');
-        }, LOGOUT_DELAY);
-      }, IDLE_LIMIT);
-    };
-
-    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
-    events.forEach(ev => window.addEventListener(ev, resetIdle, { passive: true }));
-    resetIdle();
-
-    return () => {
-      events.forEach(ev => window.removeEventListener(ev, resetIdle));
-      clearTimeout(idleTimerRef.current);
-      clearTimeout(warningTimerRef.current);
-    };
-  }, [isAuthenticated]);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    if (!username.trim()) { toast.error('Please enter your User ID'); return; }
-    if (!password.trim()) { toast.error('Please enter your Password'); return; }
-    setLoginLoading(true);
-    try {
-      // Get reCAPTCHA v3 token (non-blocking)
-      let captchaToken = '';
-      try {
-        if (window.grecaptcha?.execute) {
-          const tokenOrTimeout = await Promise.race([
-            window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'login' }).catch(() => ''),
-            new Promise(r => setTimeout(() => r(''), 3000))
-          ]);
-          captchaToken = tokenOrTimeout || '';
-        }
-      } catch (e) { captchaToken = ''; }
-      const res = await axios.post(`${API}/auth/login`, { username, password, captcha_token: captchaToken });
-      if (res.data?.success) {
-        const data = res.data.data;
-        setToken(data.token);
-        localStorage.setItem('flowra_token', data.token);
-        setUser(data);
-        setIsAuthenticated(true);
-        toast.success(`Welcome, ${data.name || data.username}!`);
-
-        // Store company name mappings
-        if (data.company_mappings) {
-          const map = {};
-          data.company_mappings.forEach(m => { map[m.company_id] = m.company_name; });
-          setCompanyMappings(map);
-        }
-
-        // Check subscription expiry - show popup if within 30 days
-        const daysLeft = data.subscription_days_left;
-        if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30 && data.role !== 'super_admin') {
-          setShowRenewalPopup(true);
-        }
-
-        if (data.role === 'super_admin') {
-          setCurrentPage('super-admin');
-        }
-
-        // Trigger onboarding tour for first-time users
-        if (!data.onboarding_completed && data.role !== 'super_admin' && !localStorage.getItem('flowra_onboarding_done')) {
-          setTimeout(() => setShowOnboarding(true), 1500);
-        } else {
-          // Fetch latest FY from synced data
-          try {
-            axios.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
-            const fyRes = await axios.get(`${API}/sync/latest-fy`);
-            if (fyRes.data?.success && fyRes.data?.data?.latest_fy) {
-              setSelectedFY(fyRes.data.data.latest_fy);
-            }
-          } catch {}
-
-          // Check companies
-          if ((data.companies || []).length > 1) {
-            setShowCompanySelector(true);
-          } else if ((data.companies || []).length === 1) {
-            setSelectedCompany(data.companies[0]);
-            localStorage.setItem('flowra_company', data.companies[0]);
-          }
-        }
-      } else {
-        toast.error(res.data?.error || 'Login failed');
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Login failed');
-    } finally {
-      setLoginLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    try { await axios.post(`${API}/auth/logout`); } catch {}
-    setIsAuthenticated(false);
-    setUser(null);
-    setToken(null);
-    setSelectedCompany('');
-    setShowUserMenu(false);
-    localStorage.removeItem('flowra_token');
-    localStorage.removeItem('flowra_company');
-    delete axios.defaults.headers.common['Authorization'];
-    delete axios.defaults.headers.common['X-Company-ID'];
-    setCurrentPage('dashboard');
-    setUsername('');
-    setPassword('');
-  };
-  handleLogoutRef.current = handleLogout;
-
-  const handleCompanySelect = (company) => {
-    setSelectedCompany(company);
-    localStorage.setItem('flowra_company', company);
-    setShowCompanySelector(false);
-  };
-
-  const isFeatureActive = useCallback((featureId) => {
-    if (!user) return false;
-    if (user.role === 'super_admin') return false;
-    const features = user.features || [];
-    return features.includes(featureId);
-  }, [user]);
-
-  const getNavItems = useCallback(() => {
-    if (!user) return [];
-    if (user.role === 'super_admin') return [];
-    const features = user.features || [];
-    const items = features
-      .map(f => FEATURE_NAV_MAP[f])
-      .filter(Boolean);
-    // Insert Activity after Sync History but before Setup
+  // Navigation items derived from user features
+  const navItems = useMemo(() => {
+    if (!user || user.role === 'super_admin') return [];
+    const items = (user.features || []).map(f => FEATURE_NAV_MAP[f]).filter(Boolean);
     const setupIdx = items.findIndex(i => i.id === 'setup');
-    const activityItem = { id: 'activity', label: 'Activity', icon: History };
-    const referralItem = { id: 'referral', label: 'Refer & Earn', icon: Gift };
-    if (setupIdx >= 0) {
-      items.splice(setupIdx, 0, activityItem, referralItem);
-    } else {
-      items.push(activityItem, referralItem);
-    }
+    const extras = [
+      { id: 'activity', label: 'Activity', icon: History },
+      { id: 'referral', label: 'Refer & Earn', icon: Gift },
+    ];
+    if (setupIdx >= 0) items.splice(setupIdx, 0, ...extras);
+    else items.push(...extras);
     return items;
   }, [user]);
 
-  // Generate FY options
-  const fyOptions = [];
-  const currentYear = new Date().getFullYear();
-  for (let i = currentYear; i >= currentYear - 5; i--) {
-    fyOptions.push(`${i}-${String(i + 1).slice(2)}`);
-  }
-
-  // Public pages (not authenticated)
+  // ── Unauthenticated ──
   if (!isAuthenticated) {
-    const publicNav = (view) => setPublicView(view);
-    const backToLanding = () => setPublicView('landing');
-
-    if (publicView === 'signup') {
-      return (
-        <>
-          <Toaster position="top-right" richColors />
-          <SignupPage
-            onNavigateToLogin={() => setPublicView('login')}
-            onNavigateToLanding={backToLanding}
-          />
-        </>
-      );
-    }
-
-    if (publicView === 'privacy') return <><Toaster position="top-right" richColors /><PrivacyPolicy onNavigate={publicNav} onBack={backToLanding} /></>;
-    if (publicView === 'terms') return <><Toaster position="top-right" richColors /><TermsOfService onNavigate={publicNav} onBack={backToLanding} /></>;
-    if (publicView === 'refund') return <><Toaster position="top-right" richColors /><RefundPolicy onNavigate={publicNav} onBack={backToLanding} /></>;
-    if (publicView === 'contact') return <><Toaster position="top-right" richColors /><ContactPage onNavigate={publicNav} onBack={backToLanding} /></>;
-    if (publicView === 'social') return <><Toaster position="top-right" richColors /><SocialMediaPage onNavigate={publicNav} onBack={backToLanding} /></>;
-
-    if (publicView === 'landing') {
-      return (
-        <>
-          <Toaster position="top-right" richColors />
-          <LandingPage
-            onNavigateToLogin={() => setPublicView('login')}
-            onNavigateToSignup={() => setPublicView('signup')}
-            onNavigate={publicNav}
-          />
-        </>
-      );
-    }
-
-    // Login page (publicView === 'login' or fallback)
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Toaster position="top-right" richColors />
-        <div className="w-full max-w-md p-8">
-          <div className="text-center mb-8">
-            <img src="/flowra-logo.png" alt="FLOWRA" className="h-16 mx-auto mb-3" data-testid="login-logo" />
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">FLOWRA</h1>
-            <p className="text-slate-500 mt-1 text-sm">Organize. Automate. Accelerate.</p>
-          </div>
-          <form onSubmit={handleLogin} className="bg-white rounded-2xl border border-slate-200 p-8 space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
-              <input
-                type="text" value={username} onChange={e => setUsername(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                placeholder="Enter your email"
-                data-testid="username-input"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
-              <input
-                type="password" value={password} onChange={e => setPassword(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                placeholder="Enter your password"
-                data-testid="password-input"
-              />
-            </div>
-            <button
-              type="submit" disabled={loginLoading}
-              className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8] disabled:opacity-50 transition-colors"
-              data-testid="login-button"
-            >
-              {loginLoading ? 'Signing in...' : 'Sign In'}
-            </button>
-            <p className="text-[10px] text-slate-400 text-center mt-1">Protected by reCAPTCHA</p>
-          </form>
-          <div className="flex items-center justify-between mt-4">
-            <button onClick={() => setPublicView('landing')} className="text-sm text-[#2563EB] hover:underline" data-testid="back-to-home">Back to Home</button>
-            <button onClick={() => setPublicView('signup')} className="text-sm text-[#2563EB] hover:underline" data-testid="go-to-signup">New Customer? Sign Up</button>
-          </div>
-          <p className="text-center text-xs text-slate-400 mt-6">FLOWRA by Jodidar India</p>
-          <p className="text-center text-[9px] text-slate-400 mt-2 max-w-lg mx-auto leading-relaxed">Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
-        </div>
-      </div>
-    );
+    return <PublicRouter view={publicView} onNavigate={setPublicView} onLogin={handleLogin} loginLoading={loginLoading} />;
   }
 
-  // Company selector
-  if (showCompanySelector && user?.role !== 'super_admin') {
+  // ── Company selector gate ──
+  if (company.showCompanySelector && user?.role !== 'super_admin') {
     return (
       <div className="min-h-screen bg-slate-50">
-        <Toaster position="top-right" richColors />
-        <CompanySelector companies={user?.companies || []} companyMappings={companyMappings} onSelect={handleCompanySelect} />
+        <CompanySelector companies={user?.companies || []} companyMappings={company.companyMappings} onSelect={company.selectCompany} />
       </div>
     );
   }
 
-  // Super Admin view
+  // ── Super Admin ──
   if (user?.role === 'super_admin') {
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <Toaster position="top-right" richColors />
-        {/* Super Admin Navbar */}
-        <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6">
-            <div className="flex items-center justify-between h-16">
-              <div className="flex items-center gap-3">
-                <img src="/flowra-logo.png" alt="FLOWRA" className="h-8" data-testid="navbar-logo" />
-                <span className="text-lg font-bold text-slate-900">FLOWRA</span>
-                <span className="px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 text-xs font-semibold">Super Admin</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative" ref={userMenuRef}>
-                  <button
-                    onClick={() => setShowUserMenu(!showUserMenu)}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-50 text-sm"
-                    data-testid="user-menu-btn"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center text-xs font-bold">SA</div>
-                    <span className="text-slate-700 font-medium hidden sm:inline">{user?.name || 'Super Admin'}</span>
-                    <ChevronDown size={14} className="text-slate-400" />
-                  </button>
-                  {showUserMenu && (
-                    <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 w-48 z-50">
-                      <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="profile-btn">
-                        <User size={14} className="text-slate-400" /> Profile
-                      </button>
-                      <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2">
-                        <Lock size={14} className="text-slate-400" /> Change Password
-                      </button>
-                      <hr className="my-1 border-slate-100" />
-                      <button onClick={handleLogout} className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2" data-testid="logout-btn">
-                        <LogOut size={14} /> Logout
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </nav>
-
-        <main className="p-4 sm:p-6">
-          <SuperAdminDashboard token={token} />
-        </main>
-
-        <footer className="text-center py-4 text-xs text-slate-400">
-          <p>&copy; {new Date().getFullYear()} Jodidar India. All rights reserved.</p>
-          <p className="text-[9px] text-slate-400 mt-1 max-w-xl mx-auto leading-relaxed">Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
-        </footer>
-
-        {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
-      </div>
-    );
+    return <SuperAdminLayout user={user} token={token} onLogout={handleLogout} />;
   }
 
-  // Normal admin/employee view
-  const navItems = getNavItems();
-
-  const renderFeatureGated = (featureId, component) => {
-    if (isFeatureActive(featureId)) return component;
-    return (
-      <div className="flex items-center justify-center h-[60vh]" data-testid="feature-locked">
-        <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 max-w-md">
-          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Lock size={28} className="text-slate-400" />
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">Feature Not Activated</h3>
-          <p className="text-slate-500 text-sm">Subscribe for this feature. Contact your FLOWRA administrator to activate <strong className="capitalize">{featureId.replace('_', ' ')}</strong>.</p>
-        </div>
-      </div>
-    );
-  };
-
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'dashboard': return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'inventory': return renderFeatureGated('inventory', <Inventory selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'sales': return renderFeatureGated('sales', <Sales selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'crm': return renderFeatureGated('crm', <CustomerCRM selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'analytics': return renderFeatureGated('analytics', <InventoryAnalytics selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'ai-reports': return renderFeatureGated('ai_reports', <EnhancedAIReports selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'salesman': return renderFeatureGated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      case 'sync-history': return renderFeatureGated('sync_history', <SyncHistory companyId={selectedCompany} />);
-      case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
-      case 'activity': return <ActivityLog token={token} role={user?.role} />;
-      case 'referral': return <ReferAndEarn />;
-      case 'ca-corner': return renderFeatureGated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} />);
-      case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-      default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-    }
-  };
-
+  // ── Normal User ──
   return (
     <div className="min-h-screen bg-slate-50">
-      <Toaster position="top-right" richColors />
+      <AppNavbar
+        user={user}
+        navItems={navItems}
+        currentPage={currentPage}
+        setCurrentPage={setCurrentPage}
+        selectedFY={company.selectedFY}
+        setSelectedFY={company.setSelectedFY}
+        fyOptions={fyOptions}
+        selectedCompany={company.selectedCompany}
+        companyMappings={company.companyMappings}
+        onSwitchCompany={() => company.setShowCompanySelector(true)}
+        excludeBranches={company.excludeBranches}
+        onToggleBranches={company.toggleBranches}
+        syncStatus={syncStatus}
+        onLogout={handleLogout}
+        onOpenProfile={() => setShowProfile(true)}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
+      />
 
-      {/* Navbar */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
-        <div className="max-w-full mx-auto px-3 sm:px-6">
-          <div className="flex items-center justify-between h-14">
-            {/* Left: Logo + Company */}
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden p-1.5 hover:bg-slate-100 rounded-lg">
-                {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
-              </button>
-              <img src="/flowra-logo.png" alt="FLOWRA" className="h-7 hidden sm:block" data-testid="navbar-logo" />
-              <div className="flex flex-col">
-                <span className="text-sm sm:text-base font-bold text-slate-900 leading-tight">FLOWRA</span>
-                {selectedCompany && (
-                  <button
-                    onClick={() => (user?.companies || []).length > 1 && setShowCompanySelector(true)}
-                    className="text-[10px] sm:text-xs text-slate-500 hover:text-[#2563EB] flex items-center gap-1 leading-tight"
-                    data-testid="company-switch-btn"
-                  >
-                    <Building2 size={10} />
-                    <span className="truncate max-w-[120px] sm:max-w-[200px]">{companyMappings[selectedCompany] || selectedCompany}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Center: Nav Items */}
-            <div className="hidden md:flex items-center gap-0.5 overflow-x-auto">
-              {navItems.map(item => {
-                const Icon = item.icon;
-                const isActive = currentPage === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setCurrentPage(item.id)}
-                    data-testid={`nav-${item.id}`}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 transition-colors ${
-                      isActive ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Icon size={14} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Right: FY + Sync + User */}
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedFY}
-                onChange={(e) => setSelectedFY(e.target.value)}
-                className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                data-testid="fy-selector"
-              >
-                {fyOptions.map(fy => <option key={fy} value={fy}>FY {fy}</option>)}
-              </select>
-
-              <div className="flex items-center gap-1.5" data-testid="sync-indicator">
-                <RefreshCw size={12} className={`${syncStatus ? 'text-green-500' : 'text-slate-300'}`} />
-                <span className="text-[10px] text-slate-400 hidden sm:inline">{syncStatus?.last_sync ? 'Synced' : 'No sync'}</span>
-              </div>
-
-              {/* Branch toggle */}
-              <div className="flex items-center gap-1.5" data-testid="branch-toggle-wrapper">
-                <span className="text-[10px] text-slate-400 hidden sm:inline">Branch</span>
-                <button
-                  onClick={() => {
-                    setExcludeBranches(prev => {
-                      const next = !prev;
-                      if (next) {
-                        axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
-                      } else {
-                        delete axios.defaults.headers.common['X-Exclude-Branches'];
-                      }
-                      localStorage.setItem('flowra_exclude_branches', next ? 'true' : 'false');
-                      return next;
-                    });
-                  }}
-                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-green-200 bg-green-50 text-green-700'}`}
-                  title={excludeBranches ? 'Branch/Depot sales excluded — click to include' : 'Branch/Depot sales included — click to exclude'}
-                  data-testid="branch-toggle"
-                >
-                  <div className={`w-6 h-3.5 rounded-full relative transition-colors ${excludeBranches ? 'bg-amber-500' : 'bg-green-500'}`}>
-                    <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform ${excludeBranches ? 'translate-x-3' : 'translate-x-0.5'}`} />
-                  </div>
-                  <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? 'Excluded' : 'Included'}</span>
-                </button>
-              </div>
-
-              <div className="relative" ref={userMenuRef}>
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-slate-50"
-                  data-testid="user-menu-btn"
-                >
-                  <div className="w-6 h-6 rounded-full bg-[#2563EB] text-white flex items-center justify-center text-[10px] font-bold">
-                    {(user?.name || user?.username || 'U')[0].toUpperCase()}
-                  </div>
-                  <span className="text-xs text-slate-700 font-medium hidden sm:inline">{user?.name || user?.username}</span>
-                  <ChevronDown size={12} className="text-slate-400" />
-                </button>
-                {showUserMenu && (
-                  <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 w-48 z-50">
-                    <div className="px-4 py-2 border-b border-slate-100">
-                      <div className="text-sm font-medium text-slate-900">{user?.name || user?.username}</div>
-                      <div className="text-xs text-slate-500 capitalize">{user?.role?.replace('_', ' ')}</div>
-                    </div>
-                    <button onClick={() => { setShowProfile(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="profile-btn">
-                      <User size={14} className="text-slate-400" /> Profile & Security
-                    </button>
-                    {(user?.companies || []).length > 1 && (
-                      <button onClick={() => { setShowCompanySelector(true); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="switch-company-btn">
-                        <Building2 size={14} className="text-slate-400" /> Switch Company
-                      </button>
-                    )}
-                    <hr className="my-1 border-slate-100" />
-                    <button onClick={handleLogout} className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2" data-testid="logout-btn">
-                      <LogOut size={14} /> Logout
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      {/* Mobile Menu */}
-      {mobileMenuOpen && (
-        <div className="md:hidden bg-white border-b border-slate-200 px-3 py-2 space-y-1">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = currentPage === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => { setCurrentPage(item.id); setMobileMenuOpen(false); }}
-                data-testid={`mobile-nav-${item.id}`}
-                className={`w-full px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${
-                  isActive ? 'bg-[#2563EB] text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Icon size={16} />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Main Content */}
       <main className="p-3 sm:p-6 max-w-full">
-        {renderPage()}
+        <PageRenderer
+          currentPage={currentPage}
+          user={user}
+          selectedFY={company.selectedFY}
+          selectedCompany={company.selectedCompany}
+          excludeBranches={company.excludeBranches}
+          token={token}
+        />
       </main>
 
-      {/* Footer */}
       <footer className="text-center py-4 text-xs text-slate-400">
         <p>&copy; {new Date().getFullYear()} Jodidar India. All rights reserved.</p>
         <p className="text-[9px] text-slate-400 mt-1 max-w-xl mx-auto leading-relaxed">Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
       </footer>
 
-      {/* Modals */}
       {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
-      {showCompanySelector && (
-        <CompanySelector companies={user?.companies || []} companyMappings={companyMappings} onSelect={handleCompanySelect} />
-      )}
       {showRenewalPopup && (
         <RenewalPopup
           daysLeft={user?.subscription_days_left}
@@ -763,34 +203,8 @@ function App() {
           onOpenSubscription={() => { setShowRenewalPopup(false); setShowProfile(true); }}
         />
       )}
-
-      {/* Idle Warning Modal */}
-      {idleWarning && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" data-testid="idle-warning-modal">
-          <div className="bg-white rounded-2xl max-w-sm w-full mx-4 p-8 text-center shadow-2xl">
-            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Clock size={32} className="text-amber-600" />
-            </div>
-            <h2 className="text-xl font-bold text-slate-900 mb-2">Session Expiring</h2>
-            <p className="text-slate-600 text-sm mb-6">You've been idle for a while. Your session will expire in <strong className="text-red-600">1 minute</strong>.</p>
-            <button
-              onClick={() => setIdleWarning(false)}
-              className="w-full py-3 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8] transition-colors"
-              data-testid="stay-logged-in-btn"
-            >
-              Stay Logged In
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Onboarding Tour */}
-      {showOnboarding && (
-        <OnboardingTour
-          run={showOnboarding}
-          onComplete={() => setShowOnboarding(false)}
-        />
-      )}
+      {idleWarning && <IdleWarningModal onDismiss={dismissWarning} />}
+      {showOnboarding && <OnboardingTour run={showOnboarding} onComplete={() => setShowOnboarding(false)} />}
     </div>
   );
 }
