@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request
 from typing import Optional
+import math
 from datetime import datetime
 import logging
 
@@ -104,42 +105,12 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
             sales_v = _filter_branch_vouchers(sales_v, branch_set)
             purchase_v = _filter_branch_vouchers(purchase_v, branch_set)
 
-            fy_sales = filter_vouchers_by_fy(sales_v, fy) if fy else sales_v
-            fy_purchases = filter_vouchers_by_fy(purchase_v, fy) if fy else purchase_v
-
-            # Build per-item qty sold and purchased in this FY
-            from collections import defaultdict
-            item_sold = defaultdict(float)
-            item_purchased = defaultdict(float)
-            item_sold_value = defaultdict(float)
-            item_purchased_value = defaultdict(float)
-
-            for v in fy_sales:
-                for vi in v.get("items", []):
-                    iname = (vi.get("item", "") or "").strip().lower()
-                    item_sold[iname] += abs(safe_num(vi.get("quantity", 0)))
-                    item_sold_value[iname] += abs(safe_num(vi.get("amount", 0)))
-
-            for v in fy_purchases:
-                for vi in v.get("items", []):
-                    iname = (vi.get("item", "") or "").strip().lower()
-                    item_purchased[iname] += abs(safe_num(vi.get("quantity", 0)))
-                    item_purchased_value[iname] += abs(safe_num(vi.get("amount", 0)))
-
-            # Current stock = closing of latest sync
-            # Closing of selected FY = Current - sales_after_FY + purchases_after_FY
-            # But simpler: FY closing = opening + purchases - sales
-            # Opening = current_qty + all_sales_after_fy - all_purchases_after_fy
-            # We approximate: if FY is current, use current stock. Otherwise calculate.
-            from services.ist_utils import now_ist_iso
+            # FY end date
             fy_end_year = int(fy.split('-')[0]) + 1 if '-' in fy else 2027
             fy_end_date = f"{fy_end_year}-03-31"
 
-            # Get post-FY vouchers
-            all_sales = filter_vouchers_by_fy(sales_v, fy) if fy else []
-            all_purchases = filter_vouchers_by_fy(purchase_v, fy) if fy else []
-
             # For the selected FY, closing = current_stock + sales_after_fy - purchases_after_fy
+            from collections import defaultdict
             post_fy_sold = defaultdict(float)
             post_fy_purchased = defaultdict(float)
             for v in sales_v:
@@ -1097,7 +1068,7 @@ async def set_reorder_level(request: Request):
         ctx = await get_tenant_context(request)
         body = await request.json()
         item_id = body.get("item_id", "")
-        reorder_level = float(body.get("reorder_level", 0))
+        reorder_level = math.ceil(float(body.get("reorder_level", 0)))
 
         if not item_id:
             return APIResponse(success=False, error="Item ID required")
@@ -1108,8 +1079,9 @@ async def set_reorder_level(request: Request):
             return APIResponse(success=False, error="Item not found")
 
         user = await get_current_user(request, db)
-        await log_audit("reorder_level_set", user.get("username", ""),
-                         tenant_id=ctx.get("tenant_id", ""), company_id=ctx.get("company_id", ""),
+        await log_audit("reorder_level_set", user.get("username", "") if user else "",
+                         tenant_id=ctx.get("tenant_id", "") if ctx else "",
+                         company_id=ctx.get("company_id", "") if ctx else "",
                          target=item_id, details=f"Reorder level: {reorder_level}",
                          ip_address=get_client_ip(request))
 
@@ -1165,7 +1137,7 @@ async def auto_set_reorder_levels(request: Request):
             total_sold = item_sales_qty.get(iname.lower(), 0)
             if total_sold > 0:
                 monthly_avg = total_sold / months_span
-                reorder_level = round(monthly_avg * 2, 2)  # 2-month stock
+                reorder_level = math.ceil(monthly_avg * 2)  # 2-month stock, rounded up
                 item_q = _build_query(ctx, company_id, {"item_id": item["item_id"]})
                 await db.inventory_items.update_one(item_q, {"$set": {"reorder_level": reorder_level}})
                 updated += 1

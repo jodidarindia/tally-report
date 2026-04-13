@@ -127,7 +127,8 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "subscription_start": sub_start or None,
                 "subscription_months": sub_months,
                 "subscription_expires": sub_expires_iso,
-                "subscription_days_left": sub_days_left
+                "subscription_days_left": sub_days_left,
+                "onboarding_completed": user.get("onboarding_completed", False)
             }
         )
     except Exception as e:
