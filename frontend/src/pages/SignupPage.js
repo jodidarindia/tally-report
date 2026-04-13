@@ -53,11 +53,12 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
     }
     setLoading(true);
     try {
-      // Get reCAPTCHA v3 token
+      // Get reCAPTCHA v3 token (with timeout)
       let captchaToken = '';
       if (window.grecaptcha?.execute) {
         try {
-          captchaToken = await window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'signup' });
+          const p = window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'signup' });
+          captchaToken = await Promise.race([p, new Promise((_, r) => setTimeout(() => r('timeout'), 5000))]) || '';
         } catch { /* fail open */ }
       }
       const res = await axios.post(`${API}/public/signup`, { ...form, captcha_token: captchaToken });

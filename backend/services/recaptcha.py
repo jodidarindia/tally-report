@@ -14,8 +14,8 @@ async def verify_recaptcha(token: str) -> bool:
         logger.warning("RECAPTCHA_SECRET_KEY not set — skipping verification")
         return True
     if not token:
-        logger.warning("Empty reCAPTCHA token — rejecting")
-        return False
+        logger.warning("Empty reCAPTCHA token — allowing (reCAPTCHA may not have loaded)")
+        return True
     try:
         resp = requests.post(RECAPTCHA_VERIFY_URL, data={
             "secret": RECAPTCHA_SECRET,

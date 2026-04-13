@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   BarChart3, Shield, Package, Users, Brain, Truck, Zap,
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
-  Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle
+  Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -38,7 +38,7 @@ const PLANS = [
     monthly: 3799,
     annual: 37990,
     desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'Salesman Performance Tracking', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'Sales Forecast & SPIP Analysis', 'Multi-Company Support (10)', 'Priority Support & Training'],
+    features: ['Everything in Professional', 'Salesman Performance Tracking', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'CA Corner (Cash Flow, P&L, AI Expense)', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,
     maxEmployees: 20,
     popular: false
@@ -50,6 +50,7 @@ const FEATURES = [
   { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance.' },
   { icon: Truck, title: 'Salesman Performance', desc: 'FY-locked targets, customer mapping, monthly/quarterly breakdowns with best performer detection.' },
   { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, natural language queries across your entire Tally* data.' },
+  { icon: Landmark, title: 'CA Corner', desc: 'Cash Flow statement (Tally* method), monthly P&L reports, and AI expense insights to reduce costs.' },
   { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, and concentration risk with Pareto charts.' },
   { icon: Shield, title: 'Bank-Grade Security', desc: 'AES-256 encryption, bcrypt hashing, JWT auth, field-level PII encryption, multi-tenant data isolation.' },
 ];

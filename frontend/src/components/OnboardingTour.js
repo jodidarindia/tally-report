@@ -9,6 +9,7 @@ const STEPS = [
   { target: '[data-testid="nav-inventory"]', title: 'Inventory', text: 'All your stock items synced from Tally*. Click "Auto Reorder" to set smart reorder levels based on 2-month sales.' },
   { target: '[data-testid="nav-crm"]', title: 'CRM', text: 'Customer outstanding balances, targets, follow-ups, and payment behavior. Export to Excel anytime.' },
   { target: '[data-testid="nav-analytics"]', title: 'Analytics', text: 'Deep insights — inventory movement, below-cost sales, sales frequency, and customer-item breakdown.' },
+  { target: '[data-testid="nav-ca-corner"]', title: 'CA Corner', text: 'Cash Flow statement, P&L reports (monthly/annual), and AI-powered expense analysis with cost reduction suggestions.' },
   { target: '[data-testid="nav-referral"]', title: 'Refer & Earn', text: 'Share your referral code. Earn 3% commission when they subscribe!' },
   { target: '[data-testid="nav-setup"]', title: 'Setup', text: 'Connect Tally* and configure sync settings. Start here if you haven\'t connected yet.' },
   { target: '[data-testid="fy-selector"]', title: 'Financial Year', text: 'Switch between FYs. All reports filter by the selected year.' },

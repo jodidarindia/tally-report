@@ -101,7 +101,7 @@ const TallySetup = ({ companyId }) => {
               <Download size={24} className="text-white" />
             </div>
             <div className="flex-1">
-              <a href="/tally_sync_agent_v7.py" download className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
+              <a href="/flowra-desktop-agent.py" download className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
                 <Download size={14} /> Download Desktop Connector
               </a>
             </div>

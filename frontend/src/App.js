@@ -2,11 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import axios from 'axios';
 import { toast, Toaster } from 'sonner';
-import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
   Brain, Truck, History, Settings, LogOut, RefreshCw, Menu,
-  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock, Gift
+  X, Building2, Shield, User, Lock, ChevronDown, Lightbulb, Clock, Gift, Landmark
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -23,6 +22,7 @@ import ProfileModal from './pages/ProfileModal';
 import ActivityLog from './pages/ActivityLog';
 import InsiderResult from './pages/InsiderResult';
 import ReferAndEarn from './pages/ReferAndEarn';
+import CACorner from './pages/CACorner';
 import OnboardingTour from './components/OnboardingTour';
 import LandingPage from './pages/LandingPage';
 import SignupPage from './pages/SignupPage';
@@ -42,6 +42,7 @@ const FEATURE_NAV_MAP = {
   salesman: { id: 'salesman', label: 'Salesman', icon: Truck },
   ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
   insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
+  ca_corner: { id: 'ca-corner', label: 'CA Corner', icon: Landmark },
   sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
   setup: { id: 'setup', label: 'Setup', icon: Settings },
 };
@@ -270,13 +271,17 @@ function App() {
     if (!password.trim()) { toast.error('Please enter your Password'); return; }
     setLoginLoading(true);
     try {
-      // Get reCAPTCHA v3 token
+      // Get reCAPTCHA v3 token (non-blocking)
       let captchaToken = '';
-      if (window.grecaptcha?.execute) {
-        try {
-          captchaToken = await window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'login' });
-        } catch { /* fail open if captcha fails to load */ }
-      }
+      try {
+        if (window.grecaptcha?.execute) {
+          const tokenOrTimeout = await Promise.race([
+            window.grecaptcha.execute(process.env.REACT_APP_RECAPTCHA_SITE_KEY, { action: 'login' }).catch(() => ''),
+            new Promise(r => setTimeout(() => r(''), 3000))
+          ]);
+          captchaToken = tokenOrTimeout || '';
+        }
+      } catch (e) { captchaToken = ''; }
       const res = await axios.post(`${API}/auth/login`, { username, password, captcha_token: captchaToken });
       if (res.data?.success) {
         const data = res.data.data;
@@ -575,6 +580,7 @@ function App() {
       case 'setup': return renderFeatureGated('setup', <TallySetup companyId={selectedCompany} />);
       case 'activity': return <ActivityLog token={token} role={user?.role} />;
       case 'referral': return <ReferAndEarn />;
+      case 'ca-corner': return renderFeatureGated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} />);
       case 'insider': return renderFeatureGated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
       default: return renderFeatureGated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     }
@@ -789,10 +795,4 @@ function App() {
   );
 }
 
-const AppWithCaptcha = () => (
-  <GoogleReCaptchaProvider reCaptchaKey={process.env.REACT_APP_RECAPTCHA_SITE_KEY}>
-    <App />
-  </GoogleReCaptchaProvider>
-);
-
-export default AppWithCaptcha;
+export default App;

@@ -13,7 +13,7 @@ JWT_ALGORITHM = "HS256"
 
 ALL_FEATURES = [
     "dashboard", "sales", "crm", "inventory", "analytics",
-    "salesman", "ai_reports", "insider", "sync_history", "setup"
+    "salesman", "ai_reports", "insider", "ca_corner", "sync_history", "setup"
 ]
 
 
