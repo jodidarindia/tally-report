@@ -248,6 +248,7 @@ const SuperAdminDashboard = ({ token }) => {
     { id: 'admins', label: 'Admin Mgmt', icon: Shield },
     { id: 'renewals', label: 'Renewals', icon: Calendar },
     { id: 'referrals', label: 'Referrals', icon: Gift },
+    { id: 'questionnaires', label: 'Leads', icon: FileText },
     { id: 'activity', label: 'Activity', icon: Activity },
   ];
 
@@ -850,6 +851,9 @@ const SuperAdminDashboard = ({ token }) => {
       {/* ===== REFERRALS TAB ===== */}
       {activeTab === 'referrals' && <ReferralManagement token={token} />}
 
+      {/* ===== QUESTIONNAIRES (LEADS) TAB ===== */}
+      {activeTab === 'questionnaires' && <QuestionnaireLeads headers={headers} />}
+
       {/* ===== ACTIVITY TAB ===== */}
       {activeTab === 'activity' && <ActivityLog />}
 
@@ -1442,6 +1446,159 @@ const ReferralManagement = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+/* ─── Questionnaire Leads Component ─────────────────── */
+const QuestionnaireLeads = ({ headers }) => {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [expandedIdx, setExpandedIdx] = useState(null);
+
+  useEffect(() => { fetchLeads(); }, []);
+
+  const fetchLeads = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/super-admin/questionnaires`, { headers });
+      if (res.data?.success) {
+        setData(res.data.data.questionnaires || []);
+        setTotal(res.data.data.total || 0);
+      }
+    } catch { toast.error('Failed to fetch questionnaires'); }
+    finally { setLoading(false); }
+  };
+
+  const exportExcel = async () => {
+    try {
+      const res = await axios.get(`${API}/super-admin/questionnaires/export`, { headers, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'FLOWRA_Questionnaires.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Excel downloaded!');
+    } catch { toast.error('Failed to export'); }
+  };
+
+  const updateStatus = async (idx, status) => {
+    try {
+      await axios.put(`${API}/super-admin/questionnaires/${idx}/status`, { status }, { headers });
+      toast.success('Status updated');
+      fetchLeads();
+    } catch { toast.error('Failed to update status'); }
+  };
+
+  const statusColor = (s) => {
+    if (s === 'new') return 'bg-blue-100 text-blue-700';
+    if (s === 'contacted') return 'bg-amber-100 text-amber-700';
+    if (s === 'qualified') return 'bg-green-100 text-green-700';
+    if (s === 'closed') return 'bg-slate-100 text-slate-500';
+    return 'bg-slate-100 text-slate-600';
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-40"><RefreshCw size={20} className="animate-spin text-slate-400" /></div>;
+
+  return (
+    <div data-testid="questionnaires-tab">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Questionnaire Leads</h2>
+          <p className="text-sm text-slate-500">{total} submission{total !== 1 ? 's' : ''} collected</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={fetchLeads} className="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5">
+            <RefreshCw size={14} /> Refresh
+          </button>
+          <button onClick={exportExcel} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1.5" data-testid="export-questionnaires-btn">
+            <Download size={14} /> Export Excel
+          </button>
+        </div>
+      </div>
+
+      {data.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
+          <FileText size={32} className="text-slate-300 mx-auto mb-3" />
+          <p className="text-slate-500 text-sm">No questionnaire submissions yet.</p>
+          <p className="text-slate-400 text-xs mt-1">Share the Needs Assessment form link with prospects.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {data.map((q, idx) => (
+            <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`lead-${idx}`}>
+              <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
+                    <Building2 size={16} className="text-[#2563EB]" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">{q.company_name || q.contact_person || 'Unnamed'}</div>
+                    <div className="text-xs text-slate-500 truncate">{q.phone || q.email || '—'} {q.city ? `| ${q.city}` : ''}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusColor(q.status)}`}>{q.status}</span>
+                  <span className="text-[10px] text-slate-400 hidden sm:inline">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{q.submitted_by === 'employee' ? 'Rep' : 'Self'}</span>
+                  {expandedIdx === idx ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+                </div>
+              </div>
+
+              {expandedIdx === idx && (
+                <div className="px-4 pb-4 border-t border-slate-100 pt-3">
+                  <div className="grid sm:grid-cols-3 gap-3 text-xs mb-3">
+                    <div><span className="text-slate-500">Contact:</span> <span className="text-slate-900 font-medium">{q.contact_person || '—'}</span></div>
+                    <div><span className="text-slate-500">Designation:</span> <span className="text-slate-900">{q.designation || '—'}</span></div>
+                    <div><span className="text-slate-500">Industry:</span> <span className="text-slate-900">{q.industry || '—'}</span></div>
+                    <div><span className="text-slate-500">Employees:</span> <span className="text-slate-900">{q.employees || '—'}</span></div>
+                    <div><span className="text-slate-500">Turnover:</span> <span className="text-slate-900">{q.turnover || '—'}</span></div>
+                    <div><span className="text-slate-500">Tally Version:</span> <span className="text-slate-900">{q.tally_version || '—'}</span></div>
+                    <div><span className="text-slate-500">Companies:</span> <span className="text-slate-900">{q.tally_companies || '—'}</span></div>
+                    <div><span className="text-slate-500">Branches:</span> <span className="text-slate-900">{q.has_branches === 'yes' ? `Yes (${q.branch_count || '?'})` : q.has_branches || '—'}</span></div>
+                    <div><span className="text-slate-500">Budget:</span> <span className="text-slate-900">{q.budget || '—'}</span></div>
+                    <div><span className="text-slate-500">Timeline:</span> <span className="text-slate-900">{q.timeline || '—'}</span></div>
+                    <div><span className="text-slate-500">Decision Maker:</span> <span className="text-slate-900">{q.decision_maker || '—'}</span></div>
+                    <div><span className="text-slate-500">Heard From:</span> <span className="text-slate-900">{q.heard_from || '—'}</span></div>
+                  </div>
+                  {(q.pain_points || []).length > 0 && (
+                    <div className="mb-2">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Pain Points:</span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {q.pain_points.map((p, i) => <span key={i} className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-[10px]">{p.slice(0, 50)}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {q.biggest_challenge && <p className="text-xs text-slate-600 mb-2"><span className="font-semibold text-slate-500">Challenge:</span> {q.biggest_challenge}</p>}
+                  {(q.next_steps || []).length > 0 && (
+                    <div className="mb-3">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Requested:</span>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {q.next_steps.map((n, i) => <span key={i} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">{n}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {q.callback_time && <p className="text-xs text-slate-600 mb-2"><span className="font-semibold text-slate-500">Callback:</span> {q.callback_time}</p>}
+                  {q.notes && <p className="text-xs text-slate-600 mb-3"><span className="font-semibold text-slate-500">Notes:</span> {q.notes}</p>}
+                  <div className="flex gap-2">
+                    {['new', 'contacted', 'qualified', 'closed'].map(s => (
+                      <button key={s} onClick={() => updateStatus(idx, s)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${q.status === s ? 'border-[#2563EB] bg-blue-50 text-[#2563EB]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

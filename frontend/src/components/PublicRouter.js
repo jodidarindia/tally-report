@@ -2,6 +2,7 @@ import React from 'react';
 import LandingPage from '../pages/LandingPage';
 import SignupPage from '../pages/SignupPage';
 import LoginPage from './LoginPage';
+import QuestionnaireForm from '../pages/QuestionnaireForm';
 import { PrivacyPolicy, TermsOfService, RefundPolicy, ContactPage, SocialMediaPage } from '../pages/PublicPages';
 
 const PublicRouter = ({ view, onNavigate, onLogin, loginLoading }) => {
@@ -20,6 +21,8 @@ const PublicRouter = ({ view, onNavigate, onLogin, loginLoading }) => {
       return <ContactPage onNavigate={onNavigate} onBack={back} />;
     case 'social':
       return <SocialMediaPage onNavigate={onNavigate} onBack={back} />;
+    case 'questionnaire':
+      return <QuestionnaireForm onBack={back} />;
     case 'login':
       return <LoginPage onLogin={onLogin} loading={loginLoading} onNavigate={onNavigate} />;
     default:

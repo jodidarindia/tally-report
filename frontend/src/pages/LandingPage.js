@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
   BarChart3, Shield, Package, Users, Brain, Truck, Zap,
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
-  Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark
+  Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark,
+  FileText, ClipboardList, Download, ChevronDown
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -63,6 +64,16 @@ const TESTIMONIALS = [
 
 const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
   const [billingCycle, setBillingCycle] = useState('annual');
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const resourcesRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (resourcesRef.current && !resourcesRef.current.contains(e.target)) setResourcesOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const scrollTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
@@ -82,6 +93,27 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
             <button onClick={() => scrollTo('pricing')} className="hover:text-zinc-950 transition-colors">Pricing</button>
             <button onClick={() => scrollTo('testimonials')} className="hover:text-zinc-950 transition-colors">Testimonials</button>
             <button onClick={() => scrollTo('security')} className="hover:text-zinc-950 transition-colors">Security</button>
+            <div className="relative" ref={resourcesRef}>
+              <button onClick={() => setResourcesOpen(!resourcesOpen)} className="hover:text-zinc-950 transition-colors flex items-center gap-1" data-testid="resources-menu-btn">
+                Resources <ChevronDown size={14} className={`transition-transform ${resourcesOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {resourcesOpen && (
+                <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-zinc-200 rounded-xl shadow-xl py-2 z-50" data-testid="resources-dropdown">
+                  <button onClick={() => { onNavigate?.('questionnaire'); setResourcesOpen(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-questionnaire">
+                    <ClipboardList size={16} className="text-[#0052FF]" /> Needs Assessment Form
+                  </button>
+                  <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-presentation">
+                    <FileText size={16} className="text-[#0052FF]" /> Product Presentation
+                  </a>
+                  <a href="/FLOWRA_Customer_Questionnaire.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-pdf-questionnaire">
+                    <Download size={16} className="text-[#0052FF]" /> Download Questionnaire (PDF)
+                  </a>
+                </div>
+              )}
+            </div>
           </nav>
           <div className="flex items-center gap-3">
             <button onClick={onNavigateToLogin} data-testid="header-login-btn" className="text-sm font-bold text-zinc-950 border border-zinc-950 rounded-sm px-5 py-2 hover:bg-zinc-100 transition-colors">
@@ -335,6 +367,8 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               <button onClick={() => scrollTo('features')} className="block hover:text-white transition-colors">Features</button>
               <button onClick={() => scrollTo('pricing')} className="block hover:text-white transition-colors">Pricing</button>
               <button onClick={() => scrollTo('security')} className="block hover:text-white transition-colors">Security</button>
+              <button onClick={() => onNavigate?.('questionnaire')} className="block hover:text-white transition-colors">Needs Assessment</button>
+              <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer" className="block hover:text-white transition-colors">Presentation</a>
             </div>
           </div>
           <div>
