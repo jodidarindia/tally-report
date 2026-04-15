@@ -916,14 +916,8 @@ async def create_agent_command(request: Request):
         # For resync: also clear the data immediately so the dashboard shows empty
         if action == "resync":
             q = {"tenant_id": tenant_id, "company_id": company_id}
-            data_colls = [
-                "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
-                "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
-                "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
-                "profit_loss", "sync_history",
-            ]
             total = 0
-            for coll_name in data_colls:
+            for coll_name in _COMPANY_DATA_COLLECTIONS:
                 result = await db[coll_name].delete_many(q)
                 total += result.deleted_count
             logger.info(f"Resync command: cleared {total} records for company {company_id}")
@@ -931,21 +925,14 @@ async def create_agent_command(request: Request):
         # For delete: clear data AND remove company from user's list
         if action == "delete":
             q = {"tenant_id": tenant_id, "company_id": company_id}
-            all_colls = [
-                "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
-                "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
-                "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
-                "profit_loss", "sync_history", "sync_status",
-            ]
             total = 0
-            for coll_name in all_colls:
+            for coll_name in _COMPANY_ALL_COLLECTIONS:
                 result = await db[coll_name].delete_many(q)
                 total += result.deleted_count
             await db.users.update_many(
                 {"tenant_id": tenant_id, "companies": company_id},
                 {"$pull": {"companies": company_id}}
             )
-            await db.company_mappings.delete_many({"tenant_id": tenant_id, "company_id": company_id})
             logger.info(f"Delete command: removed {total} records + company mapping for {company_id}")
 
         return APIResponse(success=True, data={"message": f"Command '{action}' queued for agent."})
@@ -1003,12 +990,14 @@ async def ack_agent_command(request: dict):
 
 
 # ─── All collections that store per-company data ───
-_COMPANY_COLLECTIONS = [
+_COMPANY_DATA_COLLECTIONS = [
     "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
     "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
     "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
-    "profit_loss", "sync_history", "sync_status",
+    "profit_loss", "sync_history", "overdue_digest", "ai_queries",
+    "branch_ledgers", "purchase_orders", "customer_targets", "customer_followups",
 ]
+_COMPANY_ALL_COLLECTIONS = _COMPANY_DATA_COLLECTIONS + ["sync_status", "company_mappings"]
 
 
 @router.delete("/sync/company/{company_id}")
@@ -1027,7 +1016,7 @@ async def delete_company_data(company_id: str, request: Request):
         q = {"tenant_id": tenant_id, "company_id": company_id}
         total_deleted = 0
 
-        for coll_name in _COMPANY_COLLECTIONS:
+        for coll_name in _COMPANY_ALL_COLLECTIONS:
             coll = db[coll_name]
             result = await coll.delete_many(q)
             total_deleted += result.deleted_count
@@ -1037,9 +1026,6 @@ async def delete_company_data(company_id: str, request: Request):
             {"tenant_id": tenant_id, "companies": company_id},
             {"$pull": {"companies": company_id}}
         )
-
-        # Remove company mapping
-        await db.company_mappings.delete_many({"tenant_id": tenant_id, "company_id": company_id})
 
         logger.info(f"Deleted company {company_id} for tenant {tenant_id}: {total_deleted} records removed")
 
@@ -1069,8 +1055,7 @@ async def resync_company_data(company_id: str, request: Request):
         total_deleted = 0
 
         # Delete data from all collections EXCEPT sync_status (keep connection info)
-        data_collections = [c for c in _COMPANY_COLLECTIONS if c != "sync_status"]
-        for coll_name in data_collections:
+        for coll_name in _COMPANY_DATA_COLLECTIONS:
             coll = db[coll_name]
             result = await coll.delete_many(q)
             total_deleted += result.deleted_count
