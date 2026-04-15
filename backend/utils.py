@@ -105,13 +105,12 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
 
     # Apply branch exclusion if provided
     if branch_parties:
-        bp_set = set(branch_parties)
-        bp_lower = set(p.lower() for p in branch_parties)
-        sales = [v for v in sales if v.get("party_name") not in bp_set]
-        receipts = [v for v in receipts if v.get("party_name") not in bp_set]
-        credit_notes = [v for v in credit_notes if v.get("party_name") not in bp_set]
-        journals = [v for v in journals if v.get("party_name") not in bp_set]
-        synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in bp_lower]
+        bp_lower = set(p.lower().strip() for p in branch_parties)
+        sales = [v for v in sales if (v.get("party_name") or "").lower().strip() not in bp_lower]
+        receipts = [v for v in receipts if (v.get("party_name") or "").lower().strip() not in bp_lower]
+        credit_notes = [v for v in credit_notes if (v.get("party_name") or "").lower().strip() not in bp_lower]
+        journals = [v for v in journals if (v.get("party_name") or "").lower().strip() not in bp_lower]
+        synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower().strip() not in bp_lower]
 
     synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 

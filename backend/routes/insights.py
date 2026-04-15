@@ -9,6 +9,7 @@ from db import db
 from models import APIResponse
 from services.tenant_context import get_tenant_context
 from utils import filter_vouchers_by_fy
+from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,6 +29,21 @@ def _build_query(ctx, company_id=None):
     return f
 
 
+async def _get_branch_exclusion(request, ctx):
+    """Check header and return list of branch party names to exclude."""
+    if request.headers.get("X-Exclude-Branches", "").lower() == "true":
+        return await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+    return []
+
+
+def _exclude_branch_vouchers(vouchers, branch_parties):
+    """Filter out vouchers belonging to branch parties."""
+    if not branch_parties:
+        return vouchers
+    bp_set = set(branch_parties)
+    return [v for v in vouchers if v.get("party_name") not in bp_set]
+
+
 # ===================== 1. CUSTOMER LIFECYCLE =====================
 
 @router.get("/insights/customer-lifecycle")
@@ -39,6 +55,8 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
         today = date_type.today()
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1, "amount": 1, "total_amount": 1}).to_list(20000)
+        bp = await _get_branch_exclusion(request, ctx)
+        vouchers = _exclude_branch_vouchers(vouchers, bp)
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)
 
@@ -127,6 +145,8 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
         q = _build_query(ctx, company_id)
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(20000)
+        bp = await _get_branch_exclusion(request, ctx)
+        vouchers = _exclude_branch_vouchers(vouchers, bp)
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)
 
@@ -190,10 +210,55 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
             yoy[y]["revenue"] += t["revenue"]
             yoy[y]["count"] += t["count"]
 
+        # Month-vs-month cross-FY comparison (e.g. Apr 2025 vs Apr 2024 vs Apr 2023)
+        # Also fetch ALL vouchers (not FY filtered) for historical comparison
+        all_vouchers_for_compare = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(50000)
+        all_vouchers_for_compare = _exclude_branch_vouchers(all_vouchers_for_compare, bp)
+
+        all_monthly = defaultdict(lambda: {"revenue": 0, "count": 0})
+        for v in all_vouchers_for_compare:
+            d = v.get("voucher_date", "")
+            if not d:
+                continue
+            month_key = d[:7]  # "2025-04"
+            amt = v.get("total_amount") or v.get("amount") or 0
+            all_monthly[month_key]["revenue"] += abs(float(amt)) if amt else 0
+            all_monthly[month_key]["count"] += 1
+
+        # Build comparison: group by month number (04=Apr, 05=May, etc.)
+        month_comparison = defaultdict(list)  # {"04": [{"fy": "2024-25", "month": "2025-04", "revenue": ...}, ...]}
+        for month_key, data in sorted(all_monthly.items()):
+            mm = month_key[5:7]  # "04", "05", etc.
+            yyyy = int(month_key[:4])
+            m_int = int(mm)
+            fy_year = yyyy if m_int >= 4 else yyyy - 1
+            fy_label = f"{fy_year}-{str(fy_year + 1)[-2:]}"
+            month_comparison[mm].append({
+                "fy": fy_label,
+                "month": month_key,
+                "revenue": round(data["revenue"], 2),
+                "count": data["count"],
+            })
+
+        # Sort each month's entries by FY
+        for mm in month_comparison:
+            month_comparison[mm].sort(key=lambda x: x["fy"])
+
+        month_names = {"04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec", "01": "Jan", "02": "Feb", "03": "Mar"}
+        comparison_data = []
+        for mm in ["04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03"]:
+            if mm in month_comparison:
+                comparison_data.append({
+                    "month_num": mm,
+                    "month_name": month_names.get(mm, mm),
+                    "data": month_comparison[mm]
+                })
+
         return APIResponse(success=True, data={
             "timeline": timeline,
             "forecasts": forecasts,
             "yoy": [{"year": k, **v} for k, v in sorted(yoy.items())],
+            "month_comparison": comparison_data,
             "summary": {
                 "total_months": len(timeline),
                 "avg_monthly_revenue": round(sum(revenues) / len(revenues), 2) if revenues else 0,
@@ -217,6 +282,8 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
 
         # Get sales vouchers with items
         sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+        bp = await _get_branch_exclusion(request, ctx)
+        sales = _exclude_branch_vouchers(sales, bp)
         if fy:
             sales = filter_vouchers_by_fy(sales, fy)
 
@@ -316,6 +383,8 @@ async def get_concentration_risk(request: Request, fy: Optional[str] = None, com
         q = _build_query(ctx, company_id)
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1, "amount": 1, "total_amount": 1}).to_list(20000)
+        bp = await _get_branch_exclusion(request, ctx)
+        vouchers = _exclude_branch_vouchers(vouchers, bp)
         if fy:
             vouchers = filter_vouchers_by_fy(vouchers, fy)
 

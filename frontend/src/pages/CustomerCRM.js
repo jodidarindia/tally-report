@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X, Phone, MapPin, Clock } from 'lucide-react';
+import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Download, ChevronDown, ChevronUp, X, Phone, MapPin, Clock, Trash2, Plus, RotateCcw } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 import SearchableSelect from '../components/SearchableSelect';
@@ -25,6 +25,11 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   const [exportingLedger, setExportingLedger] = useState(null);
   const [sortField, setSortField] = useState('customer_name');
   const [sortDir, setSortDir] = useState('asc');
+  const [selectedForRemoval, setSelectedForRemoval] = useState([]);
+  const [removedCustomers, setRemovedCustomers] = useState([]);
+  const [showBulkPercentage, setShowBulkPercentage] = useState(false);
+  const [bulkPct, setBulkPct] = useState(115);
+  const [selectedForReactivate, setSelectedForReactivate] = useState([]);
   const [newFollowup, setNewFollowup] = useState({
     customer_name: '',
     followup_date: '',
@@ -216,6 +221,54 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
     });
     setShowSetTarget(customer.customer_name);
   };
+
+  const handleRemoveSelected = async () => {
+    if (!selectedForRemoval.length) return;
+    try {
+      const res = await axios.post(`${API}/customers/targets/remove`, { fy: selectedFY, customer_names: selectedForRemoval });
+      if (res.data?.success) {
+        toast.success(`${selectedForRemoval.length} customers removed from targets`);
+        setSelectedForRemoval([]);
+        fetchData();
+        fetchRemovedCustomers();
+      }
+    } catch { toast.error('Failed to remove customers'); }
+  };
+
+  const handleReactivateSelected = async () => {
+    if (!selectedForReactivate.length) return;
+    try {
+      const res = await axios.post(`${API}/customers/targets/reactivate`, { fy: selectedFY, customer_names: selectedForReactivate });
+      if (res.data?.success) {
+        toast.success(`${res.data.data.reactivated} customers reactivated`);
+        setSelectedForReactivate([]);
+        fetchData();
+        fetchRemovedCustomers();
+      }
+    } catch { toast.error('Failed to reactivate'); }
+  };
+
+  const handleBulkPercentage = async () => {
+    try {
+      const res = await axios.post(`${API}/customers/targets/bulk-percentage`, { fy: selectedFY, percentage: bulkPct });
+      if (res.data?.success) {
+        toast.success(res.data.data.message);
+        setShowBulkPercentage(false);
+        fetchData();
+      }
+    } catch { toast.error('Failed to set bulk targets'); }
+  };
+
+  const fetchRemovedCustomers = async () => {
+    try {
+      const res = await axios.get(`${API}/customers/targets/removed?fy=${selectedFY}`);
+      if (res.data?.success) setRemovedCustomers(res.data.data.removed || []);
+    } catch {}
+  };
+
+  useEffect(() => { fetchRemovedCustomers(); }, [selectedFY, excludeBranches]);
+
+
 
   const tabs = [
     { id: 'targets', label: 'Targets', icon: TrendingUp },
@@ -504,7 +557,20 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
           {/* Targets with Set Target & Monthly Sales */}
           {activeTab === 'targets' && (
             <div>
-              <div className="flex justify-end mb-3">
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                {!isFYCompleted() && (
+                  <>
+                    {selectedForRemoval.length > 0 && (
+                      <button onClick={handleRemoveSelected} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700" data-testid="remove-selected-btn">
+                        <Trash2 size={14} /> Remove {selectedForRemoval.length} Selected
+                      </button>
+                    )}
+                    <button onClick={() => setShowBulkPercentage(true)} className="flex items-center gap-1.5 px-3 py-2 border border-[#2563EB] text-[#2563EB] rounded-lg text-sm font-medium hover:bg-blue-50" data-testid="bulk-pct-btn">
+                      <TrendingUp size={14} /> Bulk % Target
+                    </button>
+                  </>
+                )}
+                <div className="flex-1" />
                 <button onClick={() => exportTargetsExcel(targets)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-targets-excel">
                   <Download size={14} /> Export Excel
                 </button>
@@ -513,6 +579,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                   <table className="data-table min-w-[800px]" data-testid="targets-table">
                     <thead>
                       <tr>
+                        {!isFYCompleted() && <th className="w-10"><input type="checkbox" checked={selectedForRemoval.length === targets.length && targets.length > 0} onChange={(e) => setSelectedForRemoval(e.target.checked ? targets.map(t => t.customer_name) : [])} /></th>}
                         <th>Customer Name</th>
                         <th className="numeric">Prev FY Sales{targets[0]?.previous_fy ? ` (${targets[0].previous_fy})` : ''}</th>
                         <th className="numeric">Target</th>
@@ -527,6 +594,12 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                       {targets.map((target, idx) => (
                         <React.Fragment key={idx}>
                           <tr>
+                            {!isFYCompleted() && (
+                              <td><input type="checkbox" checked={selectedForRemoval.includes(target.customer_name)} onChange={(e) => {
+                                if (e.target.checked) setSelectedForRemoval(prev => [...prev, target.customer_name]);
+                                else setSelectedForRemoval(prev => prev.filter(n => n !== target.customer_name));
+                              }} /></td>
+                            )}
                             <td className="font-medium text-slate-900">
                               <div className="flex items-center gap-2">
                                 {target.customer_name}
@@ -630,19 +703,11 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                         <input
                           type="number"
                           value={targetForm.last_fy_sales}
-                          onChange={(e) => {
-                            const fy = e.target.value;
-                            setTargetForm({
-                              ...targetForm,
-                              last_fy_sales: fy,
-                              target_amount: targetForm.target_amount || (fy ? Math.round(parseFloat(fy) * 1.15) : '')
-                            });
-                          }}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                          placeholder="Enter last FY sales"
+                          readOnly
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-500 cursor-not-allowed"
                           data-testid="last-fy-sales-input"
                         />
-                        <p className="text-xs text-slate-400 mt-1">Auto-suggests 15% growth target</p>
+                        <p className="text-xs text-slate-400 mt-1">Previous FY actual sales (read-only from Tally* data)</p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Target Amount (Rs.)</label>
@@ -662,6 +727,52 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                         <button onClick={() => setShowSetTarget(null)} className="flex-1 btn-secondary py-3">Cancel</button>
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Bulk Percentage Modal */}
+              {showBulkPercentage && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-50" onClick={() => setShowBulkPercentage(false)}>
+                  <div className="bg-white rounded-xl max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>
+                    <h2 className="text-lg font-semibold text-slate-900 mb-4">Bulk Set Target Percentage</h2>
+                    <p className="text-sm text-slate-500 mb-4">Set target for all customers as a percentage of their previous FY sales.</p>
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Target Percentage (%)</label>
+                      <input type="number" value={bulkPct} onChange={(e) => setBulkPct(Number(e.target.value))}
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                        placeholder="e.g. 115 for 15% growth" data-testid="bulk-pct-input" />
+                      <p className="text-xs text-slate-400 mt-1">Example: 120 = 20% growth over previous FY</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={() => setShowBulkPercentage(false)} className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm font-medium text-slate-600">Cancel</button>
+                      <button onClick={handleBulkPercentage} className="flex-1 px-4 py-2.5 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#1D4ED8]" data-testid="apply-bulk-pct-btn">Apply to All</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Removed Customers Section */}
+              {!isFYCompleted() && removedCustomers.length > 0 && (
+                <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-4" data-testid="removed-customers-section">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-slate-700">Removed Customers ({removedCustomers.length})</h3>
+                    {selectedForReactivate.length > 0 && (
+                      <button onClick={handleReactivateSelected} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700" data-testid="reactivate-btn">
+                        <Plus size={12} /> Reactivate {selectedForReactivate.length} Selected
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {removedCustomers.map((rc, i) => (
+                      <label key={i} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-green-300">
+                        <input type="checkbox" checked={selectedForReactivate.includes(rc.customer_name)} onChange={(e) => {
+                          if (e.target.checked) setSelectedForReactivate(prev => [...prev, rc.customer_name]);
+                          else setSelectedForReactivate(prev => prev.filter(n => n !== rc.customer_name));
+                        }} />
+                        <span className="text-sm text-slate-600">{rc.customer_name}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               )}

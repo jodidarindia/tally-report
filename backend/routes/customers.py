@@ -383,6 +383,10 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
         custom_targets = await db.customer_targets.find(q, {"_id": 0}).to_list(100)
         custom_target_map = {t["customer_name"]: t for t in custom_targets}
 
+        # Get removed customers for this FY
+        removed_docs = await db.customer_target_removals.find({**q, "fy": fy} if fy else q, {"_id": 0, "customer_name": 1}).to_list(5000)
+        removed_set = {d["customer_name"] for d in removed_docs}
+
         # Apply branch exclusion
         exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
         branch_parties = []
@@ -416,6 +420,8 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
             prev_sales[party] = prev_sales.get(party, 0) + amount
 
         all_customers = set(list(current_sales.keys()) + list(prev_sales.keys()))
+        # Filter out removed customers
+        all_customers = all_customers - removed_set
         targets = []
         for cust in all_customers:
             ct = custom_target_map.get(cust, {})
@@ -450,7 +456,7 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
 
         return APIResponse(
             success=True,
-            data={"targets": targets, "current_fy": fy, "previous_fy": prev_fy}
+            data={"targets": targets, "current_fy": fy, "previous_fy": prev_fy, "removed_count": len(removed_set)}
         )
 
     except Exception as e:
@@ -508,6 +514,160 @@ async def set_customer_target(request: Request):
     except Exception as e:
         logger.error(f"Error setting customer target: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@router.post("/customers/targets/bulk-percentage")
+async def bulk_set_target_percentage(request: Request):
+    """Set target as a percentage of previous FY sales for multiple customers at once."""
+    try:
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+        fy = body.get("fy", "")
+        percentage = float(body.get("percentage", 115))  # default 115%
+        customer_names = body.get("customer_names", [])  # empty = all
+
+        if not fy:
+            return APIResponse(success=False, error="FY is required")
+
+        # Verify FY is current or future
+        from datetime import date as date_type
+        fy_start, fy_end = fy_to_date_range(fy)
+        if fy_end:
+            end_parts = fy_end.split('-')
+            fy_end_date = date_type(int(end_parts[0]), int(end_parts[1]), int(end_parts[2]))
+            if date_type.today() > fy_end_date:
+                return APIResponse(success=False, error=f"FY {fy} has ended. Cannot modify targets.")
+
+        # Get previous FY sales
+        prev_fy = get_previous_fy(fy)
+        all_vouchers = await db.sales_vouchers.find(tq, {"_id": 0}).to_list(10000)
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        if exclude_branches:
+            branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
+            if branch_parties:
+                all_vouchers = [v for v in all_vouchers if v.get("party_name") not in branch_parties]
+
+        prev_vouchers = filter_vouchers_by_fy(all_vouchers, prev_fy) if prev_fy else []
+        prev_sales = {}
+        for v in prev_vouchers:
+            party = v.get("party_name", "")
+            amt = safe_num(v.get("total_amount"))
+            prev_sales[party] = prev_sales.get(party, 0) + amt
+
+        # Check for removed customers
+        removed_docs = await db.customer_target_removals.find({**tq, "fy": fy}, {"_id": 0, "customer_name": 1}).to_list(5000)
+        removed_set = {d["customer_name"] for d in removed_docs}
+
+        updated = 0
+        targets_to_process = customer_names if customer_names else list(prev_sales.keys())
+        for cust in targets_to_process:
+            if cust in removed_set:
+                continue
+            last_fy = prev_sales.get(cust, 0)
+            if last_fy <= 0:
+                continue
+            target_amount = last_fy * (percentage / 100)
+            doc = {
+                "customer_name": cust,
+                "target_amount": round(target_amount, 2),
+                "last_fy_sales": round(last_fy, 2),
+                "fy": fy,
+                "target_percentage": percentage,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            if ctx and ctx.get("tenant_id"):
+                doc["tenant_id"] = ctx["tenant_id"]
+            if ctx and ctx.get("company_id"):
+                doc["company_id"] = ctx["company_id"]
+            await db.customer_targets.update_one(
+                {**tq, "customer_name": cust, "fy": fy},
+                {"$set": doc},
+                upsert=True
+            )
+            updated += 1
+
+        return APIResponse(success=True, data={"updated": updated, "percentage": percentage, "message": f"Updated {updated} customer targets to {percentage}% of previous FY"})
+    except Exception as e:
+        logger.error(f"Bulk target error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/customers/targets/remove")
+async def remove_customers_from_targets(request: Request):
+    """Remove selected customers from target reports for current FY. Does not affect Tally data."""
+    try:
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+        fy = body.get("fy", "")
+        customer_names = body.get("customer_names", [])
+
+        if not fy or not customer_names:
+            return APIResponse(success=False, error="FY and customer_names required")
+
+        count = 0
+        for cust in customer_names:
+            doc = {
+                "customer_name": cust,
+                "fy": fy,
+                "removed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if ctx and ctx.get("tenant_id"):
+                doc["tenant_id"] = ctx["tenant_id"]
+            if ctx and ctx.get("company_id"):
+                doc["company_id"] = ctx["company_id"]
+            await db.customer_target_removals.update_one(
+                {**tq, "customer_name": cust, "fy": fy},
+                {"$set": doc},
+                upsert=True
+            )
+            count += 1
+
+        return APIResponse(success=True, data={"removed": count, "message": f"{count} customers removed from targets"})
+    except Exception as e:
+        logger.error(f"Remove targets error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/customers/targets/reactivate")
+async def reactivate_customers_in_targets(request: Request):
+    """Reactivate previously removed customers in target reports."""
+    try:
+        body = await request.json()
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+        fy = body.get("fy", "")
+        customer_names = body.get("customer_names", [])
+
+        if not fy or not customer_names:
+            return APIResponse(success=False, error="FY and customer_names required")
+
+        result = await db.customer_target_removals.delete_many(
+            {**tq, "fy": fy, "customer_name": {"$in": customer_names}}
+        )
+
+        return APIResponse(success=True, data={"reactivated": result.deleted_count})
+    except Exception as e:
+        logger.error(f"Reactivate targets error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/customers/targets/removed")
+async def get_removed_customers(request: Request, fy: Optional[str] = None):
+    """Get list of customers removed from targets for a given FY."""
+    try:
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx)
+        q = {**tq}
+        if fy:
+            q["fy"] = fy
+        docs = await db.customer_target_removals.find(q, {"_id": 0}).to_list(5000)
+        return APIResponse(success=True, data={"removed": docs})
+    except Exception as e:
+        logger.error(f"Get removed customers error: {e}")
+        return APIResponse(success=False, error=str(e))
+
 
 
 @router.post("/customers/ledger/export")

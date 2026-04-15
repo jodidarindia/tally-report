@@ -7,7 +7,7 @@ import SyncStatusBar from '../components/SyncStatusBar';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Dashboard = ({ selectedFY, excludeBranches }) => {
+const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [reminders, setReminders] = useState(null);
@@ -35,7 +35,7 @@ const Dashboard = ({ selectedFY, excludeBranches }) => {
     }
 
     return () => { if (intervalId) clearInterval(intervalId); };
-  }, [autoRefresh, selectedFY, excludeBranches]);
+  }, [autoRefresh, selectedFY, excludeBranches, companyId]);
 
   const fetchData = async () => {
     setLoading(true);
