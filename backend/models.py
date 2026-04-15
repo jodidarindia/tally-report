@@ -26,6 +26,7 @@ class InventoryItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     item_id: str
     item_name: str
+    part_number: Optional[str] = None
     quantity: float
     unit: str
     price: Optional[float] = None

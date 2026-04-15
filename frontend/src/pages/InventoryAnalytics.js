@@ -314,6 +314,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                     <thead>
                       <tr>
                         <SortTh field="item_name" label="Item Name" />
+                        <th>Part No.</th>
                         <th>Category</th>
                         <SortTh field="opening_stock" label="Opening" className="numeric" />
                         <SortTh field="inward" label="Inward" className="numeric" />
@@ -333,6 +334,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       }).map((item, idx) => (
                         <tr key={idx} data-testid={`movement-row-${idx}`}>
                           <td className="font-medium">{item.item_name}</td>
+                          <td className="text-slate-400 text-xs">{item.part_number || '-'}</td>
                           <td className="text-slate-500 text-xs">{item.category}</td>
                           <td className="numeric">{item.opening_stock > 0 ? item.opening_stock : '-'}</td>
                           <td className="numeric">{item.inward > 0 ? item.inward : '-'}</td>

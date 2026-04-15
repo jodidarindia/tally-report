@@ -509,6 +509,7 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
 
             movement_data.append({
                 "item_name": item_name,
+                "part_number": item.get("part_number", ""),
                 "category": item.get("category", item.get("stock_group", "General")),
                 "opening_stock": round(opening_stock, 1),
                 "inward": round(inward, 1),

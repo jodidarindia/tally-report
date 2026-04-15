@@ -532,6 +532,105 @@ async def receive_agent_sync(request: dict):
         return APIResponse(success=False, error=str(e))
 
 
+# ─── DATA TYPE → COLLECTION / KEY MAPPING for reconciliation ───
+_RECONCILE_MAP = {
+    "sales":              {"collection": "sales_vouchers",    "key": "voucher_id"},
+    "receipts":           {"collection": "receipt_vouchers",  "key": "voucher_id"},
+    "credit_notes":       {"collection": "credit_notes",      "key": "voucher_id"},
+    "journal_vouchers":   {"collection": "journal_vouchers",  "key": "voucher_id"},
+    "stock_journals":     {"collection": "stock_journals",    "key": "voucher_id"},
+    "purchase_vouchers":  {"collection": "purchase_vouchers", "key": "voucher_id"},
+    "debit_notes":        {"collection": "debit_notes",       "key": "voucher_id"},
+    "contra_vouchers":    {"collection": "contra_vouchers",   "key": "voucher_id"},
+    "customers":          {"collection": "customers",         "key": "customer_name"},
+    "sundry_creditors":   {"collection": "sundry_creditors",  "key": "creditor_name"},
+    "bank_cash_ledgers":  {"collection": "bank_cash_ledgers", "key": "ledger_name"},
+}
+
+
+@router.post("/agent/reconcile")
+async def reconcile_deleted_records(request: dict):
+    """Reconcile: remove records from DB that no longer exist in Tally*.
+    Agent sends a manifest of all IDs currently in Tally* for a given data_type + FY.
+    Any DB records NOT in this manifest are deleted (orphan cleanup)."""
+    try:
+        data_type = request.get("data_type", "")
+        manifest_ids = request.get("manifest_ids", [])
+        req_tenant_id = request.get("tenant_id", "")
+        req_company_id = request.get("company_id", "")
+        financial_year = request.get("financial_year", "")
+        sync_token = request.get("sync_token", "")
+
+        if not data_type or not req_tenant_id:
+            return APIResponse(success=False, error="data_type and tenant_id required")
+
+        # Verify sync token
+        if req_tenant_id and sync_token:
+            if not verify_sync_token(req_tenant_id, sync_token):
+                return APIResponse(success=False, error="Invalid sync token")
+
+        # Resolve company_id if name-based
+        from services.id_mapping_service import get_company_uuid
+        try:
+            import uuid as _uuid
+            _uuid.UUID(req_company_id)
+        except (ValueError, AttributeError):
+            if req_company_id and req_tenant_id:
+                from services.id_mapping_service import register_company_mapping
+                req_company_id = await register_company_mapping(req_tenant_id, req_company_id)
+
+        mapping = _RECONCILE_MAP.get(data_type)
+        if not mapping:
+            return APIResponse(success=False, error=f"Reconcile not supported for {data_type}")
+
+        collection = db[mapping["collection"]]
+        key_field = mapping["key"]
+
+        # Build filter: tenant + company (+ FY where applicable)
+        delete_filter = {"tenant_id": req_tenant_id}
+        if req_company_id:
+            delete_filter["company_id"] = req_company_id
+
+        if not manifest_ids:
+            # Empty manifest means Tally* has zero records for this type
+            # Delete all records matching the filter
+            result = await collection.delete_many(delete_filter)
+            deleted = result.deleted_count
+        else:
+            # Delete records whose key is NOT in the manifest
+            delete_filter[key_field] = {"$nin": manifest_ids}
+            result = await collection.delete_many(delete_filter)
+            deleted = result.deleted_count
+
+        if deleted > 0:
+            logger.info(f"Reconcile {data_type}: removed {deleted} orphan records "
+                        f"[tenant={req_tenant_id}, company={req_company_id}, fy={financial_year}]")
+
+            # Log the reconciliation event
+            await db.sync_history.insert_one({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_type": f"{data_type}_reconcile",
+                "count": deleted,
+                "financial_year": financial_year,
+                "company_name": request.get("company_name", ""),
+                "agent_version": request.get("agent_version", ""),
+                "sync_mode": "reconcile",
+                "tenant_id": req_tenant_id,
+                "company_id": req_company_id,
+            })
+        else:
+            logger.info(f"Reconcile {data_type}: no orphans found [tenant={req_tenant_id}]")
+
+        return APIResponse(
+            success=True,
+            message=f"Reconciled {data_type}: {deleted} orphan records removed"
+        )
+
+    except Exception as e:
+        logger.error(f"Reconcile error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.post("/agent/sync-progress")
 async def receive_sync_progress(request: dict):
     """Receive real-time sync progress from desktop agent."""

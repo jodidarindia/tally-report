@@ -114,7 +114,8 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   };
 
   const filteredItems = items.filter(item => {
-    const matchesSearch = (item.item_name || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const term = searchTerm.toLowerCase();
+    const matchesSearch = (item.item_name || '').toLowerCase().includes(term) || (item.part_number || '').toLowerCase().includes(term);
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
     return matchesSearch && matchesCategory && matchesGroup;
@@ -257,6 +258,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
             <thead>
               <tr>
                 <SortHeader field="item_name" label="Item Name" />
+                <th>Part No.</th>
                 <SortHeader field="stock_group" label="Stock Group" />
                 <th>Category</th>
                 <SortHeader field="quantity" label="Quantity" className="numeric" />
@@ -276,6 +278,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                   return (
                     <tr key={item.item_id} data-testid={`inventory-row-${item.item_id}`}>
                       <td className="font-medium text-slate-900">{item.item_name}</td>
+                      <td className="text-slate-500 text-xs">{item.part_number || '-'}</td>
                       <td className="text-slate-600">{item.stock_group || '-'}</td>
                       <td>{item.category || '-'}</td>
                       <td className="numeric font-semibold">{item.quantity}</td>
