@@ -363,6 +363,26 @@ class TallyCollectionClient:
             return f"<SVCURRENTCOMPANY>{c}</SVCURRENTCOMPANY>"
         return ""
 
+    def _ping_tally(self) -> bool:
+        """Lightweight connection check — does NOT overwrite self.company.
+        Just verifies Tally is responding with a minimal request."""
+        try:
+            company_tag = self._company_tag()
+            xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraPing</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraPing" ISINITIALIZE="Yes"><TYPE>Company</TYPE><FETCH>NAME</FETCH></COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+            resp = requests.post(TALLY_URL, data=xml.encode('utf-8'),
+                                 headers={'Content-Type': 'application/xml'},
+                                 timeout=REQUEST_TIMEOUT)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     def test_connection(self) -> bool:
         """Quick ping to check Tally is responding + detect active company name."""
         # Method 1: Collection request for company list
@@ -2099,6 +2119,11 @@ class FlowraSyncAgent:
             is_placeholder = company_name == '_active_'
             display_name = company_name if not is_placeholder else 'Active Company (auto-detect)'
 
+            # CRITICAL: Set the company on the TallyConnector BEFORE any requests.
+            # This ensures _company_tag() injects <SVCURRENTCOMPANY> in all XML requests.
+            if not is_placeholder:
+                self.tally.company = company_name
+
             # Always do full sync — Tally has no change-detection API, so edits to old
             # invoices/items/vouchers would be missed by partial fetches.
             # Hash comparison on upload side still prevents unnecessary DB writes.
@@ -2106,8 +2131,8 @@ class FlowraSyncAgent:
 
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
 
-            # Test connection
-            if not self.tally.test_connection():
+            # Test connection — use a lightweight ping that does NOT overwrite self.tally.company
+            if not self._ping_tally():
                 logger.error("Cannot connect to Tally! Is TallyPrime running?")
                 self.report_progress('sync_error', error='Tally not responding')
                 return
@@ -2120,11 +2145,17 @@ class FlowraSyncAgent:
             logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)} ({sync_mode} mode)")
 
             # If company name is still unknown, try to resolve from Tally now
-            if is_placeholder and self.tally.company and self.tally.company.lower() not in ('default', '##default', '', '_active_'):
-                resolved = self.tally.company
-                logger.info(f"  Resolved company name: {resolved}")
-                self._active_company = resolved
-                company_name = resolved
+            if is_placeholder:
+                if not self.tally.test_connection():
+                    logger.error("Cannot connect to Tally!")
+                    return
+                if self.tally.company and self.tally.company.lower() not in ('default', '##default', '', '_active_'):
+                    resolved = self.tally.company
+                    logger.info(f"  Resolved company name: {resolved}")
+                    self._active_company = resolved
+                    company_name = resolved
+            else:
+                logger.info(f"  Tally company: {company_name}")
 
             # --- Phase 1: Stock Items (always full — just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")
