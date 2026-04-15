@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download } from 'lucide-react';
+import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -15,6 +15,8 @@ const TallySetup = ({ companyId }) => {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [syncStatus, setSyncStatus] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null); // {type: 'resync'|'delete', company}
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     checkStatus();
@@ -72,6 +74,37 @@ const TallySetup = ({ companyId }) => {
       toast.error('Failed to connect to Tally*');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCompanyAction = async () => {
+    if (!confirmAction) return;
+    const { type, company } = confirmAction;
+    setActionLoading(true);
+    try {
+      const cid = company.company_id;
+      if (type === 'resync') {
+        const res = await axios.post(`${API}/sync/company/${cid}/resync`);
+        if (res.data?.success) {
+          toast.success(`Data cleared for ${company.company_name}. Run Desktop Agent to sync fresh.`);
+          fetchSyncStatus();
+        } else {
+          toast.error(res.data?.error || 'Resync failed');
+        }
+      } else if (type === 'delete') {
+        const res = await axios.delete(`${API}/sync/company/${cid}`);
+        if (res.data?.success) {
+          toast.success(`${company.company_name} removed completely.`);
+          fetchSyncStatus();
+        } else {
+          toast.error(res.data?.error || 'Delete failed');
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Action failed');
+    } finally {
+      setActionLoading(false);
+      setConfirmAction(null);
     }
   };
 
@@ -146,12 +179,37 @@ const TallySetup = ({ companyId }) => {
               </div>
               <div className="p-3 rounded-lg bg-slate-50 sm:col-span-2">
                 <div className="text-xs text-slate-500 flex items-center gap-1 mb-2"><Building2 size={12} /> Linked Companies</div>
-                <div className="flex flex-wrap gap-2" data-testid="linked-companies">
-                  {syncStatus.companies?.length > 0 ? syncStatus.companies.map((c, i) => (
-                    <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-700">
-                      {typeof c === 'object' ? (c.company_name || c.company_id || '') : c}
-                    </span>
-                  )) : (
+                <div className="space-y-2" data-testid="linked-companies">
+                  {syncStatus.companies?.length > 0 ? syncStatus.companies.map((c, i) => {
+                    const name = typeof c === 'object' ? (c.company_name || c.company_id || '') : c;
+                    const cObj = typeof c === 'object' ? c : { company_id: c, company_name: c };
+                    return (
+                      <div key={i} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Building2 size={14} className="text-[#2563EB] shrink-0" />
+                          <span className="text-sm font-medium text-slate-800 truncate">{name}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => setConfirmAction({ type: 'resync', company: cObj })}
+                            className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors"
+                            title="Resync — clear old data and sync fresh"
+                            data-testid={`resync-btn-${i}`}
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                          <button
+                            onClick={() => setConfirmAction({ type: 'delete', company: cObj })}
+                            className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition-colors"
+                            title="Delete — remove all company data"
+                            data-testid={`delete-btn-${i}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }) : (
                     <span className="text-xs text-slate-400">No companies synced yet. Run the Desktop Agent to start syncing.</span>
                   )}
                 </div>
@@ -304,6 +362,69 @@ const TallySetup = ({ companyId }) => {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]" data-testid="confirm-modal">
+          <div className="bg-white rounded-2xl max-w-md w-full mx-4 p-6 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${confirmAction.type === 'delete' ? 'bg-red-100' : 'bg-amber-100'}`}>
+                <AlertTriangle size={24} className={confirmAction.type === 'delete' ? 'text-red-600' : 'text-amber-600'} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {confirmAction.type === 'delete' ? 'Delete Company' : 'Resync Company'}
+                </h3>
+                <p className="text-sm text-slate-500">{confirmAction.company.company_name}</p>
+              </div>
+            </div>
+
+            {confirmAction.type === 'delete' ? (
+              <div className="mb-6">
+                <p className="text-sm text-slate-700 mb-3">This will <strong className="text-red-600">permanently delete ALL data</strong> for this company:</p>
+                <ul className="text-sm text-slate-600 space-y-1 ml-4">
+                  <li className="list-disc">All inventory items, sales vouchers, receipts</li>
+                  <li className="list-disc">Customer records, credit notes, journals</li>
+                  <li className="list-disc">Purchase data, contra vouchers, P&L data</li>
+                  <li className="list-disc">Sync history and company mapping</li>
+                </ul>
+                <p className="text-sm text-red-600 font-medium mt-3">This action cannot be undone. The company will be removed from your account.</p>
+              </div>
+            ) : (
+              <div className="mb-6">
+                <p className="text-sm text-slate-700 mb-3">This will <strong className="text-amber-600">clear all existing data</strong> for this company and prepare for a fresh sync:</p>
+                <ul className="text-sm text-slate-600 space-y-1 ml-4">
+                  <li className="list-disc">All synced data (inventory, sales, customers, etc.) will be deleted</li>
+                  <li className="list-disc">The company stays in your account</li>
+                  <li className="list-disc">Run the Desktop Agent after this to sync fresh data</li>
+                </ul>
+                <p className="text-sm text-amber-600 font-medium mt-3">The app will show empty data until the next sync completes.</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmAction(null)}
+                disabled={actionLoading}
+                className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                data-testid="confirm-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCompanyAction}
+                disabled={actionLoading}
+                className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${
+                  confirmAction.type === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+                }`}
+                data-testid="confirm-action-btn"
+              >
+                {actionLoading ? 'Processing...' : confirmAction.type === 'delete' ? 'Yes, Delete Everything' : 'Yes, Clear & Resync'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

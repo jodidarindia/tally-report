@@ -873,3 +873,104 @@ def _time_diff_minutes(ts1: str, ts2: str) -> float:
         return abs((d1 - d2).total_seconds()) / 60
     except Exception:
         return 999
+
+
+# ─── All collections that store per-company data ───
+_COMPANY_COLLECTIONS = [
+    "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
+    "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
+    "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
+    "profit_loss", "sync_history", "sync_status",
+]
+
+
+@router.delete("/sync/company/{company_id}")
+async def delete_company_data(company_id: str, request: Request):
+    """Delete ALL synced data for a specific company. Removes from all collections + user's company list."""
+    try:
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        user = ctx.get("user") if ctx else None
+
+        if not tenant_id or not user:
+            return APIResponse(success=False, error="Authentication required")
+        if user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+
+        q = {"tenant_id": tenant_id, "company_id": company_id}
+        total_deleted = 0
+
+        for coll_name in _COMPANY_COLLECTIONS:
+            coll = db[coll_name]
+            result = await coll.delete_many(q)
+            total_deleted += result.deleted_count
+
+        # Remove company_id from user's companies list
+        await db.users.update_many(
+            {"tenant_id": tenant_id, "companies": company_id},
+            {"$pull": {"companies": company_id}}
+        )
+
+        # Remove company mapping
+        await db.company_mappings.delete_many({"tenant_id": tenant_id, "company_id": company_id})
+
+        logger.info(f"Deleted company {company_id} for tenant {tenant_id}: {total_deleted} records removed")
+
+        return APIResponse(success=True, data={
+            "message": f"Company data deleted successfully. {total_deleted} records removed.",
+            "deleted_count": total_deleted
+        })
+    except Exception as e:
+        logger.error(f"Delete company error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/sync/company/{company_id}/resync")
+async def resync_company_data(company_id: str, request: Request):
+    """Wipe all synced data for a company (keeps company in user's list). Agent will refill on next sync."""
+    try:
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        user = ctx.get("user") if ctx else None
+
+        if not tenant_id or not user:
+            return APIResponse(success=False, error="Authentication required")
+        if user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+
+        q = {"tenant_id": tenant_id, "company_id": company_id}
+        total_deleted = 0
+
+        # Delete data from all collections EXCEPT sync_status (keep connection info)
+        data_collections = [c for c in _COMPANY_COLLECTIONS if c != "sync_status"]
+        for coll_name in data_collections:
+            coll = db[coll_name]
+            result = await coll.delete_many(q)
+            total_deleted += result.deleted_count
+
+        # Mark sync_status as needing resync
+        await db.sync_status.update_one(
+            {"tenant_id": tenant_id, "company_id": company_id, "type": "agent_sync"},
+            {"$set": {"resync_requested": True, "resync_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+
+        # Log the resync event
+        await db.sync_history.insert_one({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data_type": "resync_requested",
+            "count": total_deleted,
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "sync_mode": "resync",
+        })
+
+        logger.info(f"Resync requested for company {company_id}, tenant {tenant_id}: {total_deleted} records cleared")
+
+        return APIResponse(success=True, data={
+            "message": f"Company data cleared. {total_deleted} records removed. Run the Desktop Agent to sync fresh data.",
+            "deleted_count": total_deleted
+        })
+    except Exception as e:
+        logger.error(f"Resync company error: {e}")
+        return APIResponse(success=False, error=str(e))
