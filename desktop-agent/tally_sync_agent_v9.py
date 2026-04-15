@@ -190,14 +190,16 @@ def fy_to_dates(fy: str):
     return date(start_year, 4, 1), date(end_year, 3, 31)
 
 
-def months_in_fy(fy: str):
-    """Generate monthly (start, end) date pairs for an FY."""
+def months_in_fy(fy: str, cap_date: date = None):
+    """Generate monthly (start, end) date pairs for an FY.
+    cap_date: if provided, stop at this date instead of today (for latest FY)."""
     fy_start, fy_end = fy_to_dates(fy)
+    end_limit = cap_date if cap_date else date.today()
+    end_limit = min(fy_end, end_limit)
     current = fy_start
-    today = date.today()
-    while current <= min(fy_end, today):
+    while current <= end_limit:
         month_end = (current.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-        month_end = min(month_end, fy_end, today)
+        month_end = min(month_end, fy_end, end_limit)
         yield current, month_end
         current = (month_end + timedelta(days=1))
 
@@ -1317,6 +1319,39 @@ $$GroupIdx:$PARENT = $$GroupIdx:$$GroupSundryCreditors
             fys.append(f"{y}-{str(y+1)[-2:]}")
         return sorted(fys)
 
+    def fetch_last_voucher_date(self) -> Optional[date]:
+        """Query Tally for the date of the most recent voucher entry in the active company.
+        Returns a date object or None if detection fails."""
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
+<ID>FlowraLastVoucherDate</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<REPORT NAME="FlowraLastVoucherDate"><FORMS>LVDForm</FORMS></REPORT>
+<FORM NAME="LVDForm"><PARTS>LVDPart</PARTS></FORM>
+<PART NAME="LVDPart"><LINES>LVDLine</LINES></PART>
+<LINE NAME="LVDLine"><FIELDS>LVDField</FIELDS></LINE>
+<FIELD NAME="LVDField"><SET>$$LastVoucherDate</SET></FIELD>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
+            if data:
+                text = self._extract_text_deep(data)
+                if text:
+                    text = str(text).strip()
+                    # Tally returns dates as YYYYMMDD or DD-Mon-YYYY
+                    for fmt in ('%Y%m%d', '%d-%m-%Y', '%d-%b-%Y'):
+                        try:
+                            return datetime.strptime(text[:10], fmt).date()
+                        except ValueError:
+                            continue
+        except Exception as e:
+            logger.debug(f"  Last voucher date detection failed: {e}")
+        return None
+
     # ---- CONTRA VOUCHERS (bank-to-bank, cash-to-bank) ----
 
     def fetch_contra_vouchers_month(self, month_start: date, month_end: date) -> List[Dict]:
@@ -2211,11 +2246,14 @@ class FlowraSyncAgent:
 
                 logger.info(f"[QUICK] Sales sync: {company}")
 
+                # Detect last voucher date for this company
+                lvd = self.tally.fetch_last_voucher_date() or date.today()
+
                 for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
                     fy_sales = []
-                    for m_start, m_end in months_in_fy(fy):
+                    for m_start, m_end in months_in_fy(fy, cap_date=lvd):
                         fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
                         time.sleep(SLEEP_BETWEEN_REQUESTS)
                     if fy_sales:
@@ -2366,6 +2404,14 @@ class FlowraSyncAgent:
             else:
                 logger.info(f"  Tally company: {company_name}")
 
+            # Detect last voucher entry date — cap syncing at this date for latest FY
+            last_voucher_date = self.tally.fetch_last_voucher_date()
+            if last_voucher_date:
+                logger.info(f"  Last voucher date in Tally*: {last_voucher_date.strftime('%d-%b-%Y')}")
+            else:
+                last_voucher_date = date.today()
+                logger.info(f"  Last voucher date: using today ({last_voucher_date.strftime('%d-%b-%Y')})")
+
             # --- Phase 1: Stock Items (always full — just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")
             self.financial_year = fys_to_sync[0]
@@ -2391,7 +2437,7 @@ class FlowraSyncAgent:
                 self.financial_year = fy
                 fy_start, fy_end = fy_to_dates(fy)
 
-                months = list(months_in_fy(fy))
+                months = list(months_in_fy(fy, cap_date=last_voucher_date))
                 logger.info(f"--- Full sync FY {fy}: {len(months)} months ---")
 
                 # Phase 2: Sales
@@ -2567,7 +2613,7 @@ class FlowraSyncAgent:
                 self.financial_year = fy
                 fy_start, fy_end = fy_to_dates(fy)
                 fy_contra = []
-                for m_start, m_end in months_in_fy(fy):
+                for m_start, m_end in months_in_fy(fy, cap_date=last_voucher_date):
                     fy_contra.extend(self.tally.fetch_contra_vouchers_month(m_start, m_end))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_contra:
