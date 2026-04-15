@@ -2,6 +2,7 @@ from fastapi import APIRouter, Response, Request
 from datetime import datetime, timezone
 import logging
 import re
+import asyncio
 
 from db import db
 from models import (
@@ -17,7 +18,11 @@ from services.ist_utils import (
     now_ist_iso, subscription_expires_at, is_subscription_active,
     days_until_expiry
 )
-from services.email_service import send_subscription_expiry_warning
+from services.email_service import (
+    send_subscription_expiry_warning,
+    send_employee_created_to_employee,
+    send_employee_created_to_admin
+)
 from services.recaptcha import verify_recaptcha
 
 logger = logging.getLogger(__name__)
@@ -313,6 +318,19 @@ async def create_user(req: CreateUserRequest, request: Request):
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(new_user)
+
+        # Send emails: credentials to employee + confirmation to admin
+        admin_company = user.get("name", user.get("username", "Your Organization"))
+        asyncio.create_task(
+            send_employee_created_to_employee(req.username, req.name or req.username, req.password, admin_company)
+        )
+        # Only send admin notification if admin username is a valid email
+        admin_email = user.get("username", "")
+        if re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', admin_email):
+            asyncio.create_task(
+                send_employee_created_to_admin(admin_email, user.get("name", admin_email), req.name or req.username, req.username, "employee")
+            )
+
         return APIResponse(success=True, message=f"User '{req.username}' created", data={"username": req.username, "role": new_user["role"]})
     except Exception as e:
         logger.error(f"Create user error: {e}")
