@@ -609,6 +609,8 @@ class TallyCollectionClient:
 <FETCH>BASEUNITS</FETCH>
 <FETCH>OPENINGBALANCE</FETCH>
 <FETCH>PARTNUMBER</FETCH>
+<FETCH>PARTNO</FETCH>
+<FETCH>MAILINGNAME</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
 <COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
@@ -663,13 +665,30 @@ class TallyCollectionClient:
                 parent = parent.get('#text', 'General')
             parent = str(parent or 'General').strip()
 
-            # Part Number
-            part_no = si.get('PARTNUMBER', si.get('PARTNO', ''))
-            if isinstance(part_no, dict):
-                part_no = part_no.get('#text', '')
-            part_no = str(part_no or '').strip()
-            if part_no.lower() in ('none', '0', 'null'):
-                part_no = ''
+            # Part Number — Tally uses $PartNo, also check PARTNUMBER and MAILINGNAME
+            part_no = ''
+            for pn_field in ('PARTNO', 'PARTNUMBER', 'PartNo'):
+                raw = si.get(pn_field, '')
+                if raw and raw != 'None':
+                    if isinstance(raw, dict):
+                        raw = raw.get('#text', '')
+                    part_no = str(raw or '').strip()
+                    if part_no and part_no.lower() not in ('none', '0', 'null'):
+                        break
+                    part_no = ''
+            # Fallback: MAILINGNAME (can store part number as alias)
+            if not part_no:
+                mailing = si.get('MAILINGNAME', si.get('MAILINGNAME.LIST', ''))
+                if mailing:
+                    if isinstance(mailing, dict):
+                        mailing = mailing.get('MAILINGNAME', mailing.get('#text', ''))
+                    if isinstance(mailing, list):
+                        mailing = mailing[0] if mailing else ''
+                    if isinstance(mailing, dict):
+                        mailing = mailing.get('#text', '')
+                    mailing = str(mailing or '').strip()
+                    if mailing and mailing.lower() not in ('none', name.lower()):
+                        part_no = mailing
 
             # Try COMPUTE fields first (CLBAL, CLRATE, CLVAL)
             qty = self._num(si.get('CLBAL', 0))
