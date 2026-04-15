@@ -1041,7 +1041,7 @@ class TallyCollectionClient:
 <FETCH>LEDGERPHONE, LEDGERFAX, LEDGERCONTACT, LEDGERMOBILE, STATENAME</FETCH>
 </COLLECTION>
 <SYSTEM TYPE="Formulae" NAME="IsSundryCreditor">
-$$GroupIdx:$PARENT = $$GroupIdx:$$GroupSundryCreditors
+$Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditors"
 </SYSTEM>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -1356,7 +1356,26 @@ $$GroupIdx:$PARENT = $$GroupIdx:$$GroupSundryCreditors
 
     def fetch_contra_vouchers_month(self, month_start: date, month_end: date) -> List[Dict]:
         """Fetch Contra vouchers for a given month."""
-        return self._fetch_voucher_collection("Contra", month_start, month_end)
+        fd_disp = month_start.strftime("%d-%b-%Y")
+        td_disp = month_end.strftime("%d-%b-%Y")
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Voucher Register</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+<VOUCHERTYPENAME>Contra</VOUCHERTYPENAME>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+        data = self._post(xml, debug_name=f'contra_{month_start.strftime("%Y%m")}')
+        if not data:
+            return []
+        return self._parse_vouchers(data, 'contra')
 
     # ---- BANK & CASH LEDGER BALANCES ----
 
@@ -2249,6 +2268,7 @@ class FlowraSyncAgent:
                 # Detect last voucher date for this company
                 lvd = self.tally.fetch_last_voucher_date() or date.today()
 
+                all_quick_sales = []
                 for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
@@ -2258,9 +2278,11 @@ class FlowraSyncAgent:
                         time.sleep(SLEEP_BETWEEN_REQUESTS)
                     if fy_sales:
                         self.sync_to_backend('sales', fy_sales)
-                    sales_ids = [v.get('voucher_id', '') for v in fy_sales if v.get('voucher_id')]
-                    self.reconcile_with_backend('sales', sales_ids)
+                    all_quick_sales.extend(fy_sales)
                     logger.info(f"  [QUICK] FY {fy}: {len(fy_sales)} sales vouchers synced")
+
+                # Reconcile AFTER all FYs
+                self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')])
 
         except Exception as e:
             logger.debug(f"Quick sales sync error: {e}")
@@ -2335,6 +2357,10 @@ class FlowraSyncAgent:
             # This ensures _company_tag() injects <SVCURRENTCOMPANY> in all XML requests.
             if not is_placeholder:
                 self.tally.company = company_name
+                # Set per-company debug directory for raw XML exports
+                safe_name = company_name.replace(' ', '_').replace('/', '_')
+                self.tally.debug_dir = os.path.join(self.export_dir, safe_name)
+                os.makedirs(self.tally.debug_dir, exist_ok=True)
 
             # Always do full sync — Tally has no change-detection API, so edits to old
             # invoices/items/vouchers would be missed by partial fetches.
@@ -2451,9 +2477,6 @@ class FlowraSyncAgent:
                     self.save_cache(f'sales_{fy}', fy_sales)
                     self.sync_to_backend('sales', fy_sales)
                     all_sales_combined.extend(fy_sales)
-                # Reconcile: send all voucher_ids for this FY to delete orphans
-                sales_ids = [v.get('voucher_id', '') for v in fy_sales if v.get('voucher_id')]
-                self.reconcile_with_backend('sales', sales_ids)
                 logger.info(f"  FY {fy}: {len(fy_sales)} sales vouchers")
                 self.report_progress('phase_complete', phase='sales', count=len(fy_sales))
 
@@ -2468,8 +2491,6 @@ class FlowraSyncAgent:
                     self.save_cache(f'receipts_{fy}', fy_receipts)
                     self.sync_to_backend('receipts', fy_receipts)
                     all_receipts_combined.extend(fy_receipts)
-                receipt_ids = [v.get('voucher_id', '') for v in fy_receipts if v.get('voucher_id')]
-                self.reconcile_with_backend('receipts', receipt_ids)
                 logger.info(f"  FY {fy}: {len(fy_receipts)} receipt vouchers")
                 self.report_progress('phase_complete', phase='receipts', count=len(fy_receipts))
 
@@ -2484,8 +2505,6 @@ class FlowraSyncAgent:
                     self.save_cache(f'credit_notes_{fy}', fy_cn)
                     self.sync_to_backend('credit_notes', fy_cn)
                     all_credit_notes_combined.extend(fy_cn)
-                cn_ids = [v.get('voucher_id', '') for v in fy_cn if v.get('voucher_id')]
-                self.reconcile_with_backend('credit_notes', cn_ids)
                 logger.info(f"  FY {fy}: {len(fy_cn)} credit notes")
                 self.report_progress('phase_complete', phase='credit_notes', count=len(fy_cn))
 
@@ -2500,8 +2519,6 @@ class FlowraSyncAgent:
                     self.save_cache(f'journals_{fy}', fy_jv)
                     self.sync_to_backend('journal_vouchers', fy_jv)
                     all_journals_combined.extend(fy_jv)
-                jv_ids = [v.get('voucher_id', '') for v in fy_jv if v.get('voucher_id')]
-                self.reconcile_with_backend('journal_vouchers', jv_ids)
                 logger.info(f"  FY {fy}: {len(fy_jv)} journal vouchers")
                 self.report_progress('phase_complete', phase='journals', count=len(fy_jv))
 
@@ -2516,8 +2533,6 @@ class FlowraSyncAgent:
                     self.save_cache(f'stock_journals_{fy}', fy_sj)
                     self.sync_to_backend('stock_journals', fy_sj)
                     all_stock_journals_combined.extend(fy_sj)
-                sj_ids = [v.get('voucher_id', '') for v in fy_sj if v.get('voucher_id')]
-                self.reconcile_with_backend('stock_journals', sj_ids)
                 logger.info(f"  FY {fy}: {len(fy_sj)} stock journals")
                 self.report_progress('phase_complete', phase='stock_journals', count=len(fy_sj))
 
@@ -2525,21 +2540,14 @@ class FlowraSyncAgent:
                 logger.info(f"  Phase 6: Purchase Vouchers (FY {fy})")
                 self.report_progress('phase_start', phase='purchases')
                 fy_purchases = []
-                m = fy_start
-                while m <= fy_end:
-                    m_end = min(date(m.year, m.month, 28) + timedelta(days=4), fy_end)
-                    m_end = m_end.replace(day=1) - timedelta(days=1) if m_end.month != m.month else m_end
-                    if m_end > fy_end:
-                        m_end = fy_end
-                    pvs = self.tally.fetch_purchases_month(m, m_end)
+                for m_start, m_end in months:
+                    pvs = self.tally.fetch_purchases_month(m_start, m_end)
                     fy_purchases.extend(pvs)
-                    m = (m_end + timedelta(days=1))
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_purchases:
                     self.save_cache(f'purchase_vouchers_{fy}', fy_purchases)
                     self.sync_to_backend('purchase_vouchers', fy_purchases)
                     all_purchases_combined.extend(fy_purchases)
-                pv_ids = [v.get('voucher_id', '') for v in fy_purchases if v.get('voucher_id')]
-                self.reconcile_with_backend('purchase_vouchers', pv_ids)
                 logger.info(f"  FY {fy}: {len(fy_purchases)} purchase vouchers")
                 self.report_progress('phase_complete', phase='purchases', count=len(fy_purchases))
 
@@ -2547,23 +2555,26 @@ class FlowraSyncAgent:
                 logger.info(f"  Phase 7: Debit Notes (FY {fy})")
                 self.report_progress('phase_start', phase='debit_notes')
                 fy_dn = []
-                m = fy_start
-                while m <= fy_end:
-                    m_end = min(date(m.year, m.month, 28) + timedelta(days=4), fy_end)
-                    m_end = m_end.replace(day=1) - timedelta(days=1) if m_end.month != m.month else m_end
-                    if m_end > fy_end:
-                        m_end = fy_end
-                    dns = self.tally.fetch_debit_notes_month(m, m_end)
+                for m_start, m_end in months:
+                    dns = self.tally.fetch_debit_notes_month(m_start, m_end)
                     fy_dn.extend(dns)
-                    m = (m_end + timedelta(days=1))
+                    time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_dn:
                     self.save_cache(f'debit_notes_{fy}', fy_dn)
                     self.sync_to_backend('debit_notes', fy_dn)
                     all_debit_notes_combined.extend(fy_dn)
-                dn_ids = [v.get('voucher_id', '') for v in fy_dn if v.get('voucher_id')]
-                self.reconcile_with_backend('debit_notes', dn_ids)
                 logger.info(f"  FY {fy}: {len(fy_dn)} debit notes")
                 self.report_progress('phase_complete', phase='debit_notes', count=len(fy_dn))
+
+            # ── RECONCILE after ALL FYs (uses combined IDs so cross-FY data is preserved) ──
+            logger.info("--- Reconciling all voucher types across FYs ---")
+            self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_sales_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('receipts', [v.get('voucher_id', '') for v in all_receipts_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('credit_notes', [v.get('voucher_id', '') for v in all_credit_notes_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('journal_vouchers', [v.get('voucher_id', '') for v in all_journals_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('stock_journals', [v.get('voucher_id', '') for v in all_stock_journals_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('purchase_vouchers', [v.get('voucher_id', '') for v in all_purchases_combined if v.get('voucher_id')])
+            self.reconcile_with_backend('debit_notes', [v.get('voucher_id', '') for v in all_debit_notes_combined if v.get('voucher_id')])
 
             # --- Phase 6: Customer Ledgers (always full — just current balances) ---
             self.financial_year = fys_to_sync[0]
@@ -2620,9 +2631,8 @@ class FlowraSyncAgent:
                     self.save_cache(f'contra_vouchers_{fy}', fy_contra)
                     self.sync_to_backend('contra_vouchers', fy_contra)
                     all_contra_combined.extend(fy_contra)
-                contra_ids = [v.get('voucher_id', '') for v in fy_contra if v.get('voucher_id')]
-                self.reconcile_with_backend('contra_vouchers', contra_ids)
                 logger.info(f"  FY {fy}: {len(fy_contra)} contra vouchers")
+            self.reconcile_with_backend('contra_vouchers', [v.get('voucher_id', '') for v in all_contra_combined if v.get('voucher_id')])
             self.report_progress('phase_complete', phase='contra_vouchers', count=len(all_contra_combined))
 
             # --- Phase 10: Bank & Cash Ledger Balances ---
