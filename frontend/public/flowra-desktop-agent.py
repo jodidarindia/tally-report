@@ -88,6 +88,7 @@ BACKEND_URL = os.getenv('BACKEND_URL', '')  # Will be set during login if not pr
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
 SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'
 SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
+SALES_SYNC_INTERVAL = int(os.getenv('SALES_SYNC_INTERVAL_MINUTES', '5'))
 INCREMENTAL_SYNC = os.getenv('INCREMENTAL_SYNC', 'true').lower() == 'true'
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
@@ -2058,6 +2059,140 @@ class FlowraSyncAgent:
             logger.error(f"  Reconcile error ({data_type}): {e}")
             return False
 
+    def poll_and_execute_commands(self):
+        """Poll backend for pending commands (resync, delete) and execute them."""
+        try:
+            resp = requests.get(
+                f"{self.backend_url}/api/agent/commands",
+                params={"tenant_id": self.tenant_id, "sync_token": self.sync_token},
+                headers={'Authorization': f'Bearer {self.auth_token}'},
+                timeout=10
+            )
+            if resp.status_code != 200:
+                return
+
+            data = resp.json()
+            commands = data.get('data', {}).get('commands', [])
+            if not commands:
+                return
+
+            for cmd in commands:
+                action = cmd.get('action', '')
+                cmd_company_id = cmd.get('company_id', '')
+                cmd_company_name = cmd.get('company_name', '')
+                display = cmd_company_name or cmd_company_id
+
+                if action == 'delete':
+                    logger.info(f"[CMD] DELETE company: {display}")
+                    # Remove from local sync list
+                    if cmd_company_name and cmd_company_name in self._companies_to_sync:
+                        self._companies_to_sync.remove(cmd_company_name)
+                        logger.info(f"  Removed '{cmd_company_name}' from sync list")
+                    # Also check by matching company_id in mappings
+                    for cname, cid in list(self.company_mappings.items()):
+                        if cid == cmd_company_id and cname in self._companies_to_sync:
+                            self._companies_to_sync.remove(cname)
+                            logger.info(f"  Removed '{cname}' (id={cid}) from sync list")
+                    # Clear local cache
+                    safe_name = (cmd_company_name or '').replace(' ', '_').replace('/', '_')
+                    cache_dir = os.path.join(self.export_dir, safe_name) if safe_name else None
+                    if cache_dir and os.path.isdir(cache_dir):
+                        import shutil
+                        shutil.rmtree(cache_dir, ignore_errors=True)
+                        logger.info(f"  Deleted local cache: {cache_dir}")
+                    # Clear hash state for this company
+                    state = load_sync_state()
+                    if 'companies' in state and cmd_company_name in state['companies']:
+                        del state['companies'][cmd_company_name]
+                        save_sync_state(state)
+                    logger.info(f"  Company '{display}' fully removed from agent")
+
+                elif action == 'resync':
+                    logger.info(f"[CMD] RESYNC company: {display}")
+                    # Clear local hash cache so next full sync sends everything fresh
+                    state = load_sync_state()
+                    if 'companies' in state and cmd_company_name in state['companies']:
+                        state['companies'][cmd_company_name]['hashes'] = {}
+                        state['companies'][cmd_company_name]['full_sync_done'] = False
+                        save_sync_state(state)
+                    # Clear local cache files
+                    safe_name = (cmd_company_name or '').replace(' ', '_').replace('/', '_')
+                    cache_dir = os.path.join(self.export_dir, safe_name) if safe_name else None
+                    if cache_dir and os.path.isdir(cache_dir):
+                        import shutil
+                        shutil.rmtree(cache_dir, ignore_errors=True)
+                        logger.info(f"  Cleared local cache: {cache_dir}")
+                    logger.info(f"  Resync queued — next full sync will push fresh data for '{display}'")
+
+                # Acknowledge command
+                try:
+                    requests.post(
+                        f"{self.backend_url}/api/agent/commands/ack",
+                        json={
+                            "tenant_id": self.tenant_id,
+                            "company_id": cmd_company_id,
+                            "action": action,
+                        },
+                        headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
+                        timeout=10
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.debug(f"Command poll error: {e}")
+
+    def run_sales_quick_sync(self):
+        """Quick sync: only sales vouchers for all companies (runs every 5 min)."""
+        if self.sync_running:
+            return
+        self.sync_running = True
+        try:
+            # Poll commands first
+            self.poll_and_execute_commands()
+
+            if not self._companies_to_sync:
+                return
+
+            # Refresh auth if needed
+            try:
+                self.auth_config = self._refresh_auth()
+                if not self.auth_config:
+                    return
+                self.auth_token = self.auth_config.get('token', '')
+                self.sync_token = self.auth_config.get('sync_token', '')
+            except Exception:
+                return
+
+            fys_to_sync = self._sync_fys if hasattr(self, '_sync_fys') and self._sync_fys else get_sync_fys()
+
+            for company in self._companies_to_sync:
+                self._active_company = company
+                self.tally.company = company if company != '_active_' else ''
+
+                if not self._ping_tally():
+                    continue
+
+                logger.info(f"[QUICK] Sales sync: {company}")
+
+                for fy in fys_to_sync:
+                    self.financial_year = fy
+                    fy_start, fy_end = fy_to_dates(fy)
+                    fy_sales = []
+                    for m_start, m_end in months_in_fy(fy):
+                        fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
+                        time.sleep(SLEEP_BETWEEN_REQUESTS)
+                    if fy_sales:
+                        self.sync_to_backend('sales', fy_sales)
+                    sales_ids = [v.get('voucher_id', '') for v in fy_sales if v.get('voucher_id')]
+                    self.reconcile_with_backend('sales', sales_ids)
+                    logger.info(f"  [QUICK] FY {fy}: {len(fy_sales)} sales vouchers synced")
+
+        except Exception as e:
+            logger.debug(f"Quick sales sync error: {e}")
+        finally:
+            self.sync_running = False
+
     def save_cache(self, data_type, data):
         """Save fetched data to local JSON file for caching.
         Uses company-specific subfolder for data isolation."""
@@ -2076,6 +2211,9 @@ class FlowraSyncAgent:
             return
         try:
             self.sync_running = True
+
+            # ── Poll and execute any pending commands (resync/delete) ──
+            self.poll_and_execute_commands()
 
             # Refresh auth token before each cycle
             try:
@@ -2475,9 +2613,10 @@ class FlowraSyncAgent:
         # Initial sync
         self.run_sync_cycle()
 
-        # Schedule every N min
+        # Schedule: full sync every N min, sales quick sync every 5 min
         schedule.every(self.sync_interval).minutes.do(self.run_sync_cycle)
-        logger.info(f"Next sync in {self.sync_interval} minutes. Ctrl+C to stop.")
+        schedule.every(SALES_SYNC_INTERVAL).minutes.do(self.run_sales_quick_sync)
+        logger.info(f"Full sync every {self.sync_interval} min | Sales quick sync every {SALES_SYNC_INTERVAL} min")
         logger.info("Type Ctrl+C to exit. Run with --logout to clear saved credentials.")
 
         try:

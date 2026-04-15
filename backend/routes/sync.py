@@ -875,6 +875,133 @@ def _time_diff_minutes(ts1: str, ts2: str) -> float:
         return 999
 
 
+# ─── AGENT COMMAND QUEUE ───────────────────────────────
+# Commands created by frontend, polled by desktop agent each cycle
+
+@router.post("/agent/commands")
+async def create_agent_command(request: Request):
+    """Create a command for the desktop agent to execute (resync, delete)."""
+    try:
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        user = ctx.get("user") if ctx else None
+
+        if not tenant_id or not user:
+            return APIResponse(success=False, error="Authentication required")
+        if user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+
+        body = await request.json()
+        action = body.get("action", "")
+        company_id = body.get("company_id", "")
+        company_name = body.get("company_name", "")
+
+        if action not in ("resync", "delete"):
+            return APIResponse(success=False, error="Invalid action. Must be 'resync' or 'delete'.")
+        if not company_id:
+            return APIResponse(success=False, error="company_id required")
+
+        cmd = {
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "company_name": company_name,
+            "action": action,
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": user.get("username", ""),
+        }
+
+        await db.agent_commands.insert_one(cmd)
+
+        # For resync: also clear the data immediately so the dashboard shows empty
+        if action == "resync":
+            q = {"tenant_id": tenant_id, "company_id": company_id}
+            data_colls = [
+                "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
+                "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
+                "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
+                "profit_loss", "sync_history",
+            ]
+            total = 0
+            for coll_name in data_colls:
+                result = await db[coll_name].delete_many(q)
+                total += result.deleted_count
+            logger.info(f"Resync command: cleared {total} records for company {company_id}")
+
+        # For delete: clear data AND remove company from user's list
+        if action == "delete":
+            q = {"tenant_id": tenant_id, "company_id": company_id}
+            all_colls = [
+                "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
+                "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
+                "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
+                "profit_loss", "sync_history", "sync_status",
+            ]
+            total = 0
+            for coll_name in all_colls:
+                result = await db[coll_name].delete_many(q)
+                total += result.deleted_count
+            await db.users.update_many(
+                {"tenant_id": tenant_id, "companies": company_id},
+                {"$pull": {"companies": company_id}}
+            )
+            await db.company_mappings.delete_many({"tenant_id": tenant_id, "company_id": company_id})
+            logger.info(f"Delete command: removed {total} records + company mapping for {company_id}")
+
+        return APIResponse(success=True, data={"message": f"Command '{action}' queued for agent."})
+    except Exception as e:
+        logger.error(f"Create agent command error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/agent/commands")
+async def get_agent_commands(request: Request, tenant_id: str = "", sync_token: str = ""):
+    """Agent polls this to get pending commands. Returns all pending commands for the tenant."""
+    try:
+        if not tenant_id:
+            return APIResponse(success=True, data={"commands": []})
+
+        if tenant_id and sync_token:
+            if not verify_sync_token(tenant_id, sync_token):
+                return APIResponse(success=False, error="Invalid sync token")
+
+        commands = await db.agent_commands.find(
+            {"tenant_id": tenant_id, "status": "pending"},
+            {"_id": 0}
+        ).sort("created_at", 1).to_list(50)
+
+        return APIResponse(success=True, data={"commands": commands})
+    except Exception as e:
+        logger.error(f"Get agent commands error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/agent/commands/ack")
+async def ack_agent_command(request: dict):
+    """Agent acknowledges a command as executed."""
+    try:
+        tenant_id = request.get("tenant_id", "")
+        company_id = request.get("company_id", "")
+        action = request.get("action", "")
+
+        if not tenant_id or not action:
+            return APIResponse(success=False, error="tenant_id and action required")
+
+        q = {"tenant_id": tenant_id, "action": action, "status": "pending"}
+        if company_id:
+            q["company_id"] = company_id
+
+        result = await db.agent_commands.update_many(
+            q,
+            {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()}}
+        )
+
+        return APIResponse(success=True, data={"acknowledged": result.modified_count})
+    except Exception as e:
+        logger.error(f"Ack agent command error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 # ─── All collections that store per-company data ───
 _COMPANY_COLLECTIONS = [
     "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",

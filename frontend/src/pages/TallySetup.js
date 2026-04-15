@@ -82,23 +82,20 @@ const TallySetup = ({ companyId }) => {
     const { type, company } = confirmAction;
     setActionLoading(true);
     try {
-      const cid = company.company_id;
-      if (type === 'resync') {
-        const res = await axios.post(`${API}/sync/company/${cid}/resync`);
-        if (res.data?.success) {
-          toast.success(`Data cleared for ${company.company_name}. Run Desktop Agent to sync fresh.`);
-          fetchSyncStatus();
+      const res = await axios.post(`${API}/agent/commands`, {
+        action: type,
+        company_id: company.company_id,
+        company_name: company.company_name,
+      });
+      if (res.data?.success) {
+        if (type === 'delete') {
+          toast.success(`${company.company_name} deleted. Agent will stop syncing this company.`);
         } else {
-          toast.error(res.data?.error || 'Resync failed');
+          toast.success(`Resync queued for ${company.company_name}. Run Desktop Agent to sync fresh.`);
         }
-      } else if (type === 'delete') {
-        const res = await axios.delete(`${API}/sync/company/${cid}`);
-        if (res.data?.success) {
-          toast.success(`${company.company_name} removed completely.`);
-          fetchSyncStatus();
-        } else {
-          toast.error(res.data?.error || 'Delete failed');
-        }
+        fetchSyncStatus();
+      } else {
+        toast.error(res.data?.error || 'Action failed');
       }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Action failed');
