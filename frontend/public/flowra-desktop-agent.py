@@ -1381,20 +1381,20 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     def fetch_bank_cash_ledgers(self) -> List[Dict]:
         """Fetch all Bank and Cash ledgers with opening/closing balances."""
-        xml = """<ENVELOPE>
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
         <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BankCashLedgers</ID></HEADER>
         <BODY><DESC>
-            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
             <TDL><TDLMESSAGE>
-                <COLLECTION NAME="BankCashLedgers" ISMODIFY="No">
+                <COLLECTION NAME="BankCashLedgers" ISINITIALIZE="Yes">
                     <TYPE>Ledger</TYPE>
-                    <CHILDOF>$$GroupSundry</CHILDOF>
-                    <BELONGTO>Yes</BELONGTO>
                     <FILTER>BankCashFilter</FILTER>
-                    <FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE, LEDGERPHONE, BANKDETAILS.BANKNAME, BANKDETAILS.ACCOUNTNUMBER, BANKDETAILS.IFSCODE, LEDSTATISTICSFLAGS.ISCASHLEDGER, LEDSTATISTICSFLAGS.ISBANKLEDGER, BANKOD</FETCH>
+                    <FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
+                    <FETCH>LEDGERPHONE, BANKDETAILS.BANKNAME, BANKDETAILS.ACCOUNTNUMBER, BANKDETAILS.IFSCODE, BANKOD</FETCH>
                 </COLLECTION>
                 <SYSTEM TYPE="Formulae" NAME="BankCashFilter">
-                    $Parent CONTAINS "Bank" OR $Parent CONTAINS "Cash" OR $Parent = "Bank Accounts" OR $Parent = "Bank OD Accounts" OR $Parent = "Cash-in-Hand"
+                    $Parent = "Bank Accounts" OR $Parent = "Bank OD Accounts" OR $Parent = "Cash-in-Hand" OR $$GroupIdx:$PARENT = $$GroupIdx:"Bank Accounts" OR $$GroupIdx:$PARENT = $$GroupIdx:"Bank OD Accounts" OR $$GroupIdx:$PARENT = $$GroupIdx:"Cash-in-Hand"
                 </SYSTEM>
             </TDLMESSAGE></TDL>
         </DESC></BODY></ENVELOPE>"""
@@ -1450,12 +1450,13 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     def fetch_pl_data(self) -> Dict:
         """Fetch Profit & Loss ledger data (Income and Expense groups with balances)."""
-        xml = """<ENVELOPE>
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
         <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PLLedgers</ID></HEADER>
         <BODY><DESC>
-            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
             <TDL><TDLMESSAGE>
-                <COLLECTION NAME="PLLedgers" ISMODIFY="No">
+                <COLLECTION NAME="PLLedgers" ISINITIALIZE="Yes">
                     <TYPE>Ledger</TYPE>
                     <FILTER>PLFilter</FILTER>
                     <FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
@@ -2437,6 +2438,9 @@ class FlowraSyncAgent:
             else:
                 last_voucher_date = date.today()
                 logger.info(f"  Last voucher date: using today ({last_voucher_date.strftime('%d-%b-%Y')})")
+
+            # Report sync started for this company
+            self.report_progress('sync_started', company_name=company_name)
 
             # --- Phase 1: Stock Items (always full — just current balances) ---
             logger.info("--- Phase 1: Stock Items ---")

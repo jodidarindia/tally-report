@@ -640,6 +640,20 @@ async def receive_sync_progress(request: dict):
         req_company_id = request.get('company_id', '')
         logger.info(f"Sync progress: {event_type}")
 
+        # Track is_syncing flag per company
+        if event_type == 'sync_started':
+            await db.sync_status.update_one(
+                {'type': 'agent_sync', 'tenant_id': req_tenant_id, 'company_id': req_company_id},
+                {'$set': {'is_syncing': True, 'sync_started_at': datetime.now(timezone.utc).isoformat()}},
+                upsert=True
+            )
+        elif event_type in ('sync_complete', 'sync_error'):
+            await db.sync_status.update_one(
+                {'type': 'agent_sync', 'tenant_id': req_tenant_id, 'company_id': req_company_id},
+                {'$set': {'is_syncing': False, 'last_sync': datetime.now(timezone.utc).isoformat()}},
+                upsert=True
+            )
+
         await db.sync_status.update_one(
             {'type': 'sync_progress', 'tenant_id': req_tenant_id},
             {'$set': {
@@ -789,6 +803,8 @@ async def get_connection_status(request: Request):
             q["company_id"] = company_id
         sync_status = await db.sync_status.find_one(q, {"_id": 0}, sort=[("last_sync", -1)])
 
+        is_syncing = sync_status.get("is_syncing", False) if sync_status else False
+
         # Get user's companies
         user = await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "companies": 1})
         companies = user.get("companies", []) if user else []
@@ -810,6 +826,7 @@ async def get_connection_status(request: Request):
             "last_sync": sync_status.get("last_sync") if sync_status else None,
             "agent_version": sync_status.get("agent_version", "") if sync_status else "",
             "companies": companies_with_names,
+            "is_syncing": is_syncing,
             "sync_counts": {
                 "inventory_items": inv_count,
                 "sales_vouchers": sales_count,

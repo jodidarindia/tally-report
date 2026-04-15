@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import './App.css';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark
+  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from './hooks/useAuth';
@@ -46,6 +46,7 @@ function App() {
   const [showRenewalPopup, setShowRenewalPopup] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const wsRef = useRef(null);
   const initDoneRef = useRef(false);
 
@@ -103,7 +104,12 @@ function App() {
         wsRef.current.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.event === 'status_response') setSyncStatus(msg.data?.sync_status);
+            if (msg.event === 'status_response') {
+              setSyncStatus(msg.data?.sync_status);
+              setIsSyncing(msg.data?.sync_status?.is_syncing || false);
+            }
+            if (msg.event === 'sync_started') setIsSyncing(true);
+            if (msg.event === 'sync_complete' || msg.event === 'sync_error') setIsSyncing(false);
             if (msg.event === 'data_synced') toast.success(`${msg.data?.data_type}: ${msg.data?.count} items synced`);
           } catch {}
         };
@@ -180,6 +186,12 @@ function App() {
       />
 
       <main className="p-3 sm:p-6 max-w-full">
+        {isSyncing && (
+          <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5" data-testid="sync-banner">
+            <RefreshCw size={14} className="text-amber-600 animate-spin shrink-0" />
+            <span className="text-sm text-amber-800 font-medium">Sync in progress — data is updating. Showing last synced data.</span>
+          </div>
+        )}
         <PageRenderer
           currentPage={currentPage}
           user={user}
