@@ -1247,24 +1247,38 @@ $$GroupIdx:$PARENT = $$GroupIdx:$$GroupSundryCreditors
             if not companies:
                 return self._fallback_fy_discovery()
 
+            if isinstance(companies, str):
+                # Single company returned as string name — can't extract dates from name alone
+                # Try the collection items approach instead
+                companies = self._get_collection_items(data, 'COMPANY')
+                if not companies:
+                    return self._fallback_fy_discovery()
+
             if isinstance(companies, dict):
                 companies = [companies]
 
             fys = set()
             for c in companies:
+                if isinstance(c, str):
+                    # Skip string entries — they're just company names without date fields
+                    continue
                 start = c.get('BOOKSFROM') or c.get('STARTINGFROM', '')
-                end = c.get('ENDDATE', '')
-                if start:
-                    try:
-                        s = datetime.strptime(start[:8], '%Y%m%d')
-                        fy_start_year = s.year if s.month >= 4 else s.year - 1
-                        today = date.today()
-                        current_fy_start = today.year if today.month >= 4 else today.year - 1
-                        for y in range(fy_start_year, current_fy_start + 1):
-                            short = str(y + 1)[-2:]
-                            fys.add(f"{y}-{short}")
-                    except Exception:
-                        pass
+                if isinstance(start, dict):
+                    start = start.get('#text', '')
+                start = str(start or '').strip()
+                if not start:
+                    continue
+                try:
+                    # Tally dates are YYYYMMDD format
+                    s = datetime.strptime(start[:8], '%Y%m%d')
+                    fy_start_year = s.year if s.month >= 4 else s.year - 1
+                    today = date.today()
+                    current_fy_start = today.year if today.month >= 4 else today.year - 1
+                    for y in range(fy_start_year, current_fy_start + 1):
+                        short = str(y + 1)[-2:]
+                        fys.add(f"{y}-{short}")
+                except Exception:
+                    pass
 
             if fys:
                 return sorted(fys)
@@ -1701,7 +1715,7 @@ class FlowraSyncAgent:
             if resp.status_code == 200:
                 parsed = xmltodict.parse(resp.text)
                 companies = []
-                items = self._get_collection_items(parsed, 'COMPANY')
+                items = self.tally._get_collection_items(parsed, 'COMPANY')
                 for item in items:
                     if isinstance(item, dict):
                         name = item.get('NAME', item.get('@NAME', ''))
@@ -1764,7 +1778,7 @@ class FlowraSyncAgent:
                                  timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 parsed = xmltodict.parse(resp.text)
-                items = self._get_collection_items(parsed, 'COMPANY')
+                items = self.tally._get_collection_items(parsed, 'COMPANY')
                 for item in items:
                     if isinstance(item, dict):
                         name = item.get('NAME', item.get('@NAME', ''))
