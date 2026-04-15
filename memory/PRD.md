@@ -6,13 +6,10 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analy
 ## Architecture
 - **Frontend**: React + Tailwind CSS, modular component architecture
 - **Backend**: FastAPI + MongoDB
-- **Desktop Agent**: v8 at `/app/desktop-agent/tally_sync_agent_v8.py`
+- **Desktop Agent**: v9 at `/app/desktop-agent/tally_sync_agent_v9.py`
 
 ### Frontend Architecture (Refactored Apr 2026)
-App.js (~160 lines) — Clean orchestrator composing hooks + components:
-- **Hooks**: `useAuth`, `useIdleTimeout`, `useCompany`
-- **Components**: `LoginPage`, `PublicRouter`, `AppNavbar`, `SuperAdminLayout`, `PageRenderer`, `IdleWarningModal`
-- **Pages**: Dashboard, Sales, CRM, Inventory, InventoryAnalytics, EnhancedAIReports, CACorner, ReferAndEarn, QuestionnaireForm, etc.
+App.js (~160 lines) — Orchestrator with hooks + components.
 
 ## Key Features Implemented
 - Customer CRM, Inventory Analytics, SuperAdmin controls
@@ -20,33 +17,29 @@ App.js (~160 lines) — Clean orchestrator composing hooks + components:
 - reCAPTCHA v3, 15-min idle logout, Excel exports
 - Auto-reorder levels, Branch toggle, Public pages
 - CA Corner (Cash Flow, P&L, AI Expense Insights) — Enterprise
-- Digital Questionnaire Form (6-step) + SuperAdmin Leads tab with Excel export
-- Resources menu on landing page (Presentation, Questionnaire PDF, Needs Assessment form)
+- Digital Questionnaire Form (6-step) + SuperAdmin Leads tab
+- Resources menu on landing page
+- **Deletion Reconciliation (v9)**: Agent sends manifest of all IDs per data type; backend deletes orphans not in manifest. Fixes ghost data from Tally* deletions.
+- **Part Number**: Stock items now fetch PARTNUMBER from Tally*. Displayed in Inventory table and Movement Analysis.
 
-## Marketing Materials
-1. FLOWRA_Presentation.pdf (12 slides)
-2. FLOWRA_Training_Booklet.pdf
-3. FLOWRA_Social_Media_Kit.pdf (7 posts + 30-day calendar)
-4. FLOWRA_Customer_Questionnaire.pdf (6-section printable)
-5. **FLOWRA_Coming_Soon.pdf** (12 slides — Dispatch Terminal + Salesman Order System)
+## Desktop Agent v9 Changes
+- Deletion reconciliation (Option B) for 11 data types: sales, receipts, credit_notes, journal_vouchers, stock_journals, purchase_vouchers, debit_notes, contra_vouchers, customers, sundry_creditors, bank_cash_ledgers
+- PARTNUMBER fetch from Tally* TDL Collection
+- All v8 features retained (FY discovery, encrypted auth, P&L, Cash Flow sync)
+
+## API Endpoints (New)
+- `POST /api/agent/reconcile` — Receives manifest_ids from agent, deletes orphan DB records
 
 ## Collections
 - `referrals`, `contra_vouchers`, `bank_cash_ledgers`, `profit_loss`
 - `users`, `questionnaires`
+- `sync_history` — Now logs reconcile events
 
-## Upcoming — P1 Priority
+## Upcoming — P1
 - **Dispatch Terminal** (Enterprise) — see `/app/memory/DISPATCH_TERMINAL_SPEC.md`
-  - McDonald's KDS-style real-time dispatch board
-  - Invoice cards with full tracking (boxes, porter, transport, employee)
-  - Queue system, manual cards, physical verification
-  - Porter expense tracking with weekly settlement
-  - Close-of-day summary, admin drill-down for pending only
-- Compile Desktop Agent v8 to `.exe`
+- Compile Desktop Agent v9 to `.exe`
 
 ## Upcoming — P2
 - **Salesman Order System** (Enterprise)
-  - Salesman login, mapped customers, inventory visibility
-  - Order creation → admin approval → dispatch
-  - Beat plans, performance analytics
 - Export Audit Logs to CSV
-- Automated payment follow-up reminders via email/WhatsApp
+- Automated payment follow-up reminders
