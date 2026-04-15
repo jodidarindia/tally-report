@@ -2170,7 +2170,7 @@ class FlowraSyncAgent:
                 self._active_company = company
                 self.tally.company = company if company != '_active_' else ''
 
-                if not self._ping_tally():
+                if not self.tally._ping_tally():
                     continue
 
                 logger.info(f"[QUICK] Sales sync: {company}")
@@ -2270,7 +2270,7 @@ class FlowraSyncAgent:
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
 
             # Test connection — use a lightweight ping that does NOT overwrite self.tally.company
-            if not self._ping_tally():
+            if not self.tally._ping_tally():
                 logger.error("Cannot connect to Tally! Is TallyPrime running?")
                 self.report_progress('sync_error', error='Tally not responding')
                 return
