@@ -1881,7 +1881,7 @@ class FlowraSyncAgent:
         return self.company_mappings.get(company_name, company_name)
 
     def discover_and_select_fys(self):
-        """Discover available FYs from Tally and ask user to select starting FY."""
+        """Discover available FYs from Tally and ask user to select starting FY per company."""
         logger.info("Discovering available financial years from Tally*...")
         available_fys = self.tally.discover_financial_years()
 
@@ -1890,48 +1890,67 @@ class FlowraSyncAgent:
             return
 
         cur = current_fy()
-
-        # Check if user has previously selected a starting FY
         state = load_sync_state()
-        saved_start_fy = state.get('selected_start_fy')
-        if saved_start_fy and saved_start_fy in available_fys:
-            # Filter FYs from saved selection to current
-            idx = available_fys.index(saved_start_fy)
-            self._sync_fys = available_fys[idx:]
-            if cur not in self._sync_fys:
-                self._sync_fys.append(cur)
-            logger.info(f"Resuming from saved FY selection: {saved_start_fy} to {self._sync_fys[-1]} ({len(self._sync_fys)} FYs)")
-            return
 
-        # First-time: ask user to select starting FY
-        print("\n" + "=" * 50)
-        print("  Available Financial Years in Tally*:")
-        print("=" * 50)
-        for i, fy in enumerate(available_fys, 1):
-            marker = " (current)" if fy == cur else ""
-            print(f"  {i}. FY {fy}{marker}")
-        print("=" * 50)
-        print("  Select STARTING FY to sync from (data will sync")
-        print("  from this FY up to the current FY)")
-        print()
+        if not hasattr(self, '_company_fys'):
+            self._company_fys = {}
 
-        while True:
-            choice = input(f"  Enter number [1-{len(available_fys)}]: ").strip()
-            try:
-                idx = int(choice) - 1
-                if 0 <= idx < len(available_fys):
-                    start_fy = available_fys[idx]
-                    self._sync_fys = available_fys[idx:]
-                    if cur not in self._sync_fys:
-                        self._sync_fys.append(cur)
-                    # Save selection
-                    state['selected_start_fy'] = start_fy
-                    save_sync_state(state)
-                    logger.info(f"Will sync FYs: {start_fy} to {self._sync_fys[-1]} ({len(self._sync_fys)} FYs)")
-                    break
-            except ValueError:
-                pass
-            print("  Invalid choice, try again.")
+        companies = self._companies_to_sync or ['_active_']
+
+        for company in companies:
+            display = company if company != '_active_' else 'Active Company'
+
+            # Per-company state key
+            company_fy_key = f"selected_start_fy__{company.replace(' ', '_')}"
+            saved_start_fy = state.get(company_fy_key)
+
+            if saved_start_fy and saved_start_fy in available_fys:
+                idx = available_fys.index(saved_start_fy)
+                company_fys = available_fys[idx:]
+                if cur not in company_fys:
+                    company_fys.append(cur)
+                self._company_fys[company] = company_fys
+                logger.info(f"  [{display}] Resuming from saved FY: {saved_start_fy} to {company_fys[-1]} ({len(company_fys)} FYs)")
+                continue
+
+            # First-time for this company: ask user
+            print(f"\n{'=' * 56}")
+            print(f"  FY Selection for: {display}")
+            print(f"{'=' * 56}")
+            print(f"  Available Financial Years in Tally*:")
+            print(f"{'=' * 56}")
+            for i, fy in enumerate(available_fys, 1):
+                marker = " (current)" if fy == cur else ""
+                print(f"  {i}. FY {fy}{marker}")
+            print("=" * 56)
+            print(f"  Select STARTING FY to sync from for {display}")
+            print(f"  (data will sync from this FY up to current FY)")
+            print()
+
+            while True:
+                choice = input(f"  Enter number [1-{len(available_fys)}]: ").strip()
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(available_fys):
+                        start_fy = available_fys[idx]
+                        company_fys = available_fys[idx:]
+                        if cur not in company_fys:
+                            company_fys.append(cur)
+                        self._company_fys[company] = company_fys
+                        # Save per-company selection
+                        state[company_fy_key] = start_fy
+                        save_sync_state(state)
+                        logger.info(f"  [{display}] Will sync FYs: {start_fy} to {company_fys[-1]} ({len(company_fys)} FYs)")
+                        break
+                except ValueError:
+                    pass
+                print("  Invalid choice, try again.")
+
+        # Also set global _sync_fys as union of all company FYs (for backward compat)
+        all_fys = set()
+        for fys in self._company_fys.values():
+            all_fys.update(fys)
+        self._sync_fys = sorted(all_fys) if all_fys else None
 
     def report_progress(self, event_type, **kwargs):
         company = self._active_company or self.tally.company or ''
@@ -2093,6 +2112,11 @@ class FlowraSyncAgent:
                         if cid == cmd_company_id and cname in self._companies_to_sync:
                             self._companies_to_sync.remove(cname)
                             logger.info(f"  Removed '{cname}' (id={cid}) from sync list")
+                    # Clear per-company FY selection
+                    state = load_sync_state()
+                    fy_key = f"selected_start_fy__{cmd_company_name.replace(' ', '_')}"
+                    if fy_key in state:
+                        del state[fy_key]
                     # Clear local cache
                     safe_name = (cmd_company_name or '').replace(' ', '_').replace('/', '_')
                     cache_dir = os.path.join(self.export_dir, safe_name) if safe_name else None
@@ -2101,10 +2125,11 @@ class FlowraSyncAgent:
                         shutil.rmtree(cache_dir, ignore_errors=True)
                         logger.info(f"  Deleted local cache: {cache_dir}")
                     # Clear hash state for this company
-                    state = load_sync_state()
                     if 'companies' in state and cmd_company_name in state['companies']:
                         del state['companies'][cmd_company_name]
-                        save_sync_state(state)
+                    save_sync_state(state)
+                    if hasattr(self, '_company_fys') and cmd_company_name in self._company_fys:
+                        del self._company_fys[cmd_company_name]
                     logger.info(f"  Company '{display}' fully removed from agent")
 
                 elif action == 'resync':
@@ -2115,6 +2140,13 @@ class FlowraSyncAgent:
                         state['companies'][cmd_company_name]['hashes'] = {}
                         state['companies'][cmd_company_name]['full_sync_done'] = False
                         save_sync_state(state)
+                    # Clear per-company FY selection — agent will ask user again
+                    fy_key = f"selected_start_fy__{cmd_company_name.replace(' ', '_')}"
+                    if fy_key in state:
+                        del state[fy_key]
+                        save_sync_state(state)
+                    if hasattr(self, '_company_fys') and cmd_company_name in self._company_fys:
+                        del self._company_fys[cmd_company_name]
                     # Clear local cache files
                     safe_name = (cmd_company_name or '').replace(' ', '_').replace('/', '_')
                     cache_dir = os.path.join(self.export_dir, safe_name) if safe_name else None
@@ -2122,7 +2154,7 @@ class FlowraSyncAgent:
                         import shutil
                         shutil.rmtree(cache_dir, ignore_errors=True)
                         logger.info(f"  Cleared local cache: {cache_dir}")
-                    logger.info(f"  Resync queued — next full sync will push fresh data for '{display}'")
+                    logger.info(f"  Resync queued — agent will ask for FY selection on next cycle for '{display}'")
 
                 # Acknowledge command
                 try:
@@ -2154,17 +2186,13 @@ class FlowraSyncAgent:
             if not self._companies_to_sync:
                 return
 
-            # Refresh auth if needed
+            # Refresh auth
             try:
-                self.auth_config = self._refresh_auth()
-                if not self.auth_config:
-                    return
+                self.auth_config = get_or_refresh_auth(self.backend_url)
                 self.auth_token = self.auth_config.get('token', '')
                 self.sync_token = self.auth_config.get('sync_token', '')
             except Exception:
                 return
-
-            fys_to_sync = self._sync_fys if hasattr(self, '_sync_fys') and self._sync_fys else get_sync_fys()
 
             for company in self._companies_to_sync:
                 self._active_company = company
@@ -2173,9 +2201,17 @@ class FlowraSyncAgent:
                 if not self.tally._ping_tally():
                     continue
 
+                # Per-company FYs
+                if hasattr(self, '_company_fys') and company in self._company_fys:
+                    fys = self._company_fys[company]
+                elif hasattr(self, '_sync_fys') and self._sync_fys:
+                    fys = self._sync_fys
+                else:
+                    fys = get_sync_fys()
+
                 logger.info(f"[QUICK] Sales sync: {company}")
 
-                for fy in fys_to_sync:
+                for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
                     fy_sales = []
@@ -2275,11 +2311,46 @@ class FlowraSyncAgent:
                 self.report_progress('sync_error', error='Tally not responding')
                 return
 
-            # Determine which FYs to sync
-            if hasattr(self, '_sync_fys') and self._sync_fys:
+            # Determine which FYs to sync — per-company if available
+            if hasattr(self, '_company_fys') and company_name in self._company_fys:
+                fys_to_sync = self._company_fys[company_name]
+            elif hasattr(self, '_sync_fys') and self._sync_fys:
                 fys_to_sync = self._sync_fys
             else:
                 fys_to_sync = get_sync_fys()
+
+            # If no per-company FY set (e.g. after resync), re-ask for this company
+            if hasattr(self, '_company_fys') and company_name not in self._company_fys:
+                available_fys = self.tally.discover_financial_years()
+                if available_fys:
+                    cur = current_fy()
+                    print(f"\n{'=' * 56}")
+                    print(f"  FY Selection for: {company_name}")
+                    print(f"{'=' * 56}")
+                    for i, fy in enumerate(available_fys, 1):
+                        marker = " (current)" if fy == cur else ""
+                        print(f"  {i}. FY {fy}{marker}")
+                    print("=" * 56)
+                    while True:
+                        choice = input(f"  Enter starting FY [1-{len(available_fys)}]: ").strip()
+                        try:
+                            idx = int(choice) - 1
+                            if 0 <= idx < len(available_fys):
+                                start_fy = available_fys[idx]
+                                fys_to_sync = available_fys[idx:]
+                                if cur not in fys_to_sync:
+                                    fys_to_sync.append(cur)
+                                self._company_fys[company_name] = fys_to_sync
+                                state = load_sync_state()
+                                fy_key = f"selected_start_fy__{company_name.replace(' ', '_')}"
+                                state[fy_key] = start_fy
+                                save_sync_state(state)
+                                logger.info(f"  [{company_name}] Will sync FYs: {start_fy} to {fys_to_sync[-1]}")
+                                break
+                        except ValueError:
+                            pass
+                        print("  Invalid choice, try again.")
+
             logger.info(f"  Syncing FYs: {', '.join(fys_to_sync)} ({sync_mode} mode)")
 
             # If company name is still unknown, try to resolve from Tally now
