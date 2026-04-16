@@ -8,7 +8,7 @@ from db import db
 from models import (
     CustomerFollowup, CustomerFollowupCreate, APIResponse
 )
-from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, get_previous_fy
+from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, get_previous_fy, get_jv_party_amount
 from services.auth_service import get_current_user
 from services.export_service import ExportService
 from services.tenant_context import get_tenant_context
@@ -121,9 +121,8 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             for jv in pre_jvs:
                 p = jv.get('party_name', '')
                 if p:
-                    # Journal debit increases outstanding, credit reduces it
-                    debit = safe_num(jv.get('debit_amount'))
-                    credit = safe_num(jv.get('credit_amount'))
+                    # Use party-specific amount from ledger_entries
+                    debit, credit = get_jv_party_amount(jv)
                     opening_balance[p] = opening_balance.get(p, 0) + debit - credit
 
             # If we have Tally's synced opening_balance AND we have NO pre-FY vouchers for a customer,
@@ -149,9 +148,8 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         for jv in fy_jvs:
             p = safe_str(jv.get("party_name")).strip()
             if p:
-                # Net journal effect: debit increases outstanding, credit reduces it
-                debit = safe_num(jv.get("debit_amount"))
-                credit = safe_num(jv.get("credit_amount"))
+                # Use party-specific amount from ledger_entries (not total voucher amount)
+                debit, credit = get_jv_party_amount(jv)
                 net_credit = credit - debit  # Positive = reduces outstanding
                 customer_jv_adjustment[p] = customer_jv_adjustment.get(p, 0) + net_credit
 
@@ -743,13 +741,14 @@ async def export_customer_ledger(request: Request):
                 'narration': cn.get('narration', '')
             })
         for jv in journals:
+            debit, credit = get_jv_party_amount(jv)
             entries.append({
                 'date': jv.get('voucher_date', ''),
                 'particulars': f"Journal - {jv.get('voucher_id', '')}",
                 'vch_type': 'Journal',
                 'vch_no': jv.get('voucher_id', ''),
-                'debit': safe_num(jv.get('debit_amount')),
-                'credit': safe_num(jv.get('credit_amount')),
+                'debit': debit,
+                'credit': credit,
                 'narration': jv.get('narration', '')
             })
 
@@ -774,14 +773,15 @@ async def export_customer_ledger(request: Request):
                     {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
                 ).to_list(10000)
                 all_jv_pre = await db.journal_vouchers.find(
-                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1}
+                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1, "party_name": 1, "ledger_entries": 1}
                 ).to_list(10000)
 
                 opening_balance += sum(safe_num(v.get('total_amount')) for v in all_sales_pre)
                 opening_balance -= sum(safe_num(r.get('amount')) for r in all_receipts_pre)
                 opening_balance -= sum(safe_num(cn.get('total_amount')) for cn in all_cn_pre)
                 for jv in all_jv_pre:
-                    opening_balance += safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+                    debit, credit = get_jv_party_amount(jv)
+                    opening_balance += debit - credit
             except Exception:
                 pass
 
@@ -907,7 +907,8 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             for jv in pre_jvs:
                 p = jv.get('party_name', '')
                 if p:
-                    opening_balance_map[p] = opening_balance_map.get(p, 0) + safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+                    debit, credit = get_jv_party_amount(jv)
+                    opening_balance_map[p] = opening_balance_map.get(p, 0) + debit - credit
 
             # Fallback: use Tally's opening_balance from customers collection for any customer not captured by pre-FY vouchers
             for sc in synced_customers:
@@ -938,7 +939,9 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         for jv in all_journals:
             party = safe_str(jv.get("party_name")).strip()
             if party:
-                customer_jv[party] = customer_jv.get(party, 0) + safe_num(jv.get("credit_amount"))
+                _, credit = get_jv_party_amount(jv)
+                if credit > 0:
+                    customer_jv[party] = customer_jv.get(party, 0) + credit
 
         behavior_map = {}
         for voucher in all_sales:

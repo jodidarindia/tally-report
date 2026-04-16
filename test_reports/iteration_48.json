@@ -1,0 +1,89 @@
+{
+  "summary": "Iteration 48: Verified JV party amount fix for outstanding calculations. The fix correctly extracts party-specific amounts from ledger_entries instead of using total voucher amounts. All 9 backend tests passed. Frontend UI verified - CRM Outstanding and Payment Behavior tabs show correct values.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AppNavbar", "issues": ["Console warning: span cannot be child of option element - hydration error warning (non-blocking, same as iteration 47)"]}
+    ]
+  },
+  "features_tested": {
+    "outstanding_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/customers/outstanding?fy=2025-26 returns 200 with correct journal_credit values"
+    },
+    "abhishek_auto_parts_outstanding": {
+      "status": "PASS",
+      "details": "Abhishek Auto Parts outstanding = 0.0 (was -17642 before fix). journal_credit = 17642.0 (party-specific, not 35284.0 total)"
+    },
+    "bk_sales_journal_credit": {
+      "status": "PASS",
+      "details": "Bk Sales journal_credit = 1531.0 (party-specific, was 3062.0 before fix)"
+    },
+    "payment_behavior_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/customers/payment-behavior?fy=2025-26 returns 200 with correct journal_credit values"
+    },
+    "payment_behavior_jv_fix": {
+      "status": "PASS",
+      "details": "Payment behavior uses party-specific JV amounts. Abhishek journal_credit = 17642.0"
+    },
+    "overdue_digest_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/dashboard/overdue-digest returns 200 without errors. Total overdue: Rs.16,717,990 across 87 invoices for 3 customers"
+    },
+    "outstanding_formula_verification": {
+      "status": "PASS",
+      "details": "Outstanding = Opening Balance + Sales - (Receipts + Credit Notes + Journal Credits) formula verified"
+    },
+    "frontend_crm_outstanding": {
+      "status": "PASS",
+      "details": "CRM Outstanding tab shows Abhishek Auto Parts with Outstanding = Rs.0, Total Sales = Rs.17,642, Paid = Rs.17,642"
+    },
+    "frontend_crm_payment_behavior": {
+      "status": "PASS",
+      "details": "CRM Payment Behavior tab shows Abhishek Auto Parts with Outstanding = Rs.0, Pay Ratio = 100%, Pattern = excellent"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration48_jv_fix.py",
+    "/app/test_reports/pytest/iteration48_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "get_jv_party_amount() helper correctly extracts party-specific amount from ledger_entries array",
+    "Fallback logic divides total by number of entries if party not found in ledger_entries",
+    "Fix applied consistently across: customers.py (outstanding, payment behavior, ledger export) and utils.py (overdue digest)",
+    "Outstanding calculation formula: OB + Sales - (Receipts + CN + JV) is correct"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (9/9 pytest tests passed)",
+    "frontend": "100% (All UI elements rendered correctly with correct values)"
+  },
+  "test_credentials": {
+    "admin": "admin / admin123",
+    "note": "Login requires captcha_token field - send empty string '' for API testing. For browser testing, inject token via localStorage.setItem('flowra_token', token)"
+  },
+  "seed_data_creation": "No new seed data created. Used existing data for testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 48 verified JV party amount fix: 1) get_jv_party_amount() helper extracts party-specific amount from ledger_entries array. 2) Abhishek Auto Parts: outstanding=0.0 (correct), journal_credit=17642.0 (party-specific). 3) Bk Sales: journal_credit=1531.0 (party-specific). 4) Fix applied in customers.py (outstanding line 148-156, opening balance line 123-127, payment behavior line 937-941, ledger export line 746-754) and utils.py (overdue digest line 175-177). 5) All 9 backend tests pass. 6) Frontend UI renders correctly with correct values.",
+  "verification_summary": {
+    "before_fix": {
+      "abhishek_outstanding": -17642,
+      "abhishek_journal_credit": 35284,
+      "bk_sales_journal_credit": 3062
+    },
+    "after_fix": {
+      "abhishek_outstanding": 0.0,
+      "abhishek_journal_credit": 17642.0,
+      "bk_sales_journal_credit": 1531.0
+    },
+    "fix_explanation": "JV documents store TOTAL voucher amounts in debit_amount/credit_amount fields (sum of all ledger entries). The fix extracts the party-specific amount from the ledger_entries array, which is the correct value for outstanding calculations."
+  }
+}

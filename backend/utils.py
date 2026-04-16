@@ -17,6 +17,36 @@ def safe_num(val, default=0):
         return default
 
 
+def get_jv_party_amount(jv):
+    """Extract the party-specific debit/credit from a journal voucher.
+
+    JV documents store total voucher amounts in debit_amount/credit_amount,
+    but for outstanding calculations we need only the amount belonging to
+    the specific party_name. This is found inside ledger_entries.
+
+    Returns (debit, credit) tuple for the party.
+    """
+    party = (jv.get('party_name') or '').lower().strip()
+    entries = jv.get('ledger_entries') or []
+    party_amt = 0
+    for e in entries:
+        if (e.get('ledger_name') or '').lower().strip() == party:
+            party_amt = float(e.get('amount') or 0)
+            break
+    # Fallback: if party not found in entries, divide total by number of entries
+    if party_amt == 0 and entries:
+        total = float(jv.get('credit_amount') or jv.get('debit_amount') or 0)
+        party_amt = total / len(entries)
+
+    debit = 0.0
+    credit = 0.0
+    if float(jv.get('debit_amount') or 0) > 0:
+        debit = party_amt
+    elif float(jv.get('credit_amount') or 0) > 0:
+        credit = party_amt
+    return debit, credit
+
+
 def safe_str(val, default=""):
     """Return string value or default if None."""
     return str(val) if val is not None else default
@@ -142,7 +172,7 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
         party = safe_str(jv.get("party_name")).strip()
         if not party:
             continue
-        credit_amt = safe_num(jv.get("credit_amount"))
+        _, credit_amt = get_jv_party_amount(jv)
         if credit_amt > 0:
             customer_credits[party] = customer_credits.get(party, 0) + credit_amt
 
