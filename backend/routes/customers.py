@@ -63,10 +63,11 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
         # Filter branch parties from vouchers
         if branch_parties:
-            all_sales = [v for v in all_sales if v.get("party_name") not in branch_parties]
-            all_receipts = [v for v in all_receipts if v.get("party_name") not in branch_parties]
-            all_credit_notes = [v for v in all_credit_notes if v.get("party_name") not in branch_parties]
-            all_journals = [v for v in all_journals if v.get("party_name") not in branch_parties]
+            bp_lower = set(p.lower().strip() for p in branch_parties)
+            all_sales = [v for v in all_sales if (v.get("party_name") or "").lower().strip() not in bp_lower]
+            all_receipts = [v for v in all_receipts if (v.get("party_name") or "").lower().strip() not in bp_lower]
+            all_credit_notes = [v for v in all_credit_notes if (v.get("party_name") or "").lower().strip() not in bp_lower]
+            all_journals = [v for v in all_journals if (v.get("party_name") or "").lower().strip() not in bp_lower]
 
         # Compute FY boundaries
         fy_start_str = None
@@ -102,7 +103,7 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             fy_cns = filter_vouchers_by_fy(fy_cns, fy)
             fy_jvs = filter_vouchers_by_fy(fy_jvs, fy)
 
-        # Compute opening balance per customer (pre-FY: sales - receipts - credit notes - journal credits)
+        # Compute opening balance per customer (pre-FY: sales - receipts - credit notes ± journals)
         opening_balance = {}
         if fy_start_str:
             for v in pre_sales:
@@ -120,9 +121,13 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             for jv in pre_jvs:
                 p = jv.get('party_name', '')
                 if p:
-                    opening_balance[p] = opening_balance.get(p, 0) + safe_num(jv.get('debit_amount')) - safe_num(jv.get('credit_amount'))
+                    # Journal debit increases outstanding, credit reduces it
+                    debit = safe_num(jv.get('debit_amount'))
+                    credit = safe_num(jv.get('credit_amount'))
+                    opening_balance[p] = opening_balance.get(p, 0) + debit - credit
 
-            # Fallback: use Tally's opening_balance from customers collection
+            # If we have Tally's synced opening_balance AND we have NO pre-FY vouchers for a customer,
+            # use Tally's opening balance. But do NOT mix: if computed opening exists, trust the computation.
             for sc in synced_customers:
                 name = sc.get("customer_name")
                 tally_ob = safe_num(sc.get("opening_balance", 0))
@@ -132,7 +137,6 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         # Compute current FY credits per customer
         customer_receipts = {}
         customer_cn_total = {}
-        customer_jv_credit = {}
         for r in fy_receipts:
             p = safe_str(r.get("party_name")).strip()
             if p:
@@ -141,10 +145,15 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             p = safe_str(cn.get("party_name")).strip()
             if p:
                 customer_cn_total[p] = customer_cn_total.get(p, 0) + safe_num(cn.get("total_amount"))
+        customer_jv_adjustment = {}
         for jv in fy_jvs:
             p = safe_str(jv.get("party_name")).strip()
             if p:
-                customer_jv_credit[p] = customer_jv_credit.get(p, 0) + safe_num(jv.get("credit_amount"))
+                # Net journal effect: debit increases outstanding, credit reduces it
+                debit = safe_num(jv.get("debit_amount"))
+                credit = safe_num(jv.get("credit_amount"))
+                net_credit = credit - debit  # Positive = reduces outstanding
+                customer_jv_adjustment[p] = customer_jv_adjustment.get(p, 0) + net_credit
 
         customer_map = {}
         customer_vouchers = {}
@@ -224,16 +233,16 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             total_sales = cust["total_sales"]
             receipt_paid = customer_receipts.get(party, 0)
             cn_credit = customer_cn_total.get(party, 0)
-            jv_credit = customer_jv_credit.get(party, 0)
-            total_credits = receipt_paid + cn_credit + jv_credit
+            jv_adjustment = customer_jv_adjustment.get(party, 0)  # Net: positive = reduces outstanding
+            total_credits = receipt_paid + cn_credit + jv_adjustment
 
-            # Outstanding = Opening + Sales - Receipts - Credit Notes - Journal Credits
+            # Outstanding = Opening + Sales - Receipts - Credit Notes - Net Journal Adjustments
             outstanding = ob + total_sales - total_credits
-            cust["outstanding_amount"] = round(max(0, outstanding), 2)
+            cust["outstanding_amount"] = round(outstanding, 2)  # Allow negative (advance payments)
             cust["paid_amount"] = round(total_credits, 2)
             cust["receipt_count"] = len([r for r in fy_receipts if r.get("party_name") == party])
             cust["credit_note_total"] = round(cn_credit, 2)
-            cust["journal_credit"] = round(jv_credit, 2)
+            cust["journal_credit"] = round(jv_adjustment, 2)
 
             # FIFO aging on outstanding
             voucher_list = customer_vouchers.get(party, [])

@@ -15,7 +15,14 @@ export function useCompany(isAuthenticated) {
   const [selectedCompany, setSelectedCompany] = useState('');
   const [companyMappings, setCompanyMappings] = useState({});
   const [excludeBranches, setExcludeBranches] = useState(() => {
-    return localStorage.getItem('flowra_exclude_branches') === 'true';
+    const saved = localStorage.getItem('flowra_exclude_branches') === 'true';
+    // Set header immediately on initialization (not just in useEffect)
+    if (saved) {
+      axios.defaults.headers.common['X-Exclude-Branches'] = 'true';
+    } else {
+      delete axios.defaults.headers.common['X-Exclude-Branches'];
+    }
+    return saved;
   });
   const [showCompanySelector, setShowCompanySelector] = useState(false);
 
