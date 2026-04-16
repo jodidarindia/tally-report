@@ -297,11 +297,12 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
             date_str = v.get("voucher_date", "")
             month = date_str[:7] if date_str else ""
             for item in items_list:
-                name = item.get("item_name") or item.get("stock_item_name") or ""
+                name = item.get("item_name") or item.get("stock_item_name") or item.get("item") or ""
                 if not name:
                     continue
                 qty = abs(float(item.get("quantity") or item.get("billed_qty") or 0))
-                amt = abs(float(item.get("amount") or item.get("rate", 0) * qty))
+                rate = float(item.get("rate", 0) or 0)
+                amt = abs(float(item.get("amount") or 0)) or abs(rate * qty)
                 item_sales[name]["qty_sold"] += qty
                 item_sales[name]["revenue"] += amt
                 if month:
