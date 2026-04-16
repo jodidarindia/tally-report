@@ -25,16 +25,23 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analy
 - Branch exclusion for overdue, concentration risk, SPIP, forecast
 - Month-vs-month cross-FY comparison in sales forecast
 
-## Critical Helper: get_jv_party_amount()
-Located in `/app/backend/utils.py`. Journal voucher documents store TOTAL voucher amounts in debit_amount/credit_amount (sum of all ledger entries). This helper extracts the party-specific amount from the `ledger_entries` array. Used in:
-- customers.py (outstanding, payment behavior, ledger export opening balance)
-- utils.py (overdue digest)
+## Critical Technical Notes
+
+### Opening Balance Logic (customers.py)
+Tally's `opening_balance` on a customer = balance at START of `sync_status.financial_year` (the base FY).
+- **Base FY** (e.g., 2026-27): Use Tally OB directly
+- **Earlier FYs** (e.g., 2025-26): Reverse-compute: `OB = Tally_OB - FY_activity` (subtract sales, add receipts/CNs/JV credits)
+- **Later FYs**: Forward-compute: `OB = Tally_OB + intervening_activity`
+- **Non-customer parties** (depots, etc.): Use pure pre-FY voucher sum (no Tally OB)
+
+### Journal Voucher Party Amounts (utils.py: get_jv_party_amount)
+JV `credit_amount`/`debit_amount` = TOTAL across ALL ledger entries (e.g., 35284 for 2-entry JV). 
+Use `ledger_entries` array to extract the party-specific amount (e.g., 17642).
 
 ## Bug Fixes (April 16, 2026)
-- **Fixed CRM Outstanding JV double-counting (ROOT CAUSE)**: JV credit_amount is total across all ledger entries (e.g., 35284 for 2-entry JV). Party-specific amount (17642) extracted from ledger_entries array via get_jv_party_amount() helper.
-- Fixed SPIP Analysis item name extraction: sales voucher items use `item` key (not `item_name`)
-- Verified CRM Targets (bulk %, removal, reactivation) all functional
-- Verified Dashboard company isolation via X-Company-Id header
+- **Fixed FY-specific Opening Balance**: Tally OB is for base FY only; earlier FYs reverse-computed via voucher activity
+- **Fixed JV double-counting**: Extract party-specific amounts from ledger_entries array
+- **Fixed SPIP Analysis**: Sales voucher items use `item` key (not `item_name`)
 
 ## Upcoming
 - P1: Compile Desktop Agent v9 to `.exe`
