@@ -25,15 +25,13 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analy
 - Branch exclusion for overdue, concentration risk, SPIP, forecast
 - Month-vs-month cross-FY comparison in sales forecast
 
-## API Endpoints (Recent)
-- `POST /api/customers/targets/bulk-percentage` — Bulk set targets as % of prev FY
-- `POST /api/customers/targets/remove` — Remove customers from target reports
-- `POST /api/customers/targets/reactivate` — Reactivate removed customers
-- `GET /api/customers/targets/removed` — List removed customers per FY
-- `GET /api/insights/spip-analysis` — Sales vs Purchase vs Inventory gap analysis
+## Critical Helper: get_jv_party_amount()
+Located in `/app/backend/utils.py`. Journal voucher documents store TOTAL voucher amounts in debit_amount/credit_amount (sum of all ledger entries). This helper extracts the party-specific amount from the `ledger_entries` array. Used in:
+- customers.py (outstanding, payment behavior, ledger export opening balance)
+- utils.py (overdue digest)
 
 ## Bug Fixes (April 16, 2026)
-- Fixed CRM Outstanding journal voucher double-counting: now computes net_credit = credit - debit
+- **Fixed CRM Outstanding JV double-counting (ROOT CAUSE)**: JV credit_amount is total across all ledger entries (e.g., 35284 for 2-entry JV). Party-specific amount (17642) extracted from ledger_entries array via get_jv_party_amount() helper.
 - Fixed SPIP Analysis item name extraction: sales voucher items use `item` key (not `item_name`)
 - Verified CRM Targets (bulk %, removal, reactivation) all functional
 - Verified Dashboard company isolation via X-Company-Id header
