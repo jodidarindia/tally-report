@@ -103,35 +103,92 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             fy_cns = filter_vouchers_by_fy(fy_cns, fy)
             fy_jvs = filter_vouchers_by_fy(fy_jvs, fy)
 
-        # Compute opening balance per customer (pre-FY: sales - receipts - credit notes ± journals)
+        # Compute opening balance per customer
+        # Tally's opening_balance = balance as of the START of Tally's selected FY (base FY).
+        # For the base FY: use Tally OB directly.
+        # For earlier FYs: reverse-compute by subtracting activity between requested and base FY.
+        # For later FYs: forward-compute by adding activity between base and requested FY.
+        # For non-customer parties (not in customers collection): use pure voucher sum.
         opening_balance = {}
         if fy_start_str:
-            for v in pre_sales:
-                p = v.get('party_name', '')
-                if p:
-                    opening_balance[p] = opening_balance.get(p, 0) + safe_num(v.get('total_amount'))
-            for r in pre_receipts:
-                p = r.get('party_name', '')
-                if p:
-                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(r.get('amount'))
-            for cn in pre_cns:
-                p = cn.get('party_name', '')
-                if p:
-                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(cn.get('total_amount'))
-            for jv in pre_jvs:
-                p = jv.get('party_name', '')
-                if p:
-                    # Use party-specific amount from ledger_entries
-                    debit, credit = get_jv_party_amount(jv)
-                    opening_balance[p] = opening_balance.get(p, 0) + debit - credit
+            # Get base FY from sync_status
+            sync_doc = await db.sync_status.find_one({**q, "type": "agent_sync"}, {"_id": 0, "financial_year": 1})
+            base_fy = sync_doc.get("financial_year") if sync_doc else None
+            base_fy_start = None
+            if base_fy:
+                try:
+                    base_fy_start = f"{int(base_fy.split('-')[0])}-04-01"
+                except Exception:
+                    pass
 
-            # If we have Tally's synced opening_balance AND we have NO pre-FY vouchers for a customer,
-            # use Tally's opening balance. But do NOT mix: if computed opening exists, trust the computation.
+            synced_names = set()
             for sc in synced_customers:
                 name = sc.get("customer_name")
-                tally_ob = safe_num(sc.get("opening_balance", 0))
-                if name and name not in opening_balance and tally_ob != 0:
-                    opening_balance[name] = tally_ob
+                if name:
+                    synced_names.add(name)
+                    opening_balance[name] = safe_num(sc.get("opening_balance", 0))
+
+            # Adjust Tally OB for customers if viewing a different FY
+            if base_fy_start and fy_start_str != base_fy_start:
+                if fy_start_str < base_fy_start:
+                    # Backward: undo activity between req_fy_start and base_fy_start
+                    lo, hi = fy_start_str, base_fy_start
+                    for v in all_sales:
+                        d, p = v.get('voucher_date', ''), v.get('party_name', '')
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] -= safe_num(v.get('total_amount'))
+                    for r in all_receipts:
+                        d, p = r.get('voucher_date', ''), (r.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] += safe_num(r.get('amount'))
+                    for cn in all_credit_notes:
+                        d, p = cn.get('voucher_date', ''), (cn.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] += safe_num(cn.get('total_amount'))
+                    for jv in all_journals:
+                        d, p = jv.get('voucher_date', ''), (jv.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            debit, credit = get_jv_party_amount(jv)
+                            opening_balance[p] += credit - debit
+                else:
+                    # Forward: add activity between base_fy_start and req_fy_start
+                    lo, hi = base_fy_start, fy_start_str
+                    for v in all_sales:
+                        d, p = v.get('voucher_date', ''), v.get('party_name', '')
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] = opening_balance.get(p, 0) + safe_num(v.get('total_amount'))
+                    for r in all_receipts:
+                        d, p = r.get('voucher_date', ''), (r.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] = opening_balance.get(p, 0) - safe_num(r.get('amount'))
+                    for cn in all_credit_notes:
+                        d, p = cn.get('voucher_date', ''), (cn.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance[p] = opening_balance.get(p, 0) - safe_num(cn.get('total_amount'))
+                    for jv in all_journals:
+                        d, p = jv.get('voucher_date', ''), (jv.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            debit, credit = get_jv_party_amount(jv)
+                            opening_balance[p] = opening_balance.get(p, 0) + debit - credit
+
+            # For non-customer parties (e.g., depot sales): use pure pre-FY voucher sum
+            for v in pre_sales:
+                p = v.get('party_name', '')
+                if p and p not in synced_names:
+                    opening_balance[p] = opening_balance.get(p, 0) + safe_num(v.get('total_amount'))
+            for r in pre_receipts:
+                p = (r.get('party_name') or '').strip()
+                if p and p not in synced_names:
+                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(r.get('amount'))
+            for cn in pre_cns:
+                p = (cn.get('party_name') or '').strip()
+                if p and p not in synced_names:
+                    opening_balance[p] = opening_balance.get(p, 0) - safe_num(cn.get('total_amount'))
+            for jv in pre_jvs:
+                p = (jv.get('party_name') or '').strip()
+                if p and p not in synced_names:
+                    debit, credit = get_jv_party_amount(jv)
+                    opening_balance[p] = opening_balance.get(p, 0) + debit - credit
 
         # Compute current FY credits per customer
         customer_receipts = {}
@@ -218,6 +275,30 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 "aging_60_90": 0.0, "aging_90_plus": 0.0,
                 "oldest_invoice_days": 0
             }
+
+        # Add any party with non-zero opening balance from pre-FY SALES activity
+        # not yet in customer_map (e.g., depot/branch ledgers with sales but no customers record)
+        if fy_start_str:
+            pre_sales_parties = set(v.get('party_name', '') for v in pre_sales if v.get('party_name'))
+            for party_name in pre_sales_parties:
+                if party_name not in customer_map:
+                    ob_val = opening_balance.get(party_name, 0)
+                    if round(ob_val, 2) != 0:
+                        customer_map[party_name] = {
+                            "customer_name": party_name,
+                            "ledger_group": "Sundry Debtors",
+                            "phone": "",
+                            "contact_person": "",
+                            "state": "",
+                            "opening_balance": round(ob_val, 2),
+                            "outstanding_amount": 0,
+                            "total_sales": 0,
+                            "voucher_count": 0,
+                            "last_transaction": None,
+                            "aging_0_30": 0.0, "aging_30_60": 0.0,
+                            "aging_60_90": 0.0, "aging_90_plus": 0.0,
+                            "oldest_invoice_days": 0
+                        }
 
         customers = list(customer_map.values())
 
@@ -763,25 +844,49 @@ async def export_customer_ledger(request: Request):
                 start_year = int(fy_parts[0])
                 fy_start = f"{start_year}-04-01"
 
-                all_sales_pre = await db.sales_vouchers.find(
-                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
-                ).to_list(10000)
-                all_receipts_pre = await db.receipt_vouchers.find(
-                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "amount": 1}
-                ).to_list(10000)
-                all_cn_pre = await db.credit_notes.find(
-                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "total_amount": 1}
-                ).to_list(10000)
-                all_jv_pre = await db.journal_vouchers.find(
-                    {**tq, "party_name": customer_name, "voucher_date": {"$lt": fy_start}}, {"_id": 0, "debit_amount": 1, "credit_amount": 1, "party_name": 1, "ledger_entries": 1}
-                ).to_list(10000)
+                # Get Tally OB and base FY
+                cust_doc = await db.customers.find_one({**tq, "customer_name": customer_name}, {"_id": 0, "opening_balance": 1})
+                sync_doc = await db.sync_status.find_one({**tq, "type": "agent_sync"}, {"_id": 0, "financial_year": 1})
+                base_fy = sync_doc.get("financial_year") if sync_doc else None
+                base_fy_start = None
+                if base_fy:
+                    try:
+                        base_fy_start = f"{int(base_fy.split('-')[0])}-04-01"
+                    except Exception:
+                        pass
 
-                opening_balance += sum(safe_num(v.get('total_amount')) for v in all_sales_pre)
-                opening_balance -= sum(safe_num(r.get('amount')) for r in all_receipts_pre)
-                opening_balance -= sum(safe_num(cn.get('total_amount')) for cn in all_cn_pre)
-                for jv in all_jv_pre:
-                    debit, credit = get_jv_party_amount(jv)
-                    opening_balance += debit - credit
+                if cust_doc and base_fy_start:
+                    opening_balance = safe_num(cust_doc.get("opening_balance", 0))
+                    if fy_start != base_fy_start:
+                        lo = min(fy_start, base_fy_start)
+                        hi = max(fy_start, base_fy_start)
+                        adj_sales = await db.sales_vouchers.find(
+                            {**tq, "party_name": customer_name, "voucher_date": {"$gte": lo, "$lt": hi}}, {"_id": 0, "total_amount": 1}
+                        ).to_list(10000)
+                        adj_receipts = await db.receipt_vouchers.find(
+                            {**tq, "party_name": customer_name, "voucher_date": {"$gte": lo, "$lt": hi}}, {"_id": 0, "amount": 1}
+                        ).to_list(10000)
+                        adj_cns = await db.credit_notes.find(
+                            {**tq, "party_name": customer_name, "voucher_date": {"$gte": lo, "$lt": hi}}, {"_id": 0, "total_amount": 1}
+                        ).to_list(10000)
+                        adj_jvs = await db.journal_vouchers.find(
+                            {**tq, "party_name": customer_name, "voucher_date": {"$gte": lo, "$lt": hi}},
+                            {"_id": 0, "debit_amount": 1, "credit_amount": 1, "party_name": 1, "ledger_entries": 1}
+                        ).to_list(10000)
+                        if fy_start < base_fy_start:
+                            opening_balance -= sum(safe_num(v.get('total_amount')) for v in adj_sales)
+                            opening_balance += sum(safe_num(r.get('amount')) for r in adj_receipts)
+                            opening_balance += sum(safe_num(cn.get('total_amount')) for cn in adj_cns)
+                            for jv in adj_jvs:
+                                d, c = get_jv_party_amount(jv)
+                                opening_balance += c - d
+                        else:
+                            opening_balance += sum(safe_num(v.get('total_amount')) for v in adj_sales)
+                            opening_balance -= sum(safe_num(r.get('amount')) for r in adj_receipts)
+                            opening_balance -= sum(safe_num(cn.get('total_amount')) for cn in adj_cns)
+                            for jv in adj_jvs:
+                                d, c = get_jv_party_amount(jv)
+                                opening_balance += d - c
             except Exception:
                 pass
 
@@ -888,34 +993,64 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             all_credit_notes = all_credit_notes_raw
             all_journals = all_journals_raw
 
-        # Compute opening balance per customer
-        # Priority: 1) Pre-FY voucher calculation  2) Tally's opening_balance from customers collection
+        # Compute opening balance per customer (same logic as outstanding endpoint)
         opening_balance_map = {}
         if fy_start_str:
-            for v in pre_sales:
-                p = v.get('party_name', '')
-                if p:
-                    opening_balance_map[p] = opening_balance_map.get(p, 0) + safe_num(v.get('total_amount'))
-            for r in pre_receipts:
-                p = r.get('party_name', '')
-                if p:
-                    opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(r.get('amount'))
-            for cn in pre_cns:
-                p = cn.get('party_name', '')
-                if p:
-                    opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(cn.get('total_amount'))
-            for jv in pre_jvs:
-                p = jv.get('party_name', '')
-                if p:
-                    debit, credit = get_jv_party_amount(jv)
-                    opening_balance_map[p] = opening_balance_map.get(p, 0) + debit - credit
+            sync_doc = await db.sync_status.find_one({**q, "type": "agent_sync"}, {"_id": 0, "financial_year": 1})
+            base_fy = sync_doc.get("financial_year") if sync_doc else None
+            base_fy_start = None
+            if base_fy:
+                try:
+                    base_fy_start = f"{int(base_fy.split('-')[0])}-04-01"
+                except Exception:
+                    pass
 
-            # Fallback: use Tally's opening_balance from customers collection for any customer not captured by pre-FY vouchers
+            synced_names = set()
             for sc in synced_customers:
                 name = sc.get("customer_name")
-                tally_ob = safe_num(sc.get("opening_balance", 0))
-                if name and name not in opening_balance_map and tally_ob != 0:
-                    opening_balance_map[name] = tally_ob
+                if name:
+                    synced_names.add(name)
+                    opening_balance_map[name] = safe_num(sc.get("opening_balance", 0))
+
+            if base_fy_start and fy_start_str != base_fy_start:
+                if fy_start_str < base_fy_start:
+                    lo, hi = fy_start_str, base_fy_start
+                    for v in all_sales_raw:
+                        d, p = v.get('voucher_date', ''), v.get('party_name', '')
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] -= safe_num(v.get('total_amount'))
+                    for r in all_receipts_raw:
+                        d, p = r.get('voucher_date', ''), (r.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] += safe_num(r.get('amount'))
+                    for cn in all_credit_notes_raw:
+                        d, p = cn.get('voucher_date', ''), (cn.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] += safe_num(cn.get('total_amount'))
+                    for jv in all_journals_raw:
+                        d, p = jv.get('voucher_date', ''), (jv.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            debit, credit = get_jv_party_amount(jv)
+                            opening_balance_map[p] += credit - debit
+                else:
+                    lo, hi = base_fy_start, fy_start_str
+                    for v in all_sales_raw:
+                        d, p = v.get('voucher_date', ''), v.get('party_name', '')
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] = opening_balance_map.get(p, 0) + safe_num(v.get('total_amount'))
+                    for r in all_receipts_raw:
+                        d, p = r.get('voucher_date', ''), (r.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(r.get('amount'))
+                    for cn in all_credit_notes_raw:
+                        d, p = cn.get('voucher_date', ''), (cn.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            opening_balance_map[p] = opening_balance_map.get(p, 0) - safe_num(cn.get('total_amount'))
+                    for jv in all_journals_raw:
+                        d, p = jv.get('voucher_date', ''), (jv.get('party_name') or '').strip()
+                        if p in synced_names and lo <= d < hi:
+                            debit, credit = get_jv_party_amount(jv)
+                            opening_balance_map[p] = opening_balance_map.get(p, 0) + debit - credit
 
         # Build per-customer receipt totals (FY-filtered)
         customer_payments = {}

@@ -1,0 +1,97 @@
+{
+  "summary": "Iteration 49: Verified Opening Balance (OB) fix for different FYs and JV party amount fix. All 11 backend tests passed. Frontend login blocked by reCAPTCHA - cannot automate UI testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login", "issues": ["reCAPTCHA blocks automated testing - manual verification required"]}
+    ]
+  },
+  "features_tested": {
+    "ankit_ob_fy_2025_26": {
+      "status": "PASS",
+      "details": "Ankit OB for FY 2025-26 = 0.0 (NOT 848996). Correctly reverse-computed from Tally's base FY 2026-27 OB."
+    },
+    "ankit_ob_fy_2026_27": {
+      "status": "PASS",
+      "details": "Ankit OB for FY 2026-27 = 848996.0 (Tally's actual OB). Uses Tally OB directly for base FY."
+    },
+    "fy_continuity_all_customers": {
+      "status": "PASS",
+      "details": "All customers pass FY continuity check: FY 2025-26 Outstanding = FY 2026-27 Opening Balance. Zero mismatches."
+    },
+    "abhishek_auto_parts_jv_fix": {
+      "status": "PASS",
+      "details": "Abhishek Auto Parts journal_credit = 17642.0 (party-specific, not 35284.0 total). Outstanding = 0.0."
+    },
+    "saanvi_ob_fy_2025_26": {
+      "status": "PASS",
+      "details": "Saanvi OB for FY 2025-26 correctly computed (negative value as expected)."
+    },
+    "saanvi_ob_fy_2026_27": {
+      "status": "PASS",
+      "details": "Saanvi OB for FY 2026-27 = 294160.0 (Tally's actual OB)."
+    },
+    "payment_behavior_ankit_ob_fy_2025_26": {
+      "status": "PASS",
+      "details": "Payment behavior endpoint: Ankit OB for FY 2025-26 = 0.0."
+    },
+    "payment_behavior_ankit_ob_fy_2026_27": {
+      "status": "PASS",
+      "details": "Payment behavior endpoint: Ankit OB for FY 2026-27 = 848996.0."
+    },
+    "overdue_digest_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/dashboard/overdue-digest returns 200 without errors."
+    },
+    "no_bank_ledgers_in_outstanding": {
+      "status": "PASS",
+      "details": "Checked for bank ledgers in outstanding list - no issues found."
+    },
+    "no_expense_ledgers_in_outstanding": {
+      "status": "PASS",
+      "details": "Checked for expense ledgers in outstanding list - no issues found."
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration49_ob_fix.py",
+    "/app/test_reports/pytest/iteration49_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OB fix correctly implemented: Tally's opening_balance = balance at START of sync_status.financial_year (2026-27)",
+    "For FY 2025-26, code reverse-computes OB by subtracting FY 2025-26 voucher activity from Tally OB",
+    "For FY 2026-27, code uses Tally OB directly",
+    "JV fix correctly extracts party-specific amount from ledger_entries array using get_jv_party_amount() helper",
+    "FY continuity verified: All customers' FY 2025-26 Outstanding = FY 2026-27 Opening Balance"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration49_ob_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 pytest tests passed)",
+    "frontend": "Not tested (reCAPTCHA blocks automated login)"
+  },
+  "test_credentials": {
+    "admin": "admin / admin123",
+    "note": "Login requires reCAPTCHA - cannot be bypassed in automated testing. For API testing, send empty captcha_token."
+  },
+  "seed_data_creation": "No new seed data created. Used existing data for testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 49 verified OB fix for different FYs: 1) Ankit OB 2025-26=0.0, 2026-27=848996.0. 2) FY continuity: all customers' 2025-26 Outstanding = 2026-27 OB. 3) JV fix: Abhishek journal_credit=17642 (party-specific). 4) All 11 backend tests pass. 5) Frontend login requires reCAPTCHA - use manual testing or inject token via localStorage.",
+  "verification_summary": {
+    "key_verifications": {
+      "ankit_2025_26_ob": "0.0 (CORRECT - was showing 848996 before fix)",
+      "ankit_2026_27_ob": "848996.0 (CORRECT - Tally's actual OB)",
+      "fy_continuity_mismatches": "0 (CORRECT - all customers pass)",
+      "abhishek_journal_credit": "17642.0 (CORRECT - was 35284 before fix)",
+      "abhishek_outstanding": "0.0 (CORRECT - fully settled)"
+    },
+    "fix_explanation": "Tally's opening_balance = balance at START of Tally's selected FY (2026-27). For earlier FYs (like 2025-26), the OB is reverse-computed by subtracting that FY's activity from the Tally OB. For JV fix, the code now extracts party-specific amounts from ledger_entries instead of using total voucher amounts."
+  }
+}
