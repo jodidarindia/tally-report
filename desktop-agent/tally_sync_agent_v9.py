@@ -1398,145 +1398,169 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     # ---- BANK & CASH LEDGER BALANCES ----
 
-    def fetch_bank_cash_ledgers(self) -> List[Dict]:
-        """Fetch all Bank and Cash ledgers with opening/closing balances."""
+    def fetch_all_ledgers(self) -> List[Dict]:
+        """Fetch ALL ledgers from Tally* (excluding Sundry Debtors/Creditors).
+        Returns categorized ledger data for Balance Sheet, P&L, Cash Flow."""
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
-        <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BankCashLedgers</ID></HEADER>
-        <BODY><DESC>
-            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
-            <TDL><TDLMESSAGE>
-                <COLLECTION NAME="BankCashLedgers" ISINITIALIZE="Yes">
-                    <TYPE>Ledger</TYPE>
-                    <FILTER>BankCashFilter</FILTER>
-                    <FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
-                    <FETCH>LEDGERPHONE, BANKDETAILS.BANKNAME, BANKDETAILS.ACCOUNTNUMBER, BANKDETAILS.IFSCODE, BANKOD</FETCH>
-                </COLLECTION>
-                <SYSTEM TYPE="Formulae" NAME="BankCashFilter">
-                    $Parent = "Bank Accounts" OR $Parent = "Bank OD Accounts" OR $Parent = "Cash-in-Hand" OR $$GroupIdx:$PARENT = $$GroupIdx:"Bank Accounts" OR $$GroupIdx:$PARENT = $$GroupIdx:"Bank OD Accounts" OR $$GroupIdx:$PARENT = $$GroupIdx:"Cash-in-Hand"
-                </SYSTEM>
-            </TDLMESSAGE></TDL>
-        </DESC></BODY></ENVELOPE>"""
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraAllLedgers</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraAllLedgers" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<FILTER>ExcludeDebtorsCreditors</FILTER>
+<FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
+<FETCH>LEDGERPHONE, LEDGERMOBILE, BANKOD</FETCH>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="ExcludeDebtorsCreditors">
+NOT ($Parent = "Sundry Debtors") AND NOT ($Parent = "Sundry Creditors") AND NOT ($$GroupIdx:$PARENT = $$GroupIdx:"Sundry Debtors") AND NOT ($$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditors")
+</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+
+        # Root group classification map
+        GROUP_CATEGORY = {
+            # Bank & Cash
+            'bank accounts': 'bank', 'bank od accounts': 'bank_od', 'cash-in-hand': 'cash',
+            # Income
+            'sales accounts': 'direct_income', 'direct income': 'direct_income', 'direct incomes': 'direct_income',
+            'indirect income': 'indirect_income', 'indirect incomes': 'indirect_income',
+            # Expense
+            'purchase accounts': 'direct_expense', 'direct expenses': 'direct_expense', 'direct expense': 'direct_expense',
+            'indirect expenses': 'indirect_expense', 'indirect expense': 'indirect_expense',
+            'manufacturing expenses': 'direct_expense',
+            # Capital & Reserves
+            'capital account': 'capital', "partner's capital account": 'capital',
+            'reserves & surplus': 'reserves', 'reserves and surplus': 'reserves',
+            # Loans
+            'secured loans': 'secured_loans', 'unsecured loans': 'unsecured_loans',
+            'loans (liability)': 'unsecured_loans',
+            # Liabilities
+            'current liabilities': 'current_liabilities', 'provisions': 'provisions',
+            'duties & taxes': 'duties_taxes', 'duties and taxes': 'duties_taxes',
+            'non-current liabilities': 'non_current_liabilities',
+            # Assets
+            'current assets': 'current_assets', 'deposits (asset)': 'current_assets',
+            'loans & advances (asset)': 'current_assets', 'loans and advances (asset)': 'current_assets',
+            'stock-in-hand': 'stock_in_hand',
+            'fixed assets': 'fixed_assets',
+            'investments': 'investments',
+            # Special
+            'profit & loss a/c': 'profit_loss_ac', 'profit and loss a/c': 'profit_loss_ac',
+            'misc. expenses (asset)': 'misc_expense',
+            'suspense a/c': 'suspense', 'suspense account': 'suspense',
+            'branch / divisions': 'branch_division',
+        }
+
         try:
-            data = self._post(xml)
+            data = self._post(xml, debug_name='all_ledgers')
             if not data:
+                logger.warning("  No response for all ledgers query")
                 return []
 
             ledgers_raw = self._find_deep(data, 'LEDGER')
             if not ledgers_raw:
+                # Fallback: try collection items
+                ledgers_raw = self._get_collection_items(data, 'LEDGER')
+            if not ledgers_raw:
+                logger.warning("  No ledger data found in response")
                 return []
             if isinstance(ledgers_raw, dict):
                 ledgers_raw = [ledgers_raw]
+            if isinstance(ledgers_raw, str):
+                logger.warning("  Ledger data returned as string — cannot parse")
+                return []
 
             results = []
             for led in ledgers_raw:
                 if not isinstance(led, dict):
                     continue
                 name = str(led.get('NAME', '') or led.get('@NAME', '')).strip()
+                if not name:
+                    continue
                 parent = str(led.get('PARENT', '') or '').strip()
                 opening = self._safe_float(led.get('OPENINGBALANCE', 0))
                 closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
-                is_bank_od = str(led.get('BANKOD', '') or '').strip().lower() == 'yes'
 
-                bank_details = led.get('BANKDETAILS.BANKNAME', '') or ''
-                account_no = led.get('BANKDETAILS.ACCOUNTNUMBER', '') or ''
-                ifsc = led.get('BANKDETAILS.IFSCODE', '') or ''
+                # Classify by parent group
+                parent_lower = parent.lower().strip()
+                category = GROUP_CATEGORY.get(parent_lower, 'other')
 
-                ledger_type = 'cash'
-                parent_lower = parent.lower()
-                if 'bank od' in parent_lower or is_bank_od:
-                    ledger_type = 'bank_od'
-                elif 'bank' in parent_lower:
-                    ledger_type = 'bank'
+                # If not matched directly, try partial matching
+                if category == 'other':
+                    for group_key, cat_val in GROUP_CATEGORY.items():
+                        if group_key in parent_lower:
+                            category = cat_val
+                            break
 
                 results.append({
                     'ledger_name': name,
                     'parent_group': parent,
-                    'ledger_type': ledger_type,
+                    'category': category,
                     'opening_balance': round(opening, 2),
                     'closing_balance': round(closing, 2),
-                    'bank_name': str(bank_details).strip(),
-                    'account_number': str(account_no).strip(),
-                    'ifsc_code': str(ifsc).strip(),
                 })
-            logger.info(f"  Fetched {len(results)} bank/cash ledgers")
+
+            # Log summary by category
+            cat_counts = {}
+            for r in results:
+                cat_counts[r['category']] = cat_counts.get(r['category'], 0) + 1
+            logger.info(f"  Fetched {len(results)} ledgers: {dict(cat_counts)}")
             return results
+
         except Exception as e:
-            logger.warning(f"Error fetching bank/cash ledgers: {e}")
+            logger.warning(f"Error fetching all ledgers: {e}")
             return []
 
-    # ---- PROFIT & LOSS DATA ----
+    def compute_pl_summary(self, ledgers: List[Dict], opening_stock: float = 0, closing_stock: float = 0,
+                           total_sales_fy: float = 0, total_purchases_fy: float = 0) -> Dict:
+        """Compute Gross Profit and Net Profit from ledger data.
+        Gross Profit = (Closing Stock + Sales + Direct Income) - (Opening Stock + Purchases + Direct Expense)
+        Net Profit = Total Income - Total Expense
+        """
+        direct_income = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'direct_income')
+        indirect_income = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'indirect_income')
+        direct_expense = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'direct_expense')
+        indirect_expense = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'indirect_expense')
 
-    def fetch_pl_data(self) -> Dict:
-        """Fetch Profit & Loss ledger data (Income and Expense groups with balances)."""
-        company_tag = self._company_tag()
-        xml = f"""<ENVELOPE>
-        <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PLLedgers</ID></HEADER>
-        <BODY><DESC>
-            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
-            <TDL><TDLMESSAGE>
-                <COLLECTION NAME="PLLedgers" ISINITIALIZE="Yes">
-                    <TYPE>Ledger</TYPE>
-                    <FILTER>PLFilter</FILTER>
-                    <FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
-                </COLLECTION>
-                <SYSTEM TYPE="Formulae" NAME="PLFilter">
-                    $$IsPL:$Parent OR $$IsPL:$Name
-                </SYSTEM>
-            </TDLMESSAGE></TDL>
-        </DESC></BODY></ENVELOPE>"""
-        try:
-            data = self._post(xml)
-            if not data:
-                return {"income": [], "expense": []}
+        # Use synced sales/purchase totals if provided (more accurate from vouchers)
+        sales_for_gp = total_sales_fy if total_sales_fy > 0 else direct_income
+        purchases_for_gp = total_purchases_fy if total_purchases_fy > 0 else direct_expense
 
-            ledgers_raw = self._find_deep(data, 'LEDGER')
-            if not ledgers_raw:
-                return {"income": [], "expense": []}
-            if isinstance(ledgers_raw, dict):
-                ledgers_raw = [ledgers_raw]
+        # Gross Profit = (Closing Stock + Sales + Direct Income) - (Opening Stock + Purchases + Direct Expense)
+        gross_credit = closing_stock + sales_for_gp + direct_income
+        gross_debit = opening_stock + purchases_for_gp + direct_expense
+        gross_profit = gross_credit - gross_debit
 
-            income_groups = {'sales accounts', 'direct income', 'indirect income', 'income direct', 'income indirect'}
-            expense_groups = {'purchase accounts', 'direct expenses', 'indirect expenses', 'expenses direct', 'expenses indirect', 'manufacturing expenses'}
+        # Net Profit = All Income - All Expense
+        total_income = direct_income + indirect_income
+        total_expense = direct_expense + indirect_expense
+        net_profit = total_income - total_expense
 
-            income_ledgers = []
-            expense_ledgers = []
+        # Also check P&L A/c ledger balance
+        pl_ac_ledger = [l for l in ledgers if l['category'] == 'profit_loss_ac']
+        pl_ac_closing = pl_ac_ledger[0]['closing_balance'] if pl_ac_ledger else 0
+        pl_ac_opening = pl_ac_ledger[0]['opening_balance'] if pl_ac_ledger else 0
 
-            for led in ledgers_raw:
-                if not isinstance(led, dict):
-                    continue
-                name = str(led.get('NAME', '') or led.get('@NAME', '')).strip()
-                parent = str(led.get('PARENT', '') or '').strip()
-                closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
-
-                entry = {
-                    'ledger_name': name,
-                    'parent_group': parent,
-                    'amount': round(abs(closing), 2),
-                    'is_debit': closing > 0,
-                }
-
-                parent_lower = parent.lower()
-                if any(g in parent_lower for g in income_groups) or closing < 0:
-                    income_ledgers.append(entry)
-                elif any(g in parent_lower for g in expense_groups) or closing > 0:
-                    expense_ledgers.append(entry)
-
-            total_income = sum(l['amount'] for l in income_ledgers)
-            total_expense = sum(l['amount'] for l in expense_ledgers)
-            net_pl = total_income - total_expense
-
-            logger.info(f"  P&L: {len(income_ledgers)} income, {len(expense_ledgers)} expense ledgers. Net: {net_pl:,.2f}")
-            return {
-                "income": income_ledgers,
-                "expense": expense_ledgers,
-                "total_income": round(total_income, 2),
-                "total_expense": round(total_expense, 2),
-                "net_profit_loss": round(net_pl, 2),
-            }
-        except Exception as e:
-            logger.warning(f"Error fetching P&L data: {e}")
-            return {"income": [], "expense": [], "total_income": 0, "total_expense": 0, "net_profit_loss": 0}
+        return {
+            'gross_profit': round(gross_profit, 2),
+            'is_gross_loss': gross_profit < 0,
+            'net_profit': round(net_profit, 2),
+            'is_net_loss': net_profit < 0,
+            'total_income': round(total_income, 2),
+            'total_expense': round(total_expense, 2),
+            'direct_income': round(direct_income, 2),
+            'indirect_income': round(indirect_income, 2),
+            'direct_expense': round(direct_expense, 2),
+            'indirect_expense': round(indirect_expense, 2),
+            'opening_stock': round(opening_stock, 2),
+            'closing_stock': round(closing_stock, 2),
+            'sales_value': round(sales_for_gp, 2),
+            'purchases_value': round(purchases_for_gp, 2),
+            'pl_ac_opening': round(pl_ac_opening, 2),
+            'pl_ac_closing': round(pl_ac_closing, 2),
+        }
 
 
 # ==================== AUTH & SESSION MANAGEMENT ====================
@@ -2467,6 +2491,7 @@ class FlowraSyncAgent:
             self.report_progress('sync_started', mode='collection-v6', fys=fys_to_sync, sync_mode=sync_mode)
             self.report_progress('phase_start', phase='inventory')
             items = self.tally.fetch_stock_items()
+            self._last_inventory = items  # Store for P&L gross profit calculation
             if items:
                 self.save_cache('inventory', items)
                 self.sync_to_backend('inventory', items)
@@ -2658,30 +2683,73 @@ class FlowraSyncAgent:
             self.reconcile_with_backend('contra_vouchers', [v.get('voucher_id', '') for v in all_contra_combined if v.get('voucher_id')])
             self.report_progress('phase_complete', phase='contra_vouchers', count=len(all_contra_combined))
 
-            # --- Phase 10: Bank & Cash Ledger Balances ---
-            logger.info("--- Phase 10: Bank & Cash Ledger Balances ---")
-            self.report_progress('phase_start', phase='bank_cash_ledgers')
-            bank_cash = self.tally.fetch_bank_cash_ledgers()
-            if bank_cash:
-                self.save_cache('bank_cash_ledgers', bank_cash)
-                self.sync_to_backend('bank_cash_ledgers', bank_cash)
-            # Reconcile bank/cash ledgers
-            bc_names = [l.get('ledger_name', '') for l in bank_cash if l.get('ledger_name')]
-            self.reconcile_with_backend('bank_cash_ledgers', bc_names, id_key='ledger_name')
-            logger.info(f"  Got {len(bank_cash)} bank/cash ledgers")
-            self.report_progress('phase_complete', phase='bank_cash_ledgers', count=len(bank_cash))
+            # --- Phase 10: All Ledgers (Bank, Cash, Income, Expense, Assets, Liabilities, Capital, etc.) ---
+            logger.info("--- Phase 10: All Ledgers (Balance Sheet + P&L) ---")
+            self.report_progress('phase_start', phase='ledgers')
+            all_ledgers = self.tally.fetch_all_ledgers()
+            if all_ledgers:
+                self.save_cache('all_ledgers', all_ledgers)
+                self.sync_to_backend('all_ledgers', all_ledgers)
 
-            # --- Phase 11: Profit & Loss Data ---
-            logger.info("--- Phase 11: Profit & Loss ---")
-            self.report_progress('phase_start', phase='profit_loss')
-            pl_data = self.tally.fetch_pl_data()
-            income_count = len(pl_data.get('income', []))
-            expense_count = len(pl_data.get('expense', []))
-            if income_count + expense_count > 0:
+                # Extract bank/cash subset for backward compatibility
+                bank_cash = [l for l in all_ledgers if l['category'] in ('bank', 'bank_od', 'cash')]
+                if bank_cash:
+                    self.sync_to_backend('bank_cash_ledgers', bank_cash)
+                logger.info(f"  Bank/Cash: {len(bank_cash)} ledgers")
+
+                # Compute P&L summary
+                # Get stock values for gross profit calculation
+                opening_stock = sum(i.get('opening_value', 0) or 0 for i in (self._last_inventory or []))
+                closing_stock = sum(i.get('closing_value', 0) or 0 for i in (self._last_inventory or []))
+                # Get sales and purchase totals from synced vouchers
+                total_sales_fy = sum(abs(float(v.get('total_amount', 0) or 0)) for v in all_sales_combined)
+                total_purchases_fy = sum(abs(float(v.get('total_amount', 0) or 0)) for v in all_purchases_combined)
+
+                pl_summary = self.tally.compute_pl_summary(
+                    all_ledgers,
+                    opening_stock=opening_stock,
+                    closing_stock=closing_stock,
+                    total_sales_fy=total_sales_fy,
+                    total_purchases_fy=total_purchases_fy
+                )
+
+                # Build P&L data in the format backend expects
+                income_ledgers = [{'ledger_name': l['ledger_name'], 'parent_group': l['parent_group'],
+                                   'amount': round(abs(l['closing_balance']), 2), 'is_debit': l['closing_balance'] > 0}
+                                  for l in all_ledgers if l['category'] in ('direct_income', 'indirect_income')]
+                expense_ledgers = [{'ledger_name': l['ledger_name'], 'parent_group': l['parent_group'],
+                                    'amount': round(abs(l['closing_balance']), 2), 'is_debit': l['closing_balance'] > 0}
+                                   for l in all_ledgers if l['category'] in ('direct_expense', 'indirect_expense')]
+
+                pl_data = {
+                    'income': income_ledgers,
+                    'expense': expense_ledgers,
+                    'total_income': pl_summary['total_income'],
+                    'total_expense': pl_summary['total_expense'],
+                    'net_profit_loss': pl_summary['net_profit'],
+                    'gross_profit': pl_summary['gross_profit'],
+                    'is_gross_loss': pl_summary['is_gross_loss'],
+                    'is_net_loss': pl_summary['is_net_loss'],
+                    'opening_stock': pl_summary['opening_stock'],
+                    'closing_stock': pl_summary['closing_stock'],
+                    'pl_ac_opening': pl_summary['pl_ac_opening'],
+                    'pl_ac_closing': pl_summary['pl_ac_closing'],
+                }
                 self.save_cache('profit_loss', pl_data)
-                self.sync_to_backend('profit_loss', [pl_data])  # Wrap in list for sync_to_backend
-            logger.info(f"  P&L: {income_count} income, {expense_count} expense ledgers")
-            self.report_progress('phase_complete', phase='profit_loss', count=income_count + expense_count)
+                self.sync_to_backend('profit_loss', [pl_data])
+
+                gp_label = "Gross Loss" if pl_summary['is_gross_loss'] else "Gross Profit"
+                np_label = "Net Loss" if pl_summary['is_net_loss'] else "Net Profit"
+                logger.info(f"  {gp_label}: {abs(pl_summary['gross_profit']):,.2f}")
+                logger.info(f"  {np_label}: {abs(pl_summary['net_profit']):,.2f}")
+                logger.info(f"  P&L: {len(income_ledgers)} income, {len(expense_ledgers)} expense ledgers")
+            else:
+                logger.warning("  No ledgers fetched from Tally*")
+
+            # Reconcile ledgers
+            led_names = [l.get('ledger_name', '') for l in all_ledgers if l.get('ledger_name')]
+            self.reconcile_with_backend('bank_cash_ledgers', [l.get('ledger_name', '') for l in all_ledgers if l['category'] in ('bank', 'bank_od', 'cash') and l.get('ledger_name')], id_key='ledger_name')
+            self.report_progress('phase_complete', phase='ledgers', count=len(all_ledgers))
 
             # Free memory
             gc.collect()

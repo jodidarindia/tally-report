@@ -461,6 +461,30 @@ async def receive_agent_sync(request: dict):
                 )
             logger.info("Synced P&L data")
 
+        elif data_type == 'all_ledgers':
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for led in data:
+                    name = led.get('ledger_name', '')
+                    if not name:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"ledger_name": name, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                **{k: v_val for k, v_val in led.items() if k != '_id'},
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.all_ledgers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} ledgers")
+
         # Update last sync time
         financial_year = request.get('financial_year', '')
         # Normalize sync_time to always have timezone info (UTC)
@@ -1011,7 +1035,7 @@ _COMPANY_DATA_COLLECTIONS = [
     "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
     "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
     "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
-    "profit_loss", "sync_history", "overdue_digest", "ai_queries",
+    "profit_loss", "all_ledgers", "sync_history", "overdue_digest", "ai_queries",
     "branch_ledgers", "purchase_orders", "customer_targets", "customer_followups",
 ]
 _COMPANY_ALL_COLLECTIONS = _COMPANY_DATA_COLLECTIONS + ["sync_status", "company_mappings"]
