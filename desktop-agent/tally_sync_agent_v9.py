@@ -1459,17 +1459,20 @@ NOT ($Parent = "Sundry Debtors") AND NOT ($Parent = "Sundry Creditors") AND NOT 
                 logger.warning("  No response for all ledgers query")
                 return []
 
-            ledgers_raw = self._find_deep(data, 'LEDGER')
+            # Use _get_collection_items first (most reliable path)
+            ledgers_raw = self._get_collection_items(data, 'LEDGER')
             if not ledgers_raw:
-                # Fallback: try collection items
-                ledgers_raw = self._get_collection_items(data, 'LEDGER')
+                # Fallback: try _find_deep
+                found = self._find_deep(data, 'LEDGER')
+                if found and isinstance(found, list):
+                    ledgers_raw = found
+                elif found and isinstance(found, dict):
+                    ledgers_raw = [found]
+                else:
+                    ledgers_raw = []
+
             if not ledgers_raw:
                 logger.warning("  No ledger data found in response")
-                return []
-            if isinstance(ledgers_raw, dict):
-                ledgers_raw = [ledgers_raw]
-            if isinstance(ledgers_raw, str):
-                logger.warning("  Ledger data returned as string — cannot parse")
                 return []
 
             results = []
@@ -2687,6 +2690,7 @@ class FlowraSyncAgent:
             logger.info("--- Phase 10: All Ledgers (Balance Sheet + P&L) ---")
             self.report_progress('phase_start', phase='ledgers')
             all_ledgers = self.tally.fetch_all_ledgers()
+            bank_cash = []
             if all_ledgers:
                 self.save_cache('all_ledgers', all_ledgers)
                 self.sync_to_backend('all_ledgers', all_ledgers)
@@ -2746,9 +2750,9 @@ class FlowraSyncAgent:
             else:
                 logger.warning("  No ledgers fetched from Tally*")
 
-            # Reconcile ledgers
-            led_names = [l.get('ledger_name', '') for l in all_ledgers if l.get('ledger_name')]
-            self.reconcile_with_backend('bank_cash_ledgers', [l.get('ledger_name', '') for l in all_ledgers if l['category'] in ('bank', 'bank_od', 'cash') and l.get('ledger_name')], id_key='ledger_name')
+            # Reconcile bank/cash ledgers
+            bc_names = [l.get('ledger_name', '') for l in bank_cash if l.get('ledger_name')]
+            self.reconcile_with_backend('bank_cash_ledgers', bc_names, id_key='ledger_name')
             self.report_progress('phase_complete', phase='ledgers', count=len(all_ledgers))
 
             # Free memory
