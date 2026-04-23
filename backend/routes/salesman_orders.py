@@ -275,6 +275,11 @@ async def update_order_status(order_id: str, request: Request):
         now = datetime.now(timezone.utc).isoformat()
         update_fields = {"status": new_status, "updated_at": now}
 
+        if new_status == "rejected":
+            reject_reason = (body.get("reject_reason") or "").strip()
+            if not reject_reason:
+                return APIResponse(success=False, error="Rejection reason is required")
+
         if new_status == "billed":
             invoice_number = (body.get("invoice_number") or "").strip()
             if not invoice_number:
@@ -315,6 +320,114 @@ async def get_order_stats(request: Request, company_id: Optional[str] = None):
         stats = {r["_id"]: {"count": r["count"], "total": round(r["total"], 2)} for r in results}
         return APIResponse(success=True, data={"stats": stats})
     except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+
+# ═══════════════════════════════════════════════════════
+# PENDING BILLING — Approved orders not yet billed + item verification
+# ═══════════════════════════════════════════════════════
+
+@router.get("/salesman-orders/pending-billing")
+async def get_pending_billing(request: Request, company_id: Optional[str] = None):
+    """Get approved orders pending billing, grouped by customer with item details.
+    Also for billed orders, compare order items vs actual Tally invoice items."""
+    try:
+        ctx = await get_tenant_context(request)
+        q = _q(ctx, company_id)
+
+        # Approved orders (pending billing)
+        approved = await db.salesman_orders.find(
+            {**q, "status": "approved"}, {"_id": 0}
+        ).sort("created_at", 1).to_list(500)
+
+        # Billed orders — for verification
+        billed = await db.salesman_orders.find(
+            {**q, "status": "billed", "invoice_number": {"$ne": ""}}, {"_id": 0}
+        ).sort("created_at", -1).to_list(500)
+
+        # Group approved by customer
+        pending_by_customer = {}
+        for o in approved:
+            cust = o.get("customer_name", "Unknown")
+            pending_by_customer.setdefault(cust, {"orders": [], "total_items": [], "total_amount": 0})
+            pending_by_customer[cust]["orders"].append({
+                "order_id": o.get("order_id"),
+                "salesman": o.get("salesman", ""),
+                "created_at": o.get("created_at", ""),
+                "total_amount": o.get("total_amount", 0),
+                "items": o.get("items", []),
+            })
+            pending_by_customer[cust]["total_amount"] += safe_num(o.get("total_amount", 0))
+            for it in o.get("items", []):
+                pending_by_customer[cust]["total_items"].append({
+                    "item_name": it.get("item_name", ""),
+                    "quantity": safe_num(it.get("quantity", 0)),
+                    "price": safe_num(it.get("price", 0)),
+                    "remark": it.get("remark", ""),
+                    "order_id": o.get("order_id"),
+                })
+
+        pending_list = []
+        for cust, data in sorted(pending_by_customer.items()):
+            # Aggregate items by name
+            item_agg = {}
+            for it in data["total_items"]:
+                name = it["item_name"]
+                item_agg.setdefault(name, {"item_name": name, "total_qty": 0, "price": it["price"], "orders": []})
+                item_agg[name]["total_qty"] += it["quantity"]
+                item_agg[name]["orders"].append(it["order_id"])
+            pending_list.append({
+                "customer_name": cust,
+                "order_count": len(data["orders"]),
+                "total_amount": round(data["total_amount"], 2),
+                "items": list(item_agg.values()),
+                "orders": data["orders"],
+            })
+
+        # Billed verification — compare order items vs Tally invoice
+        verified = []
+        for o in billed[:50]:
+            inv_num = o.get("invoice_number", "")
+            if not inv_num:
+                continue
+            # Find matching Tally invoice
+            tally_inv = await db.sales_vouchers.find_one(
+                {**q, "$or": [{"voucher_id": inv_num}, {"reference_number": inv_num}]},
+                {"_id": 0, "items": 1, "party_name": 1, "total_amount": 1, "voucher_id": 1}
+            )
+            order_items = {it.get("item_name", ""): safe_num(it.get("quantity", 0)) for it in o.get("items", [])}
+            invoice_items = {}
+            if tally_inv:
+                for it in tally_inv.get("items", []):
+                    name = it.get("item") or it.get("item_name") or ""
+                    invoice_items[name] = safe_num(it.get("quantity", 0))
+
+            # Compare
+            all_items = set(list(order_items.keys()) + list(invoice_items.keys()))
+            discrepancies = []
+            for name in all_items:
+                oq = order_items.get(name, 0)
+                iq = invoice_items.get(name, 0)
+                if abs(oq - iq) > 0.01:
+                    discrepancies.append({"item_name": name, "ordered": oq, "billed": iq, "diff": round(iq - oq, 2)})
+
+            verified.append({
+                "order_id": o.get("order_id"),
+                "invoice_number": inv_num,
+                "customer_name": o.get("customer_name", ""),
+                "tally_matched": tally_inv is not None,
+                "match_status": "matched" if not discrepancies and tally_inv else ("discrepancy" if discrepancies else "not_synced"),
+                "discrepancies": discrepancies,
+            })
+
+        return APIResponse(success=True, data={
+            "pending": pending_list,
+            "pending_count": len(approved),
+            "verified": verified,
+        })
+    except Exception as e:
+        logger.error(f"Pending billing error: {e}")
         return APIResponse(success=False, error=str(e))
 
 

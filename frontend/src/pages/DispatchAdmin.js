@@ -3,7 +3,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import {
   Truck, Package, Clock, Users, DollarSign, Boxes, AlertTriangle,
-  Plus, User, Calendar, FileDown, Edit2, Trash2, X
+  Plus, User, Calendar, FileDown, Edit2, Trash2, X, ChevronDown
 } from 'lucide-react';
 import DispatchTerminal from './DispatchTerminal';
 import SalesmanOrderApp from './SalesmanOrderApp';
@@ -122,6 +122,7 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
   const tabs = [
     {id:'board', label:'Kanban Board'},
     {id:'online-orders', label:'Online Orders'},
+    {id:'pending-billing', label:'Pending Billing'},
     {id:'overview', label:'Overview'},
     {id:'pending', label:`Pending (${pendingCards.length})`},
     {id:'porters', label:'Porters'},
@@ -167,6 +168,9 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
 
       {/* ONLINE ORDERS — approved/billed salesman orders */}
       {tab==='online-orders' && <OnlineOrdersTab companyId={companyId} hdr={hdr}/>}
+
+      {/* PENDING BILLING — approved orders with items pending for billing per customer */}
+      {tab==='pending-billing' && <PendingBillingTab companyId={companyId} hdr={hdr}/>}
 
       {/* OVERVIEW */}
       {tab==='overview' && summary && <div className="space-y-4">
@@ -331,7 +335,7 @@ function OnlineOrdersTab({ companyId, hdr }) {
   const STATUS_C = { approved:'#3b82f6', billed:'#10b981', hold:'#8b5cf6' };
   if(loading) return <div className="flex items-center justify-center h-24"><div className="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
   return <div className="space-y-2" data-testid="online-orders-tab">
-    <p className="text-xs text-slate-500 mb-2">Salesman orders that are approved, billed, or on hold. Billed orders with Tally invoice numbers auto-create dispatch cards on next sync.</p>
+    <p className="text-xs text-slate-500 mb-2">Approved, billed, or on-hold salesman orders. Rejected orders are not shown here.</p>
     {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No online orders</p>}
     {orders.map(o=><div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -347,5 +351,102 @@ function OnlineOrdersTab({ companyId, hdr }) {
         </div>
       </div>
     </div>)}
+  </div>;
+}
+
+function PendingBillingTab({ companyId, hdr }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState({});
+  useEffect(() => {
+    axios.get(`${API}/api/salesman-orders/pending-billing?company_id=${companyId||''}`, {headers:hdr()})
+      .then(r => { if(r.data.success) setData(r.data.data); })
+      .finally(()=>setLoading(false));
+  }, [companyId, hdr]);
+
+  if(loading) return <div className="flex items-center justify-center h-24"><div className="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
+  if(!data) return null;
+
+  return <div className="space-y-4" data-testid="pending-billing-tab">
+    <div className="flex items-center justify-between">
+      <div><p className="text-xs text-slate-500">{data.pending_count} approved orders pending billing</p></div>
+    </div>
+
+    {/* Pending billing by customer */}
+    {data.pending?.length > 0 && <div>
+      <h3 className="text-xs font-semibold text-slate-700 mb-2">Items Pending for Billing (by Customer)</h3>
+      <div className="space-y-2">
+        {data.pending.map((c, ci) => (
+          <div key={ci} className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid={`pending-cust-${ci}`}>
+            <button onClick={() => setExpanded(e => ({...e, [ci]: !e[ci]}))} className="w-full text-left p-3 flex items-center justify-between hover:bg-slate-50 transition">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{c.customer_name}</div>
+                <div className="text-[10px] text-slate-500">{c.order_count} orders | {c.items.length} items</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-bold text-amber-600">Rs.{fmt(c.total_amount)}</div>
+                <ChevronDown size={14} className={`text-slate-400 transition ${expanded[ci] ? 'rotate-180' : ''}`}/>
+              </div>
+            </button>
+            {expanded[ci] && (
+              <div className="border-t border-slate-100 p-3">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-[10px] text-slate-500 border-b border-slate-100">
+                    <th className="text-left py-1.5 font-semibold">Item</th>
+                    <th className="text-right py-1.5 font-semibold">Total Qty</th>
+                    <th className="text-right py-1.5 font-semibold">Price</th>
+                    <th className="text-right py-1.5 font-semibold">Amount</th>
+                  </tr></thead>
+                  <tbody>
+                    {c.items.map((it, ii) => (
+                      <tr key={ii} className="border-b border-slate-50">
+                        <td className="py-1.5 text-slate-800">{it.item_name}</td>
+                        <td className="py-1.5 text-right font-medium">{it.total_qty}</td>
+                        <td className="py-1.5 text-right text-slate-500">Rs.{it.price}</td>
+                        <td className="py-1.5 text-right font-medium">Rs.{fmt(it.total_qty * it.price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {data.pending?.length === 0 && <p className="text-center text-sm text-slate-400 py-6">No orders pending for billing</p>}
+
+    {/* Billed verification */}
+    {data.verified?.length > 0 && <div>
+      <h3 className="text-xs font-semibold text-slate-700 mb-2">Billed Order Verification (Order vs Tally Invoice)</h3>
+      <div className="space-y-1.5">
+        {data.verified.map((v, vi) => (
+          <div key={vi} className={`bg-white rounded-lg border p-2.5 text-xs ${v.match_status === 'matched' ? 'border-green-200' : v.match_status === 'discrepancy' ? 'border-amber-200' : 'border-slate-200'}`} data-testid={`verified-${vi}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-mono text-slate-400">{v.order_id}</span>
+                <span className="text-slate-600 ml-2">{v.customer_name}</span>
+                <span className="text-slate-400 ml-2">Inv: {v.invoice_number}</span>
+              </div>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                v.match_status === 'matched' ? 'bg-green-100 text-green-700' :
+                v.match_status === 'discrepancy' ? 'bg-amber-100 text-amber-700' :
+                'bg-slate-100 text-slate-500'
+              }`}>{v.match_status === 'matched' ? 'MATCHED' : v.match_status === 'discrepancy' ? 'DISCREPANCY' : 'NOT SYNCED'}</span>
+            </div>
+            {v.discrepancies?.length > 0 && (
+              <div className="mt-1.5 bg-amber-50 rounded p-2">
+                {v.discrepancies.map((d, di) => (
+                  <div key={di} className="text-[10px] text-amber-800">
+                    {d.item_name}: Ordered {d.ordered} → Billed {d.billed} ({d.diff > 0 ? '+' : ''}{d.diff})
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>}
   </div>;
 }

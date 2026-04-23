@@ -379,7 +379,7 @@ function OrderDetailModal({ order, onClose, isAdmin, hdr }) {
               <div className="flex gap-2">
                 <button onClick={()=>changeStatus('approved', {admin_notes:adminNotes})} disabled={processing} className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50" data-testid="btn-approve">Approve</button>
                 <button onClick={()=>changeStatus('hold', {admin_notes:adminNotes})} disabled={processing} className="px-3 py-2 text-xs bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100" data-testid="btn-hold">Hold</button>
-                <button onClick={()=>{const r=prompt('Rejection reason?');if(r)changeStatus('rejected',{reject_reason:r,admin_notes:adminNotes});}} disabled={processing} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100" data-testid="btn-reject">Reject</button>
+                <button onClick={()=>{const r=prompt('Rejection reason (required):');if(r&&r.trim())changeStatus('rejected',{reject_reason:r.trim(),admin_notes:adminNotes});else if(r!==null)toast.error('Rejection reason is required');}} disabled={processing} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100" data-testid="btn-reject">Reject</button>
               </div>
             </div>
           )}
@@ -396,7 +396,7 @@ function OrderDetailModal({ order, onClose, isAdmin, hdr }) {
           {isAdmin && o.status==='hold' && (
             <div className="flex gap-2 border-t border-slate-200 pt-3">
               <button onClick={()=>changeStatus('approved')} disabled={processing} className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-lg">Resume to Approved</button>
-              <button onClick={()=>{const r=prompt('Rejection reason?');if(r)changeStatus('rejected',{reject_reason:r});}} disabled={processing} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg">Reject</button>
+              <button onClick={()=>{const r=prompt('Rejection reason (required):');if(r&&r.trim())changeStatus('rejected',{reject_reason:r.trim()});else if(r!==null)toast.error('Rejection reason is required');}} disabled={processing} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg">Reject</button>
             </div>
           )}
         </div>
