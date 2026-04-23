@@ -30,6 +30,7 @@ from routes.branch_ledgers import router as branch_ledgers_router
 from routes.referrals import router as referrals_router
 from routes.ca_corner import router as ca_corner_router
 from routes.questionnaire import router as questionnaire_router
+from routes.dispatch import router as dispatch_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -62,6 +63,7 @@ api_router.include_router(prospects_router)
 api_router.include_router(referrals_router)
 api_router.include_router(ca_corner_router)
 api_router.include_router(questionnaire_router)
+api_router.include_router(dispatch_router)
 
 # Include the combined router in the main app
 app.include_router(api_router)

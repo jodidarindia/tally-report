@@ -29,6 +29,7 @@ const ProfileModal = ({ user, token, onClose }) => {
   const [newEmpEmail, setNewEmpEmail] = useState('');
   const [newEmpName, setNewEmpName] = useState('');
   const [newEmpPassword, setNewEmpPassword] = useState('');
+  const [newEmpRole, setNewEmpRole] = useState('employee');
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -37,7 +38,7 @@ const ProfileModal = ({ user, token, onClose }) => {
     try {
       const res = await axios.get(`${API}/auth/users`, { headers });
       if (res.data?.success) {
-        setEmployees((res.data.data?.users || []).filter(u => u.role === 'employee'));
+        setEmployees((res.data.data?.users || []).filter(u => u.role === 'employee' || u.role === 'dispatch'));
       }
     } catch {}
     finally { setEmpLoading(false); }
@@ -64,7 +65,7 @@ const ProfileModal = ({ user, token, onClose }) => {
         username: newEmpEmail.toLowerCase().trim(),
         password: newEmpPassword,
         name: newEmpName.trim(),
-        role: 'employee'
+        role: newEmpRole
       }, { headers });
       if (res.data?.success) {
         toast.success(`Employee '${newEmpName.trim()}' added successfully`);
@@ -287,6 +288,11 @@ const ProfileModal = ({ user, token, onClose }) => {
                     <input type="password" value={newEmpPassword} onChange={e => setNewEmpPassword(e.target.value)}
                       placeholder="Set password (min 4 characters)" data-testid="emp-password-input"
                       className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                    <select value={newEmpRole} onChange={e => setNewEmpRole(e.target.value)} data-testid="emp-role-select"
+                      className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+                      <option value="employee">Employee (Full Access)</option>
+                      <option value="dispatch">Dispatch (Terminal Only)</option>
+                    </select>
                     <button onClick={handleAddEmployee} disabled={loading}
                       className="w-full py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#1D4ED8] disabled:opacity-50"
                       data-testid="add-employee-btn">
@@ -317,6 +323,7 @@ const ProfileModal = ({ user, token, onClose }) => {
                           <p className="text-sm font-medium text-slate-900">{emp.name || emp.username}</p>
                           <p className="text-xs text-slate-500 flex items-center gap-1"><Mail size={10} /> {emp.username}</p>
                         </div>
+                        {emp.role === 'dispatch' && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">DISPATCH</span>}
                       </div>
                       <button onClick={() => handleDeleteEmployee(emp.username)}
                         className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg"

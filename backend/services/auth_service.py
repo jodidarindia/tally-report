@@ -13,7 +13,7 @@ JWT_ALGORITHM = "HS256"
 
 ALL_FEATURES = [
     "dashboard", "sales", "crm", "inventory", "analytics",
-    "salesman", "ai_reports", "insider", "ca_corner", "sync_history", "setup"
+    "salesman", "ai_reports", "insider", "ca_corner", "sync_history", "setup", "dispatch"
 ]
 
 
@@ -75,8 +75,8 @@ async def get_current_user(request: Request, db) -> dict:
         if not user:
             return None
         # For admin/employee, check if their tenant is active
-        if user.get("role") in ("admin", "employee") and user.get("tenant_id"):
-            if user["role"] == "employee":
+        if user.get("role") in ("admin", "employee", "dispatch") and user.get("tenant_id"):
+            if user["role"] in ("employee", "dispatch"):
                 # Find the admin for this tenant
                 admin = await db.users.find_one(
                     {"tenant_id": user["tenant_id"], "role": "admin"},

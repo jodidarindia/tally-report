@@ -13,6 +13,8 @@ import ActivityLog from '../pages/ActivityLog';
 import ReferAndEarn from '../pages/ReferAndEarn';
 import CACorner from '../pages/CACorner';
 import InsiderResult from '../pages/InsiderResult';
+import DispatchTerminal from '../pages/DispatchTerminal';
+import DispatchAdmin from '../pages/DispatchAdmin';
 
 const FeatureLocked = ({ featureId }) => (
   <div className="flex items-center justify-center h-[60vh]" data-testid="feature-locked">
@@ -48,6 +50,11 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     case 'referral': return <ReferAndEarn />;
     case 'ca-corner': return gated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} />);
     case 'insider': return gated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
+    case 'dispatch': {
+      const role = user?.role;
+      if (role === 'dispatch') return <DispatchTerminal selectedFY={selectedFY} companyId={selectedCompany} />;
+      return gated('dispatch', <DispatchAdmin selectedFY={selectedFY} companyId={selectedCompany} />);
+    }
     default: return gated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
   }
 };

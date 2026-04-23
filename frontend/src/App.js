@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import './App.css';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark, RefreshCw
+  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark, RefreshCw, Warehouse
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from './hooks/useAuth';
@@ -30,6 +30,7 @@ const FEATURE_NAV_MAP = {
   ai_reports: { id: 'ai-reports', label: 'AI Reports', icon: Brain },
   insider: { id: 'insider', label: 'Insider Result', icon: Lightbulb },
   ca_corner: { id: 'ca-corner', label: 'CA Corner', icon: Landmark },
+  dispatch: { id: 'dispatch', label: 'Dispatch', icon: Warehouse },
   sync_history: { id: 'sync-history', label: 'Sync History', icon: History },
   setup: { id: 'setup', label: 'Setup', icon: Settings },
 };
@@ -60,6 +61,11 @@ function App() {
 
     if (user.role === 'super_admin') {
       setCurrentPage('super-admin');
+      return;
+    }
+
+    if (user.role === 'dispatch') {
+      setCurrentPage('dispatch');
       return;
     }
 

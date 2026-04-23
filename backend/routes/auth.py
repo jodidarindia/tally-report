@@ -46,7 +46,7 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         # Check if admin is active
         if user.get("role") == "admin" and not user.get("active", True):
             return APIResponse(success=False, error="Your account has been deactivated. Contact FLOWRA admin.")
-        if user.get("role") == "employee":
+        if user.get("role") in ("employee", "dispatch"):
             admin = await db.users.find_one(
                 {"tenant_id": user.get("tenant_id"), "role": "admin"},
                 {"_id": 0, "active": 1, "subscription_start": 1, "subscription_months": 1}
@@ -58,7 +58,7 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         tenant_id = user.get("tenant_id")
         sub_start = user.get("subscription_start", "")
         sub_months = user.get("subscription_months", 12)
-        if user.get("role") == "employee" and tenant_id:
+        if user.get("role") in ("employee", "dispatch") and tenant_id:
             admin_for_sub = await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"},
                 {"_id": 0, "subscription_start": 1, "subscription_months": 1}
@@ -88,7 +88,7 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         # Get companies for this tenant (UUIDs + resolved names)
         companies = []
         company_mappings = []
-        if tenant_id and user["role"] in ("admin", "employee"):
+        if tenant_id and user["role"] in ("admin", "employee", "dispatch"):
             admin_user = user if user["role"] == "admin" else await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"}, {"_id": 0}
             )
@@ -123,7 +123,7 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "role": user["role"],
                 "token": token,
                 "tenant_id": tenant_id,
-                "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else []),
+                "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else (["dispatch"] if user["role"] == "dispatch" else [])),
                 "companies": companies,
                 "company_mappings": company_mappings,
                 "plan": user.get("plan", "enterprise"),
@@ -152,7 +152,7 @@ async def get_me(request: Request):
         companies = []
         features = user.get("features", [])
 
-        if tenant_id and user["role"] in ("admin", "employee"):
+        if tenant_id and user["role"] in ("admin", "employee", "dispatch"):
             admin_user = user if user["role"] == "admin" else await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"}, {"_id": 0}
             )
@@ -160,11 +160,13 @@ async def get_me(request: Request):
                 companies = admin_user.get("companies", [])
                 if user["role"] == "employee":
                     features = admin_user.get("features", [])
+                elif user["role"] == "dispatch":
+                    features = ["dispatch"]
 
         # Subscription info
         sub_start = user.get("subscription_start", "")
         sub_months = user.get("subscription_months", 12)
-        if user["role"] == "employee" and tenant_id:
+        if user["role"] in ("employee", "dispatch") and tenant_id:
             admin_for_sub = await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"},
                 {"_id": 0, "subscription_start": 1, "subscription_months": 1}
@@ -304,7 +306,7 @@ async def create_user(req: CreateUserRequest, request: Request):
         # Enforce max_employees from plan
         if user["role"] == "admin":
             max_emp = user.get("max_employees", 20)
-            current_employees = await db.users.count_documents({"tenant_id": tenant_id, "role": "employee"})
+            current_employees = await db.users.count_documents({"tenant_id": tenant_id, "role": {"$in": ["employee", "dispatch"]}})
             if current_employees >= max_emp:
                 plan_name = user.get("plan", "current").capitalize()
                 return APIResponse(success=False, error=f"Employee limit reached ({max_emp}). Upgrade your {plan_name} plan to add more employees.")
@@ -313,7 +315,7 @@ async def create_user(req: CreateUserRequest, request: Request):
             "username": req.username,
             "password_hash": hash_password(req.password),
             "name": req.name,
-            "role": req.role if req.role in ("employee",) else "employee",
+            "role": req.role if req.role in ("employee", "dispatch") else "employee",
             "tenant_id": tenant_id,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
