@@ -14,38 +14,40 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analy
 - reCAPTCHA v3, idle timeout, Excel exports
 - Branch toggle, auto-reorder levels, public pages
 - Digital Questionnaire + SuperAdmin Leads tab
-- Deletion reconciliation (agent v9)
-- Part Number sync for stock items
+- Deletion reconciliation (agent v9), Part Number sync
 - Company resync/delete with command queue
 - 5-min sales quick sync + 20-min full sync
-- Per-company FY selection + last voucher date cap
-- Sync-in-progress banner on frontend
 - CRM target customer removal/reactivation per FY
 - Bulk percentage target setting
 - Branch exclusion for overdue, concentration risk, SPIP, forecast
-- Month-vs-month cross-FY comparison in sales forecast
+- **Dispatch Terminal** (NEW — April 2026)
+
+## Dispatch Terminal Feature
+- **Kanban Board**: Status lanes (New, Queued, Processing, Packed, Dispatched) + Hold
+- **Auto-create**: Cards generated from synced Tally sales invoices
+- **Manual Cards**: For samples, returns, replacements, internal transfers
+- **Document Uploads**: Invoice doc, Sales order, LR receipt (image/PDF)
+- **LR Tracking**: Transport LR receipt number per dispatch card
+- **Porter Management**: Master list, per-dispatch charges, settlement reports, payment recording
+- **Employee Role**: `dispatch` role — terminal access only, sees all active cards, works on assigned
+- **Admin View**: Overview, Pending (with reassign), Porter Settlement, Employees, Updates/Changelog tabs
+- **Dispatch History**: Permanent searchable archive with all documents for any invoice
+- **Round-robin Assignment**: Auto-assign cards to dispatch employees
+- Collections: `dispatch_cards`, `dispatch_porters`, `dispatch_porter_payments`
 
 ## Critical Technical Notes
 
 ### Opening Balance Logic (customers.py)
-Tally's `opening_balance` on a customer = balance at START of `sync_status.financial_year` (the base FY).
+Tally's `opening_balance` = balance at START of `sync_status.financial_year` (base FY).
 - **Base FY** (e.g., 2026-27): Use Tally OB directly
-- **Earlier FYs** (e.g., 2025-26): Reverse-compute: `OB = Tally_OB - FY_activity` (subtract sales, add receipts/CNs/JV credits)
-- **Later FYs**: Forward-compute: `OB = Tally_OB + intervening_activity`
-- **Non-customer parties** (depots, etc.): Use pure pre-FY voucher sum (no Tally OB)
+- **Earlier FYs** (e.g., 2025-26): Reverse-compute: subtract FY activity
+- **Non-customer parties**: Use pure pre-FY voucher sum
 
 ### Journal Voucher Party Amounts (utils.py: get_jv_party_amount)
-JV `credit_amount`/`debit_amount` = TOTAL across ALL ledger entries (e.g., 35284 for 2-entry JV). 
-Use `ledger_entries` array to extract the party-specific amount (e.g., 17642).
-
-## Bug Fixes (April 16, 2026)
-- **Fixed FY-specific Opening Balance**: Tally OB is for base FY only; earlier FYs reverse-computed via voucher activity
-- **Fixed JV double-counting**: Extract party-specific amounts from ledger_entries array
-- **Fixed SPIP Analysis**: Sales voucher items use `item` key (not `item_name`)
+JV `credit_amount`/`debit_amount` = TOTAL across ALL ledger entries. Use `ledger_entries` array to extract party-specific amount.
 
 ## Upcoming
 - P1: Compile Desktop Agent v9 to `.exe`
-- P1: Dispatch Terminal (spec at `/app/memory/DISPATCH_TERMINAL_SPEC.md`)
 - P2: Salesman Order System
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders via email/WhatsApp
