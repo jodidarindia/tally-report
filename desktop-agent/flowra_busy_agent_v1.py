@@ -610,124 +610,203 @@ class FlowraAPIClient:
         self.backend_url = backend_url.rstrip("/")
         self.token = None
         self.tenant_id = None
-        self.companies = []
+        self.companies = []           # list of company_id strings
+        self.company_mappings = []    # list of {company_name, company_id}
         self.features = []
-        self.sync_token = None
+        self.plan = "unknown"
+        self.max_companies = 10
+        self.sync_token = ""
+        self.name = ""
 
     def login(self, username: str, password: str) -> bool:
         import requests
         try:
-            r = requests.post(f"{self.backend_url}/api/auth/login",
-                              json={"username": username, "password": password}, timeout=15)
+            r = requests.post(
+                f"{self.backend_url}/api/auth/login",
+                json={"username": username, "password": password},
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                logger.error(f"Login HTTP {r.status_code}: {r.text[:200]}")
+                return False
             data = r.json()
-            if data.get("success"):
-                d = data["data"]
-                self.token = d["token"]
-                self.tenant_id = d.get("tenant_id", "")
-                self.companies = d.get("companies", [])
-                self.features = d.get("features", [])
-                self.sync_token = d.get("sync_token", "")
-                logger.info(f"Logged in. Tenant: {self.tenant_id}, Companies: {len(self.companies)}")
-                return True
-            else:
+            if not data.get("success"):
                 logger.error(f"Login failed: {data.get('error', 'Unknown')}")
                 return False
+
+            d = data["data"]
+            if d.get("role") not in ("admin",):
+                logger.error("Only admin accounts can use the Busy Sync Agent")
+                return False
+
+            self.token = d["token"]
+            self.tenant_id = d.get("tenant_id", "")
+            self.companies = d.get("companies", []) or []
+            self.company_mappings = d.get("company_mappings", []) or []
+            self.features = d.get("features", []) or []
+            self.plan = d.get("plan", "unknown")
+            self.max_companies = d.get("max_companies", 10)
+            self.name = d.get("name", "")
+
+            # Fetch sync token (HMAC) for subsequent sync calls
+            try:
+                tr = requests.get(
+                    f"{self.backend_url}/api/auth/sync-token",
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=10,
+                )
+                if tr.status_code == 200 and tr.json().get("success"):
+                    self.sync_token = tr.json()["data"].get("sync_token", "")
+            except Exception as e:
+                logger.warning(f"Could not fetch sync_token: {e}")
+
+            logger.info(
+                f"Logged in as {self.name or username} | tenant={self.tenant_id} | "
+                f"plan={self.plan} | companies={len(self.companies)}"
+            )
+            return True
         except Exception as e:
             logger.error(f"Login error: {e}")
             return False
 
-    def _headers(self, company_id: str = "") -> dict:
-        h = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
-        if company_id:
-            h["X-Company-Id"] = company_id
-        return h
+    def _auth_headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
 
-    def sync_data(self, company_id: str, data_type: str, records: List[Dict]) -> bool:
-        """Upload data in chunks to keep RAM low."""
+    def _build_envelope(self, data_type: str, data: list, company_id: str,
+                        company_name: str, financial_year: str) -> dict:
+        return {
+            "data_type": data_type,
+            "data": data,
+            "sync_time": datetime.now(timezone.utc).isoformat(),
+            "agent_version": f"busy-{VERSION}",
+            "company_name": company_name,
+            "financial_year": financial_year,
+            "tenant_id": self.tenant_id,
+            "company_id": company_id,
+            "sync_token": self.sync_token,
+        }
+
+    def _post_chunk(self, data_type: str, chunk: list, company_id: str,
+                    company_name: str, financial_year: str) -> bool:
         import requests
-        url = f"{self.backend_url}/api/sync/data"
-        for i in range(0, len(records), CHUNK_SIZE):
-            chunk = records[i:i + CHUNK_SIZE]
-            try:
-                r = requests.post(url, json={
-                    "data_type": data_type,
-                    "data": chunk,
-                    "sync_token": self.sync_token,
-                }, headers=self._headers(company_id), timeout=60)
-                if not r.json().get("success"):
-                    logger.warning(f"Sync chunk failed for {data_type}: {r.json().get('error', '')}")
-                    return False
-            except Exception as e:
-                logger.error(f"Sync error {data_type}: {e}")
+        if not chunk:
+            return True
+        try:
+            payload = self._build_envelope(data_type, chunk, company_id, company_name, financial_year)
+            r = requests.post(
+                f"{self.backend_url}/api/agent/sync",
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=60,
+            )
+            if r.status_code != 200:
+                logger.warning(f"Sync {data_type}: HTTP {r.status_code} — {r.text[:200]}")
                 return False
-        return True
+            js = r.json()
+            if not js.get("success"):
+                logger.warning(f"Sync {data_type} failed: {js.get('error', '')}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Sync error {data_type}: {e}")
+            return False
 
-    def sync_generator(self, company_id: str, data_type: str, gen: Generator) -> tuple:
-        """Sync from a generator in chunks. Returns (success, count, manifest_ids)."""
-        import requests
-        url = f"{self.backend_url}/api/sync/data"
+    def sync_generator(self, company_id: str, company_name: str, financial_year: str,
+                       data_type: str, gen: Generator, id_key: str = "voucher_id") -> tuple:
+        """Stream records from a generator, chunk-upload to backend.
+        Returns (success, count, manifest_ids)."""
         buffer = []
-        count = 0
         manifest = []
+        count = 0
+        success = True
 
         for record in gen:
             buffer.append(record)
-            manifest.append(record.get("voucher_id", record.get("customer_id", record.get("item_id", ""))))
+            manifest.append(str(record.get(id_key, "")))
             count += 1
             if len(buffer) >= CHUNK_SIZE:
-                try:
-                    r = requests.post(url, json={
-                        "data_type": data_type, "data": buffer, "sync_token": self.sync_token,
-                    }, headers=self._headers(company_id), timeout=60)
-                    if not r.json().get("success"):
-                        logger.warning(f"Chunk sync failed {data_type}: {r.json().get('error', '')}")
-                except Exception as e:
-                    logger.error(f"Sync error {data_type}: {e}")
+                if not self._post_chunk(data_type, buffer, company_id, company_name, financial_year):
+                    success = False
                 buffer.clear()
-                gc.collect()  # Free memory after each chunk
+                gc.collect()
 
-        # Flush remaining
         if buffer:
-            try:
-                import requests as req
-                r = req.post(url, json={
-                    "data_type": data_type, "data": buffer, "sync_token": self.sync_token,
-                }, headers=self._headers(company_id), timeout=60)
-            except Exception as e:
-                logger.error(f"Final chunk error {data_type}: {e}")
+            if not self._post_chunk(data_type, buffer, company_id, company_name, financial_year):
+                success = False
             buffer.clear()
 
         gc.collect()
-        return True, count, manifest
+        return success, count, manifest
 
-    def reconcile(self, company_id: str, data_type: str, manifest_ids: list, id_key: str = "voucher_id") -> bool:
+    def sync_data(self, company_id: str, company_name: str, financial_year: str,
+                  data_type: str, records: list) -> bool:
+        """One-shot sync (for small datasets like profit_loss)."""
+        for i in range(0, len(records) or 1, CHUNK_SIZE):
+            chunk = records[i:i + CHUNK_SIZE] if records else []
+            if not self._post_chunk(data_type, chunk, company_id, company_name, financial_year):
+                return False
+        return True
+
+    def reconcile(self, company_id: str, company_name: str, financial_year: str,
+                  data_type: str, manifest_ids: list, id_key: str = "voucher_id") -> bool:
         import requests
         try:
-            r = requests.post(f"{self.backend_url}/api/agent/reconcile", json={
-                "data_type": data_type, "manifest_ids": manifest_ids, "id_key": id_key,
-            }, headers=self._headers(company_id), timeout=30)
-            return r.json().get("success", False)
-        except Exception:
+            payload = {
+                "data_type": data_type,
+                "manifest_ids": manifest_ids,
+                "tenant_id": self.tenant_id,
+                "company_id": company_id,
+                "company_name": company_name,
+                "financial_year": financial_year,
+                "sync_token": self.sync_token,
+                "agent_version": f"busy-{VERSION}",
+                "id_key": id_key,
+            }
+            r = requests.post(
+                f"{self.backend_url}/api/agent/reconcile",
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=30,
+            )
+            return r.status_code == 200 and r.json().get("success", False)
+        except Exception as e:
+            logger.error(f"Reconcile error {data_type}: {e}")
             return False
 
-    def poll_commands(self, company_id: str) -> list:
+    def poll_commands(self) -> list:
         import requests
         try:
-            r = requests.get(f"{self.backend_url}/api/agent/commands",
-                             headers=self._headers(company_id), timeout=10)
-            if r.json().get("success"):
-                return r.json()["data"].get("commands", [])
-        except Exception:
-            pass
+            r = requests.get(
+                f"{self.backend_url}/api/agent/commands",
+                params={"tenant_id": self.tenant_id, "sync_token": self.sync_token},
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=10,
+            )
+            if r.status_code == 200 and r.json().get("success"):
+                return r.json()["data"].get("commands", []) or []
+        except Exception as e:
+            logger.debug(f"Command poll failed: {e}")
         return []
 
-    def ack_command(self, company_id: str, command_id: str, status: str = "completed"):
+    def ack_command(self, company_id: str, action: str):
         import requests
         try:
-            requests.patch(f"{self.backend_url}/api/agent/commands/{command_id}",
-                           json={"status": status}, headers=self._headers(company_id), timeout=10)
-        except Exception:
-            pass
+            requests.post(
+                f"{self.backend_url}/api/agent/commands/ack",
+                json={
+                    "tenant_id": self.tenant_id,
+                    "company_id": company_id,
+                    "action": action,
+                },
+                headers=self._auth_headers(),
+                timeout=10,
+            )
+        except Exception as e:
+            logger.debug(f"Ack failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -764,12 +843,22 @@ class FlowraBusySyncAgent:
         save_config(self.config)
 
     def get_companies(self) -> list:
-        return self.api.companies if self.api else []
+        """Return list of {company_id, company_name} from login mappings."""
+        if not self.api:
+            return []
+        if self.api.company_mappings:
+            return [
+                {"company_id": m.get("company_id", ""),
+                 "company_name": m.get("company_name", m.get("company_id", ""))}
+                for m in self.api.company_mappings
+            ]
+        # Fallback: raw company ids only
+        return [{"company_id": c, "company_name": c} for c in (self.api.companies or [])]
 
     def get_fys(self) -> list:
         return self.extractor.get_available_fys() if self.extractor else []
 
-    def run_full_sync(self, company_id: str, fy: str):
+    def run_full_sync(self, company_id: str, company_name: str, fy: str):
         """Full sync — all data types. RAM-optimized with generator streaming."""
         if not self.api or not self.extractor:
             self.set_status("Not configured. Login and set Busy folder first.")
@@ -777,37 +866,42 @@ class FlowraBusySyncAgent:
 
         self.running = True
         start = time.time()
-        self.set_status(f"Starting full sync for FY {fy}...")
+        self.set_status(f"Starting full sync for {company_name} | FY {fy}...")
 
         sync_phases = [
-            ("customers", self.extractor.extract_customers, "customer_id"),
-            ("sundry_creditors", self.extractor.extract_creditors, "creditor_id"),
-            ("inventory_items", self.extractor.extract_inventory_items, "item_id"),
-            ("sales_vouchers", self.extractor.extract_sales, "voucher_id"),
-            ("receipt_vouchers", self.extractor.extract_receipts, "voucher_id"),
-            ("credit_notes", self.extractor.extract_credit_notes, "voucher_id"),
-            ("journal_vouchers", self.extractor.extract_journals, "voucher_id"),
-            ("purchase_vouchers", self.extractor.extract_purchases, "voucher_id"),
-            ("debit_notes", self.extractor.extract_debit_notes, "voucher_id"),
-            ("contra_vouchers", self.extractor.extract_contra, "voucher_id"),
-            ("stock_journals", self.extractor.extract_stock_journals, "voucher_id"),
+            ("customers",         self.extractor.extract_customers,        "customer_id"),
+            ("sundry_creditors",  self.extractor.extract_creditors,        "creditor_id"),
+            ("inventory",         self.extractor.extract_inventory_items,  "item_id"),
+            ("sales",             self.extractor.extract_sales,            "voucher_id"),
+            ("receipts",          self.extractor.extract_receipts,         "voucher_id"),
+            ("credit_notes",      self.extractor.extract_credit_notes,     "voucher_id"),
+            ("journal_vouchers",  self.extractor.extract_journals,         "voucher_id"),
+            ("purchase_vouchers", self.extractor.extract_purchases,        "voucher_id"),
+            ("debit_notes",       self.extractor.extract_debit_notes,      "voucher_id"),
+            ("contra_vouchers",   self.extractor.extract_contra,           "voucher_id"),
+            ("stock_journals",    self.extractor.extract_stock_journals,   "voucher_id"),
         ]
 
         for i, (dtype, extractor_fn, id_key) in enumerate(sync_phases, 1):
             self.set_status(f"Phase {i}/{len(sync_phases)}: Syncing {dtype}...")
-            ok, count, manifest = self.api.sync_generator(company_id, dtype, extractor_fn(fy))
+            ok, count, manifest = self.api.sync_generator(
+                company_id, company_name, fy, dtype, extractor_fn(fy), id_key
+            )
             if ok and manifest:
-                self.api.reconcile(company_id, dtype, manifest, id_key)
+                self.api.reconcile(company_id, company_name, fy, dtype, manifest, id_key)
             self.set_status(f"  {dtype}: {count} records synced")
             gc.collect()
 
         # P&L + All Ledgers
         self.set_status("Computing P&L...")
         pl = self.extractor.compute_profit_loss(fy)
-        self.api.sync_data(company_id, "profit_loss", [pl])
+        self.api.sync_data(company_id, company_name, fy, "profit_loss", [pl])
 
         self.set_status("Syncing all ledgers...")
-        ok, count, _ = self.api.sync_generator(company_id, "all_ledgers", self.extractor.extract_all_ledgers(fy))
+        ok, count, _ = self.api.sync_generator(
+            company_id, company_name, fy, "all_ledgers",
+            self.extractor.extract_all_ledgers(fy), "ledger_id"
+        )
         self.set_status(f"  all_ledgers: {count} records synced")
 
         elapsed = round(time.time() - start, 1)
@@ -816,39 +910,42 @@ class FlowraBusySyncAgent:
         # Update state
         self.state.setdefault(company_id, {})["last_full_sync"] = now_ist()
         self.state[company_id]["last_fy"] = fy
+        self.state[company_id]["company_name"] = company_name
         save_sync_state(self.state)
         self.running = False
         gc.collect()
 
-    def run_quick_sales_sync(self, company_id: str, fy: str):
+    def run_quick_sales_sync(self, company_id: str, company_name: str, fy: str):
         """Quick sync — sales only. For 5-min interval."""
         if not self.api or not self.extractor:
             return
         self.set_status("Quick sales sync...")
         ok, count, manifest = self.api.sync_generator(
-            company_id, "sales_vouchers", self.extractor.extract_sales(fy))
+            company_id, company_name, fy, "sales",
+            self.extractor.extract_sales(fy), "voucher_id"
+        )
         if ok and manifest:
-            self.api.reconcile(company_id, "sales_vouchers", manifest, "voucher_id")
+            self.api.reconcile(company_id, company_name, fy, "sales", manifest, "voucher_id")
         self.set_status(f"Quick sync: {count} sales at {now_ist_display()}")
         self.state.setdefault(company_id, {})["last_quick_sync"] = now_ist()
         save_sync_state(self.state)
         gc.collect()
 
-    def poll_commands(self, company_id: str, fy: str):
+    def poll_commands(self, company_id: str, company_name: str, fy: str):
         """Check and execute remote commands."""
         if not self.api:
             return
-        commands = self.api.poll_commands(company_id)
+        commands = self.api.poll_commands()
         for cmd in commands:
-            cmd_type = cmd.get("command_type", "")
-            cmd_id = cmd.get("command_id", "")
-            if cmd_type == "resync":
-                self.set_status(f"Remote resync command received")
-                self.run_full_sync(company_id, fy)
-                self.api.ack_command(company_id, cmd_id)
-            elif cmd_type == "delete":
-                self.set_status(f"Remote delete command — skipping (manual action needed)")
-                self.api.ack_command(company_id, cmd_id, "skipped")
+            action = cmd.get("action", "") or cmd.get("command_type", "")
+            cmd_company = cmd.get("company_id", "") or company_id
+            if action == "resync":
+                self.set_status("Remote resync command received")
+                self.run_full_sync(cmd_company, company_name, fy)
+                self.api.ack_command(cmd_company, action)
+            elif action == "delete":
+                self.set_status("Remote delete command — marking acknowledged")
+                self.api.ack_command(cmd_company, action)
 
 
 # ---------------------------------------------------------------------------
@@ -937,7 +1034,11 @@ def run_gui():
         if path:
             folder_var.set(path)
             agent.set_busy_folder(path)
-            update_status(f"FYs found: {agent.get_fys()}")
+            fys = agent.get_fys()
+            fy_combo["values"] = fys
+            if fys:
+                fy_combo.current(len(fys) - 1)
+            update_status(f"FYs found: {fys}")
 
     ttk.Button(folder_frame, text="Browse", command=browse_folder).pack(side="right", padx=(5, 0))
 
@@ -945,58 +1046,103 @@ def run_gui():
     sync_frame = ttk.LabelFrame(root, text="Companies & Sync", padding=10)
     sync_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
 
-    tree = ttk.Treeview(sync_frame, columns=("status", "last_sync"), show="headings", height=5)
+    # FY selector row
+    fy_row = ttk.Frame(sync_frame)
+    fy_row.pack(fill="x", pady=(0, 8))
+    ttk.Label(fy_row, text="Financial Year:").pack(side="left")
+    fy_var = tk.StringVar()
+    fy_combo = ttk.Combobox(fy_row, textvariable=fy_var, state="readonly", width=15)
+    fy_combo.pack(side="left", padx=(5, 10))
+
+    def refresh_fys():
+        fys = agent.get_fys()
+        fy_combo["values"] = fys
+        if fys:
+            fy_combo.current(len(fys) - 1)  # default: latest FY
+        else:
+            fy_var.set("")
+
+    ttk.Button(fy_row, text="Reload FYs", command=refresh_fys).pack(side="left")
+
+    tree = ttk.Treeview(sync_frame, columns=("name", "status", "last_sync"),
+                        show="headings", height=5)
+    tree.heading("name", text="Company")
     tree.heading("status", text="Status")
     tree.heading("last_sync", text="Last Sync (IST)")
+    tree.column("name", width=220)
     tree.column("status", width=100)
-    tree.column("last_sync", width=200)
+    tree.column("last_sync", width=180)
     tree.pack(fill="both", expand=True)
 
     def refresh_companies():
         tree.delete(*tree.get_children())
         for c in agent.get_companies():
             cid = c.get("company_id", "")
-            name = c.get("company_name", cid[:20])
+            name = c.get("company_name", cid[:30]) or cid[:30]
             state = agent.state.get(cid, {})
             last = state.get("last_full_sync", "Never")
-            tree.insert("", "end", iid=cid, text=name, values=("Idle", last))
+            if last and last != "Never":
+                try:
+                    last = datetime.fromisoformat(last).astimezone(IST).strftime("%d-%b %I:%M %p")
+                except Exception:
+                    pass
+            tree.insert("", "end", iid=cid, values=(name, "Idle", last))
 
     btn_frame = ttk.Frame(sync_frame)
     btn_frame.pack(fill="x", pady=(5, 0))
 
-    def do_sync():
+    def _selected_company():
         sel = tree.selection()
         if not sel:
-            messagebox.showwarning("Select", "Select a company first")
-            return
+            messagebox.showwarning("Select Company", "Select a company row first")
+            return None, None
         cid = sel[0]
-        fys = agent.get_fys()
-        if not fys:
-            messagebox.showerror("Error", "No FY data found. Check Busy folder.")
+        name = tree.item(cid, "values")[0] if tree.item(cid, "values") else cid
+        return cid, name
+
+    def _current_fy():
+        fy = fy_var.get().strip()
+        if not fy:
+            messagebox.showerror("No FY", "No FY data available. Check your Busy folder.")
+            return None
+        return fy
+
+    def do_sync():
+        cid, cname = _selected_company()
+        if not cid:
             return
-        fy = fys[-1]  # Latest FY
+        fy = _current_fy()
+        if not fy:
+            return
         tree.set(cid, "status", "Syncing...")
 
         def sync_thread():
-            agent.run_full_sync(cid, fy)
-            tree.set(cid, "status", "Done")
-            tree.set(cid, "last_sync", now_ist_display())
+            try:
+                agent.run_full_sync(cid, cname, fy)
+                tree.set(cid, "status", "Done")
+                tree.set(cid, "last_sync", now_ist_display())
+            except Exception as e:
+                logger.exception("Full sync crashed")
+                tree.set(cid, "status", "Error")
+                update_status(f"Sync error: {e}")
 
         threading.Thread(target=sync_thread, daemon=True).start()
 
     def do_quick_sync():
-        sel = tree.selection()
-        if not sel:
+        cid, cname = _selected_company()
+        if not cid:
             return
-        cid = sel[0]
-        fys = agent.get_fys()
-        if not fys:
+        fy = _current_fy()
+        if not fy:
             return
-        threading.Thread(target=lambda: agent.run_quick_sales_sync(cid, fys[-1]), daemon=True).start()
+        threading.Thread(
+            target=lambda: agent.run_quick_sales_sync(cid, cname, fy),
+            daemon=True,
+        ).start()
 
     ttk.Button(btn_frame, text="Full Sync", command=do_sync, style="Accent.TButton").pack(side="left", padx=(0, 5))
     ttk.Button(btn_frame, text="Quick Sales Sync", command=do_quick_sync).pack(side="left", padx=(0, 5))
-    ttk.Button(btn_frame, text="Refresh", command=refresh_companies).pack(side="right")
+    ttk.Button(btn_frame, text="Refresh", command=lambda: (refresh_companies(), refresh_fys())).pack(side="right")
 
     # ── Status Bar ──
     status_bar = ttk.Frame(root, padding=(15, 5))
@@ -1007,6 +1153,7 @@ def run_gui():
     # Auto-load saved config
     if agent.config.get("busy_folder"):
         agent.set_busy_folder(agent.config["busy_folder"])
+        refresh_fys()
 
     root.mainloop()
 
@@ -1016,7 +1163,7 @@ def run_gui():
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print(f"\n  {APP_NAME} v{VERSION}")
-    print(f"  All times in IST (Asia/Kolkata)\n")
+    print("  All times in IST (Asia/Kolkata)\n")
 
     if "--headless" in sys.argv:
         # CLI mode for testing

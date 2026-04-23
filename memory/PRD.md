@@ -25,6 +25,17 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 - Enterprise plan updated with Dispatch and Salesman features
 
 ## Upcoming
-- P1: Compile Desktop Agent v9 to `.exe`
+- P0: Ship `.exe` installer for Busy Agent (validate on a real Windows + Busy install with customer data)
+- P1: Compile Desktop Agent v9 (Tally) to `.exe`
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders
+
+## Desktop Sync Agents
+- **Tally (v9)** — `/app/desktop-agent/tally_sync_agent_v9.py` (mature, production)
+- **Busy (v1)** — `/app/desktop-agent/flowra_busy_agent_v1.py` (Feb 2026)
+  - Light-themed tkinter GUI, `pyodbc` cursor streaming from `.bds` (MS Access Jet 4.0)
+  - Chunked uploads (500/chunk), generator extraction, gc.collect() per phase
+  - Login + FY dropdown + company picker + Full Sync + Quick Sales Sync
+  - Validated end-to-end against `/api/agent/sync`, `/api/agent/reconcile`,
+    `/api/agent/commands*` (sync_token auth working)
+  - Docs: `/app/desktop-agent/BUSY_README.md`
