@@ -5,7 +5,7 @@ import {
   BarChart3, Shield, Package, Users, Brain, Truck, Zap,
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
   Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark,
-  FileText, ClipboardList, Download, ChevronDown
+  FileText, ClipboardList, Download, ChevronDown, ShoppingCart
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -39,7 +39,7 @@ const PLANS = [
     monthly: 3799,
     annual: 37990,
     desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'Salesman Performance Tracking', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'CA Corner (Cash Flow, P&L, AI Expense)', 'Multi-Company Support (10)', 'Priority Support & Training'],
+    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'CA Corner (P&L, Balance Sheet, AI)', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,
     maxEmployees: 20,
     popular: false
@@ -49,9 +49,10 @@ const PLANS = [
 const FEATURES = [
   { icon: BarChart3, title: 'Inventory Analytics', desc: 'Movement analysis, below-cost detection, stock classification with clickable filters and Excel exports.' },
   { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance.' },
-  { icon: Truck, title: 'Salesman Performance', desc: 'FY-locked targets, customer mapping, monthly/quarterly breakdowns with best performer detection.' },
+  { icon: Truck, title: 'Dispatch Terminal', desc: 'Warehouse Kanban board with LR tracking, document uploads, porter & transporter settlement, and Close-of-Day PDF.', isNew: true },
+  { icon: ShoppingCart, title: 'Salesman Orders', desc: 'Mobile-first order collection. Salesmen place orders on the go, admin approves, and invoices flow straight to dispatch.', isNew: true },
   { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, natural language queries across your entire Tally* data.' },
-  { icon: Landmark, title: 'CA Corner', desc: 'Cash Flow statement (Tally* method), monthly P&L reports, and AI expense insights to reduce costs.' },
+  { icon: Landmark, title: 'CA Corner', desc: 'Cash Flow, P&L with ledger drill-down, Balance Sheet, and AI expense insights — all synced from Tally*.', isNew: true },
   { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, and concentration risk with Pareto charts.' },
   { icon: Shield, title: 'Bank-Grade Security', desc: 'AES-256 encryption, bcrypt hashing, JWT auth, field-level PII encryption, multi-tenant data isolation.' },
 ];
@@ -210,7 +211,8 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {FEATURES.map((f, i) => (
-              <div key={i} className="bg-white border border-zinc-200 rounded-sm p-8 hover:-translate-y-1 hover:border-zinc-300 transition-all" data-testid={`feature-card-${i}`}>
+              <div key={i} className="bg-white border border-zinc-200 rounded-sm p-8 hover:-translate-y-1 hover:border-zinc-300 transition-all relative" data-testid={`feature-card-${i}`}>
+                {f.isNew && <span className="absolute top-3 right-3 text-[9px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">NEW</span>}
                 <div className="w-11 h-11 bg-zinc-950 rounded-sm flex items-center justify-center mb-5">
                   <f.icon size={20} className="text-white" />
                 </div>

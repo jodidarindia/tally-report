@@ -7,6 +7,7 @@ Cash Flow follows Tally's Indirect Method:
 """
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from typing import Optional
 from datetime import datetime, timezone
 import logging
 import os
@@ -354,4 +355,119 @@ Keep the language simple and practical for a business owner. Use Indian Rupee am
         })
     except Exception as e:
         logger.error(f"AI Expense insights error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# BALANCE SHEET
+# ═══════════════════════════════════════════════════════
+
+@router.get("/ca-corner/balance-sheet")
+async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional[str] = None):
+    """Balance Sheet from all_ledgers: Assets vs Liabilities + Capital."""
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+
+        q = _build_q(ctx, company_id)
+        ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
+
+        if not ledgers:
+            return APIResponse(success=True, data={
+                "assets": [], "liabilities": [], "total_assets": 0, "total_liabilities": 0,
+                "message": "No ledger data synced yet. Please run the desktop agent to sync."
+            })
+
+        # Classify
+        asset_cats = {'current_assets', 'fixed_assets', 'investments', 'stock_in_hand', 'misc_expense', 'cash', 'bank', 'bank_od'}
+        liability_cats = {'current_liabilities', 'provisions', 'duties_taxes', 'non_current_liabilities', 'secured_loans', 'unsecured_loans'}
+        capital_cats = {'capital', 'reserves', 'profit_loss_ac'}
+
+        def group_ledgers(cats, sign=1):
+            groups = {}
+            for l in ledgers:
+                if l.get('category') in cats:
+                    grp = l.get('parent_group', 'Other')
+                    groups.setdefault(grp, {"group": grp, "ledgers": [], "total": 0})
+                    amt = round(abs(l.get('closing_balance', 0)), 2)
+                    groups[grp]["ledgers"].append({"name": l.get('ledger_name', ''), "amount": amt})
+                    groups[grp]["total"] += amt
+            return sorted(groups.values(), key=lambda x: x['total'], reverse=True)
+
+        assets = group_ledgers(asset_cats)
+        liabilities = group_ledgers(liability_cats)
+        capital = group_ledgers(capital_cats)
+
+        total_assets = sum(g['total'] for g in assets)
+        total_liabilities = sum(g['total'] for g in liabilities)
+        total_capital = sum(g['total'] for g in capital)
+
+        return APIResponse(success=True, data={
+            "assets": assets,
+            "liabilities": liabilities,
+            "capital": capital,
+            "total_assets": round(total_assets, 2),
+            "total_liabilities": round(total_liabilities, 2),
+            "total_capital": round(total_capital, 2),
+            "total_liabilities_capital": round(total_liabilities + total_capital, 2),
+        })
+    except Exception as e:
+        logger.error(f"Balance sheet error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# P&L DRILL-DOWN — Ledger-wise breakdown by group
+# ═══════════════════════════════════════════════════════
+
+@router.get("/ca-corner/pl-drilldown")
+async def get_pl_drilldown(request: Request, type: str = "expense", company_id: Optional[str] = None):
+    """Get ledger-wise P&L drill-down grouped by parent. type=income or expense."""
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+
+        q = _build_q(ctx, company_id)
+
+        # From stored P&L data
+        pl = await db.profit_loss.find_one(
+            {"tenant_id": q.get("tenant_id", ""), "company_id": q.get("company_id", "")}, {"_id": 0}
+        )
+        if not pl:
+            return APIResponse(success=True, data={"groups": [], "total": 0, "type": type})
+
+        items = pl.get(type, [])  # income or expense array
+        total = pl.get(f"total_{type}", 0)
+
+        # Group by parent_group
+        groups = {}
+        for item in items:
+            grp = item.get("parent_group", "Other")
+            groups.setdefault(grp, {"group": grp, "ledgers": [], "total": 0})
+            amt = round(abs(item.get("amount", 0)), 2)
+            groups[grp]["ledgers"].append({
+                "name": item.get("ledger_name", ""),
+                "amount": amt,
+                "pct": round(amt / total * 100, 1) if total > 0 else 0,
+            })
+            groups[grp]["total"] += amt
+
+        # Sort groups and ledgers
+        for g in groups.values():
+            g["ledgers"] = sorted(g["ledgers"], key=lambda x: x["amount"], reverse=True)
+            g["pct"] = round(g["total"] / total * 100, 1) if total > 0 else 0
+
+        result = sorted(groups.values(), key=lambda x: x['total'], reverse=True)
+
+        return APIResponse(success=True, data={
+            "groups": result,
+            "total": round(total, 2),
+            "type": type,
+        })
+    except Exception as e:
+        logger.error(f"P&L drilldown error: {e}")
         return APIResponse(success=False, error=str(e))

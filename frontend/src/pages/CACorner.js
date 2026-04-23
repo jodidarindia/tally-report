@@ -3,7 +3,8 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import {
   Landmark, TrendingUp, TrendingDown, Brain, ArrowUpCircle, ArrowDownCircle,
-  Loader, IndianRupee, BarChart3, ChevronDown, ChevronUp, RefreshCw, Download
+  Loader, IndianRupee, BarChart3, ChevronDown, ChevronUp, RefreshCw, Download,
+  PieChart, Layers
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -19,6 +20,10 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
   const [aiLoading, setAiLoading] = useState(false);
   const [sortField, setSortField] = useState('');
   const [sortDir, setSortDir] = useState('desc');
+  const [bsData, setBsData] = useState(null);
+  const [drillType, setDrillType] = useState('expense');
+  const [drillData, setDrillData] = useState(null);
+  const [expandedGroups, setExpandedGroups] = useState({});
 
   const fetchCashFlow = useCallback(async () => {
     setLoading(true);
@@ -38,10 +43,30 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
     finally { setLoading(false); }
   }, [selectedFY, plView]);
 
+  const fetchBS = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/ca-corner/balance-sheet`, { params: { fy: selectedFY } });
+      if (res.data?.success) setBsData(res.data.data);
+    } catch { toast.error('Failed to load Balance Sheet'); }
+    finally { setLoading(false); }
+  }, [selectedFY]);
+
+  const fetchDrill = useCallback(async (type) => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/ca-corner/pl-drilldown`, { params: { type } });
+      if (res.data?.success) setDrillData(res.data.data);
+    } catch { toast.error('Failed to load drill-down'); }
+    finally { setLoading(false); }
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'cashflow') fetchCashFlow();
     else if (activeTab === 'pl') fetchPL();
-  }, [activeTab, fetchCashFlow, fetchPL]);
+    else if (activeTab === 'bs') fetchBS();
+    else if (activeTab === 'drill') fetchDrill(drillType);
+  }, [activeTab, fetchCashFlow, fetchPL, fetchBS, fetchDrill, drillType]);
 
   const fetchAIInsights = async () => {
     setAiLoading(true);
@@ -60,8 +85,10 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
 
   const tabs = [
     { id: 'cashflow', label: 'Cash Flow', icon: Landmark },
-    { id: 'ai', label: 'AI Expense Insights', icon: Brain },
     { id: 'pl', label: 'P&L Report', icon: BarChart3 },
+    { id: 'bs', label: 'Balance Sheet', icon: Layers },
+    { id: 'drill', label: 'Ledger Drill-Down', icon: PieChart },
+    { id: 'ai', label: 'AI Expense Insights', icon: Brain },
   ];
 
   return (
@@ -107,6 +134,15 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
       {/* P&L Tab */}
       {activeTab === 'pl' && !loading && (
         <PLView data={plData} view={plView} setView={setPlView} sortField={sortField} sortDir={sortDir} toggleSort={toggleSort} />
+      )}
+
+      {/* Balance Sheet Tab */}
+      {activeTab === 'bs' && !loading && <BalanceSheetView data={bsData} />}
+
+      {/* Ledger Drill-Down Tab */}
+      {activeTab === 'drill' && !loading && (
+        <DrillDownView data={drillData} drillType={drillType} setDrillType={setDrillType}
+          expanded={expandedGroups} toggleExpand={(g) => setExpandedGroups(e => ({...e, [g]: !e[g]}))} />
       )}
     </div>
   );
@@ -409,3 +445,110 @@ const LedgerTable = ({ title, items, color }) => {
 };
 
 export default CACorner;
+
+/* ─── Balance Sheet View ────────────────────────────── */
+const BalanceSheetView = ({ data }) => {
+  const [expanded, setExpanded] = useState({});
+  if (!data) return <div className="text-center text-sm text-slate-400 py-10">No balance sheet data. Run desktop agent to sync ledgers.</div>;
+
+  const toggle = (key) => setExpanded(e => ({...e, [key]: !e[key]}));
+
+  const GroupSection = ({ title, groups, total, color }) => (
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid={`bs-${title.toLowerCase().replace(/\s/g,'-')}`}>
+      <div className="p-3 sm:p-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 className="text-sm font-bold" style={{color}}>{title}</h3>
+        <span className="text-sm font-bold" style={{color}}>{fmtRs(total)}</span>
+      </div>
+      {groups.length === 0 && <p className="text-center text-xs text-slate-400 py-4">No data</p>}
+      {groups.map((g, gi) => (
+        <div key={gi} className="border-b border-slate-50 last:border-0">
+          <button onClick={() => toggle(`${title}-${gi}`)} className="w-full text-left px-3 sm:px-4 py-2.5 flex items-center justify-between hover:bg-slate-25 transition">
+            <span className="text-xs font-semibold text-slate-700">{g.group}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-900">{fmtRs(g.total)}</span>
+              <ChevronDown size={14} className={`text-slate-400 transition ${expanded[`${title}-${gi}`] ? 'rotate-180' : ''}`}/>
+            </div>
+          </button>
+          {expanded[`${title}-${gi}`] && g.ledgers && (
+            <div className="px-3 sm:px-4 pb-2.5 space-y-0.5">
+              {g.ledgers.sort((a,b) => b.amount - a.amount).map((l, li) => (
+                <div key={li} className="flex items-center justify-between text-xs py-0.5 pl-4 border-l-2 border-slate-200">
+                  <span className="text-slate-600 truncate mr-2">{l.name}</span>
+                  <span className="text-slate-800 font-medium flex-shrink-0">{fmtRs(l.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div data-testid="bs-view" className="space-y-4">
+      {data.message && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">{data.message}</div>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-3">
+          <GroupSection title="Assets" groups={data.assets || []} total={data.total_assets || 0} color="#10b981"/>
+        </div>
+        <div className="space-y-3">
+          <GroupSection title="Liabilities" groups={data.liabilities || []} total={data.total_liabilities || 0} color="#ef4444"/>
+          <GroupSection title="Capital & Reserves" groups={data.capital || []} total={data.total_capital || 0} color="#8b5cf6"/>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+          <div className="text-[10px] text-green-600 uppercase font-semibold">Total Assets</div>
+          <div className="text-lg font-bold text-green-700">{fmtRs(data.total_assets)}</div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+          <div className="text-[10px] text-red-600 uppercase font-semibold">Liabilities + Capital</div>
+          <div className="text-lg font-bold text-red-700">{fmtRs(data.total_liabilities_capital)}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── Ledger Drill-Down View ────────────────────────── */
+const DrillDownView = ({ data, drillType, setDrillType, expanded, toggleExpand }) => {
+  return (
+    <div data-testid="drill-view">
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={() => setDrillType('income')} className={`px-3 py-1.5 text-xs rounded-lg font-medium transition ${drillType === 'income' ? 'bg-green-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} data-testid="drill-income">Income</button>
+        <button onClick={() => setDrillType('expense')} className={`px-3 py-1.5 text-xs rounded-lg font-medium transition ${drillType === 'expense' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`} data-testid="drill-expense">Expense</button>
+        {data && <span className="ml-auto text-sm font-bold text-slate-900">Total: {fmtRs(data.total)}</span>}
+      </div>
+      {!data && <p className="text-center text-sm text-slate-400 py-10">No P&L data synced yet.</p>}
+      {data && data.groups?.length === 0 && <p className="text-center text-sm text-slate-400 py-10">No {drillType} ledgers found.</p>}
+      {data && data.groups?.map((g, gi) => (
+        <div key={gi} className="bg-white rounded-xl border border-slate-200 mb-2 overflow-hidden" data-testid={`drill-group-${gi}`}>
+          <button onClick={() => toggleExpand(gi)} className="w-full text-left p-3 flex items-center justify-between hover:bg-slate-25 transition">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-slate-800">{g.group}</div>
+              <div className="text-[10px] text-slate-500">{g.ledgers?.length || 0} ledgers | {g.pct}% of total</div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-sm font-bold" style={{color: drillType === 'income' ? '#10b981' : '#ef4444'}}>{fmtRs(g.total)}</span>
+              <ChevronDown size={14} className={`text-slate-400 transition ${expanded[gi] ? 'rotate-180' : ''}`}/>
+            </div>
+          </button>
+          {expanded[gi] && g.ledgers && (
+            <div className="border-t border-slate-100">
+              {g.ledgers.map((l, li) => (
+                <div key={li} className="px-4 py-2 flex items-center justify-between border-b border-slate-50 last:border-0 text-xs">
+                  <span className="text-slate-700 truncate mr-2">{l.name}</span>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width: `${Math.min(l.pct, 100)}%`, background: drillType === 'income' ? '#10b981' : '#ef4444'}}/></div>
+                    <span className="text-[10px] text-slate-400 w-10 text-right">{l.pct}%</span>
+                    <span className="font-medium text-slate-900 w-24 text-right">{fmtRs(l.amount)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
