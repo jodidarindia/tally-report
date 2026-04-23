@@ -828,6 +828,36 @@ class FlowraBusySyncAgent:
         if self.status_callback:
             self.status_callback(msg)
 
+    def report_progress(self, event_type: str, company_id: str = "", company_name: str = "",
+                        financial_year: str = "", **kwargs):
+        """Mirror Tally v9's progress events — POST to /api/agent/sync-progress.
+        Backend broadcasts via websocket so web UI shows live phase progress."""
+        if not self.api:
+            return
+        import requests
+        payload = {
+            "type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "financial_year": financial_year,
+            "company_name": company_name,
+            "tenant_id": self.api.tenant_id,
+            "company_id": company_id,
+            "agent_version": f"busy-{VERSION}",
+            **kwargs,
+        }
+        try:
+            requests.post(
+                f"{self.api.backend_url}/api/agent/sync-progress",
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api.token}",
+                },
+                timeout=5,
+            )
+        except Exception:
+            pass  # Non-blocking — progress is best-effort
+
     def login(self, backend_url: str, username: str, password: str) -> bool:
         self.api = FlowraAPIClient(backend_url)
         if self.api.login(username, password):
@@ -867,6 +897,9 @@ class FlowraBusySyncAgent:
         self.running = True
         start = time.time()
         self.set_status(f"Starting full sync for {company_name} | FY {fy}...")
+        self.report_progress("sync_started", company_id=company_id,
+                             company_name=company_name, financial_year=fy,
+                             source="busy")
 
         sync_phases = [
             ("customers",         self.extractor.extract_customers,        "customer_id"),
@@ -882,44 +915,95 @@ class FlowraBusySyncAgent:
             ("stock_journals",    self.extractor.extract_stock_journals,   "voucher_id"),
         ]
 
-        for i, (dtype, extractor_fn, id_key) in enumerate(sync_phases, 1):
-            self.set_status(f"Phase {i}/{len(sync_phases)}: Syncing {dtype}...")
-            ok, count, manifest = self.api.sync_generator(
-                company_id, company_name, fy, dtype, extractor_fn(fy), id_key
+        total_phases = len(sync_phases) + 2  # + profit_loss + all_ledgers
+        sync_failed = False
+
+        try:
+            for i, (dtype, extractor_fn, id_key) in enumerate(sync_phases, 1):
+                self.set_status(f"Phase {i}/{total_phases}: Syncing {dtype}...")
+                self.report_progress("phase_start", phase=dtype,
+                                     company_id=company_id, company_name=company_name,
+                                     financial_year=fy,
+                                     phase_index=i, total_phases=total_phases)
+                ok, count, manifest = self.api.sync_generator(
+                    company_id, company_name, fy, dtype, extractor_fn(fy), id_key
+                )
+                if ok and manifest:
+                    self.api.reconcile(company_id, company_name, fy, dtype, manifest, id_key)
+                self.set_status(f"  {dtype}: {count} records synced")
+                self.report_progress("phase_complete", phase=dtype, count=count,
+                                     company_id=company_id, company_name=company_name,
+                                     financial_year=fy,
+                                     phase_index=i, total_phases=total_phases)
+                if not ok:
+                    sync_failed = True
+                gc.collect()
+
+            # P&L
+            self.set_status("Computing P&L...")
+            self.report_progress("phase_start", phase="profit_loss",
+                                 company_id=company_id, company_name=company_name,
+                                 financial_year=fy,
+                                 phase_index=len(sync_phases) + 1, total_phases=total_phases)
+            pl = self.extractor.compute_profit_loss(fy)
+            self.api.sync_data(company_id, company_name, fy, "profit_loss", [pl])
+            self.report_progress("phase_complete", phase="profit_loss", count=1,
+                                 company_id=company_id, company_name=company_name,
+                                 financial_year=fy,
+                                 phase_index=len(sync_phases) + 1, total_phases=total_phases)
+
+            # All Ledgers
+            self.set_status("Syncing all ledgers...")
+            self.report_progress("phase_start", phase="all_ledgers",
+                                 company_id=company_id, company_name=company_name,
+                                 financial_year=fy,
+                                 phase_index=total_phases, total_phases=total_phases)
+            ok, count, _ = self.api.sync_generator(
+                company_id, company_name, fy, "all_ledgers",
+                self.extractor.extract_all_ledgers(fy), "ledger_id"
             )
-            if ok and manifest:
-                self.api.reconcile(company_id, company_name, fy, dtype, manifest, id_key)
-            self.set_status(f"  {dtype}: {count} records synced")
+            self.set_status(f"  all_ledgers: {count} records synced")
+            self.report_progress("phase_complete", phase="all_ledgers", count=count,
+                                 company_id=company_id, company_name=company_name,
+                                 financial_year=fy,
+                                 phase_index=total_phases, total_phases=total_phases)
+            if not ok:
+                sync_failed = True
+
+            elapsed = round(time.time() - start, 1)
+            self.set_status(f"Full sync complete in {elapsed}s at {now_ist_display()}")
+            self.report_progress(
+                "sync_error" if sync_failed else "sync_complete",
+                company_id=company_id, company_name=company_name, financial_year=fy,
+                elapsed_seconds=elapsed, source="busy",
+            )
+
+            # Update state
+            self.state.setdefault(company_id, {})["last_full_sync"] = now_ist()
+            self.state[company_id]["last_fy"] = fy
+            self.state[company_id]["company_name"] = company_name
+            save_sync_state(self.state)
+        except Exception as e:
+            logger.exception("Full sync failed")
+            self.report_progress("sync_error", error=str(e),
+                                 company_id=company_id, company_name=company_name,
+                                 financial_year=fy, source="busy")
+            raise
+        finally:
+            self.running = False
             gc.collect()
-
-        # P&L + All Ledgers
-        self.set_status("Computing P&L...")
-        pl = self.extractor.compute_profit_loss(fy)
-        self.api.sync_data(company_id, company_name, fy, "profit_loss", [pl])
-
-        self.set_status("Syncing all ledgers...")
-        ok, count, _ = self.api.sync_generator(
-            company_id, company_name, fy, "all_ledgers",
-            self.extractor.extract_all_ledgers(fy), "ledger_id"
-        )
-        self.set_status(f"  all_ledgers: {count} records synced")
-
-        elapsed = round(time.time() - start, 1)
-        self.set_status(f"Full sync complete in {elapsed}s at {now_ist_display()}")
-
-        # Update state
-        self.state.setdefault(company_id, {})["last_full_sync"] = now_ist()
-        self.state[company_id]["last_fy"] = fy
-        self.state[company_id]["company_name"] = company_name
-        save_sync_state(self.state)
-        self.running = False
-        gc.collect()
 
     def run_quick_sales_sync(self, company_id: str, company_name: str, fy: str):
         """Quick sync — sales only. For 5-min interval."""
         if not self.api or not self.extractor:
             return
         self.set_status("Quick sales sync...")
+        self.report_progress("sync_started", company_id=company_id,
+                             company_name=company_name, financial_year=fy,
+                             source="busy", mode="quick")
+        self.report_progress("phase_start", phase="sales",
+                             company_id=company_id, company_name=company_name,
+                             financial_year=fy, phase_index=1, total_phases=1)
         ok, count, manifest = self.api.sync_generator(
             company_id, company_name, fy, "sales",
             self.extractor.extract_sales(fy), "voucher_id"
@@ -927,6 +1011,12 @@ class FlowraBusySyncAgent:
         if ok and manifest:
             self.api.reconcile(company_id, company_name, fy, "sales", manifest, "voucher_id")
         self.set_status(f"Quick sync: {count} sales at {now_ist_display()}")
+        self.report_progress("phase_complete", phase="sales", count=count,
+                             company_id=company_id, company_name=company_name,
+                             financial_year=fy, phase_index=1, total_phases=1)
+        self.report_progress("sync_complete" if ok else "sync_error",
+                             company_id=company_id, company_name=company_name,
+                             financial_year=fy, source="busy", mode="quick")
         self.state.setdefault(company_id, {})["last_quick_sync"] = now_ist()
         save_sync_state(self.state)
         gc.collect()
