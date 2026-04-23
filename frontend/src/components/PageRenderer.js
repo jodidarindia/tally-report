@@ -15,6 +15,7 @@ import CACorner from '../pages/CACorner';
 import InsiderResult from '../pages/InsiderResult';
 import DispatchTerminal from '../pages/DispatchTerminal';
 import DispatchAdmin from '../pages/DispatchAdmin';
+import SalesmanOrderApp from '../pages/SalesmanOrderApp';
 
 const FeatureLocked = ({ featureId }) => (
   <div className="flex items-center justify-center h-[60vh]" data-testid="feature-locked">
@@ -54,6 +55,9 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
       const role = user?.role;
       if (role === 'dispatch') return <DispatchTerminal selectedFY={selectedFY} companyId={selectedCompany} />;
       return gated('dispatch', <DispatchAdmin selectedFY={selectedFY} companyId={selectedCompany} />);
+    }
+    case 'salesman-orders': {
+      return <SalesmanOrderApp user={user} selectedFY={selectedFY} companyId={selectedCompany} />;
     }
     default: return gated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
   }

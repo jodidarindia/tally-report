@@ -38,7 +38,7 @@ const ProfileModal = ({ user, token, onClose }) => {
     try {
       const res = await axios.get(`${API}/auth/users`, { headers });
       if (res.data?.success) {
-        setEmployees((res.data.data?.users || []).filter(u => u.role === 'employee' || u.role === 'dispatch'));
+        setEmployees((res.data.data?.users || []).filter(u => u.role === 'employee' || u.role === 'dispatch' || u.role === 'salesman'));
       }
     } catch {}
     finally { setEmpLoading(false); }
@@ -292,6 +292,7 @@ const ProfileModal = ({ user, token, onClose }) => {
                       className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                       <option value="employee">Employee (Full Access)</option>
                       <option value="dispatch">Dispatch (Terminal Only)</option>
+                      <option value="salesman">Salesman (Orders Only)</option>
                     </select>
                     <button onClick={handleAddEmployee} disabled={loading}
                       className="w-full py-2 bg-[#2563EB] text-white rounded-lg text-sm font-medium hover:bg-[#1D4ED8] disabled:opacity-50"
@@ -324,6 +325,7 @@ const ProfileModal = ({ user, token, onClose }) => {
                           <p className="text-xs text-slate-500 flex items-center gap-1"><Mail size={10} /> {emp.username}</p>
                         </div>
                         {emp.role === 'dispatch' && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">DISPATCH</span>}
+                        {emp.role === 'salesman' && <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">SALESMAN</span>}
                       </div>
                       <button onClick={() => handleDeleteEmployee(emp.username)}
                         className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg"

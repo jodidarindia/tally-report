@@ -69,6 +69,11 @@ function App() {
       return;
     }
 
+    if (user.role === 'salesman') {
+      setCurrentPage('salesman-orders');
+      return;
+    }
+
     const daysLeft = user.subscription_days_left;
     if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30) {
       setShowRenewalPopup(true);

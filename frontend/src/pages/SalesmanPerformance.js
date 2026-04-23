@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
   Users, TrendingUp, Award, Plus, X, Package, ChevronDown, ChevronUp,
-  Save, Trash2, Download, Calendar, Lock, BarChart3
+  Save, Trash2, Download, Calendar, Lock, BarChart3, ShoppingCart
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { toast } from 'sonner';
 import SearchableSelect from '../components/SearchableSelect';
+import SalesmanOrderApp from './SalesmanOrderApp';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -24,7 +25,7 @@ const DURATION_TABS = [
   { id: 'annual', label: 'Annual' },
 ];
 
-const SalesmanPerformance = ({ selectedFY }) => {
+const SalesmanPerformance = ({ selectedFY, companyId }) => {
   const [performance, setPerformance] = useState([]);
   const [periods, setPeriods] = useState({ months: [], month_labels: {}, quarters: [] });
   const [loading, setLoading] = useState(true);
@@ -166,6 +167,7 @@ const SalesmanPerformance = ({ selectedFY }) => {
   const tabs = [
     { id: 'performance', label: 'Performance', icon: TrendingUp },
     { id: 'items', label: 'Item-wise Sales', icon: Package },
+    { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'manage', label: 'Manage Salesmen', icon: Users },
   ];
 
@@ -465,6 +467,11 @@ const SalesmanPerformance = ({ selectedFY }) => {
             })
           )}
         </div>
+      )}
+
+      {/* ========== ORDERS TAB ========== */}
+      {activeTab === 'orders' && (
+        <SalesmanOrderApp user={{role: 'admin'}} selectedFY={selectedFY} companyId={companyId} />
       )}
 
       {/* ========== MANAGE TAB ========== */}

@@ -75,8 +75,8 @@ async def get_current_user(request: Request, db) -> dict:
         if not user:
             return None
         # For admin/employee, check if their tenant is active
-        if user.get("role") in ("admin", "employee", "dispatch") and user.get("tenant_id"):
-            if user["role"] in ("employee", "dispatch"):
+        if user.get("role") in ("admin", "employee", "dispatch", "salesman") and user.get("tenant_id"):
+            if user["role"] in ("employee", "dispatch", "salesman"):
                 # Find the admin for this tenant
                 admin = await db.users.find_one(
                     {"tenant_id": user["tenant_id"], "role": "admin"},

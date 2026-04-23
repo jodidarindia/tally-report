@@ -6,6 +6,7 @@ import {
   Plus, User, Calendar, FileDown, Edit2, Trash2, X
 } from 'lucide-react';
 import DispatchTerminal from './DispatchTerminal';
+import SalesmanOrderApp from './SalesmanOrderApp';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = n => { if(!n||n===0) return '0'; if(Math.abs(n)>=100000) return `Rs.${(n/100000).toFixed(2)}L`; if(Math.abs(n)>=1000) return `Rs.${(n/1000).toFixed(1)}K`; return `Rs.${n.toLocaleString('en-IN')}`; };
@@ -120,6 +121,7 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
 
   const tabs = [
     {id:'board', label:'Kanban Board'},
+    {id:'online-orders', label:'Online Orders'},
     {id:'overview', label:'Overview'},
     {id:'pending', label:`Pending (${pendingCards.length})`},
     {id:'porters', label:'Porters'},
@@ -162,6 +164,9 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
 
       {/* KANBAN */}
       {tab==='board' && <DispatchTerminal key={refreshKey} selectedFY={selectedFY} companyId={companyId} filterDate={filterDate}/>}
+
+      {/* ONLINE ORDERS — approved/billed salesman orders */}
+      {tab==='online-orders' && <OnlineOrdersTab companyId={companyId} hdr={hdr}/>}
 
       {/* OVERVIEW */}
       {tab==='overview' && summary && <div className="space-y-4">
@@ -311,5 +316,36 @@ function SettlementTab({type, settlement, items, onAdd, onEdit, onDelete, onPay}
         {settlement.length===0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">No settlement data</td></tr>}
       </tbody></table>
     </div>
+  </div>;
+}
+
+function OnlineOrdersTab({ companyId, hdr }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    axios.get(`${API}/api/salesman-orders/orders?company_id=${companyId||''}&limit=100`, {headers:hdr()})
+      .then(r => { if(r.data.success) setOrders((r.data.data.orders||[]).filter(o=>['approved','billed','hold'].includes(o.status))); })
+      .finally(()=>setLoading(false));
+  }, [companyId, hdr]);
+  const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true}); } catch { return iso; } };
+  const STATUS_C = { approved:'#3b82f6', billed:'#10b981', hold:'#8b5cf6' };
+  if(loading) return <div className="flex items-center justify-center h-24"><div className="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
+  return <div className="space-y-2" data-testid="online-orders-tab">
+    <p className="text-xs text-slate-500 mb-2">Salesman orders that are approved, billed, or on hold. Billed orders with Tally invoice numbers auto-create dispatch cards on next sync.</p>
+    {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No online orders</p>}
+    {orders.map(o=><div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2"><span className="text-xs font-mono text-slate-400">{o.order_id}</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{background:(STATUS_C[o.status]||'#94a3b8')+'20',color:STATUS_C[o.status]||'#94a3b8'}}>{o.status?.toUpperCase()}</span></div>
+          <div className="text-sm font-semibold text-slate-900 truncate">{o.customer_name}</div>
+          <div className="text-[10px] text-slate-500">by {o.salesman} | {toIST(o.created_at)}</div>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="text-sm font-bold text-slate-900">Rs.{fmt(o.total_amount)}</div>
+          {o.invoice_number && <div className="text-[10px] text-green-600 font-semibold">Inv: {o.invoice_number}</div>}
+        </div>
+      </div>
+    </div>)}
   </div>;
 }
