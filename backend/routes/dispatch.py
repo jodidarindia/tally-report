@@ -521,6 +521,189 @@ async def get_dispatch_history(request: Request, search: Optional[str] = None, p
         return APIResponse(success=False, error=str(e))
 
 
+# ═══════════════════════════════════════════════════════
+# TRANSPORTER SETTLEMENT
+# ═══════════════════════════════════════════════════════
+
+@router.get("/dispatch/transporter-settlement")
+async def get_transporter_settlement(request: Request):
+    try:
+        ctx = await get_tenant_context(request)
+        q = _q(ctx)
+        transporters = await db.dispatch_transporters.find(q, {"_id": 0}).to_list(200)
+        payments = await db.dispatch_transporter_payments.find(q, {"_id": 0}).to_list(1000)
+        cards = await db.dispatch_cards.find({**q, "transport_name": {"$ne": ""}, "status": {"$in": ["dispatched", "info_shared"]}},
+            {"_id": 0, "transport_name": 1, "transport_charges": 1}).to_list(5000)
+        tt, tp = {}, {}
+        for c in cards:
+            n = c.get("transport_name", "")
+            if n:
+                tt.setdefault(n, {"total": 0, "cnt": 0})
+                tt[n]["total"] += safe_num(c.get("transport_charges"))
+                tt[n]["cnt"] += 1
+        for p in payments:
+            n = p.get("transporter_name", "")
+            tp[n] = tp.get(n, 0) + safe_num(p.get("amount"))
+        settlement = []
+        for t in transporters:
+            n = t.get("name", "")
+            ch = tt.get(n, {}).get("total", 0)
+            pd = tp.get(n, 0)
+            settlement.append({"transporter_id": t.get("transporter_id"), "name": n, "phone": t.get("phone", ""),
+                "total_charges": round(ch, 2), "total_paid": round(pd, 2), "balance_due": round(ch - pd, 2),
+                "dispatch_count": tt.get(n, {}).get("cnt", 0)})
+        return APIResponse(success=True, data={"settlement": settlement})
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/dispatch/transporter-payment")
+async def record_transporter_payment(request: Request):
+    try:
+        user = await get_current_user(request, db)
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        payment = {"payment_id": f"TP-{uuid.uuid4().hex[:6].upper()}", "transporter_name": body.get("transporter_name", ""),
+            "amount": float(body.get("amount", 0)), "payment_ref": body.get("payment_ref", ""),
+            "paid_at": datetime.now(timezone.utc).isoformat(), "paid_by": user.get("username", ""), **_q(ctx)}
+        await db.dispatch_transporter_payments.insert_one(payment)
+        return APIResponse(success=True, message="Payment recorded")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# DELETE PORTER / TRANSPORTER
+# ═══════════════════════════════════════════════════════
+
+@router.delete("/dispatch/porters/{porter_id}")
+async def delete_porter(porter_id: str, request: Request):
+    try:
+        ctx = await get_tenant_context(request)
+        await db.dispatch_porters.delete_one({**_q(ctx), "porter_id": porter_id})
+        return APIResponse(success=True, message="Porter deleted")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.delete("/dispatch/transporters/{transporter_id}")
+async def delete_transporter(transporter_id: str, request: Request):
+    try:
+        ctx = await get_tenant_context(request)
+        await db.dispatch_transporters.delete_one({**_q(ctx), "transporter_id": transporter_id})
+        return APIResponse(success=True, message="Transporter deleted")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.patch("/dispatch/transporters/{transporter_id}")
+async def update_transporter(transporter_id: str, request: Request):
+    try:
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        updates = {f: body[f] for f in ("name", "phone", "is_active") if f in body}
+        if updates:
+            await db.dispatch_transporters.update_one({**_q(ctx), "transporter_id": transporter_id}, {"$set": updates})
+        return APIResponse(success=True, message="Transporter updated")
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# CLOSE OF DAY PDF
+# ═══════════════════════════════════════════════════════
+
+@router.get("/dispatch/close-of-day-pdf")
+async def close_of_day_pdf(request: Request, date: Optional[str] = None, company_id: Optional[str] = None):
+    """Generate Close-of-Day PDF for a given date."""
+    from fastapi.responses import StreamingResponse
+    import io
+    try:
+        from datetime import date as date_type
+        ctx = await get_tenant_context(request)
+        q = _q(ctx, company_id)
+        target_date = date or date_type.today().isoformat()
+        day_start, day_end = f"{target_date}T00:00:00", f"{target_date}T23:59:59"
+        all_cards = await db.dispatch_cards.find(q, {"_id": 0}).to_list(10000)
+        dispatched = [c for c in all_cards if c.get("status") in ("dispatched", "info_shared") and any(
+            h.get("status") == "dispatched" and day_start <= h.get("at", "") <= day_end
+            for h in c.get("status_history", []))]
+        pending = [c for c in all_cards if c.get("status") in ("new", "queued", "processing", "packed")]
+        on_hold = [c for c in all_cards if c.get("status") == "hold"]
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('Title2', parent=styles['Title'], fontSize=14, spaceAfter=6)
+        sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=9, textColor=colors.grey)
+        h2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, spaceAfter=4, spaceBefore=10)
+        cell = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=10)
+
+        elements = []
+        elements.append(Paragraph("FLOWRA — Dispatch Close of Day", title_style))
+        elements.append(Paragraph(f"Date: {target_date}", sub_style))
+        elements.append(Spacer(1, 8))
+
+        # Summary
+        elements.append(Paragraph(f"Dispatched: {len(dispatched)}  |  Pending: {len(pending)}  |  On Hold: {len(on_hold)}", styles['Normal']))
+        total_boxes = sum(safe_num(c.get('total_boxes', 0)) for c in dispatched)
+        total_transport = sum(safe_num(c.get('transport_charges', 0)) for c in dispatched)
+        total_porter = sum(safe_num(c.get('porter_charges', 0)) for c in dispatched)
+        elements.append(Paragraph(f"Total Boxes: {int(total_boxes)}  |  Transport: Rs.{total_transport:,.0f}  |  Porter: Rs.{total_porter:,.0f}", styles['Normal']))
+        elements.append(Spacer(1, 6))
+
+        if dispatched:
+            elements.append(Paragraph("Dispatched Invoices", h2))
+            data = [['#', 'Invoice', 'Party', 'Boxes', 'Transport', 'Porter', 'LR No.', 'Employee']]
+            for i, c in enumerate(dispatched, 1):
+                data.append([str(i), Paragraph(str(c.get('invoice_number', '')), cell),
+                    Paragraph(str(c.get('party_name', ''))[:30], cell), str(c.get('total_boxes', 0)),
+                    c.get('transport_name', '-'), c.get('porter_name', '-'),
+                    c.get('lr_number', '-'), (c.get('assigned_to', '-') or '-').split('@')[0]])
+            t = Table(data, colWidths=[15, 55, 85, 30, 65, 55, 55, 50])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2563EB')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            elements.append(t)
+
+        if pending:
+            elements.append(Paragraph(f"Pending ({len(pending)})", h2))
+            data = [['Invoice', 'Party', 'Status', 'Assigned To']]
+            for c in pending[:30]:
+                data.append([c.get('invoice_number', ''), c.get('party_name', '')[:35],
+                    c.get('status', '').upper(), (c.get('assigned_to', '-') or '-').split('@')[0]])
+            t = Table(data, colWidths=[80, 150, 60, 80])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f59e0b')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+            ]))
+            elements.append(t)
+
+        doc.build(elements)
+        buf.seek(0)
+        filename = f"dispatch_cod_{target_date}.pdf"
+        return StreamingResponse(buf, media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except Exception as e:
+        logger.error(f"COD PDF error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+
 async def _round_robin_assign(tq):
     employees = await db.users.find({**tq, "role": "dispatch"}, {"_id": 0, "username": 1}).to_list(50)
     if not employees:

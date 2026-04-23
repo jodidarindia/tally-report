@@ -20,8 +20,9 @@ const STATUS_CFG = {
 const LANES = ['new','queued','processing','packed','dispatched'];
 const fmt = n => { if(!n) return '0'; if(Math.abs(n)>=100000) return `${(n/100000).toFixed(2)}L`; if(Math.abs(n)>=1000) return `${(n/1000).toFixed(1)}K`; return n.toLocaleString('en-IN'); };
 const elapsed = iso => { if(!iso) return ''; const m=(Date.now()-new Date(iso).getTime())/60000; if(m<60) return `${Math.round(m)}m`; if(m<1440) return `${Math.round(m/60)}h`; return `${Math.round(m/1440)}d`; };
+const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:true}); } catch { return iso; } };
 
-export default function DispatchTerminal({ selectedFY, companyId }) {
+export default function DispatchTerminal({ selectedFY, companyId, filterDate }) {
   const [cards, setCards] = useState([]);
   const [porters, setPorters] = useState([]);
   const [transporters, setTransporters] = useState([]);
@@ -31,6 +32,7 @@ export default function DispatchTerminal({ selectedFY, companyId }) {
   const [showManual, setShowManual] = useState(false);
   const [view, setView] = useState('board'); // board | history
   const [hist, setHist] = useState([]); const [histTotal, setHistTotal] = useState(0); const [histPage, setHistPage] = useState(1); const [histQ, setHistQ] = useState('');
+  const [histSel, setHistSel] = useState(null); // separate selected card for history view
 
   const hdr = useCallback(() => ({ Authorization: `Bearer ${localStorage.getItem('flowra_token')}`, 'X-Company-Id': companyId||'' }), [companyId]);
 
@@ -97,7 +99,7 @@ export default function DispatchTerminal({ selectedFY, companyId }) {
       </div>
       <div className="space-y-2">
         {hist.map(c=>(
-          <div key={c.card_id} className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 cursor-pointer hover:border-slate-300" onClick={()=>setSel(c)} data-testid={`hist-${c.card_id}`}>
+          <div key={c.card_id} className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 cursor-pointer hover:border-slate-300" onClick={()=>setHistSel(c)} data-testid={`hist-${c.card_id}`}>
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-slate-900 truncate">{c.invoice_number}</div>
@@ -117,6 +119,8 @@ export default function DispatchTerminal({ selectedFY, companyId }) {
         {hist.length===0 && <p className="text-center text-sm text-slate-400 py-10">No dispatches found</p>}
       </div>
       {histTotal>30 && <div className="flex justify-center gap-2 mt-4"><button disabled={histPage<=1} onClick={()=>loadHist(histPage-1,histQ)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Prev</button><span className="text-xs text-slate-500 py-1">Page {histPage}</span><button disabled={histPage*30>=histTotal} onClick={()=>loadHist(histPage+1,histQ)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Next</button></div>}
+      {/* History card detail (read-only) */}
+      {histSel && <HistoryDetailModal card={histSel} onClose={()=>setHistSel(null)}/>}
     </div>
   );
 
@@ -287,7 +291,7 @@ function CardModal({ card, porters, transporters, onClose, onMove, onSave, onUpl
           {/* Timeline */}
           {card.status_history?.length>0 && <div className="border border-slate-200 rounded-lg p-2.5"><div className="text-[9px] font-semibold text-slate-500 uppercase mb-1.5">Timeline</div>
             <div className="space-y-0.5">{card.status_history.map((h,i)=><div key={i} className="flex items-center gap-1.5 text-[10px]">
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{background:STATUS_CFG[h.status]?.color||'#94a3b8'}}/><span className="font-medium text-slate-700">{STATUS_CFG[h.status]?.label||h.status}</span><span className="text-slate-400">{h.at?.replace('T',' ').slice(0,16)}</span><span className="text-slate-400">by {h.by}</span>{h.reason && <span className="text-red-500">({h.reason})</span>}</div>)}</div></div>}
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{background:STATUS_CFG[h.status]?.color||'#94a3b8'}}/><span className="font-medium text-slate-700">{STATUS_CFG[h.status]?.label||h.status}</span><span className="text-slate-400">{toIST(h.at)}</span><span className="text-slate-400">by {h.by}</span>{h.reason && <span className="text-red-500">({h.reason})</span>}</div>)}</div></div>}
         </div>
         {/* Actions */}
         <div className="p-3 sm:p-4 border-t border-slate-100 flex flex-wrap items-center gap-2 sticky bottom-0 bg-white rounded-b-2xl">
@@ -334,4 +338,64 @@ function ManualModal({onClose,onCreate}) {
     </div>
     <div className="flex gap-2 mt-4"><button onClick={onClose} className="flex-1 px-3 py-2 text-xs bg-slate-100 text-slate-700 rounded-lg">Cancel</button><button onClick={()=>onCreate({reason,party_name:party,destination_city:city,notes})} className="flex-1 px-3 py-2 text-xs bg-blue-600 text-white rounded-lg" data-testid="m-create">Create</button></div>
   </div></div>;
+}
+
+/* ═══ History Detail Modal (read-only) ═══ */
+function HistoryDetailModal({ card, onClose }) {
+  const cfg = STATUS_CFG[card.status] || STATUS_CFG.dispatched;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose} data-testid="history-detail-modal">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="p-3 sm:p-4 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white rounded-t-2xl z-10">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{background:cfg.bg}}>
+              <CheckCircle2 size={14} style={{color:cfg.color}}/></div>
+            <div className="min-w-0"><div className="text-sm font-bold text-slate-900 truncate">{card.invoice_number}</div>
+              <div className="text-[10px] text-slate-500">{card.card_id} <span className="font-semibold text-green-600">COMPLETED</span></div></div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={18} className="text-slate-400"/></button>
+        </div>
+        <div className="p-3 sm:p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-50 rounded-lg p-2.5"><div className="text-[9px] text-slate-400 uppercase font-semibold">Party</div><div className="text-xs font-semibold text-slate-900 truncate">{card.party_name||'-'}</div></div>
+            <div className="bg-slate-50 rounded-lg p-2.5"><div className="text-[9px] text-slate-400 uppercase font-semibold">Amount</div><div className="text-xs font-semibold text-slate-900">Rs.{fmt(card.total_amount)}</div></div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Boxes</span><span className="font-medium">{card.total_boxes||0}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Transport</span><span className="font-medium">{card.transport_name||'-'}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Transport Charges</span><span className="font-medium">Rs.{fmt(card.transport_charges)}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Porter</span><span className="font-medium">{card.porter_name||'-'}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Porter Charges</span><span className="font-medium">Rs.{fmt(card.porter_charges)}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">LR Number</span><span className="font-medium text-blue-700">{card.lr_number||'-'}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Destination</span><span className="font-medium">{card.destination_city||'-'}</span></div>
+            <div><span className="text-[9px] text-slate-400 uppercase font-semibold block">Assigned To</span><span className="font-medium">{card.assigned_to||'-'}</span></div>
+          </div>
+          {card.notes && <div><span className="text-[9px] text-slate-400 uppercase font-semibold block mb-1">Notes</span><p className="text-xs text-slate-600 bg-slate-50 rounded-lg p-2">{card.notes}</p></div>}
+          {/* Documents */}
+          {card.documents && Object.keys(card.documents).length>0 && <div className="border border-slate-200 rounded-lg p-2.5">
+            <div className="text-[9px] font-semibold text-slate-500 uppercase mb-2">Documents</div>
+            <div className="grid grid-cols-3 gap-2">
+              {['invoice_doc','sales_order','lr_receipt'].map(dt=>{
+                const doc = card.documents[dt];
+                return <div key={dt} className="text-center"><div className="text-[9px] text-slate-500 mb-1">{dt==='invoice_doc'?'Invoice':dt==='sales_order'?'Sales Order':'LR Receipt'}</div>
+                  {doc ? <a href={`${API}${doc.url}`} target="_blank" rel="noreferrer" className="block p-2 bg-green-50 border border-green-200 rounded-lg text-[9px] text-green-700 hover:bg-green-100"><CheckCircle2 size={14} className="mx-auto mb-0.5"/>View</a>
+                  : <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-[9px] text-slate-400">Not uploaded</div>}
+                </div>;
+              })}
+            </div>
+          </div>}
+          {/* Items */}
+          {card.items?.length>0 && <div className="border border-slate-200 rounded-lg"><div className="p-2 bg-slate-50 text-[9px] font-semibold text-slate-600 uppercase border-b">Items ({card.items.length})</div>
+            <div className="max-h-24 overflow-y-auto">{card.items.map((it,i)=><div key={i} className="px-2.5 py-1 text-[11px] text-slate-700 border-b border-slate-50 flex justify-between"><span className="truncate mr-2">{it.item||it.item_name||'-'}</span><span className="text-slate-500 flex-shrink-0">x{it.quantity||0}</span></div>)}</div></div>}
+          {/* Timeline */}
+          {card.status_history?.length>0 && <div className="border border-slate-200 rounded-lg p-2.5"><div className="text-[9px] font-semibold text-slate-500 uppercase mb-1.5">Timeline</div>
+            <div className="space-y-0.5">{card.status_history.map((h,i)=><div key={i} className="flex items-center gap-1.5 text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{background:STATUS_CFG[h.status]?.color||'#94a3b8'}}/><span className="font-medium text-slate-700">{STATUS_CFG[h.status]?.label||h.status}</span><span className="text-slate-400">{toIST(h.at)}</span><span className="text-slate-400">by {h.by}</span>{h.reason && <span className="text-red-500">({h.reason})</span>}</div>)}</div></div>}
+        </div>
+        <div className="p-3 border-t border-slate-100 sticky bottom-0 bg-white rounded-b-2xl">
+          <button onClick={onClose} className="w-full px-4 py-2 text-xs bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200">Close</button>
+        </div>
+      </div>
+    </div>
+  );
 }
