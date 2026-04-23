@@ -1,37 +1,36 @@
 # FLOWRA - Product Requirements Document
 
 ## Overview
-FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally* for business analytics, inventory, CRM, and reporting.
+FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analytics, inventory, CRM, dispatch, and salesman ordering.
+
+## Salesman Order System (Complete — April 2026)
+- **Salesman Role**: Dedicated `salesman` role — sees only order placement interface
+- **Customer Mapping**: Salesman sees only their mapped customers (from salesman_master)
+- **Product Catalog**: Real-time stock quantities and Tally sales prices from inventory_items
+- **Order Creation**: Select customer → browse catalog → add items with per-item remark field → submit
+- **Order Lifecycle**: Pending → Approved/Rejected/Hold → Billed (requires Tally invoice number)
+- **Edit Lock**: Once approved, salesman cannot edit. Only pending orders editable.
+- **Order History**: Full order history visible to salesman with status, timeline, invoice numbers
+- **Admin Approval**: Admin sees all orders via Salesman > Orders tab with stats, date filters, search
+- **Billed → Dispatch**: Billed orders with invoice numbers appear in Dispatch > Online Orders tab. Once invoice syncs from Tally, dispatch card auto-creates.
+- **Beat Management**: Admin creates beat plans (customer/day/frequency), salesman marks visits
+- **IST Timezone**: All timestamps in IST
+- **Mobile Responsive**: All pages mobile-first
+- Collections: `salesman_orders`, `salesman_beats`
 
 ## Dispatch Terminal Feature (Complete)
-- **Kanban Board**: 5 swim lanes (New/Queued/Processing/Packed/Dispatched) + Hold
-- **Date-based Card Creation**: Admin selects start date; old invoices assumed dispatched
-- **View Date Filter**: Affects all tabs (Overview summary, Kanban board)
-- **Close of Day PDF**: Downloadable PDF on Overview tab based on selected date
-- **Transport/Porter Management**: Dropdown selection + inline create by employees, edit/delete from admin master list
-- **Porter Settlement**: Running account, payment recording, balance tracking
-- **Transporter Settlement**: Running account, payment recording, balance tracking
-- **LR Tracking**: Transport receipt number per card
-- **Document Uploads**: Invoice doc, Sales order, LR receipt
-- **Dispatch History**: Searchable archive with read-only detail modal (HistoryDetailModal)
-- **Timeline**: All timestamps displayed in IST (Asia/Kolkata)
-- **Nav Position**: Between CA Corner and Sync History
-- **`dispatch` Role**: Terminal-only access
-- **Mobile Responsive**: All pages use sm: breakpoints
-- Collections: `dispatch_cards`, `dispatch_porters`, `dispatch_transporters`, `dispatch_porter_payments`, `dispatch_transporter_payments`, `dispatch_settings`
+- Kanban Board, Date-based Card Creation, Porter/Transporter Settlement
+- Document Uploads (Invoice/SO/LR), Close of Day PDF
+- Online Orders tab showing salesman billed orders
 
-## Dashboard Updates Frame
-- Scrollable changelog at bottom of Dashboard only
-- NEW/FIX tagged entries with dates
-
-## Critical Technical Notes
-### Opening Balance Logic
-Tally's `opening_balance` = balance at START of `sync_status.financial_year`. Earlier FYs: reverse-compute. Non-customer parties: pure voucher sum.
-### JV Party Amounts
-Use `ledger_entries` array to extract party-specific amount, not total `credit_amount`/`debit_amount`.
+## Other Key Features
+- Dashboard with Updates changelog frame
+- Sales, CRM (Outstanding, Targets, Payment Behavior)
+- Inventory, Analytics (SPIP, Concentration Risk, Lifecycle, Forecast)
+- CA Corner, SuperAdmin, Refer & Earn, Digital Questionnaire
+- Desktop Agent v9 with reconciliation, command queue, dual-schedule sync
 
 ## Upcoming
 - P1: Compile Desktop Agent v9 to `.exe`
-- P2: Salesman Order System
 - P2: Export Audit Logs to CSV
 - P2: Automated payment follow-up reminders
