@@ -304,7 +304,9 @@ function SettlementTab({type, settlement, items, onAdd, onEdit, onDelete, onPay}
           <td className="px-3 py-2.5 text-right text-slate-600">{fmt(p.total_charges)}</td>
           <td className="px-3 py-2.5 text-right text-green-600">{fmt(p.total_paid)}</td>
           <td className="px-3 py-2.5 text-right font-bold" style={{color:p.balance_due>0?'#ef4444':'#10b981'}}>{fmt(p.balance_due)}</td>
-          <td className="px-3 py-2.5 text-center">{p.balance_due>0 && <button onClick={()=>onPay(p.name)} className="text-[10px] text-blue-600 hover:underline" data-testid={`pay-${type}-${p.name}`}>Record Payment</button>}</td>
+          <td className="px-3 py-2.5 text-center">
+            <button onClick={()=>onPay(p.name)} className="text-[10px] text-blue-600 hover:underline" data-testid={`pay-${type}-${p.name}`}>Record Payment</button>
+          </td>
         </tr>)}
         {settlement.length===0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">No settlement data</td></tr>}
       </tbody></table>
