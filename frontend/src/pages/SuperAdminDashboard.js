@@ -19,9 +19,11 @@ const ALL_FEATURES = [
   { id: 'crm', label: 'CRM', desc: 'Customer outstanding & behavior' },
   { id: 'inventory', label: 'Inventory', desc: 'Stock management & items' },
   { id: 'analytics', label: 'Analytics', desc: 'Movement analysis & reports' },
-  { id: 'salesman', label: 'Salesman', desc: 'Salesman performance' },
+  { id: 'salesman', label: 'Salesman', desc: 'Salesman performance & orders' },
   { id: 'ai_reports', label: 'AI Reports', desc: 'AI-powered insights' },
   { id: 'insider', label: 'Insider Result', desc: 'BI analytics & forecasts' },
+  { id: 'ca_corner', label: 'CA Corner', desc: 'P&L, Balance Sheet, Cash Flow' },
+  { id: 'dispatch', label: 'Dispatch', desc: 'Dispatch terminal & tracking' },
   { id: 'sync_history', label: 'Sync History', desc: 'Data sync logs' },
   { id: 'setup', label: 'Setup', desc: 'Tally* connection settings' },
 ];
@@ -59,7 +61,7 @@ const SuperAdminDashboard = ({ token }) => {
   const [showResetModal, setShowResetModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
   const [expandedAdmin, setExpandedAdmin] = useState(null);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 });
+  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12, features: PLANS.starter.features });
   const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -116,7 +118,7 @@ const SuperAdminDashboard = ({ token }) => {
     try {
       const plan = PLANS[newAdmin.plan];
       const res = await axios.post(`${API}/super-admin/admins`, {
-        ...newAdmin, features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+        ...newAdmin, features: newAdmin.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
       }, { headers });
       if (res.data?.success) { toast.success(res.data.message); setShowCreateModal(false); setNewAdmin({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 }); fetchData(); }
       else toast.error(res.data?.error || 'Failed');
@@ -1137,7 +1139,7 @@ const SuperAdminDashboard = ({ token }) => {
                 <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
                 <div className="grid grid-cols-3 gap-2">
                   {Object.entries(PLANS).map(([id, plan]) => (
-                    <button key={id} onClick={() => setNewAdmin({ ...newAdmin, plan: id })}
+                    <button key={id} onClick={() => setNewAdmin({ ...newAdmin, plan: id, features: [...plan.features] })}
                       className={`p-3 border rounded-lg text-left ${newAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`} data-testid={`new-plan-${id}`}>
                       <p className="text-sm font-bold">{plan.name}</p>
                       <p className="text-xs text-blue-600">{formatINR(newAdmin.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly)}/mo</p>
@@ -1159,6 +1161,29 @@ const SuperAdminDashboard = ({ token }) => {
                 <option value={1}>1 Month</option><option value={3}>3 Months</option><option value={6}>6 Months</option>
                 <option value={12}>12 Months</option><option value={24}>24 Months</option><option value={36}>36 Months</option>
               </select>
+              {/* Feature Gating Checkboxes */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Features ({newAdmin.features?.length || 0}/{ALL_FEATURES.length})</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 p-3 bg-slate-50 rounded-lg border border-slate-200 max-h-48 overflow-y-auto">
+                  {ALL_FEATURES.map(f => {
+                    const checked = newAdmin.features?.includes(f.id);
+                    return (
+                      <label key={f.id} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs transition ${checked ? 'bg-emerald-50 text-emerald-800' : 'hover:bg-white text-slate-600'}`} data-testid={`new-feature-${f.id}`}>
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          setNewAdmin(prev => ({
+                            ...prev,
+                            features: checked ? prev.features.filter(x => x !== f.id) : [...(prev.features || []), f.id]
+                          }));
+                        }} className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+                        <div>
+                          <div className="font-medium leading-tight">{f.label}</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">{f.desc}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <button onClick={createAdmin} className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]" data-testid="confirm-create-admin">Create Admin</button>
             </div>
           </div>
@@ -1201,6 +1226,29 @@ const SuperAdminDashboard = ({ token }) => {
                 <option value={1}>1 Mo</option><option value={3}>3 Mo</option><option value={6}>6 Mo</option>
                 <option value={12}>12 Mo</option><option value={24}>24 Mo</option><option value={36}>36 Mo</option>
               </select>
+              {/* Feature Gating Checkboxes */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Features ({editAdmin.features?.length || 0}/{ALL_FEATURES.length})</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 p-3 bg-slate-50 rounded-lg border border-slate-200 max-h-48 overflow-y-auto">
+                  {ALL_FEATURES.map(f => {
+                    const checked = editAdmin.features?.includes(f.id);
+                    return (
+                      <label key={f.id} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs transition ${checked ? 'bg-emerald-50 text-emerald-800' : 'hover:bg-white text-slate-600'}`} data-testid={`feature-toggle-${f.id}`}>
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          setEditAdmin(prev => ({
+                            ...prev,
+                            features: checked ? prev.features.filter(x => x !== f.id) : [...(prev.features || []), f.id]
+                          }));
+                        }} className="w-3.5 h-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+                        <div>
+                          <div className="font-medium leading-tight">{f.label}</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">{f.desc}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex justify-end gap-3">
                 <button onClick={() => { setShowEditModal(null); setEditAdmin(null); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
                 <button onClick={saveEditAdmin} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="confirm-edit-admin">Save</button>

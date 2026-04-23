@@ -97,7 +97,7 @@ REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
-SYNC_STATE_FILE = 'sync_state_v8.json'
+SYNC_STATE_FILE = 'sync_state_v9.json'
 AUTH_CONFIG_FILE = 'flowra_auth.enc'  # Encrypted auth config
 ENCRYPTION_KEY_FILE = '.flowra_key'  # Machine-specific encryption key
 
@@ -1891,7 +1891,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v8 (Cash Flow + P&L + Encrypted)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9 (Reconciliation + Command Queue)")
         logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
 
@@ -2418,6 +2418,7 @@ class FlowraSyncAgent:
                 self.tally.company = company if company != '_active_' else ''
 
                 if not self.tally._ping_tally():
+                    logger.warning(f"[QUICK] Tally not responding for company '{company}' — skipping. Is Tally running with this company open?")
                     continue
 
                 # Per-company FYs

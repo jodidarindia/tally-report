@@ -97,7 +97,7 @@ REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
-SYNC_STATE_FILE = 'sync_state_v8.json'
+SYNC_STATE_FILE = 'sync_state_v9.json'
 AUTH_CONFIG_FILE = 'flowra_auth.enc'  # Encrypted auth config
 ENCRYPTION_KEY_FILE = '.flowra_key'  # Machine-specific encryption key
 
@@ -1399,25 +1399,20 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
     # ---- BANK & CASH LEDGER BALANCES ----
 
     def fetch_all_ledgers(self) -> List[Dict]:
-        """Fetch ALL ledgers from Tally* (excluding Sundry Debtors/Creditors).
-        Returns categorized ledger data for Balance Sheet, P&L, Cash Flow."""
+        """Fetch ALL ledgers from Tally* using Export Data approach (most compatible).
+        Excludes Sundry Debtors/Creditors on our side after fetching."""
         company_tag = self._company_tag()
+        # Use Export Data with List of Ledgers — works reliably across all Tally versions
         xml = f"""<ENVELOPE>
-<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraAllLedgers</ID></HEADER>
-<BODY><DESC>
-<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="FlowraAllLedgers" ISINITIALIZE="Yes">
-<TYPE>Ledger</TYPE>
-<FILTER>ExcludeDebtorsCreditors</FILTER>
-<FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
-<FETCH>LEDGERPHONE, LEDGERMOBILE, BANKOD</FETCH>
-</COLLECTION>
-<SYSTEM TYPE="Formulae" NAME="ExcludeDebtorsCreditors">
-NOT ($Parent = "Sundry Debtors") AND NOT ($Parent = "Sundry Creditors") AND NOT ($$GroupIdx:$PARENT = $$GroupIdx:"Sundry Debtors") AND NOT ($$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditors")
-</SYSTEM>
-</TDLMESSAGE></TDL>
-</DESC></BODY></ENVELOPE>"""
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>List of Accounts</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<ACCOUNTTYPE>All Ledgers</ACCOUNTTYPE>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
         # Root group classification map
         GROUP_CATEGORY = {
@@ -1453,36 +1448,67 @@ NOT ($Parent = "Sundry Debtors") AND NOT ($Parent = "Sundry Creditors") AND NOT 
             'branch / divisions': 'branch_division',
         }
 
+        # Groups to EXCLUDE (synced separately)
+        EXCLUDE_GROUPS = {'sundry debtors', 'sundry creditors'}
+
         try:
             data = self._post(xml, debug_name='all_ledgers')
             if not data:
-                logger.warning("  No response for all ledgers query")
-                return []
+                logger.warning("  No response for all ledgers query — trying fallback...")
+                return self._fetch_ledgers_fallback()
 
-            # Use _get_collection_items first (most reliable path)
-            ledgers_raw = self._get_collection_items(data, 'LEDGER')
+            # Parse: Export Data returns TALLYMESSAGE > LEDGER[]
+            ledgers_raw = []
+            # Try TALLYMESSAGE path (Export Data format)
+            envelope = data.get('ENVELOPE', data)
+            if isinstance(envelope, dict):
+                tally_msg = envelope.get('TALLYMESSAGE') or envelope.get('BODY', {}).get('TALLYMESSAGE', {})
+                if isinstance(tally_msg, dict):
+                    items = tally_msg.get('LEDGER', [])
+                    if isinstance(items, dict):
+                        items = [items]
+                    if isinstance(items, list):
+                        ledgers_raw = items
+
+            # Fallback: try collection items path
             if not ledgers_raw:
-                # Fallback: try _find_deep
+                ledgers_raw = self._get_collection_items(data, 'LEDGER')
+
+            # Fallback: try _find_deep
+            if not ledgers_raw:
                 found = self._find_deep(data, 'LEDGER')
-                if found and isinstance(found, list):
+                if isinstance(found, list):
                     ledgers_raw = found
-                elif found and isinstance(found, dict):
+                elif isinstance(found, dict):
                     ledgers_raw = [found]
-                else:
-                    ledgers_raw = []
 
             if not ledgers_raw:
-                logger.warning("  No ledger data found in response")
-                return []
+                logger.warning("  No ledger data in Export Data response — trying fallback...")
+                return self._fetch_ledgers_fallback()
 
             results = []
             for led in ledgers_raw:
                 if not isinstance(led, dict):
                     continue
-                name = str(led.get('NAME', '') or led.get('@NAME', '')).strip()
+                # Name: try @NAME (attribute), then NAME (child), then LEDGERNAME
+                name = led.get('@NAME', '') or led.get('NAME', '') or led.get('LEDGERNAME', '')
+                if isinstance(name, dict):
+                    name = name.get('#text', '')
+                name = str(name or '').strip()
                 if not name:
                     continue
-                parent = str(led.get('PARENT', '') or '').strip()
+
+                # Parent group
+                parent = led.get('PARENT', '') or led.get('@PARENT', '')
+                if isinstance(parent, dict):
+                    parent = parent.get('#text', '')
+                parent = str(parent or '').strip()
+
+                # Skip Sundry Debtors/Creditors
+                if parent.lower().strip() in EXCLUDE_GROUPS:
+                    continue
+
+                # Balances
                 opening = self._safe_float(led.get('OPENINGBALANCE', 0))
                 closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
 
@@ -1515,6 +1541,98 @@ NOT ($Parent = "Sundry Debtors") AND NOT ($Parent = "Sundry Creditors") AND NOT 
         except Exception as e:
             logger.warning(f"Error fetching all ledgers: {e}")
             return []
+
+
+    def _fetch_ledgers_fallback(self) -> List[Dict]:
+        """Fallback: fetch ledgers using simple TDL Collection with NO filter."""
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraLedgersFB</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraLedgersFB" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        EXCLUDE_GROUPS = {'sundry debtors', 'sundry creditors'}
+        GROUP_CATEGORY = self._get_group_category_map()
+        try:
+            data = self._post(xml, debug_name='all_ledgers_fb')
+            if not data:
+                return []
+            ledgers_raw = self._get_collection_items(data, 'LEDGER')
+            if not ledgers_raw:
+                found = self._find_deep(data, 'LEDGER')
+                if isinstance(found, list):
+                    ledgers_raw = found
+                elif isinstance(found, dict):
+                    ledgers_raw = [found]
+                else:
+                    return []
+            results = []
+            for led in ledgers_raw:
+                if not isinstance(led, dict):
+                    continue
+                name = led.get('@NAME', '') or led.get('NAME', '')
+                if isinstance(name, dict):
+                    name = name.get('#text', '')
+                name = str(name or '').strip()
+                if not name:
+                    continue
+                parent = led.get('PARENT', '')
+                if isinstance(parent, dict):
+                    parent = parent.get('#text', '')
+                parent = str(parent or '').strip()
+                if parent.lower().strip() in EXCLUDE_GROUPS:
+                    continue
+                opening = self._safe_float(led.get('OPENINGBALANCE', 0))
+                closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
+                parent_lower = parent.lower().strip()
+                category = GROUP_CATEGORY.get(parent_lower, 'other')
+                if category == 'other':
+                    for gk, cv in GROUP_CATEGORY.items():
+                        if gk in parent_lower:
+                            category = cv
+                            break
+                results.append({
+                    'ledger_name': name, 'parent_group': parent,
+                    'category': category,
+                    'opening_balance': round(opening, 2), 'closing_balance': round(closing, 2),
+                })
+            logger.info(f"  Fallback fetched {len(results)} ledgers")
+            return results
+        except Exception as e:
+            logger.warning(f"  Fallback ledger fetch also failed: {e}")
+            return []
+
+    def _get_group_category_map(self):
+        return {
+            'bank accounts': 'bank', 'bank od accounts': 'bank_od', 'cash-in-hand': 'cash',
+            'sales accounts': 'direct_income', 'direct income': 'direct_income', 'direct incomes': 'direct_income',
+            'indirect income': 'indirect_income', 'indirect incomes': 'indirect_income',
+            'purchase accounts': 'direct_expense', 'direct expenses': 'direct_expense', 'direct expense': 'direct_expense',
+            'indirect expenses': 'indirect_expense', 'indirect expense': 'indirect_expense',
+            'manufacturing expenses': 'direct_expense',
+            'capital account': 'capital', "partner's capital account": 'capital',
+            'reserves & surplus': 'reserves', 'reserves and surplus': 'reserves',
+            'secured loans': 'secured_loans', 'unsecured loans': 'unsecured_loans',
+            'loans (liability)': 'unsecured_loans',
+            'current liabilities': 'current_liabilities', 'provisions': 'provisions',
+            'duties & taxes': 'duties_taxes', 'duties and taxes': 'duties_taxes',
+            'non-current liabilities': 'non_current_liabilities',
+            'current assets': 'current_assets', 'deposits (asset)': 'current_assets',
+            'loans & advances (asset)': 'current_assets', 'loans and advances (asset)': 'current_assets',
+            'stock-in-hand': 'stock_in_hand', 'fixed assets': 'fixed_assets',
+            'investments': 'investments',
+            'profit & loss a/c': 'profit_loss_ac', 'profit and loss a/c': 'profit_loss_ac',
+            'misc. expenses (asset)': 'misc_expense',
+            'suspense a/c': 'suspense', 'suspense account': 'suspense',
+            'branch / divisions': 'branch_division',
+        }
+
 
     def compute_pl_summary(self, ledgers: List[Dict], opening_stock: float = 0, closing_stock: float = 0,
                            total_sales_fy: float = 0, total_purchases_fy: float = 0) -> Dict:
@@ -1773,7 +1891,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v8 (Cash Flow + P&L + Encrypted)")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9 (Reconciliation + Command Queue)")
         logger.info("  Lightweight Collection Requests + Incremental Sync")
         logger.info("=" * 60)
 
@@ -2300,6 +2418,7 @@ class FlowraSyncAgent:
                 self.tally.company = company if company != '_active_' else ''
 
                 if not self.tally._ping_tally():
+                    logger.warning(f"[QUICK] Tally not responding for company '{company}' — skipping. Is Tally running with this company open?")
                     continue
 
                 # Per-company FYs
