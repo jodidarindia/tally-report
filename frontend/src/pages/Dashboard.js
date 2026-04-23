@@ -398,6 +398,33 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
           )}
         </div>
       </div>
+
+      {/* Updates & Changelog */}
+      <div className="mt-6 bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="dashboard-updates">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+          <Bell size={14} className="text-blue-600" />
+          <h3 className="text-sm font-semibold text-slate-900">FLOWRA Updates</h3>
+        </div>
+        <div className="max-h-48 sm:max-h-56 overflow-y-auto divide-y divide-slate-50">
+          {[
+            { d: '2026-04-23', tag: 'NEW', tagColor: '#8b5cf6', title: 'Dispatch Terminal', desc: 'Kanban board, LR tracking, document uploads, porter settlement.' },
+            { d: '2026-04-16', tag: 'FIX', tagColor: '#ef4444', title: 'Outstanding Calculation Fixed', desc: 'Opening balances per FY and journal voucher party amounts corrected.' },
+            { d: '2026-04-16', tag: 'FIX', tagColor: '#ef4444', title: 'SPIP Analysis Corrected', desc: 'Item name mapping fixed for accurate gap analysis.' },
+            { d: '2026-04-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Desktop Agent v9', desc: 'Deletion reconciliation, command queue, dual-schedule syncing.' },
+            { d: '2026-04-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'CRM Targets Overhaul', desc: 'Bulk targets, customer removal/reactivation, read-only past FYs.' },
+            { d: '2026-04-05', tag: 'NEW', tagColor: '#8b5cf6', title: 'Digital Questionnaire', desc: 'Public customer forms with SuperAdmin leads and Excel export.' },
+          ].map((u, i) => (
+            <div key={i} className="px-4 py-2.5 flex items-start gap-3 hover:bg-slate-25 transition" data-testid={`update-${i}`}>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0" style={{ background: u.tagColor + '15', color: u.tagColor }}>{u.tag}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-slate-900">{u.title}</div>
+                <div className="text-[10px] text-slate-500 leading-relaxed">{u.desc}</div>
+              </div>
+              <span className="text-[9px] text-slate-400 flex-shrink-0 mt-0.5">{u.d}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
