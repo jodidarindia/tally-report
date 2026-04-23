@@ -194,14 +194,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
             {fyLocked && <span className="ml-2 inline-flex items-center gap-1 text-amber-600"><Lock size={10} /> Locked</span>}
           </p>
         </div>
-        <button
-          onClick={() => { resetForm(); setShowAddForm(true); }}
-          className="flex items-center gap-1.5 px-3 py-2 bg-[#2563EB] text-white text-xs font-medium rounded-lg hover:bg-[#1D4ED8] transition-colors"
-          data-testid="add-salesman-button"
-        >
-          <Plus size={14} />
-          Add Salesman
-        </button>
+        <p className="text-xs text-slate-400">Create salesman users from Profile &gt; Employees with role "Salesman"</p>
       </div>
 
       {/* Tabs */}

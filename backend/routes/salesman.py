@@ -99,6 +99,34 @@ async def get_salesman_master(request: Request, fy: Optional[str] = None, compan
         current_fy = get_current_fy()
         target_fy = fy or current_fy
 
+        # Auto-discover salesman-role users not yet in salesman_master
+        user_q = {}
+        if ctx and ctx.get("tenant_id"):
+            user_q["tenant_id"] = ctx["tenant_id"]
+        user_q["role"] = "salesman"
+        salesman_users = await db.users.find(user_q, {"_id": 0, "name": 1, "username": 1}).to_list(100)
+        existing_names = {m.get("salesman_name", "").lower() for m in salesmen}
+        for su in salesman_users:
+            name = (su.get("name") or su.get("username", "")).strip()
+            if name.lower() not in existing_names:
+                # Auto-create salesman_master record for this user
+                doc = {
+                    "salesman_id": str(uuid.uuid4()),
+                    "salesman_name": name,
+                    "phone": "", "email": "",
+                    "monthly_target": 0, "quarterly_target": 0,
+                    "customers": [],
+                    "fy_targets": {}, "fy_customers": {},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if ctx and ctx.get("tenant_id"):
+                    doc["tenant_id"] = ctx["tenant_id"]
+                if ctx and ctx.get("company_id"):
+                    doc["company_id"] = ctx["company_id"]
+                await db.salesman_master.insert_one(doc)
+                salesmen.append(doc)
+                existing_names.add(name.lower())
+
         result = []
         for m in salesmen:
             targets = _get_fy_targets(m, target_fy)
