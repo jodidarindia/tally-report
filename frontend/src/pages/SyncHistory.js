@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { RefreshCw, Clock, Database, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
+import AgentBadge from '../components/AgentBadge';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -89,11 +90,12 @@ const SyncHistory = () => {
             <div className="flex items-center gap-4">
               <div className={`w-3 h-3 rounded-full ${currentStatus.is_connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
               <div>
-                <div className="text-sm font-medium text-slate-900">
+                <div className="text-sm font-medium text-slate-900 flex items-center gap-2">
                   {currentStatus.company_name || 'Tally* Connection'}
+                  {currentStatus.agent_version && <AgentBadge agentVersion={currentStatus.agent_version} size="xs" />}
                 </div>
                 <div className="text-xs text-slate-500">
-                  Last sync: {formatDate(currentStatus.last_sync)} | Agent: {currentStatus.agent_version || 'N/A'}
+                  Last sync: {formatDate(currentStatus.last_sync)}
                 </div>
               </div>
             </div>
@@ -191,9 +193,11 @@ const SyncHistory = () => {
                         );
                       })}
                     </div>
-                    <div className="mt-3 flex gap-4 text-xs text-slate-500">
+                    <div className="mt-3 flex gap-4 text-xs text-slate-500 items-center">
                       <span>Company: {cycle.company_name || '-'}</span>
-                      <span>Agent: {cycle.agent_version || '-'}</span>
+                      {cycle.agent_version
+                        ? <AgentBadge agentVersion={cycle.agent_version} size="xs" />
+                        : <span>Agent: -</span>}
                       <span>Mode: {cycle.sync_mode || 'full'}</span>
                     </div>
                   </div>

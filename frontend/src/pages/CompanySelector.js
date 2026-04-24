@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Building2, ChevronRight, Clock, Package, FileText } from 'lucide-react';
+import AgentBadge from '../components/AgentBadge';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -77,6 +78,7 @@ const CompanySelector = ({ companies, companyMappings = {}, onSelect }) => {
                   <div className="flex items-center gap-3">
                     <Building2 size={18} className={selected === companyId ? 'text-[#2563EB]' : 'text-slate-400'} />
                     <span className={`font-medium ${selected === companyId ? 'text-[#2563EB]' : 'text-slate-700'}`}>{displayName}</span>
+                    {info?.agent_version && <AgentBadge agentVersion={info.agent_version} size="xs" />}
                   </div>
                   {selected === companyId && <ChevronRight size={18} className="text-[#2563EB]" />}
                 </div>
