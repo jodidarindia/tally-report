@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Menu, X, Building2, RefreshCw, ChevronDown, User, LogOut
+  Menu, X, Building2, RefreshCw, ChevronDown, User, LogOut, PlayCircle
 } from 'lucide-react';
 
 const AppNavbar = ({
@@ -8,7 +8,7 @@ const AppNavbar = ({
   selectedFY, setSelectedFY, fyOptions,
   selectedCompany, companyMappings, onSwitchCompany,
   excludeBranches, onToggleBranches,
-  syncStatus, onLogout, onOpenProfile,
+  syncStatus, onLogout, onOpenProfile, onReplayTour,
   mobileMenuOpen, setMobileMenuOpen,
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -122,6 +122,15 @@ const AppNavbar = ({
                   <button onClick={() => { onOpenProfile(); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="profile-btn">
                     <User size={14} className="text-slate-400" /> Profile & Security
                   </button>
+                  {onReplayTour && (
+                    <button
+                      onClick={() => { onReplayTour(); setShowUserMenu(false); }}
+                      className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                      data-testid="replay-tour-btn"
+                    >
+                      <PlayCircle size={14} className="text-slate-400" /> Replay Tour
+                    </button>
+                  )}
                   {(user?.companies || []).length > 1 && (
                     <button onClick={() => { onSwitchCompany(); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="switch-company-btn">
                       <Building2 size={14} className="text-slate-400" /> Switch Company

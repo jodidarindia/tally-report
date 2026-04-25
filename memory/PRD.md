@@ -36,6 +36,20 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
   - Light-themed tkinter GUI, `pyodbc` cursor streaming from `.bds` (MS Access Jet 4.0)
   - Chunked uploads (500/chunk), generator extraction, gc.collect() per phase
   - Login + FY dropdown + company picker + Full Sync + Quick Sales Sync
-  - Validated end-to-end against `/api/agent/sync`, `/api/agent/reconcile`,
-    `/api/agent/commands*` (sync_token auth working)
+  - Sync progress events mirror Tally v9 (sync_started, phase_start, phase_complete, sync_complete/error)
+  - Validated end-to-end against `/api/agent/sync`, `/api/agent/reconcile`, `/api/agent/commands*`, `/api/agent/sync-progress`
   - Docs: `/app/desktop-agent/BUSY_README.md`
+
+## Onboarding Tour (Refreshed — Apr 2026)
+- 19-step interactive tour covering every menu and feature control
+- Covers NEW: Salesman Orders, Dispatch Terminal, CA Corner, AI Reports, Insider Result, Sync History, Activity Feed
+- Auto-filters steps whose DOM targets don't exist (handles feature gating per plan)
+- "NEW" badge displayed on tooltip for recently-added features
+- "Replay Tour" button added to user dropdown menu for rewatching anytime
+
+## UI Polish (Apr 2026)
+- `<AgentBadge>` component (`/app/frontend/src/components/AgentBadge.js`) — Tally = blue, Busy = amber
+- Rendered in Sync History header + per-cycle detail, and in Company Selector modal
+
+## Database Strategy
+See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas migration target, 3-tier backup plan, DO vs Atlas comparison).

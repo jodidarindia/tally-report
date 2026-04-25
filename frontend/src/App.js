@@ -192,6 +192,10 @@ function App() {
         syncStatus={syncStatus}
         onLogout={handleLogout}
         onOpenProfile={() => setShowProfile(true)}
+        onReplayTour={() => {
+          localStorage.removeItem('flowra_onboarding_done');
+          setShowOnboarding(true);
+        }}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
       />
