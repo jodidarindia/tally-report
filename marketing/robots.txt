@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /assets/og-
+
+Sitemap: https://flowralive.in/sitemap.xml

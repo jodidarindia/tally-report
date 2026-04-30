@@ -5,7 +5,8 @@ import {
   BarChart3, Shield, Package, Users, Brain, Truck, Zap,
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
   Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark,
-  FileText, ClipboardList, Download, ChevronDown, ShoppingCart
+  FileText, ClipboardList, Download, ChevronDown, ShoppingCart,
+  Menu, X, BookOpen, Sparkles, Rocket, Image as ImageIcon, Warehouse
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -66,6 +67,8 @@ const TESTIMONIALS = [
 const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
   const [billingCycle, setBillingCycle] = useState('annual');
   const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileResourcesOpen, setMobileResourcesOpen] = useState(false);
   const resourcesRef = useRef(null);
 
   useEffect(() => {
@@ -99,32 +102,117 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                 Resources <ChevronDown size={14} className={`transition-transform ${resourcesOpen ? 'rotate-180' : ''}`} />
               </button>
               {resourcesOpen && (
-                <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-zinc-200 rounded-xl shadow-xl py-2 z-50" data-testid="resources-dropdown">
+                <div className="absolute top-full right-0 mt-2 w-72 bg-white border border-zinc-200 rounded-xl shadow-xl py-2 z-50" data-testid="resources-dropdown">
+                  <div className="px-4 py-2 text-[10px] uppercase tracking-wider font-bold text-zinc-400">Forms</div>
                   <button onClick={() => { onNavigate?.('questionnaire'); setResourcesOpen(false); }}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-questionnaire">
-                    <ClipboardList size={16} className="text-[#0052FF]" /> Needs Assessment Form
+                    <ClipboardList size={16} className="text-[#0052FF]" /> Needs Assessment (online)
                   </button>
+                  <a href="/FLOWRA_Customer_Questionnaire.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-pdf-questionnaire">
+                    <Download size={16} className="text-[#0052FF]" /> Customer Questionnaire (PDF)
+                  </a>
+
+                  <div className="border-t border-zinc-100 my-1"></div>
+                  <div className="px-4 py-2 text-[10px] uppercase tracking-wider font-bold text-zinc-400">Documents</div>
                   <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-presentation">
                     <FileText size={16} className="text-[#0052FF]" /> Product Presentation
                   </a>
-                  <a href="/FLOWRA_Customer_Questionnaire.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-pdf-questionnaire">
-                    <Download size={16} className="text-[#0052FF]" /> Download Questionnaire (PDF)
+                  <a href="/FLOWRA_Training_Booklet.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-training">
+                    <BookOpen size={16} className="text-[#0052FF]" /> Training Booklet
+                  </a>
+                  <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-deployment">
+                    <Warehouse size={16} className="text-[#0052FF]" /> Deployment Guide
+                  </a>
+                  <a href="/FLOWRA_Whats_New.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-whats-new">
+                    <Sparkles size={16} className="text-[#0052FF]" /> What's New (Latest Features)
+                  </a>
+                  <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-coming-soon">
+                    <Rocket size={16} className="text-[#0052FF]" /> Coming Soon
+                  </a>
+                  <a href="/FLOWRA_Social_Media_Kit.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-social-kit">
+                    <ImageIcon size={16} className="text-[#0052FF]" /> Social Media Kit
                   </a>
                 </div>
               )}
             </div>
           </nav>
-          <div className="flex items-center gap-3">
-            <button onClick={onNavigateToLogin} data-testid="header-login-btn" className="text-sm font-bold text-zinc-950 border border-zinc-950 rounded-sm px-5 py-2 hover:bg-zinc-100 transition-colors">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button onClick={onNavigateToLogin} data-testid="header-login-btn" className="text-xs sm:text-sm font-bold text-zinc-950 border border-zinc-950 rounded-sm px-3 sm:px-5 py-2 hover:bg-zinc-100 transition-colors">
               Login
             </button>
-            <button onClick={onNavigateToSignup} data-testid="header-signup-btn" className="text-sm font-bold bg-[#0052FF] text-white rounded-sm px-5 py-2 hover:bg-[#0039B3] transition-colors">
+            <button onClick={onNavigateToSignup} data-testid="header-signup-btn" className="text-xs sm:text-sm font-bold bg-[#0052FF] text-white rounded-sm px-3 sm:px-5 py-2 hover:bg-[#0039B3] transition-colors">
               Get Started
+            </button>
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                    className="md:hidden p-1.5 rounded-md hover:bg-zinc-100 transition-colors"
+                    data-testid="mobile-menu-toggle"
+                    aria-label="Toggle menu">
+              {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
         </div>
+
+        {/* Mobile menu drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-zinc-100 bg-white" data-testid="mobile-menu">
+            <div className="max-w-7xl mx-auto px-6 py-3 space-y-1 text-sm font-medium text-zinc-700">
+              <button onClick={() => { scrollTo('features'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Features</button>
+              <button onClick={() => { scrollTo('pricing'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Pricing</button>
+              <button onClick={() => { scrollTo('testimonials'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Testimonials</button>
+              <button onClick={() => { scrollTo('security'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Security</button>
+
+              <button onClick={() => setMobileResourcesOpen(!mobileResourcesOpen)}
+                      className="w-full flex items-center justify-between py-2.5 hover:text-[#0052FF]"
+                      data-testid="mobile-resources-toggle">
+                <span>Resources</span>
+                <ChevronDown size={16} className={`transition-transform ${mobileResourcesOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {mobileResourcesOpen && (
+                <div className="ml-3 pl-3 border-l-2 border-zinc-100 space-y-1 pb-2" data-testid="mobile-resources-list">
+                  <button onClick={() => { onNavigate?.('questionnaire'); setMobileMenuOpen(false); }}
+                          className="w-full text-left py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <ClipboardList size={14} className="text-[#0052FF]" /> Needs Assessment
+                  </button>
+                  <a href="/FLOWRA_Customer_Questionnaire.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <Download size={14} className="text-[#0052FF]" /> Customer Questionnaire
+                  </a>
+                  <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <FileText size={14} className="text-[#0052FF]" /> Product Presentation
+                  </a>
+                  <a href="/FLOWRA_Training_Booklet.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <BookOpen size={14} className="text-[#0052FF]" /> Training Booklet
+                  </a>
+                  <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <Warehouse size={14} className="text-[#0052FF]" /> Deployment Guide
+                  </a>
+                  <a href="/FLOWRA_Whats_New.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <Sparkles size={14} className="text-[#0052FF]" /> What's New
+                  </a>
+                  <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <Rocket size={14} className="text-[#0052FF]" /> Coming Soon
+                  </a>
+                  <a href="/FLOWRA_Social_Media_Kit.pdf" target="_blank" rel="noopener noreferrer"
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                    <ImageIcon size={14} className="text-[#0052FF]" /> Social Media Kit
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Hero */}
