@@ -6,7 +6,7 @@ import {
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
   Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark,
   FileText, ClipboardList, Download, ChevronDown, ShoppingCart,
-  Menu, X, BookOpen, Sparkles, Rocket, Image as ImageIcon, Warehouse
+  Menu, X, ChevronDown as _ChevDown, Sparkles, Rocket, Warehouse
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -119,10 +119,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-presentation">
                     <FileText size={16} className="text-[#0052FF]" /> Product Presentation
                   </a>
-                  <a href="/FLOWRA_Training_Booklet.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-training">
-                    <BookOpen size={16} className="text-[#0052FF]" /> Training Booklet
-                  </a>
                   <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-deployment">
                     <Warehouse size={16} className="text-[#0052FF]" /> Deployment Guide
@@ -134,10 +130,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                   <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-coming-soon">
                     <Rocket size={16} className="text-[#0052FF]" /> Coming Soon
-                  </a>
-                  <a href="/FLOWRA_Social_Media_Kit.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-social-kit">
-                    <ImageIcon size={16} className="text-[#0052FF]" /> Social Media Kit
                   </a>
                 </div>
               )}
@@ -188,10 +180,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                      className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
                     <FileText size={14} className="text-[#0052FF]" /> Product Presentation
                   </a>
-                  <a href="/FLOWRA_Training_Booklet.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
-                    <BookOpen size={14} className="text-[#0052FF]" /> Training Booklet
-                  </a>
                   <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer"
                      className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
                     <Warehouse size={14} className="text-[#0052FF]" /> Deployment Guide
@@ -203,10 +191,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                   <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer"
                      className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
                     <Rocket size={14} className="text-[#0052FF]" /> Coming Soon
-                  </a>
-                  <a href="/FLOWRA_Social_Media_Kit.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
-                    <ImageIcon size={14} className="text-[#0052FF]" /> Social Media Kit
                   </a>
                 </div>
               )}
