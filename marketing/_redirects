@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects (also valid for Netlify)
+/insights  https://insights.flowralive.in  302
+/tasks     https://tasks.flowralive.in     302
+/loyalty   https://loyalty.flowralive.in   302

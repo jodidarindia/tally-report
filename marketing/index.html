@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+  <title>FLOWRA — A suite of tools that run Indian businesses</title>
+  <meta name="description" content="FLOWRA Suite is a family of focused SaaS tools for Indian SMEs — Insights for Tally & Busy data, Tasks for team execution, Loyalty for customer retention. One brand, independent products." />
+  <meta name="theme-color" content="#0A0E1A" />
+
+  <!-- Open Graph -->
+  <meta property="og:title"        content="FLOWRA Suite — Tools that run Indian businesses" />
+  <meta property="og:description"  content="A family of focused SaaS tools for Indian SMEs. Insights, Tasks, Loyalty — and more on the way." />
+  <meta property="og:image"        content="https://flowralive.in/assets/og-cover.png" />
+  <meta property="og:url"          content="https://flowralive.in" />
+  <meta property="og:type"         content="website" />
+  <meta name="twitter:card"        content="summary_large_image" />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind (CDN — the page is static and tiny, this is fine for marketing) -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary:        '#2563EB',
+            'primary-dark': '#1D4ED8',
+            'primary-light':'#DBEAFE',
+            accent:         '#7C3AED',
+            'dark-bg':      '#0A0E1A',
+            'dark-bg-2':    '#0F1729',
+            'dark-bg-3':    '#1A2238',
+            'dark-border':  '#1E293B',
+          },
+          fontFamily: {
+            sans:    ['Inter', 'system-ui', 'sans-serif'],
+            mono:    ['"JetBrains Mono"', 'monospace'],
+          },
+          boxShadow: {
+            'glow-blue':   '0 0 60px rgba(37, 99, 235, 0.45)',
+            'glow-violet': '0 0 60px rgba(124, 58, 237, 0.35)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Brand-kit tokens -->
+  <link rel="stylesheet" href="/assets/tokens.css" />
+
+  <style>
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #0A0E1A;
+      color: #E2E8F0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ── Hero gradient mesh ── */
+    .hero-mesh {
+      background:
+        radial-gradient(60% 50% at 20% 10%, rgba(37,99,235,0.30) 0%, transparent 60%),
+        radial-gradient(45% 40% at 90% 5%, rgba(124,58,237,0.22) 0%, transparent 65%),
+        radial-gradient(70% 60% at 50% 100%, rgba(37,99,235,0.10) 0%, transparent 70%);
+    }
+
+    /* ── Grain texture ── */
+    .grain {
+      position: relative;
+    }
+    .grain::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      opacity: 0.7;
+    }
+
+    /* ── Card — gradient border on hover ── */
+    .tool-card {
+      position: relative;
+      background: linear-gradient(180deg, #0F1729 0%, #0A0E1A 100%);
+      border: 1px solid #1E293B;
+      transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
+                  border-color 220ms ease,
+                  box-shadow 280ms ease;
+    }
+    .tool-card::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(37,99,235,0.6) 0%, rgba(124,58,237,0.4) 100%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      opacity: 0;
+      transition: opacity 280ms ease;
+      pointer-events: none;
+    }
+    .tool-card:hover {
+      transform: translateY(-4px);
+      border-color: transparent;
+      box-shadow: 0 24px 60px -20px rgba(37,99,235,0.35);
+    }
+    .tool-card:hover::before { opacity: 1; }
+
+    /* ── Stagger reveal ── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      animation: rise 0.8s cubic-bezier(0.16,1,0.3,1) forwards;
+    }
+    @keyframes rise {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Animated gradient text ── */
+    .grad-text {
+      background: linear-gradient(120deg, #ffffff 0%, #93C5FD 50%, #C4B5FD 100%);
+      -webkit-background-clip: text;
+              background-clip: text;
+      -webkit-text-fill-color: transparent;
+              color: transparent;
+    }
+
+    /* ── Subtle line decoration ── */
+    .deco-grid {
+      background-image:
+        linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse 60% 50% at 50% 0%, black 30%, transparent 80%);
+    }
+
+    /* ── Premium button ── */
+    .btn-primary {
+      background: linear-gradient(180deg, #2563EB 0%, #1D4ED8 100%);
+      box-shadow: 0 4px 14px rgba(37,99,235,0.45), inset 0 1px 0 rgba(255,255,255,0.18);
+      transition: transform 180ms ease, box-shadow 220ms ease;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(37,99,235,0.55), inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .btn-primary:active { transform: translateY(0); }
+
+    /* Smooth ring focus */
+    *:focus-visible {
+      outline: 2px solid #2563EB;
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+
+    /* Live status dot pulse */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+    .live-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  </style>
+</head>
+
+<body class="overflow-x-hidden">
+
+  <!-- ═════════════════════════════════════════════════
+       NAVBAR
+       ════════════════════════════════════════════════ -->
+  <header class="fixed inset-x-0 top-0 z-50 backdrop-blur-xl bg-dark-bg/70 border-b border-dark-border" data-testid="navbar">
+    <nav class="max-w-7xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between">
+      <a href="#hero" class="flex items-center gap-2.5" data-testid="brand-logo-link">
+        <!-- Inline logo mark -->
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="url(#g1)"/>
+          <path d="M9 22V10h12v3h-9v2.5h7v3h-7V22H9Z" fill="white"/>
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="32" y2="32">
+              <stop stop-color="#2563EB"/>
+              <stop offset="1" stop-color="#7C3AED"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="text-xl font-bold tracking-tight">FLOWRA</span>
+        <span class="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 ml-1 rounded-full text-[10px] font-medium bg-white/5 border border-white/10 text-slate-400 uppercase tracking-wider">Suite</span>
+      </a>
+
+      <div class="hidden md:flex items-center gap-7 text-sm text-slate-300">
+        <a href="#tools"     class="hover:text-white transition-colors" data-testid="nav-tools">Our Tools</a>
+        <a href="#why"       class="hover:text-white transition-colors" data-testid="nav-why">Why FLOWRA</a>
+        <a href="#approach"  class="hover:text-white transition-colors" data-testid="nav-approach">Approach</a>
+        <a href="#contact"   class="hover:text-white transition-colors" data-testid="nav-contact">Contact</a>
+      </div>
+
+      <a href="https://insights.flowralive.in"
+         class="btn-primary inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold text-white"
+         data-testid="navbar-cta">
+        Open Insights
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </a>
+    </nav>
+  </header>
+
+  <!-- ═════════════════════════════════════════════════
+       HERO
+       ════════════════════════════════════════════════ -->
+  <section id="hero" class="relative pt-32 sm:pt-40 pb-20 sm:pb-32 grain hero-mesh">
+    <div class="absolute inset-0 deco-grid pointer-events-none"></div>
+
+    <div class="relative max-w-7xl mx-auto px-5 sm:px-8">
+      <!-- Eyebrow -->
+      <div class="reveal flex items-center gap-2 mb-7" style="animation-delay: 0.05s">
+        <span class="live-dot w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span class="text-xs uppercase tracking-[0.18em] text-slate-400 font-medium">A suite of focused tools for Indian SMEs</span>
+      </div>
+
+      <!-- Headline (asymmetric, left-aligned) -->
+      <h1 class="reveal text-5xl sm:text-6xl lg:text-7xl font-extrabold leading-[1.05] tracking-tight max-w-5xl"
+          style="animation-delay: 0.12s" data-testid="hero-headline">
+        Software that<br />
+        <span class="grad-text">runs your business</span><br />
+        <span class="text-slate-300/90 font-light italic">— quietly.</span>
+      </h1>
+
+      <!-- Sub -->
+      <p class="reveal mt-8 text-lg sm:text-xl text-slate-400 max-w-2xl leading-relaxed" style="animation-delay: 0.22s">
+        FLOWRA is a family of focused SaaS tools, each built to solve one real problem
+        for Indian businesses — and built to work beautifully on its own.
+      </p>
+
+      <!-- Hero CTAs -->
+      <div class="reveal flex flex-wrap items-center gap-3 mt-10" style="animation-delay: 0.32s">
+        <a href="#tools" class="btn-primary inline-flex items-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold text-white" data-testid="hero-cta-primary">
+          Explore the Suite
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </a>
+        <a href="#approach" class="inline-flex items-center gap-2 px-6 py-3.5 rounded-full text-sm font-medium text-slate-300 border border-white/10 hover:border-white/30 hover:text-white transition-colors" data-testid="hero-cta-secondary">
+          How we build
+        </a>
+      </div>
+
+      <!-- Mini stats / trust strip -->
+      <div class="reveal mt-16 sm:mt-20 grid grid-cols-2 sm:grid-cols-4 gap-6 max-w-3xl" style="animation-delay: 0.45s">
+        <div>
+          <div class="text-2xl sm:text-3xl font-bold text-white">3+</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Tools live & on the way</div>
+        </div>
+        <div>
+          <div class="text-2xl sm:text-3xl font-bold text-white">256-bit</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Encryption everywhere</div>
+        </div>
+        <div>
+          <div class="text-2xl sm:text-3xl font-bold text-white">Mumbai</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Data residency (DPDP)</div>
+        </div>
+        <div>
+          <div class="text-2xl sm:text-3xl font-bold text-white">Built<br class="sm:hidden"/> in India</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">For Indian SMEs</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════════════════════════════════════════════
+       TOOLS GRID
+       ════════════════════════════════════════════════ -->
+  <section id="tools" class="relative py-24 sm:py-32 border-t border-dark-border">
+    <div class="max-w-7xl mx-auto px-5 sm:px-8">
+
+      <!-- Section header -->
+      <div class="max-w-2xl mb-16">
+        <span class="text-xs uppercase tracking-[0.18em] text-primary font-semibold">Our Tools</span>
+        <h2 class="mt-4 text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
+          Pick what you need.<br/>
+          <span class="text-slate-400 font-light italic">Skip what you don't.</span>
+        </h2>
+        <p class="mt-5 text-base sm:text-lg text-slate-400 leading-relaxed">
+          Each FLOWRA tool runs independently — its own login, its own data,
+          its own pricing. Use one. Use them all. They share a brand,
+          not a database.
+        </p>
+      </div>
+
+      <!-- Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="tools-grid">
+
+        <!-- INSIGHTS -->
+        <a href="https://insights.flowralive.in" target="_blank" rel="noopener"
+           class="tool-card group rounded-2xl p-7 sm:p-8 flex flex-col"
+           data-testid="tool-card-insights">
+          <div class="flex items-start justify-between mb-5">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-accent grid place-items-center shadow-glow-blue">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+            </div>
+            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Live</span>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-2">FLOWRA Insights</h3>
+          <p class="text-sm text-slate-400 leading-relaxed flex-1">
+            Real-time analytics, CRM, dispatch, salesman orders and CA reports — synced
+            directly from <span class="text-slate-300">Tally</span> or <span class="text-slate-300">Busy</span>.
+          </p>
+          <div class="mt-7 flex items-center gap-2 text-sm font-semibold text-primary group-hover:gap-3 transition-all">
+            Open insights.flowralive.in
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </a>
+
+        <!-- TASKS -->
+        <a href="https://tasks.flowralive.in"
+           class="tool-card group rounded-2xl p-7 sm:p-8 flex flex-col"
+           data-testid="tool-card-tasks">
+          <div class="flex items-start justify-between mb-5">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 grid place-items-center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>
+            </div>
+            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">Coming soon</span>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-2">FLOWRA Tasks</h3>
+          <p class="text-sm text-slate-400 leading-relaxed flex-1">
+            Team execution that doesn't feel like a project-management tool — assign,
+            chase, close. Designed for the way Indian teams actually work.
+          </p>
+          <div class="mt-7 flex items-center gap-2 text-sm font-semibold text-slate-500 group-hover:text-white group-hover:gap-3 transition-all">
+            Get notified when live
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </a>
+
+        <!-- LOYALTY -->
+        <a href="https://loyalty.flowralive.in"
+           class="tool-card group rounded-2xl p-7 sm:p-8 flex flex-col"
+           data-testid="tool-card-loyalty">
+          <div class="flex items-start justify-between mb-5">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 grid place-items-center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </div>
+            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">Coming soon</span>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-2">FLOWRA Loyalty</h3>
+          <p class="text-sm text-slate-400 leading-relaxed flex-1">
+            A loyalty engine that finally fits Indian retail — points,
+            tiers, referrals, and WhatsApp-native engagement.
+          </p>
+          <div class="mt-7 flex items-center gap-2 text-sm font-semibold text-slate-500 group-hover:text-white group-hover:gap-3 transition-all">
+            Get notified when live
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </div>
+        </a>
+
+        <!-- FUTURE PLACEHOLDER -->
+        <div class="rounded-2xl p-7 sm:p-8 flex flex-col border border-dashed border-dark-border bg-dark-bg-2/40 lg:col-span-3" data-testid="tool-card-future">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 rounded-lg bg-white/5 grid place-items-center text-slate-500">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            </div>
+            <div>
+              <h3 class="text-base font-semibold text-slate-300">More tools, on the way</h3>
+              <p class="text-sm text-slate-500 mt-0.5">We add a tool only when an Indian business owner asks for it twice. <a href="#contact" class="text-primary hover:underline">Tell us what you need.</a></p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═════════════════════════════════════════════════
+       WHY FLOWRA
+       ════════════════════════════════════════════════ -->
+  <section id="why" class="relative py-24 sm:py-32 border-t border-dark-border bg-dark-bg-2/50">
+    <div class="max-w-7xl mx-auto px-5 sm:px-8">
+
+      <div class="max-w-2xl mb-16">
+        <span class="text-xs uppercase tracking-[0.18em] text-primary font-semibold">Why FLOWRA</span>
+        <h2 class="mt-4 text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
+          Built differently.<br/>
+          <span class="text-slate-400 font-light italic">On purpose.</span>
+        </h2>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-10">
+
+        <div class="group">
+          <div class="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 grid place-items-center mb-5 group-hover:bg-primary/20 transition-colors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold text-white mb-2">Independent by design</h3>
+          <p class="text-sm text-slate-400 leading-relaxed">
+            Each tool has its own database, its own admin, its own subscription. A bug in one
+            never touches another. You pick what you need.
+          </p>
+        </div>
+
+        <div class="group">
+          <div class="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 grid place-items-center mb-5 group-hover:bg-accent/20 transition-colors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold text-white mb-2">India-first, India-only</h3>
+          <p class="text-sm text-slate-400 leading-relaxed">
+            DPDP-compliant, Mumbai data residency, ₹/lakh number formatting, GST-aware,
+            WhatsApp-native. We don't translate American SaaS — we replace it.
+          </p>
+        </div>
+
+        <div class="group">
+          <div class="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 grid place-items-center mb-5 group-hover:bg-emerald-500/20 transition-colors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold text-white mb-2">Calm, secure, boring</h3>
+          <p class="text-sm text-slate-400 leading-relaxed">
+            256-bit encryption, daily backups, role-based access, audit logs.
+            The kind of "boring" that lets your CA sleep at night.
+          </p>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═════════════════════════════════════════════════
+       APPROACH (asymmetric two-column)
+       ════════════════════════════════════════════════ -->
+  <section id="approach" class="relative py-24 sm:py-32 border-t border-dark-border">
+    <div class="max-w-7xl mx-auto px-5 sm:px-8 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-20">
+
+      <div class="lg:col-span-5">
+        <span class="text-xs uppercase tracking-[0.18em] text-primary font-semibold">Our approach</span>
+        <h2 class="mt-4 text-4xl sm:text-5xl font-extrabold tracking-tight text-white leading-[1.05]">
+          One brand.<br/>
+          Many tools.<br/>
+          <span class="grad-text">No lock-in.</span>
+        </h2>
+      </div>
+
+      <div class="lg:col-span-7 space-y-10 text-slate-300">
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <div class="text-xs font-mono text-primary">01</div>
+            <h3 class="text-lg font-semibold text-white">Focused, not bloated</h3>
+          </div>
+          <p class="text-sm sm:text-base text-slate-400 leading-relaxed">
+            Every tool does one thing well. We'd rather ship 5 small products that
+            people love than 1 big platform people tolerate.
+          </p>
+        </div>
+
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <div class="text-xs font-mono text-primary">02</div>
+            <h3 class="text-lg font-semibold text-white">Same brand, same standard</h3>
+          </div>
+          <p class="text-sm sm:text-base text-slate-400 leading-relaxed">
+            Every tool follows the FLOWRA brand kit — same fonts, same colors,
+            same security baseline. Switch between them and the experience never jars.
+          </p>
+        </div>
+
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <div class="text-xs font-mono text-primary">03</div>
+            <h3 class="text-lg font-semibold text-white">Pay for one, not the bundle</h3>
+          </div>
+          <p class="text-sm sm:text-base text-slate-400 leading-relaxed">
+            Each tool is priced independently. No "Suite tax" — if you only need
+            Insights, you only pay for Insights.
+          </p>
+        </div>
+
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <div class="text-xs font-mono text-primary">04</div>
+            <h3 class="text-lg font-semibold text-white">Your data is yours</h3>
+          </div>
+          <p class="text-sm sm:text-base text-slate-400 leading-relaxed">
+            One-click export at any time. No retention games. No "growth" tactics that
+            hold your data hostage.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════════════════════════════════════════════
+       CONTACT / CTA
+       ════════════════════════════════════════════════ -->
+  <section id="contact" class="relative py-24 sm:py-32 border-t border-dark-border">
+    <div class="max-w-4xl mx-auto px-5 sm:px-8 text-center">
+      <h2 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
+        Have a tool idea<br/> for Indian businesses?
+      </h2>
+      <p class="mt-5 text-base sm:text-lg text-slate-400 max-w-xl mx-auto">
+        We build tools when business owners ask for them. Tell us what's broken
+        in your day, and we might just fix it.
+      </p>
+      <div class="mt-10 flex flex-wrap justify-center items-center gap-3">
+        <a href="mailto:hello@flowralive.in" class="btn-primary inline-flex items-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold text-white" data-testid="contact-email-cta">
+          hello@flowralive.in
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </a>
+        <a href="https://insights.flowralive.in" class="inline-flex items-center gap-2 px-6 py-3.5 rounded-full text-sm font-medium text-slate-300 border border-white/10 hover:border-white/30 hover:text-white transition-colors" data-testid="contact-app-cta">
+          Try FLOWRA Insights
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════════════════════════════════════════════
+       FOOTER
+       ════════════════════════════════════════════════ -->
+  <footer class="border-t border-dark-border py-14">
+    <div class="max-w-7xl mx-auto px-5 sm:px-8 grid grid-cols-2 md:grid-cols-5 gap-10">
+      <div class="col-span-2">
+        <div class="flex items-center gap-2.5">
+          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="url(#g2)"/>
+            <path d="M9 22V10h12v3h-9v2.5h7v3h-7V22H9Z" fill="white"/>
+            <defs>
+              <linearGradient id="g2" x1="0" y1="0" x2="32" y2="32">
+                <stop stop-color="#2563EB"/>
+                <stop offset="1" stop-color="#7C3AED"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <span class="text-lg font-bold text-white">FLOWRA</span>
+        </div>
+        <p class="mt-4 text-sm text-slate-400 max-w-xs leading-relaxed">
+          A family of focused SaaS tools for Indian businesses.
+          Built quietly. Shipped reliably.
+        </p>
+      </div>
+
+      <div>
+        <h4 class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-4">Tools</h4>
+        <ul class="space-y-3 text-sm text-slate-400">
+          <li><a href="https://insights.flowralive.in" class="hover:text-white">Insights</a></li>
+          <li><a href="https://tasks.flowralive.in" class="hover:text-white">Tasks</a></li>
+          <li><a href="https://loyalty.flowralive.in" class="hover:text-white">Loyalty</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4 class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-4">Company</h4>
+        <ul class="space-y-3 text-sm text-slate-400">
+          <li><a href="#why" class="hover:text-white">Why FLOWRA</a></li>
+          <li><a href="#approach" class="hover:text-white">Approach</a></li>
+          <li><a href="mailto:hello@flowralive.in" class="hover:text-white">Contact</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4 class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-4">Legal</h4>
+        <ul class="space-y-3 text-sm text-slate-400">
+          <li><a href="/privacy" class="hover:text-white">Privacy Policy</a></li>
+          <li><a href="/terms" class="hover:text-white">Terms of Service</a></li>
+          <li><a href="/security" class="hover:text-white">Security</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-5 sm:px-8 mt-10 pt-8 border-t border-dark-border flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+      <div>© <span id="year">2026</span> FLOWRA. All rights reserved. Made in India.</div>
+      <div class="flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
+        All systems operational
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Update year automatically
+    document.getElementById('year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>

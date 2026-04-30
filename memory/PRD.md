@@ -51,5 +51,45 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 - `<AgentBadge>` component (`/app/frontend/src/components/AgentBadge.js`) — Tally = blue, Busy = amber
 - Rendered in Sync History header + per-cycle detail, and in Company Selector modal
 
+## Suite Architecture (Decided April 2026)
+
+### Domain layout
+- **flowralive.in** — static marketing landing page (`/app/marketing/`)
+- **insights.flowralive.in** — current FLOWRA Insights SaaS (Tally/Busy)
+- **tasks.flowralive.in** — future Tasks app (existing code from another platform — to be brought in)
+- **loyalty.flowralive.in** — future Loyalty app (existing code from another platform — to be brought in)
+- **api-X.flowralive.in** — per-app FastAPI backends
+
+### Federation, NOT integration
+- Each app: own DB, own users, own admin/superadmin, own subscription
+- Shared: brand kit (`@flowra/brand-kit`), security baseline, design tokens, legal templates
+- No SSO; users log in independently to each tool
+
+### Hosting plan
+- Marketing landing → Cloudflare Pages (FREE)
+- React frontends → Vercel/Cloudflare Pages (FREE per app)
+- FastAPI backends → single DO Droplet 2GB (~₹900/mo, all 3 backends via nginx vhosts)
+- Database → MongoDB Atlas M10 Mumbai (~₹1,800/mo, separate db names per app)
+- **Total ~₹2,700/mo for full suite**
+
+## Brand Kit (`/app/brand-kit/`)
+- `tokens.css` — CSS variables (colors, fonts, spacing, radius, shadows, motion)
+- `tailwind-preset.js` — Tailwind config preset for any FLOWRA app
+- `docs/security-checklist.md` — mandatory security baseline (35+ items)
+- `docs/design-principles.md` — design rules, anti-patterns, voice guidelines
+- `legal/` — privacy + terms templates (DPDP Act 2023 ready)
+- `components/` — shared React components (to be built when first integrated)
+
+## Marketing Site (`/app/marketing/`)
+- `index.html` — single-file static landing (~30 KB, Tailwind CDN, premium dark aesthetic)
+- Hero with gradient mesh + grain texture + animated rise-in sections
+- 4-card tool grid (Insights LIVE, Tasks coming, Loyalty coming, future placeholder)
+- "Why FLOWRA" 3-column trust strip
+- "Our Approach" asymmetric two-column with numbered principles
+- Footer with all tool links, company links, legal links, status indicator
+- `vercel.json` + `_headers` + `_redirects` configured for security headers + tool subdomain redirects
+- Deploy-ready for Cloudflare Pages, Vercel, or DO App Platform Static
+- Smoke-tested: HTTP 200, all assets load, Lighthouse-ready
+
 ## Database Strategy
 See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas migration target, 3-tier backup plan, DO vs Atlas comparison).

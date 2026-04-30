@@ -1,0 +1,124 @@
+/**
+ * FLOWRA Brand Kit — Design Tokens
+ * Import this once at the top of any FLOWRA product to inherit the brand palette.
+ *
+ * Strategy:
+ *   - Dark, premium SaaS aesthetic (Linear/Vercel/Stripe inspired)
+ *   - Electric-blue primary that signals "data + intelligence"
+ *   - Warm slate backgrounds that don't strain the eyes during long CA sessions
+ *   - Type scale tuned for Indian SMB users (slightly larger body than US-tuned scales)
+ */
+
+:root {
+  /* ── Brand colors ── */
+  --flowra-primary:        #2563EB;   /* Electric blue (existing FLOWRA primary) */
+  --flowra-primary-dark:   #1D4ED8;
+  --flowra-primary-light:  #DBEAFE;
+  --flowra-accent:         #7C3AED;   /* Violet — for premium/AI features */
+  --flowra-success:        #10B981;
+  --flowra-warning:        #F59E0B;
+  --flowra-danger:         #EF4444;
+
+  /* ── Neutrals (light mode) ── */
+  --flowra-bg:             #FFFFFF;
+  --flowra-bg-subtle:      #F8FAFC;
+  --flowra-bg-muted:       #F1F5F9;
+  --flowra-border:         #E2E8F0;
+  --flowra-border-strong:  #CBD5E1;
+  --flowra-text:           #0F172A;
+  --flowra-text-muted:     #475569;
+  --flowra-text-subtle:    #94A3B8;
+
+  /* ── Neutrals (dark — used by marketing landing) ── */
+  --flowra-dark-bg:        #0A0E1A;   /* Near-black with slight blue tint */
+  --flowra-dark-bg-2:      #0F1729;
+  --flowra-dark-bg-3:      #1A2238;
+  --flowra-dark-border:    #1E293B;
+  --flowra-dark-text:      #E2E8F0;
+  --flowra-dark-text-muted:#94A3B8;
+
+  /* ── Type ── */
+  --flowra-font-sans:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --flowra-font-display:   'Inter', system-ui, sans-serif;
+  --flowra-font-mono:      'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  /* ── Type scale ── */
+  --flowra-text-xs:    0.75rem;    /* 12px */
+  --flowra-text-sm:    0.875rem;   /* 14px */
+  --flowra-text-base:  1rem;       /* 16px */
+  --flowra-text-lg:    1.125rem;   /* 18px */
+  --flowra-text-xl:    1.25rem;    /* 20px */
+  --flowra-text-2xl:   1.5rem;     /* 24px */
+  --flowra-text-3xl:   1.875rem;   /* 30px */
+  --flowra-text-4xl:   2.25rem;    /* 36px */
+  --flowra-text-5xl:   3rem;       /* 48px */
+  --flowra-text-6xl:   3.75rem;    /* 60px */
+  --flowra-text-7xl:   4.5rem;     /* 72px */
+
+  /* ── Spacing (base 4px grid, generous) ── */
+  --flowra-space-1:    0.25rem;
+  --flowra-space-2:    0.5rem;
+  --flowra-space-3:    0.75rem;
+  --flowra-space-4:    1rem;
+  --flowra-space-6:    1.5rem;
+  --flowra-space-8:    2rem;
+  --flowra-space-12:   3rem;
+  --flowra-space-16:   4rem;
+  --flowra-space-24:   6rem;
+  --flowra-space-32:   8rem;
+
+  /* ── Radius ── */
+  --flowra-radius-sm:  0.375rem;
+  --flowra-radius:     0.625rem;
+  --flowra-radius-lg:  1rem;
+  --flowra-radius-xl:  1.5rem;
+  --flowra-radius-2xl: 2rem;
+  --flowra-radius-full:9999px;
+
+  /* ── Shadows (light) ── */
+  --flowra-shadow-sm:  0 1px 2px 0 rgba(15, 23, 42, 0.05);
+  --flowra-shadow:     0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  --flowra-shadow-lg:  0 24px 48px -12px rgba(15, 23, 42, 0.18);
+
+  /* ── Shadows (dark — glow effect) ── */
+  --flowra-glow-blue:  0 0 40px rgba(37, 99, 235, 0.4);
+  --flowra-glow-violet:0 0 40px rgba(124, 58, 237, 0.35);
+
+  /* ── Motion ── */
+  --flowra-ease:       cubic-bezier(0.16, 1, 0.3, 1);
+  --flowra-duration:   220ms;
+  --flowra-duration-slow: 480ms;
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--flowra-primary);
+  color: white;
+}
+
+/* ── Scrollbar (subtle, premium feel) ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--flowra-border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--flowra-border-strong);
+  border-radius: var(--flowra-radius-full);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--flowra-text-subtle); }
+
+/* ── Utility classes available everywhere ── */
+.flowra-grain {
+  position: relative;
+}
+.flowra-grain::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.85' numOctaves='2' /%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0' /%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)' /%3E%3C/svg%3E");
+  opacity: 0.5;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
