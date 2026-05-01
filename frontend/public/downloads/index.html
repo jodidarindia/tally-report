@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FLOWRA — Download Brand Kit & Marketing</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+       background:#0A0E1A;color:#E2E8F0;margin:0;padding:48px 24px;min-height:100vh}
+  .wrap{max-width:720px;margin:0 auto}
+  h1{font-size:32px;font-weight:800;margin:0 0 8px;color:#fff}
+  p.lead{color:#94A3B8;margin:0 0 32px;font-size:15px;line-height:1.6}
+  .card{background:linear-gradient(180deg,#0F1729,#0A0E1A);border:1px solid #1E293B;
+        border-radius:14px;padding:20px;margin-bottom:14px;display:flex;align-items:center;
+        justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .meta h3{margin:0 0 4px;color:#fff;font-size:16px}
+  .meta p{margin:0;color:#94A3B8;font-size:13px}
+  .meta code{background:#1E293B;padding:2px 6px;border-radius:4px;font-size:12px}
+  a.btn{display:inline-block;background:linear-gradient(180deg,#2563EB,#1D4ED8);
+        color:#fff;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px;
+        font-size:14px;box-shadow:0 4px 14px rgba(37,99,235,.45);
+        transition:transform .15s ease}
+  a.btn:hover{transform:translateY(-1px)}
+  .note{margin-top:30px;padding:14px 16px;background:rgba(37,99,235,.08);
+        border-left:3px solid #2563EB;border-radius:6px;font-size:13px;color:#cbd5e1;line-height:1.55}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>FLOWRA — Downloads</h1>
+    <p class="lead">Click any button below to download the file. Use these in your new Emergent workspace or local machine.</p>
+
+    <div class="card">
+      <div class="meta">
+        <h3>Suite bundle (recommended)</h3>
+        <p>Both brand-kit + marketing landing page · 27 KB · <code>flowra-suite-bundle.zip</code></p>
+      </div>
+      <a class="btn" href="/downloads/flowra-suite-bundle.zip" download>Download</a>
+    </div>
+
+    <div class="card">
+      <div class="meta">
+        <h3>Brand kit only</h3>
+        <p>Tokens, Tailwind preset, security &amp; design docs · 9 KB · <code>flowra-brand-kit.zip</code></p>
+      </div>
+      <a class="btn" href="/downloads/flowra-brand-kit.zip" download>Download</a>
+    </div>
+
+    <div class="card">
+      <div class="meta">
+        <h3>Marketing landing page only</h3>
+        <p>index.html, SEO, sitemap, deployment guide · 18 KB · <code>flowra-marketing.zip</code></p>
+      </div>
+      <a class="btn" href="/downloads/flowra-marketing.zip" download>Download</a>
+    </div>
+
+    <div class="note">
+      <b>Tip:</b> For Cloudflare Pages, push the contents of <code>marketing/</code> as the repo root (so <code>index.html</code> sits at the top). The brand-kit can either ride along or live in its own repo as documentation.
+    </div>
+  </div>
+</body>
+</html>
