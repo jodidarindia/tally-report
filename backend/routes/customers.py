@@ -215,6 +215,9 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
         for voucher in fy_sales:
             party = voucher.get("party_name", "Unknown")
+            # Skip sentinel/blank parties — these are draft/cancelled Tally entries
+            if not party or party.strip().lower() in {"unknown", "n/a", "none", ""}:
+                continue
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
 
@@ -508,8 +511,11 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
             prev_sales[party] = prev_sales.get(party, 0) + amount
 
         all_customers = set(list(current_sales.keys()) + list(prev_sales.keys()))
-        # Filter out removed customers
-        all_customers = all_customers - removed_set
+        # Filter out removed customers + sentinel "Unknown" / blank parties
+        all_customers = {
+            c for c in all_customers
+            if c and c.strip().lower() not in {"unknown", "n/a", "none", ""} and c not in removed_set
+        }
         targets = []
         for cust in all_customers:
             ct = custom_target_map.get(cust, {})
@@ -1081,6 +1087,8 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         behavior_map = {}
         for voucher in all_sales:
             party = voucher.get("party_name", "Unknown")
+            if not party or party.strip().lower() in {"unknown", "n/a", "none", ""}:
+                continue
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
 
