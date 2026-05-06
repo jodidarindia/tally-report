@@ -53,7 +53,6 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         if branch_parties:
             branch_set = set(p.lower() for p in branch_parties)
             synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
-        synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # Fetch ALL vouchers (not FY filtered) for opening balance calculation
         all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
