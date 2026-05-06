@@ -171,7 +171,11 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
         q["company_id"] = company_id
 
     sales = await db_ref.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
-    receipts = await db_ref.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+    receipts_raw = await db_ref.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+    # The receipt_vouchers collection actually contains both receipts (CR party = pays down OS)
+    # and payment vouchers (DR party — e.g., cheque-bounce refund). Treat them separately so
+    # the customer's overdue isn't reduced by money we paid TO them.
+    receipts = [v for v in receipts_raw if (v.get("voucher_type") or "").strip().lower() != "payment"]
     credit_notes = await db_ref.credit_notes.find(q, {"_id": 0}).to_list(20000)
     journals = await db_ref.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
     synced_customers = await db_ref.customers.find(q, {"_id": 0}).to_list(5000)

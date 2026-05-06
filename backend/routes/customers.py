@@ -56,15 +56,24 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
         # Fetch ALL vouchers (not FY filtered) for opening balance calculation
         all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
-        all_receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+        all_receipts_raw = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
         all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(50000)
         all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(50000)
+
+        # The receipt_vouchers collection actually contains BOTH receipts (CR party = reduces OS)
+        # and payment vouchers (DR party = increases OS, e.g., cheque-bounce refund). Split by
+        # voucher_type so they affect the customer balance with the correct sign.
+        def _is_payment(v):
+            return (v.get("voucher_type") or "").strip().lower() == "payment"
+        all_receipts = [v for v in all_receipts_raw if not _is_payment(v)]
+        all_payments = [v for v in all_receipts_raw if _is_payment(v)]
 
         # Filter branch parties from vouchers
         if branch_parties:
             bp_lower = set(p.lower().strip() for p in branch_parties)
             all_sales = [v for v in all_sales if (v.get("party_name") or "").lower().strip() not in bp_lower]
             all_receipts = [v for v in all_receipts if (v.get("party_name") or "").lower().strip() not in bp_lower]
+            all_payments = [v for v in all_payments if (v.get("party_name") or "").lower().strip() not in bp_lower]
             all_credit_notes = [v for v in all_credit_notes if (v.get("party_name") or "").lower().strip() not in bp_lower]
             all_journals = [v for v in all_journals if (v.get("party_name") or "").lower().strip() not in bp_lower]
 
@@ -92,6 +101,7 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
         _, fy_sales = split_by_fy(all_sales)
         _, fy_receipts = split_by_fy(all_receipts)
+        _, fy_payments = split_by_fy(all_payments)
         _, fy_cns = split_by_fy(all_credit_notes)
         _, fy_jvs = split_by_fy(all_journals)
 
@@ -99,6 +109,7 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         if fy:
             fy_sales = filter_vouchers_by_fy(fy_sales, fy)
             fy_receipts = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date','')} for r in fy_receipts], fy)
+            fy_payments = filter_vouchers_by_fy([{**p, 'voucher_date': p.get('voucher_date','')} for p in fy_payments], fy)
             fy_cns = filter_vouchers_by_fy(fy_cns, fy)
             fy_jvs = filter_vouchers_by_fy(fy_jvs, fy)
 
@@ -144,6 +155,12 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                         p = _resolve(r.get('party_name'))
                         if p and lo <= r.get('voucher_date', '') < hi:
                             opening_balance[p] += safe_num(r.get('amount'))
+                    for pmt in all_payments:
+                        p = _resolve(pmt.get('party_name'))
+                        if p and lo <= pmt.get('voucher_date', '') < hi:
+                            # Payment voucher DRs the customer (e.g., cheque-bounce refund)
+                            # → undoing means subtract DR
+                            opening_balance[p] -= safe_num(pmt.get('amount'))
                     for cn in all_credit_notes:
                         p = _resolve(cn.get('party_name'))
                         if p and lo <= cn.get('voucher_date', '') < hi:
@@ -165,6 +182,10 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                         p = _resolve(r.get('party_name'))
                         if p and lo <= r.get('voucher_date', '') < hi:
                             opening_balance[p] -= safe_num(r.get('amount'))
+                    for pmt in all_payments:
+                        p = _resolve(pmt.get('party_name'))
+                        if p and lo <= pmt.get('voucher_date', '') < hi:
+                            opening_balance[p] += safe_num(pmt.get('amount'))
                     for cn in all_credit_notes:
                         p = _resolve(cn.get('party_name'))
                         if p and lo <= cn.get('voucher_date', '') < hi:
@@ -178,10 +199,15 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         # Compute current FY credits per customer (case-insensitive party keys)
         customer_receipts = {}
         customer_cn_total = {}
+        customer_payments_dr = {}  # Payment vouchers paid TO party → DR (increases OS)
         for r in fy_receipts:
             p = safe_str(r.get("party_name")).strip().lower()
             if p:
                 customer_receipts[p] = customer_receipts.get(p, 0) + safe_num(r.get("amount"))
+        for pmt in fy_payments:
+            p = safe_str(pmt.get("party_name")).strip().lower()
+            if p:
+                customer_payments_dr[p] = customer_payments_dr.get(p, 0) + safe_num(pmt.get("amount"))
         for cn in fy_cns:
             p = safe_str(cn.get("party_name")).strip().lower()
             if p:
@@ -242,6 +268,33 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
                 customer_map[party]["last_transaction"] = v_date_str
 
+            try:
+                parts = v_date_str.split("-")
+                if len(parts) == 3:
+                    v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+                    days_old = (today - v_date).days
+                    customer_vouchers[party].append({"amount": amount, "days_old": days_old})
+                    if days_old > customer_map[party]["oldest_invoice_days"]:
+                        customer_map[party]["oldest_invoice_days"] = days_old
+            except (ValueError, TypeError):
+                customer_vouchers[party].append({"amount": amount, "days_old": 0})
+
+        # Enrich synced customers with FY payment-voucher activity (DR party — e.g.,
+        # cheque-bounce refund, expense advance, debit-side adjustment). The Tally Sync
+        # Agent stores these inside receipt_vouchers with voucher_type='payment'.
+        for pmt in fy_payments:
+            party_raw = (pmt.get("party_name") or "").strip()
+            if not party_raw:
+                continue
+            party = synced_name_lower_to_canonical.get(party_raw.lower())
+            if not party:
+                continue
+            amount = safe_num(pmt.get("amount"))
+            v_date_str = pmt.get("voucher_date", "")
+            customer_map[party]["total_sales"] += amount  # DR side (treated like sales for math)
+            customer_map[party]["voucher_count"] += 1
+            if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
+                customer_map[party]["last_transaction"] = v_date_str
             try:
                 parts = v_date_str.split("-")
                 if len(parts) == 3:
@@ -913,9 +966,15 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
 
         # Fetch ALL vouchers first
         all_sales_raw = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
-        all_receipts_raw = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
+        all_receipts_raw_all = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
         all_credit_notes_raw = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
         all_journals_raw = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+
+        # Split receipt_vouchers into actual receipts (CR party) vs payment vouchers (DR party)
+        def _is_pmt(v):
+            return (v.get("voucher_type") or "").strip().lower() == "payment"
+        all_receipts_raw = [v for v in all_receipts_raw_all if not _is_pmt(v)]
+        all_payments_raw = [v for v in all_receipts_raw_all if _is_pmt(v)]
 
         # Apply branch exclusion
         exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
@@ -925,6 +984,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if branch_parties:
             all_sales_raw = [v for v in all_sales_raw if v.get("party_name") not in branch_parties]
             all_receipts_raw = [v for v in all_receipts_raw if v.get("party_name") not in branch_parties]
+            all_payments_raw = [v for v in all_payments_raw if v.get("party_name") not in branch_parties]
             all_credit_notes_raw = [v for v in all_credit_notes_raw if v.get("party_name") not in branch_parties]
             all_journals_raw = [v for v in all_journals_raw if v.get("party_name") not in branch_parties]
 
@@ -959,17 +1019,20 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if fy:
             pre_sales, fy_sales_raw = split_by_fy(all_sales_raw)
             _, fy_receipts_raw = split_by_fy(all_receipts_raw)
+            _, fy_payments_raw = split_by_fy(all_payments_raw)
             _, fy_cns_raw = split_by_fy(all_credit_notes_raw)
             _, fy_jvs_raw = split_by_fy(all_journals_raw)
 
             all_sales = filter_vouchers_by_fy(fy_sales_raw, fy)
             all_receipts = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date', '')} for r in fy_receipts_raw], fy)
+            all_payments = filter_vouchers_by_fy([{**p, 'voucher_date': p.get('voucher_date', '')} for p in fy_payments_raw], fy)
             all_credit_notes = filter_vouchers_by_fy(fy_cns_raw, fy)
             all_journals = filter_vouchers_by_fy(fy_jvs_raw, fy)
         else:
             pre_sales = []
             all_sales = all_sales_raw
             all_receipts = all_receipts_raw
+            all_payments = all_payments_raw
             all_credit_notes = all_credit_notes_raw
             all_journals = all_journals_raw
 
@@ -1000,6 +1063,10 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                         p = _resolve(r.get('party_name'))
                         if p and lo <= r.get('voucher_date', '') < hi:
                             opening_balance_map[p] += safe_num(r.get('amount'))
+                    for pmt in all_payments_raw:
+                        p = _resolve(pmt.get('party_name'))
+                        if p and lo <= pmt.get('voucher_date', '') < hi:
+                            opening_balance_map[p] -= safe_num(pmt.get('amount'))
                     for cn in all_credit_notes_raw:
                         p = _resolve(cn.get('party_name'))
                         if p and lo <= cn.get('voucher_date', '') < hi:
@@ -1019,6 +1086,10 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                         p = _resolve(r.get('party_name'))
                         if p and lo <= r.get('voucher_date', '') < hi:
                             opening_balance_map[p] -= safe_num(r.get('amount'))
+                    for pmt in all_payments_raw:
+                        p = _resolve(pmt.get('party_name'))
+                        if p and lo <= pmt.get('voucher_date', '') < hi:
+                            opening_balance_map[p] += safe_num(pmt.get('amount'))
                     for cn in all_credit_notes_raw:
                         p = _resolve(cn.get('party_name'))
                         if p and lo <= cn.get('voucher_date', '') < hi:
@@ -1108,6 +1179,33 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                         behavior_map[party]["oldest_invoice_days"] = days_old
             except (ValueError, TypeError):
                 pass
+
+        # Add payment vouchers (DR party — e.g., cheque-bounce refunds) as DR-side activity
+        for pmt in all_payments:
+            party = (pmt.get("party_name") or "").strip()
+            if not party:
+                continue
+            amount = safe_num(pmt.get("amount"))
+            v_date_str = pmt.get("voucher_date", "")
+            if party not in behavior_map:
+                synced = synced_map.get(party.lower(), {})
+                ob = round(opening_balance_map.get(party, 0), 2)
+                behavior_map[party] = {
+                    "customer_name": party, "phone": synced.get("phone", ""), "state": synced.get("state", ""),
+                    "total_transactions": 0, "total_amount": 0, "opening_balance": ob,
+                    "average_transaction": 0, "outstanding_amount": 0, "paid_amount": 0,
+                    "credit_note_total": 0, "journal_credit": 0, "receipt_count": 0,
+                    "payment_ratio": 0, "payment_pattern": "regular", "average_payment_delay": 0,
+                    "credit_score": 0, "oldest_invoice_days": 0,
+                    "first_transaction": v_date_str, "last_transaction": v_date_str, "invoices": []
+                }
+            behavior_map[party]["total_transactions"] += 1
+            behavior_map[party]["total_amount"] += amount
+            if v_date_str:
+                if v_date_str < (behavior_map[party].get("first_transaction") or "9999"):
+                    behavior_map[party]["first_transaction"] = v_date_str
+                if v_date_str > (behavior_map[party].get("last_transaction") or ""):
+                    behavior_map[party]["last_transaction"] = v_date_str
 
         # Item #5 fix: also include PRE-FY sales for invoice ageing (dates only, not amounts)
         # This way customers whose outstanding is entirely from previous FYs still get correct
