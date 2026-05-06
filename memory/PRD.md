@@ -98,7 +98,9 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - Fixed `customers.py` UndefinedName crash (`fy_start` → `fy_start_str`) on line 363 that broke Outstanding aging fallback for opening-balance-only customers
 - Hoisted `SortTh` + `handleSort` to top of `CustomerCRM.js` component scope (was previously trapped inside the Outstanding-tab IIFE causing `ReferenceError: SortTh is not defined` on default Targets tab)
 - Added `max-h-[calc(100vh-380px)]` wrapper to PaymentBehaviorTab so its sticky `<thead>` engages on vertical scroll (already in place for Outstanding + Targets tabs)
-- Verified end-to-end: 8/8 backend pytest pass, all 4 CRM tabs render, sticky headers + 6 sortable columns confirmed on Targets tab, JV per-line DR/CR math correct (Krishna jv_credit=-4243, oldest_invoice_days populating 194/348/350/399)
+- **CRM Outstanding root-cause rewrite:** Source of truth is now the `customers` collection (synced from Tally Sundry Debtors group). Removed auto-add of parties from `sales_vouchers` that was leaking creditors (e.g., Epsilon Petrochem) and depot ledgers into the Outstanding tab. Removed hard-coded `SUNDRY_DEBTOR_GROUPS` filter that was dropping 36/37 real customers whose Tally sub-group is "Chhattisgarh Distributor"/"MP Distributor"/"Orrisa Distributor". Receipt/CN/JV aggregation now uses lowercase party keys for case-insensitive match with the customer master.
+- **Dashboard Overdue digest guard:** Drop overdue invoices for parties whose `customers.outstanding_amount` is ≤ 0 (Tally closing balance is the source of truth — prevents stale invoices from appearing as "overdue" when receipts aren't bill-allocated, e.g., Abhishek paid in full but allocation wasn't synced).
+- Verified: Outstanding now returns 37 real customers totaling ₹29L (was 4 leaked); Overdue digest returns 2 real overdue customers with non-zero books (was showing zero-balance Abhishek).
 
 ## Known Minor (Out of Scope, FYI)
 - `AppNavbar.js:81` has `<span>` nested inside `<option>` causing a React hydration warning. Not a functional bug.

@@ -190,20 +190,20 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                     debit, credit = get_jv_party_amount(jv)
                     opening_balance[p] = opening_balance.get(p, 0) + debit - credit
 
-        # Compute current FY credits per customer
+        # Compute current FY credits per customer (case-insensitive party keys)
         customer_receipts = {}
         customer_cn_total = {}
         for r in fy_receipts:
-            p = safe_str(r.get("party_name")).strip()
+            p = safe_str(r.get("party_name")).strip().lower()
             if p:
                 customer_receipts[p] = customer_receipts.get(p, 0) + safe_num(r.get("amount"))
         for cn in fy_cns:
-            p = safe_str(cn.get("party_name")).strip()
+            p = safe_str(cn.get("party_name")).strip().lower()
             if p:
                 customer_cn_total[p] = customer_cn_total.get(p, 0) + safe_num(cn.get("total_amount"))
         customer_jv_adjustment = {}
         for jv in fy_jvs:
-            p = safe_str(jv.get("party_name")).strip()
+            p = safe_str(jv.get("party_name")).strip().lower()
             if p:
                 # Use party-specific amount from ledger_entries (not total voucher amount)
                 debit, credit = get_jv_party_amount(jv)
@@ -213,33 +213,44 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         customer_map = {}
         customer_vouchers = {}
 
-        for voucher in fy_sales:
-            party = voucher.get("party_name", "Unknown")
-            # Skip sentinel/blank parties — these are draft/cancelled Tally entries
-            if not party or party.strip().lower() in {"unknown", "n/a", "none", ""}:
+        # ── SOURCE OF TRUTH = customers collection (synced from Tally Sundry Debtors group)
+        # Build customer_map ONLY from synced_customers. Do NOT auto-add parties
+        # from sales_vouchers (those can leak creditors / non-customer ledgers).
+        synced_name_lower_to_canonical = {}
+        for sc in synced_customers:
+            name = sc.get("customer_name")
+            if not name:
                 continue
+            ob = round(opening_balance.get(name, 0), 2)
+            customer_map[name] = {
+                "customer_name": name,
+                "ledger_group": sc.get("ledger_group", ""),
+                "phone": sc.get("phone", ""),
+                "contact_person": sc.get("contact_person", ""),
+                "state": sc.get("state", ""),
+                "opening_balance": ob,
+                "tally_outstanding": safe_num(sc.get("outstanding_amount")),  # Tally closing balance
+                "outstanding_amount": 0,
+                "total_sales": 0,
+                "voucher_count": 0,
+                "last_transaction": None,
+                "aging_0_30": 0.0, "aging_30_60": 0.0,
+                "aging_60_90": 0.0, "aging_90_plus": 0.0,
+                "oldest_invoice_days": 0
+            }
+            customer_vouchers[name] = []
+            synced_name_lower_to_canonical[name.lower().strip()] = name
+
+        # Enrich synced customers with FY sales activity. Skip parties not in synced list.
+        for voucher in fy_sales:
+            party_raw = (voucher.get("party_name") or "").strip()
+            if not party_raw:
+                continue
+            party = synced_name_lower_to_canonical.get(party_raw.lower())
+            if not party:
+                continue  # Not a synced customer → ignore (creditors, depots, etc.)
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
-
-            if party not in customer_map:
-                synced = synced_map.get(party.lower(), {})
-                ob = round(opening_balance.get(party, 0), 2)
-                customer_map[party] = {
-                    "customer_name": party,
-                    "ledger_group": synced.get("ledger_group", "Sundry Debtors"),
-                    "phone": synced.get("phone", ""),
-                    "contact_person": synced.get("contact_person", ""),
-                    "state": synced.get("state", ""),
-                    "opening_balance": ob,
-                    "outstanding_amount": 0,
-                    "total_sales": 0,
-                    "voucher_count": 0,
-                    "last_transaction": v_date_str,
-                    "aging_0_30": 0.0, "aging_30_60": 0.0,
-                    "aging_60_90": 0.0, "aging_90_plus": 0.0,
-                    "oldest_invoice_days": 0
-                }
-                customer_vouchers[party] = []
 
             customer_map[party]["total_sales"] += amount
             customer_map[party]["voucher_count"] += 1
@@ -251,67 +262,16 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 if len(parts) == 3:
                     v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
                     days_old = (today - v_date).days
-                    customer_vouchers.setdefault(party, []).append({"amount": amount, "days_old": days_old})
+                    customer_vouchers[party].append({"amount": amount, "days_old": days_old})
                     if days_old > customer_map[party]["oldest_invoice_days"]:
                         customer_map[party]["oldest_invoice_days"] = days_old
             except (ValueError, TypeError):
-                customer_vouchers.setdefault(party, []).append({"amount": amount, "days_old": 0})
-
-        # Add synced customers not in FY sales
-        for sc in synced_customers:
-            name = sc.get("customer_name")
-            if not name or name in customer_map:
-                continue
-            ob = round(opening_balance.get(name, 0), 2)
-            customer_map[name] = {
-                "customer_name": name,
-                "ledger_group": sc.get("ledger_group", "Sundry Debtors"),
-                "phone": sc.get("phone", ""),
-                "contact_person": sc.get("contact_person", ""),
-                "state": sc.get("state", ""),
-                "opening_balance": ob,
-                "outstanding_amount": safe_num(sc.get("outstanding_amount")),
-                "total_sales": 0,
-                "voucher_count": 0,
-                "last_transaction": None,
-                "aging_0_30": 0.0, "aging_30_60": 0.0,
-                "aging_60_90": 0.0, "aging_90_plus": 0.0,
-                "oldest_invoice_days": 0
-            }
-
-        # Add any party with non-zero opening balance from pre-FY SALES activity
-        # not yet in customer_map (e.g., depot/branch ledgers with sales but no customers record)
-        if fy_start_str:
-            pre_sales_parties = set(v.get('party_name', '') for v in pre_sales if v.get('party_name'))
-            for party_name in pre_sales_parties:
-                if party_name not in customer_map:
-                    ob_val = opening_balance.get(party_name, 0)
-                    if round(ob_val, 2) != 0:
-                        customer_map[party_name] = {
-                            "customer_name": party_name,
-                            "ledger_group": "Sundry Debtors",
-                            "phone": "",
-                            "contact_person": "",
-                            "state": "",
-                            "opening_balance": round(ob_val, 2),
-                            "outstanding_amount": 0,
-                            "total_sales": 0,
-                            "voucher_count": 0,
-                            "last_transaction": None,
-                            "aging_0_30": 0.0, "aging_30_60": 0.0,
-                            "aging_60_90": 0.0, "aging_90_plus": 0.0,
-                            "oldest_invoice_days": 0
-                        }
+                customer_vouchers[party].append({"amount": amount, "days_old": 0})
 
         customers = list(customer_map.values())
 
-        # ── Item #6: Outstanding tab must only include Sundry Debtors (no creditors)
-        SUNDRY_DEBTOR_GROUPS = {"sundry debtors", "debtors"}
-        customers = [
-            c for c in customers
-            if any(g in (c.get("ledger_group") or "").lower() for g in SUNDRY_DEBTOR_GROUPS)
-            or not c.get("ledger_group")  # Keep if group unknown (treat as debtor by default)
-        ]
+        # Source list is the customers collection (synced from Tally Sundry Debtors group)
+        # No additional group filter needed — sync already handled it.
 
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
@@ -319,18 +279,19 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         # Calculate outstanding, paid, aging for each customer
         for cust in customers:
             party = cust["customer_name"]
+            party_key = party.lower().strip()
             ob = cust.get("opening_balance", 0)
             total_sales = cust["total_sales"]
-            receipt_paid = customer_receipts.get(party, 0)
-            cn_credit = customer_cn_total.get(party, 0)
-            jv_adjustment = customer_jv_adjustment.get(party, 0)  # Net: positive = reduces outstanding
+            receipt_paid = customer_receipts.get(party_key, 0)
+            cn_credit = customer_cn_total.get(party_key, 0)
+            jv_adjustment = customer_jv_adjustment.get(party_key, 0)  # Net: positive = reduces outstanding
             total_credits = receipt_paid + cn_credit + jv_adjustment
 
             # Outstanding = Opening + Sales - Receipts - Credit Notes - Net Journal Adjustments
             outstanding = ob + total_sales - total_credits
             cust["outstanding_amount"] = round(outstanding, 2)  # Allow negative (advance payments)
             cust["paid_amount"] = round(total_credits, 2)
-            cust["receipt_count"] = len([r for r in fy_receipts if r.get("party_name") == party])
+            cust["receipt_count"] = len([r for r in fy_receipts if (r.get("party_name") or "").lower().strip() == party_key])
             cust["credit_note_total"] = round(cn_credit, 2)
             cust["journal_credit"] = round(jv_adjustment, 2)
 

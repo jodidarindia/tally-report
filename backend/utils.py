@@ -303,6 +303,21 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
 
     overdue_invoices = [inv for inv in overdue_invoices if inv["overdue_amount"] > 0.5]
 
+    # ── SOURCE OF TRUTH GUARD: drop overdue records for customers whose actual
+    # Tally closing balance shows zero/negative outstanding. This prevents stale
+    # invoices from appearing as "overdue" when receipts/JVs aren't bill-allocated
+    # but the books are square (e.g., Abhishek Auto Parts paid in full but the
+    # voucher-level allocation isn't synced).
+    sundry_balance_map = {}
+    for sc in synced_customers:
+        nm = (sc.get("customer_name") or "").strip().lower()
+        if nm:
+            sundry_balance_map[nm] = safe_num(sc.get("outstanding_amount"))
+    overdue_invoices = [
+        inv for inv in overdue_invoices
+        if sundry_balance_map.get((inv["party_name"] or "").strip().lower(), 0) > 0.5
+    ]
+
     # Rebuild customer summary after credit adjustments
     customer_overdue = {}
     for inv in overdue_invoices:
