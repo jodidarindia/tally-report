@@ -200,6 +200,8 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         customer_receipts = {}
         customer_cn_total = {}
         customer_payments_dr = {}  # Payment vouchers paid TO party → DR (increases OS)
+        customer_jv_adjustment = {}
+        customer_jv_debit = {}  # DR-only adjustments (JV DR + CN reversals) for the Adjustment column
         for r in fy_receipts:
             p = safe_str(r.get("party_name")).strip().lower()
             if p:
@@ -210,10 +212,22 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 customer_payments_dr[p] = customer_payments_dr.get(p, 0) + safe_num(pmt.get("amount"))
         for cn in fy_cns:
             p = safe_str(cn.get("party_name")).strip().lower()
-            if p:
-                customer_cn_total[p] = customer_cn_total.get(p, 0) + safe_num(cn.get("total_amount"))
-        customer_jv_adjustment = {}
-        customer_jv_debit = {}  # Track DR-only portion separately for the Adjustment column
+            if not p:
+                continue
+            # Honor per-ledger-entry direction when available (post-agent-v9.1 sync).
+            # If a CN's party-row is marked is_debit=True, it's a reversal that DR's the
+            # customer (rare but happens — e.g., undoing an over-credit). Subtract instead
+            # of adding to the CR-side total so the math reflects reality.
+            entries = cn.get('ledger_entries') or []
+            party_entry = next((e for e in entries if (e.get('ledger_name') or '').lower().strip() == p), None)
+            amt = safe_num(cn.get("total_amount"))
+            if party_entry and party_entry.get('is_debit'):
+                # Reversal: this CN actually DRs the customer
+                customer_cn_total[p] = customer_cn_total.get(p, 0) - amt
+                # Surface in adjustment column too
+                customer_jv_debit[p] = customer_jv_debit.get(p, 0) + amt
+            else:
+                customer_cn_total[p] = customer_cn_total.get(p, 0) + amt
         for jv in fy_jvs:
             p = safe_str(jv.get("party_name")).strip().lower()
             if p:
@@ -321,6 +335,12 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
 
+        # Build master-OB lookup for Tally-Verified badge logic (FY-1 comparison)
+        synced_master_ob = {
+            (sc.get("customer_name") or "").lower().strip(): safe_num(sc.get("opening_balance", 0))
+            for sc in synced_customers if sc.get("customer_name")
+        }
+
         # Calculate outstanding, paid, aging for each customer
         for cust in customers:
             party = cust["customer_name"]
@@ -342,13 +362,22 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             # Add JV DR-only into the visible Adjustment column (already includes payment vouchers)
             cust["adjustment_dr"] = round(cust.get("adjustment_dr", 0) + customer_jv_debit.get(party_key, 0), 2)
 
-            # Tally-verified badge: only meaningful when viewing today's FY (since
-            # customers.outstanding_amount stores Tally's current closing balance).
+            # Tally-verified badge:
+            # - For today's FY: compare computed OS to Tally master CB (customers.outstanding_amount)
+            # - For previous FY (today_fy - 1): compare computed OS to Tally master OB
+            #   (master OB = closing balance of previous FY by accounting identity)
             today_fy_year = today.year if today.month >= 4 else today.year - 1
-            is_base_fy_view = (fy_start_str == f"{today_fy_year}-04-01") or not fy_start_str
-            cust["tally_verified"] = bool(
-                is_base_fy_view and abs(cust["outstanding_amount"] - cust.get("tally_outstanding", 0)) < 1.0
-            )
+            base_fy_start = f"{today_fy_year}-04-01"
+            prev_fy_start = f"{today_fy_year - 1}-04-01"
+            tally_master_ob = synced_master_ob.get(party_key, 0)
+            cust["tally_master_ob"] = tally_master_ob
+            os_val = cust["outstanding_amount"]
+            verified = False
+            if fy_start_str == base_fy_start or not fy_start_str:
+                verified = abs(os_val - cust.get("tally_outstanding", 0)) < 1.0
+            elif fy_start_str == prev_fy_start:
+                verified = abs(os_val - tally_master_ob) < 1.0
+            cust["tally_verified"] = bool(verified)
 
             # FIFO aging on outstanding
             voucher_list = customer_vouchers.get(party, [])

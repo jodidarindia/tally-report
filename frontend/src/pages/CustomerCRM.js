@@ -406,19 +406,17 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                         const verified = !!customer.tally_verified;
                         return (
                       <tr key={idx}>
-                        <td className="font-medium text-slate-900">
-                          <span className="inline-flex items-center gap-1.5">
-                            {customer.customer_name}
-                            {verified && (
-                              <span
-                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                title={`Tally Verified — closing balance reconciles with Tally master (Rs.${(customer.tally_outstanding||0).toLocaleString('en-IN', {maximumFractionDigits: 0})})`}
-                                data-testid={`tally-verified-${idx}`}
-                              >
-                                <span className="text-[8px]">✓</span> Tally
-                              </span>
-                            )}
-                          </span>
+                        <td className="font-medium text-slate-900 align-top whitespace-normal break-words" style={{minWidth: '220px', maxWidth: '260px'}}>
+                          <div className="leading-tight">{customer.customer_name}</div>
+                          {verified && (
+                            <span
+                              className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap"
+                              title={`Tally Verified — closing balance reconciles with Tally master (Rs.${(customer.tally_outstanding||customer.tally_master_ob||0).toLocaleString('en-IN', {maximumFractionDigits: 0})})`}
+                              data-testid={`tally-verified-${idx}`}
+                            >
+                              <span className="text-[8px]">✓</span> Tally
+                            </span>
+                          )}
                         </td>
                         <td className="text-slate-500 text-xs">{customer.ledger_group || '-'}</td>
                         <td className="numeric text-slate-500">
