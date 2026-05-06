@@ -93,3 +93,13 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 
 ## Database Strategy
 See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas migration target, 3-tier backup plan, DO vs Atlas comparison).
+
+## Changelog — Feb 2026 (CRM Stability)
+- Fixed `customers.py` UndefinedName crash (`fy_start` → `fy_start_str`) on line 363 that broke Outstanding aging fallback for opening-balance-only customers
+- Hoisted `SortTh` + `handleSort` to top of `CustomerCRM.js` component scope (was previously trapped inside the Outstanding-tab IIFE causing `ReferenceError: SortTh is not defined` on default Targets tab)
+- Added `max-h-[calc(100vh-380px)]` wrapper to PaymentBehaviorTab so its sticky `<thead>` engages on vertical scroll (already in place for Outstanding + Targets tabs)
+- Verified end-to-end: 8/8 backend pytest pass, all 4 CRM tabs render, sticky headers + 6 sortable columns confirmed on Targets tab, JV per-line DR/CR math correct (Krishna jv_credit=-4243, oldest_invoice_days populating 194/348/350/399)
+
+## Known Minor (Out of Scope, FYI)
+- `AppNavbar.js:81` has `<span>` nested inside `<option>` causing a React hydration warning. Not a functional bug.
+- UI login flow rejects empty `captcha_token` — works for real users (reCAPTCHA loads), blocks Playwright automation only.
