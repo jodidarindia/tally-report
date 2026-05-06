@@ -305,6 +305,14 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
         customers = list(customer_map.values())
 
+        # ── Item #6: Outstanding tab must only include Sundry Debtors (no creditors)
+        SUNDRY_DEBTOR_GROUPS = {"sundry debtors", "debtors"}
+        customers = [
+            c for c in customers
+            if any(g in (c.get("ledger_group") or "").lower() for g in SUNDRY_DEBTOR_GROUPS)
+            or not c.get("ledger_group")  # Keep if group unknown (treat as debtor by default)
+        ]
+
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
 
@@ -328,25 +336,43 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
             # FIFO aging on outstanding
             voucher_list = customer_vouchers.get(party, [])
-            if cust["outstanding_amount"] > 0 and voucher_list:
-                voucher_list.sort(key=lambda x: x["days_old"], reverse=True)
-                remaining = cust["outstanding_amount"]
-                for v in voucher_list:
-                    if remaining <= 0:
-                        break
-                    alloc = min(v["amount"], remaining)
-                    days = v["days_old"]
-                    if days > 90:
-                        cust["aging_90_plus"] += alloc
-                    elif days > 60:
-                        cust["aging_60_90"] += alloc
-                    elif days > 30:
-                        cust["aging_30_60"] += alloc
-                    else:
-                        cust["aging_0_30"] += alloc
-                    remaining -= alloc
-                if remaining > 0:
-                    cust["aging_0_30"] += remaining
+            if cust["outstanding_amount"] > 0:
+                if voucher_list:
+                    voucher_list.sort(key=lambda x: x["days_old"], reverse=True)
+                    remaining = cust["outstanding_amount"]
+                    for v in voucher_list:
+                        if remaining <= 0:
+                            break
+                        alloc = min(v["amount"], remaining)
+                        days = v["days_old"]
+                        if days > 90:
+                            cust["aging_90_plus"] += alloc
+                        elif days > 60:
+                            cust["aging_60_90"] += alloc
+                        elif days > 30:
+                            cust["aging_30_60"] += alloc
+                        else:
+                            cust["aging_0_30"] += alloc
+                        remaining -= alloc
+                    if remaining > 0:
+                        cust["aging_0_30"] += remaining
+                else:
+                    # No FY invoices but outstanding exists → it's all from opening balance
+                    # Use FY-start as reference for aging
+                    try:
+                        fy_start_date = date_type(*[int(x) for x in fy_start.split("-")])
+                        days_from_fy_start = (today - fy_start_date).days
+                        cust["oldest_invoice_days"] = max(cust.get("oldest_invoice_days", 0), days_from_fy_start)
+                        if days_from_fy_start > 90:
+                            cust["aging_90_plus"] = cust["outstanding_amount"]
+                        elif days_from_fy_start > 60:
+                            cust["aging_60_90"] = cust["outstanding_amount"]
+                        elif days_from_fy_start > 30:
+                            cust["aging_30_60"] = cust["outstanding_amount"]
+                        else:
+                            cust["aging_0_30"] = cust["outstanding_amount"]
+                    except Exception:
+                        cust["aging_0_30"] = cust["outstanding_amount"]
 
             cust["overdue_amount"] = round(cust["aging_60_90"] + cust["aging_90_plus"], 2)
 
@@ -1138,6 +1164,34 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             except (ValueError, TypeError):
                 pass
 
+        # Item #5 fix: also include PRE-FY sales for invoice ageing (dates only, not amounts)
+        # This way customers whose outstanding is entirely from previous FYs still get correct
+        # oldest_invoice_days, average_payment_delay, etc.
+        for voucher in pre_sales:
+            party = voucher.get("party_name", "Unknown")
+            if not party or party.strip().lower() in {"unknown", "n/a", "none", ""}:
+                continue
+            if party not in behavior_map:
+                continue  # only enrich existing entries
+            v_date_str = voucher.get("voucher_date", "")
+            if not v_date_str:
+                continue
+            try:
+                parts = v_date_str.split("-")
+                if len(parts) == 3:
+                    v_date = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+                    days_old = (today - v_date).days
+                    behavior_map[party]["invoices"].append({
+                        "amount": safe_num(voucher.get("total_amount")),
+                        "days_old": days_old, "date": v_date_str, "is_pre_fy": True,
+                    })
+                    if days_old > behavior_map[party]["oldest_invoice_days"]:
+                        behavior_map[party]["oldest_invoice_days"] = days_old
+                    if v_date_str < (behavior_map[party].get("first_transaction") or "9999"):
+                        behavior_map[party]["first_transaction"] = v_date_str
+            except (ValueError, TypeError):
+                pass
+
         # Also add customers with only receipt activity (no sales in data)
         for sc in synced_customers:
             name = sc.get("customer_name")
@@ -1219,6 +1273,16 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                 data["average_payment_delay"] = round(avg_invoice_age * outstanding_ratio, 0)
             else:
                 data["average_payment_delay"] = 0
+
+            # Item #5 fallback: if outstanding > 0 but no invoices found at all (pre-FY or FY),
+            # use FY-start as ageing reference so the column isn't 0
+            if data["outstanding_amount"] > 0 and data["oldest_invoice_days"] == 0 and fy_start_str:
+                try:
+                    fy_start_date = date_type(*[int(x) for x in fy_start_str.split("-")])
+                    days_from_fy_start = (today - fy_start_date).days
+                    data["oldest_invoice_days"] = days_from_fy_start
+                except Exception:
+                    pass
 
             # Credit score — cap payment_ratio input at 100
             capped_ratio = min(data["payment_ratio"], 100)

@@ -373,8 +373,8 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                   <Download size={14} /> Export Excel
                 </button>
               </div>
-            <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
-                <table className="data-table min-w-[700px]" data-testid="outstanding-table">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-340px)]">
+                <table className="data-table min-w-[1000px]" data-testid="outstanding-table">
                   <thead>
                     <tr>
                       <SortTh field="customer_name" label="Customer Name" />
@@ -383,6 +383,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                       <SortTh field="total_sales" label="Total Sales" className="numeric" />
                       <SortTh field="paid_amount" label="Paid" className="numeric" />
                       <SortTh field="outstanding_amount" label="Outstanding" className="numeric" />
+                      <SortTh field="oldest_invoice_days" label="Days Old" className="numeric" />
                       <th className="numeric">0-30d</th>
                       <th className="numeric">30-60d</th>
                       <th className="numeric">60-90d</th>
@@ -414,6 +415,13 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                         </td>
                         <td className="numeric font-semibold text-[#2563EB]">
                           Rs.{(customer.outstanding_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                        </td>
+                        <td className="numeric">
+                          {(customer.outstanding_amount || 0) > 0
+                            ? <span className={`text-xs font-medium ${(customer.oldest_invoice_days || 0) > 90 ? 'text-red-600' : (customer.oldest_invoice_days || 0) > 60 ? 'text-orange-600' : 'text-slate-600'}`}>
+                                {customer.oldest_invoice_days || 0}d
+                              </span>
+                            : '-'}
                         </td>
                         <td className="numeric">Rs.{(customer.aging_0_30 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
                         <td className="numeric">Rs.{(customer.aging_30_60 || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</td>
@@ -575,23 +583,27 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                   <Download size={14} /> Export Excel
                 </button>
               </div>
-              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-340px)]">
                   <table className="data-table min-w-[800px]" data-testid="targets-table">
                     <thead>
                       <tr>
                         {!isFYCompleted() && <th className="w-10"><input type="checkbox" checked={selectedForRemoval.length === targets.length && targets.length > 0} onChange={(e) => setSelectedForRemoval(e.target.checked ? targets.map(t => t.customer_name) : [])} /></th>}
-                        <th>Customer Name</th>
-                        <th className="numeric">Prev FY Sales{targets[0]?.previous_fy ? ` (${targets[0].previous_fy})` : ''}</th>
-                        <th className="numeric">Target</th>
-                        <th className="numeric">Current FY Achieved{targets[0]?.current_fy ? ` (${targets[0].current_fy})` : ''}</th>
-                        <th className="numeric">Achievement %</th>
-                        <th className="numeric">Remaining</th>
+                        <SortTh field="customer_name" label="Customer Name" />
+                        <SortTh field="previous_fy_sales" label={`Prev FY Sales${targets[0]?.previous_fy ? ` (${targets[0].previous_fy})` : ''}`} className="numeric" />
+                        <SortTh field="target_amount" label="Target" className="numeric" />
+                        <SortTh field="achieved" label={`Current FY Achieved${targets[0]?.current_fy ? ` (${targets[0].current_fy})` : ''}`} className="numeric" />
+                        <SortTh field="achievement_percentage" label="Achievement %" className="numeric" />
+                        <SortTh field="remaining" label="Remaining" className="numeric" />
                         <th>Status</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {targets.map((target, idx) => (
+                      {[...targets].sort((a, b) => {
+                        const dir = sortDir === 'asc' ? 1 : -1;
+                        if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
+                        return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+                      }).map((target, idx) => (
                         <React.Fragment key={idx}>
                           <tr>
                             {!isFYCompleted() && (

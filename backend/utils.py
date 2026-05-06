@@ -25,26 +25,69 @@ def get_jv_party_amount(jv):
     the specific party_name. This is found inside ledger_entries.
 
     Returns (debit, credit) tuple for the party.
+
+    Logic priority:
+      1. If a ledger_entry has explicit `dr_or_cr` / `is_debit` / signed `amount`,
+         honour it (post-agent-update behaviour).
+      2. Else, infer from the OTHER ledger entries — for a Sundry Debtor party,
+         if the other side is an income/charge ledger, customer is debited
+         (interest charged), if it's a bank/cash ledger, customer is credited
+         (refund/payment).
+      3. Final fallback: assume Sundry Debtor JVs DEBIT the customer
+         (increase outstanding) — this matches typical Indian SME practice
+         where JVs against debtors are mostly interest charges or late fees.
     """
     party = (jv.get('party_name') or '').lower().strip()
     entries = jv.get('ledger_entries') or []
-    party_amt = 0
+    party_amt = 0.0
+    party_entry = None
+    other_entries = []
+
     for e in entries:
-        if (e.get('ledger_name') or '').lower().strip() == party:
+        ln = (e.get('ledger_name') or '').lower().strip()
+        if ln == party:
             party_amt = float(e.get('amount') or 0)
-            break
-    # Fallback: if party not found in entries, divide total by number of entries
+            party_entry = e
+        else:
+            other_entries.append(e)
+
+    # Fallback amount if party not found in entries
     if party_amt == 0 and entries:
         total = float(jv.get('credit_amount') or jv.get('debit_amount') or 0)
-        party_amt = total / len(entries)
+        party_amt = total / max(len(entries), 1)
 
-    debit = 0.0
-    credit = 0.0
-    if float(jv.get('debit_amount') or 0) > 0:
-        debit = party_amt
-    elif float(jv.get('credit_amount') or 0) > 0:
-        credit = party_amt
-    return debit, credit
+    # Priority 1: explicit per-entry direction (post-agent-update)
+    if party_entry is not None:
+        dc = (party_entry.get('dr_or_cr') or party_entry.get('drCr') or '').lower().strip()
+        if dc in ('dr', 'debit'):
+            return party_amt, 0.0
+        if dc in ('cr', 'credit'):
+            return 0.0, party_amt
+        # Signed-amount convention: positive=DR, negative=CR
+        raw_amt = e_raw = party_entry.get('amount')
+        try:
+            if isinstance(raw_amt, (int, float)) and raw_amt < 0:
+                return 0.0, abs(float(raw_amt))
+            if 'is_debit' in party_entry:
+                if party_entry['is_debit'] is True:
+                    return party_amt, 0.0
+                if party_entry['is_debit'] is False:
+                    return 0.0, party_amt
+        except Exception:
+            pass
+
+    # Priority 2: heuristic from other entry's ledger group/name
+    INCOME_KEYS = {'interest', 'penalty', 'late', 'charge', 'fees', 'discount allowed'}
+    PAYMENT_KEYS = {'bank', 'cash', 'hdfc', 'sbi', 'icici', 'axis', 'kotak', 'payable'}
+    if other_entries:
+        other_name = (other_entries[0].get('ledger_name') or '').lower()
+        if any(k in other_name for k in INCOME_KEYS):
+            return party_amt, 0.0  # Interest charged → DR customer
+        if any(k in other_name for k in PAYMENT_KEYS):
+            return 0.0, party_amt  # Bank to customer → CR customer (refund)
+
+    # Priority 3: final fallback — assume DR (most JVs against debtors increase balance)
+    return party_amt, 0.0
 
 
 def safe_str(val, default=""):
