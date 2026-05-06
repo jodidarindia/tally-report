@@ -287,6 +287,17 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
     return 'text-slate-600 bg-slate-50 border-slate-200';
   };
 
+  // Shared sortable-header helpers (hoisted so all tabs can render <SortTh /> safely)
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('desc'); }
+  };
+  const SortTh = ({ field, label, className = '' }) => (
+    <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-crm-${field}`}>
+      <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+    </th>
+  );
+
   return (
     <div data-testid="crm-page">
       <div className="mb-6">
@@ -345,15 +356,6 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
         <>
           {/* Outstanding Payments - Proper Aging */}
           {activeTab === 'outstanding' && (() => {
-            const handleSort = (field) => {
-              if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-              else { setSortField(field); setSortDir('desc'); }
-            };
-            const SortTh = ({ field, label, className = '' }) => (
-              <th className={`cursor-pointer select-none hover:bg-slate-50 ${className}`} onClick={() => handleSort(field)} data-testid={`sort-crm-${field}`}>
-                <span className="flex items-center gap-1">{label} {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              </th>
-            );
             const sorted = outstanding
               .filter(c => {
                 if (selectedGroup === 'all') return true;
