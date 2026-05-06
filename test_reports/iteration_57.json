@@ -1,0 +1,44 @@
+{
+  "summary": "Frontend-only testing of Insider Result page for bugs #1 (StatCards not clickable), #2 (filter=all shows only Active), #3 (Forecast/SPIP/Concentration fail to load). Logged in as admin via localStorage token trick, navigated to /insider, exercised all 4 tabs with console + network capture. Bug #1 confirmed. Bug #2 NOT a regression - it is correct behaviour for the currently selected FY (2026-27) which has zero inactive/lost customers. Bug #3 could NOT be reproduced in current build - all three tabs render successfully with status 200 responses, no error toasts, and full UI (charts, tables, stats).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "InsiderResult > Lifecycle StatCards",
+        "issue": "StatCards (stat-active, stat-inactive, stat-lost, stat-total) are NOT clickable. Runtime check confirms element.onclick is null and computed cursor is 'auto'. The StatCard component (line 64-73) does not accept an onClick prop and does not forward one to the outer div. Only the <select data-testid='lifecycle-filter'> dropdown drives lifecycleFilter state.",
+        "selector": "[data-testid='stat-active'] / stat-inactive / stat-lost",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "InsiderResult Lifecycle tab", "issues": ["StatCards lack hover/cursor-pointer affordance even if made clickable - need cursor-pointer class and hover:ring styling for the 3 filterable cards (Active/Inactive/Lost). Total card should remain non-interactive or map to filter='all'."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "BUG #1 FIX REQUIRED: Make Customer Lifecycle StatCards clickable. Add an optional onClick prop to StatCard component (line 64) and forward it to the outer <div> along with cursor-pointer/hover styles when onClick is provided. In renderLifecycle() (line 187-190) wire up: stat-active -> setLifecycleFilter('active'), stat-inactive -> 'inactive', stat-lost -> 'lost', stat-total -> 'all'. Also highlight the currently selected card (match against lifecycleFilter) with a ring/border.",
+    "BUG #2 CLARIFICATION (NOT A BUG): Filter dropdown value='all' IS working correctly. The FY 2026-27 selection only has 18 active, 0 inactive, 0 lost customers -> so 'all' naturally shows only the 18 active rows. The backend summary returns active_count=18, inactive_count=0, lost_count=0 for FY 2026-27. No code change needed, but main agent should confirm with user which FY they were viewing; if viewing a multi-FY window they may expect inactive/lost to appear. Recommend adding a visible count badge next to the dropdown option labels (e.g., 'Inactive (0)') so users realise the filter IS active.",
+    "BUG #3 COULD NOT REPRODUCE: Forecast, SPIP, and Concentration Risk tabs all rendered successfully in the latest build. Verified network calls returned HTTP 200 with success=true, no 'Failed to load insights data' toasts, charts + tables visible. This bug may have been resolved by a recent deploy OR was caused by the user's stale bundle. Recommend the user do a hard refresh (Ctrl+Shift+R) and retest. As defensive hardening, main agent should still guard renderForecast (line 287-293) against empty arrays: `const timeline = forecast.timeline || []; const forecasts = forecast.forecasts || []; const yoy = forecast.yoy || [];` - currently destructuring would return undefined if a key is missing and `.map()` on undefined throws. Same defensive guards for renderSpip (line 374) and renderConcentration (line 498)."
+  ],
+  "critical_code_review_comments": [
+    "InsiderResult.js line 287-293 (renderForecast): destructures timeline/forecasts/yoy/summary from forecast then calls .map on timeline and forecasts. If backend ever returns a partial shape these will throw. Add `|| []` fallbacks.",
+    "InsiderResult.js line 496-505 (renderConcentration): same risk - customers.slice(0,30) will throw if customers is missing.",
+    "InsiderResult.js line 374-377 (renderSpip): same pattern. summary is used in Object.entries which handles missing gracefully, but items.filter would throw.",
+    "InsiderResult.js line 110: generic toast 'Failed to load insights data' swallows the actual error. Log err.response?.status + err.message to console for easier debugging.",
+    "InsiderResult.js line 64-73 (StatCard): not reusable as clickable element - missing onClick prop. Simple fix needed for Bug #1.",
+    "InsiderResult.js is 643 lines - should be split into 4 tab-component files (LifecycleTab, ForecastTab, SpipTab, ConcentrationTab) for maintainability."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "66% (2 of 3 reported bugs resolved/non-bugs; 1 genuine bug confirmed)"},
+  "test_credentials": "admin/admin123 (from /app/memory/test_credentials.md) - used localStorage flowra_token injection to bypass reCAPTCHA",
+  "seed_data_creation": "none",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend confirmed 200 OK for all 4 /api/insights/* endpoints (customer-lifecycle, sales-forecast, spip-analysis, concentration-risk) with fy=2025-26 and fy=2026-27. Login trick: POST /api/auth/login {username:admin,password:admin123}, then page.evaluate to set localStorage.flowra_token + flowra_user + flowra_company_id, then reload. Use [data-testid='nav-insider'] to navigate. All insider tabs rendered without errors in iteration 57 test; if user still reports failures, confirm FY selector + hard refresh. For Bug #1 verification after fix: check `stat-active`/`stat-inactive`/`stat-lost` have cursor:pointer and clicking them updates [data-testid='lifecycle-filter'].value and filters rows.",
+  "rca_of_the_issue": {
+    "bug_1_statcards_not_clickable": "Root cause: StatCard component (InsiderResult.js line 64-73) is a presentational div with no onClick handler or cursor styling. It accepts icon/label/value/sub/color/textColor/testId props but not onClick. Parent renderLifecycle() (line 187-190) instantiates 4 StatCards with no click handler, relying solely on the <select> dropdown for filtering. Reproduction: runtime evaluate `element.onclick` returns null and getComputedStyle(element).cursor returns 'auto'. Mitigation: extend StatCard signature to accept optional onClick and selected props; forward onClick to outer div and apply `cursor-pointer transition hover:ring-2 hover:ring-offset-1` classes; wire up in renderLifecycle.",
+    "bug_2_filter_all_only_shows_active": "NOT A BUG - this is correct behaviour. The currently selected FY (2026-27) has real data distribution active_count=18, inactive_count=0, lost_count=0 (confirmed via backend curl). Code line 173-179 correctly concatenates active+inactive+lost into allCustomers and when lifecycleFilter='all' returns the full array. With 0 inactive + 0 lost, 'all' legitimately equals the 18 active rows. User likely expects inactive/lost customers that only exist in an older FY window.",
+    "bug_3_tabs_fail_to_load": "COULD NOT REPRODUCE in iteration 57. Forecast, SPIP, Concentration tabs all rendered successfully with charts, summary stats, and tables populated. Network returned HTTP 200 success=true for all three endpoints. No error toasts, no console errors (aside from unrelated React hydration warning about span-in-option and websocket warnings). Likely root cause candidates that may still exist as latent bugs: (a) destructuring in render* functions doesn't defend against missing keys in the response data (line 289, 374, 498) so a partial response shape could throw; (b) generic catch block (line 109-111) swallows the real error and only shows a toast, making user-side debugging hard. Recommend main agent add `|| []` fallbacks and console.error(err) in the catch."
+  }
+}
