@@ -61,8 +61,15 @@ const fmt = (n) => {
 
 const fmtFull = (n) => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-const StatCard = ({ icon: Icon, label, value, sub, color = 'bg-slate-50', textColor = 'text-slate-900', testId }) => (
-  <div className={`${color} rounded-xl p-4 border border-slate-100`} data-testid={testId}>
+const StatCard = ({ icon: Icon, label, value, sub, color = 'bg-slate-50', textColor = 'text-slate-900', testId, onClick, selected = false }) => (
+  <div
+    className={`${color} rounded-xl p-4 border ${selected ? 'border-slate-800 ring-2 ring-slate-300' : 'border-slate-100'} ${onClick ? 'cursor-pointer transition hover:ring-2 hover:ring-offset-1 hover:ring-slate-200' : ''}`}
+    onClick={onClick}
+    data-testid={testId}
+    role={onClick ? 'button' : undefined}
+    tabIndex={onClick ? 0 : undefined}
+    onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
+  >
     <div className="flex items-center gap-2 mb-1">
       <Icon size={16} className={textColor} />
       <span className="text-xs font-medium text-slate-500">{label}</span>
@@ -107,7 +114,8 @@ const InsiderResult = ({ selectedFY, companyId }) => {
         setConcentration(res.data?.data || null);
       }
     } catch (err) {
-      toast.error('Failed to load insights data');
+      console.error('Insider Result fetch failed:', err?.response?.status, err?.response?.data, err);
+      toast.error(`Failed to load ${activeTab} data: ${err?.response?.status || err?.message || 'unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -182,12 +190,12 @@ const InsiderResult = ({ selectedFY, companyId }) => {
 
     return (
       <div className="space-y-6">
-        {/* Summary cards */}
+        {/* Summary cards (clickable to filter) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard icon={UserCheck} label="Active Customers" value={summary.active_count} sub={`Revenue: ${fmt(summary.active_revenue)}`} color="bg-emerald-50" textColor="text-emerald-700" testId="stat-active" />
-          <StatCard icon={UserMinus} label="Inactive (90+ days)" value={summary.inactive_count} sub={`Revenue: ${fmt(summary.inactive_revenue)}`} color="bg-amber-50" textColor="text-amber-700" testId="stat-inactive" />
-          <StatCard icon={UserX} label="Lost (180+ days)" value={summary.lost_count} sub={`Revenue: ${fmt(summary.lost_revenue)}`} color="bg-red-50" textColor="text-red-700" testId="stat-lost" />
-          <StatCard icon={Users} label="Total Customers" value={allCustomers.length} sub="All time" color="bg-blue-50" textColor="text-blue-700" testId="stat-total" />
+          <StatCard icon={UserCheck} label="Active Customers" value={summary.active_count} sub={`Revenue: ${fmt(summary.active_revenue)}`} color="bg-emerald-50" textColor="text-emerald-700" testId="stat-active" onClick={() => setLifecycleFilter(lifecycleFilter === 'active' ? 'all' : 'active')} selected={lifecycleFilter === 'active'} />
+          <StatCard icon={UserMinus} label="Inactive (90+ days)" value={summary.inactive_count} sub={`Revenue: ${fmt(summary.inactive_revenue)}`} color="bg-amber-50" textColor="text-amber-700" testId="stat-inactive" onClick={() => setLifecycleFilter(lifecycleFilter === 'inactive' ? 'all' : 'inactive')} selected={lifecycleFilter === 'inactive'} />
+          <StatCard icon={UserX} label="Lost (180+ days)" value={summary.lost_count} sub={`Revenue: ${fmt(summary.lost_revenue)}`} color="bg-red-50" textColor="text-red-700" testId="stat-lost" onClick={() => setLifecycleFilter(lifecycleFilter === 'lost' ? 'all' : 'lost')} selected={lifecycleFilter === 'lost'} />
+          <StatCard icon={Users} label="Total Customers" value={allCustomers.length} sub="All — click to clear filter" color="bg-blue-50" textColor="text-blue-700" testId="stat-total" onClick={() => setLifecycleFilter('all')} selected={lifecycleFilter === 'all'} />
         </div>
 
         {/* Charts */}
@@ -236,10 +244,10 @@ const InsiderResult = ({ selectedFY, companyId }) => {
                 />
               </div>
               <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" data-testid="lifecycle-filter">
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="lost">Lost</option>
+                <option value="all">All Status ({allCustomers.length})</option>
+                <option value="active">Active ({summary.active_count})</option>
+                <option value="inactive">Inactive ({summary.inactive_count})</option>
+                <option value="lost">Lost ({summary.lost_count})</option>
               </select>
             </div>
           </div>
@@ -286,7 +294,10 @@ const InsiderResult = ({ selectedFY, companyId }) => {
   // ============ FORECAST TAB ============
   const renderForecast = () => {
     if (!forecast) return null;
-    const { timeline, forecasts, yoy, summary: s } = forecast;
+    const timeline = forecast.timeline || [];
+    const forecasts = forecast.forecasts || [];
+    const yoy = forecast.yoy || [];
+    const s = forecast.summary || {};
 
     const chartData = [
       ...timeline.map(t => ({ month: t.month, revenue: t.revenue, type: 'actual' })),
@@ -372,7 +383,9 @@ const InsiderResult = ({ selectedFY, companyId }) => {
   // ============ SPIP TAB ============
   const renderSpip = () => {
     if (!spip) return null;
-    const { items, summary, total_items } = spip;
+    const items = spip.items || [];
+    const summary = spip.summary || {};
+    const total_items = spip.total_items || 0;
 
     const gapData = Object.entries(summary).map(([key, count]) => ({
       name: GAP_LABELS[key] || key,
@@ -495,12 +508,14 @@ const InsiderResult = ({ selectedFY, companyId }) => {
   // ============ CONCENTRATION RISK TAB ============
   const renderConcentration = () => {
     if (!concentration) return null;
-    const { customers, summary: s, risk_level } = concentration;
+    const customers = concentration.customers || [];
+    const s = concentration.summary || {};
+    const risk_level = concentration.risk_level || 'no_data';
     const riskStyle = RISK_COLORS[risk_level] || RISK_COLORS.no_data;
 
     // Build Pareto chart data
     const paretoData = customers.slice(0, 30).map(c => ({
-      name: c.customer_name.length > 18 ? c.customer_name.slice(0, 16) + '...' : c.customer_name,
+      name: (c.customer_name || '').length > 18 ? (c.customer_name || '').slice(0, 16) + '...' : (c.customer_name || ''),
       revenue: c.revenue,
       cumulative: c.cumulative_pct,
     }));

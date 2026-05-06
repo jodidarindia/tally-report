@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend retest of InsiderResult.js fixes from iteration_57. All 4 fixes verified PASSING: (1) StatCards now clickable with cursor-pointer, role=button, onClick handlers wired; (2) Dropdown options show counts 'All Status (18) / Active (18) / Inactive (0) / Lost (0)'; (3) Forecast/SPIP/Concentration tabs all render successfully without error toasts; (4) Defensive `|| []` fallbacks in renderForecast/renderSpip/renderConcentration confirmed in code (lines 297-299, 386-388, 511-513). Toggle behaviour (click stat-inactive twice -> back to all), selected styling (ring-2 + border-slate-800), and filter-value transitions all correct.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InsiderResult.js still 658 lines — recommend splitting into 4 tab component files (LifecycleTab/ForecastTab/SpipTab/ConcentrationTab) for maintainability, but not blocking.",
+    "Dropdown <option> wrapping issue: Browser logs show React hydration warning '<span> cannot be a child of <option>' originating from AppNavbar.js line 81 (FY selector). Not InsiderResult-related but worth flagging — wrap value text directly without span.",
+    "Login response shape: /api/auth/login returns {success, data:{token, username, ...}, error, message}. Token is at body.data.token, not body.access_token. Documenting for future testing agents."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (all 4 retest items passed)"},
+  "test_credentials": "admin/admin123 — login via POST /api/auth/login then localStorage.setItem('flowra_token', body.data.token); localStorage.setItem('flowra_company_id', '03f638d1-eab0-47ee-aed6-59049ebb5207'); navigate to /dashboard then click [data-testid=nav-insider]. Direct nav to /insider redirects back to /dashboard.",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "InsiderResult bug retest from iteration_57 is FULLY GREEN. Verified runtime: stat-active/stat-inactive/stat-lost/stat-total all have cursor=pointer, onclick handler attached, role=button, cursor-pointer class. Dropdown labels include counts. Click-to-filter + click-to-toggle-off works. Forecast/SPIP/Concentration tabs all render with charts/banners and no error toasts. Login token is at response.data.token (not access_token). To navigate to /insider, click [data-testid=nav-insider] from /dashboard since direct URL navigation to /insider redirects back to /dashboard.",
+  "rca_of_the_issue": {
+    "verification_results": {
+      "fix_1_statcards_clickable": "PASS — All 4 StatCards on Lifecycle tab now have cursor:pointer, hasOnclick:true, role:button, hasCursorPointer:true. StatCard component (line 64-80) accepts onClick + selected props and forwards them with proper styling.",
+      "fix_2_dropdown_counts": "PASS — Dropdown options render as 'All Status (18)', 'Active (18)', 'Inactive (0)', 'Lost (0)' (FY 2026-27 has 18 active, 0 inactive, 0 lost).",
+      "fix_3_statcard_filter_wiring": "PASS — Click stat-inactive sets lifecycle-filter to 'inactive' with selected styling (ring-2 + border-slate-800). Click again toggles to 'all'. Click stat-lost sets to 'lost'. Click stat-total resets to 'all'.",
+      "fix_4_defensive_fallbacks": "PASS — renderForecast/renderSpip/renderConcentration all render successfully. forecast-chart, spip-chart, risk-banner all visible. No error toasts in any tab. Defensive `|| []` fallbacks confirmed in code at lines 297-299 (forecast), 386-388 (spip), 511-513 (concentration).",
+      "fix_5_error_logging": "PASS — Catch block at line 116-118 now logs err.response.status, err.response.data, and full err object to console; toast includes the status code in message."
+    }
+  }
+}
