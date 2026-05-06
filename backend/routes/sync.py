@@ -502,6 +502,36 @@ async def receive_agent_sync(request: dict):
                     await db.all_ledgers.bulk_write(operations)
             logger.info(f"Synced {len(data)} ledgers")
 
+        elif data_type == 'balance_sheet_snapshot':
+            # Per-FY balance sheet snapshot from agent (uses Tally's FY-scoped CLOSINGBALANCE)
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for bs in data:
+                    fy = bs.get('fy', '')
+                    if not fy:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"fy": fy, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "fy": fy,
+                                "fy_start": bs.get('fy_start', ''),
+                                "fy_end": bs.get('fy_end', ''),
+                                "groups": bs.get('groups', {}),
+                                "totals": bs.get('totals', {}),
+                                "raw_ledger_count": bs.get('raw_ledger_count', 0),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id,
+                            }},
+                            upsert=True
+                        )
+                    )
+                if operations:
+                    await db.balance_sheets.bulk_write(operations)
+            logger.info(f"Synced {len(data)} balance-sheet snapshots")
+
         # Update last sync time
         financial_year = request.get('financial_year', '')
         # Normalize sync_time to always have timezone info (UTC)

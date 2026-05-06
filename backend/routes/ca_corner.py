@@ -440,7 +440,11 @@ Keep the language simple and practical for a business owner. Use Indian Rupee am
 
 @router.get("/ca-corner/balance-sheet")
 async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional[str] = None):
-    """Balance Sheet from all_ledgers: Assets vs Liabilities + Capital."""
+    """Balance Sheet — reads the FY-scoped snapshot built by the agent's Tally BS report
+    (uses SVFROMDATE/SVTODATE so closing balances are FY-end accurate, not running cumulative).
+
+    Falls back to the legacy `all_ledgers` snapshot if the new collection isn't populated yet.
+    """
     try:
         ctx = await get_tenant_context(request)
         user = await get_current_user(request, db)
@@ -448,20 +452,79 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
             return APIResponse(success=False, error="Authentication required")
 
         q = _build_q(ctx, company_id)
-        ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
 
+        # Try the new FY-scoped snapshot first
+        if fy:
+            snapshot = await db.balance_sheets.find_one({**q, "fy": fy}, {"_id": 0})
+            if snapshot and snapshot.get("groups"):
+                groups = snapshot["groups"]
+                # Group display labels — match Tally's BS format
+                LABELS = {
+                    'capital': 'Capital Account',
+                    'reserves': 'Reserves & Surplus',
+                    'secured_loans': 'Secured Loans',
+                    'unsecured_loans': 'Unsecured Loans',
+                    'current_liabilities': 'Current Liabilities',
+                    'provisions': 'Provisions',
+                    'duties_taxes': 'Duties & Taxes',
+                    'sundry_creditors': 'Sundry Creditors',
+                    'non_current_liabilities': 'Non-Current Liabilities',
+                    'profit_loss_ac': 'Profit & Loss A/c',
+                    'branch_division': 'Branch / Divisions',
+                    'suspense': 'Suspense A/c',
+                    'fixed_assets': 'Fixed Assets',
+                    'investments': 'Investments',
+                    'current_assets': 'Current Assets',
+                    'stock_in_hand': 'Stock-in-Hand',
+                    'sundry_debtors': 'Sundry Debtors',
+                    'cash': 'Cash-in-Hand',
+                    'bank': 'Bank Accounts',
+                    'bank_od': 'Bank OD A/c',
+                    'misc_expense': 'Misc. Expenses (Asset)',
+                }
+                assets = []
+                liabilities = []
+                for cat, g in groups.items():
+                    entry = {
+                        'group': LABELS.get(cat, cat.replace('_', ' ').title()),
+                        'category': cat,
+                        'total': g['total'],
+                        'ledgers': g.get('ledgers', []),
+                    }
+                    if g.get('side') == 'asset':
+                        assets.append(entry)
+                    else:
+                        liabilities.append(entry)
+                assets.sort(key=lambda x: -abs(x['total']))
+                liabilities.sort(key=lambda x: -abs(x['total']))
+                tot = snapshot.get('totals', {})
+                return APIResponse(success=True, data={
+                    "fy": fy,
+                    "fy_start": snapshot.get("fy_start"),
+                    "fy_end": snapshot.get("fy_end"),
+                    "assets": assets,
+                    "liabilities": liabilities,
+                    "total_assets": tot.get("assets", 0),
+                    "total_liabilities": tot.get("liabilities", 0),
+                    "difference": tot.get("difference", 0),
+                    "source": "tally_bs_snapshot",
+                    "raw_ledger_count": snapshot.get("raw_ledger_count", 0),
+                    "last_synced": snapshot.get("last_synced"),
+                })
+
+        # Legacy fallback — point-in-time all_ledgers (loses FY scoping)
+        ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
         if not ledgers:
             return APIResponse(success=True, data={
                 "assets": [], "liabilities": [], "total_assets": 0, "total_liabilities": 0,
-                "message": "No ledger data synced yet. Please run the desktop agent to sync."
+                "source": "empty",
+                "message": "No Balance Sheet snapshot found. Re-sync with the latest Tally agent (v9.2+)."
             })
 
-        # Classify
-        asset_cats = {'current_assets', 'fixed_assets', 'investments', 'stock_in_hand', 'misc_expense', 'cash', 'bank', 'bank_od'}
-        liability_cats = {'current_liabilities', 'provisions', 'duties_taxes', 'non_current_liabilities', 'secured_loans', 'unsecured_loans'}
-        capital_cats = {'capital', 'reserves', 'profit_loss_ac'}
+        asset_cats = {'current_assets', 'fixed_assets', 'investments', 'stock_in_hand', 'misc_expense', 'cash', 'bank', 'bank_od', 'sundry_debtors'}
+        liab_cats = {'current_liabilities', 'provisions', 'duties_taxes', 'non_current_liabilities', 'secured_loans', 'unsecured_loans', 'capital', 'reserves', 'profit_loss_ac', 'sundry_creditors'}
 
-        def group_ledgers(cats, sign=1):
+        def group_ledgers(cats):
             groups = {}
             for l in ledgers:
                 if l.get('category') in cats:
@@ -473,21 +536,14 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
             return sorted(groups.values(), key=lambda x: x['total'], reverse=True)
 
         assets = group_ledgers(asset_cats)
-        liabilities = group_ledgers(liability_cats)
-        capital = group_ledgers(capital_cats)
-
-        total_assets = sum(g['total'] for g in assets)
-        total_liabilities = sum(g['total'] for g in liabilities)
-        total_capital = sum(g['total'] for g in capital)
-
+        liabilities = group_ledgers(liab_cats)
         return APIResponse(success=True, data={
             "assets": assets,
             "liabilities": liabilities,
-            "capital": capital,
-            "total_assets": round(total_assets, 2),
-            "total_liabilities": round(total_liabilities, 2),
-            "total_capital": round(total_capital, 2),
-            "total_liabilities_capital": round(total_liabilities + total_capital, 2),
+            "total_assets": round(sum(g['total'] for g in assets), 2),
+            "total_liabilities": round(sum(g['total'] for g in liabilities), 2),
+            "source": "legacy_all_ledgers",
+            "message": "Showing legacy point-in-time view. Re-sync with the latest Tally agent for FY-accurate Balance Sheet."
         })
     except Exception as e:
         logger.error(f"Balance sheet error: {e}")

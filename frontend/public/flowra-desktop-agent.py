@@ -1553,6 +1553,155 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             return gn
         return self._resolve_root_group(parent, parent_map, depth + 1)
 
+    def fetch_balance_sheet(self, fy_start: date, fy_end: date) -> Dict:
+        """Fetch Balance Sheet snapshot scoped to a specific FY using SVFROMDATE/SVTODATE.
+        Returns Tally's actual closing balances at FY-end (not the running cumulative).
+
+        Output structure:
+        {
+          'fy': '2025-26',
+          'fy_start': '2025-04-01', 'fy_end': '2026-03-31',
+          'groups': {
+            'sundry_debtors':  {'total': 2900222, 'ledgers': [{'name':..., 'amount':...}]},
+            'sundry_creditors':{'total': -345312, ...},
+            'bank':            {...},
+            ...
+          },
+          'totals': {
+            'assets':         9919512,
+            'liabilities':    9919512,
+            'difference':     0,  # sanity check
+          }
+        }
+        """
+        fd = fy_start.strftime("%d-%b-%Y")
+        td = fy_end.strftime("%d-%b-%Y")
+        company_tag = self._company_tag()
+        # Query LEDGER collection with FY date range so CLOSINGBALANCE = balance at FY-end
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraBSLedgers</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<SVFROMDATE>{fd}</SVFROMDATE>
+<SVTODATE>{td}</SVTODATE>
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraBSLedgers" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        out = {
+            'fy': self.fy_label(fy_start),
+            'fy_start': fy_start.isoformat(),
+            'fy_end': fy_end.isoformat(),
+            'groups': {},
+            'totals': {'assets': 0, 'liabilities': 0, 'difference': 0},
+            'raw_ledger_count': 0,
+        }
+        try:
+            data = self._post(xml, debug_name=f'balance_sheet_{out["fy"]}')
+            if not data:
+                logger.warning(f"  Balance Sheet fetch returned no data for {out['fy']}")
+                return out
+            ledgers_raw = self._get_collection_items(data, 'LEDGER')
+            if not ledgers_raw:
+                found = self._find_deep(data, 'LEDGER')
+                if isinstance(found, list):
+                    ledgers_raw = found
+                elif isinstance(found, dict):
+                    ledgers_raw = [found]
+            if not ledgers_raw:
+                logger.warning(f"  Balance Sheet: no LEDGER records found")
+                return out
+
+            parent_map = self.fetch_group_parent_map()
+            cat_map = self._get_group_category_map()
+
+            # Asset categories vs liability categories (per Tally classification)
+            ASSET_CATS = {'bank', 'cash', 'bank_od', 'current_assets', 'fixed_assets',
+                          'investments', 'stock_in_hand', 'sundry_debtors',
+                          'misc_expense', 'loans_advances_asset', 'deposits_asset'}
+            LIAB_CATS = {'capital', 'reserves', 'secured_loans', 'unsecured_loans',
+                         'current_liabilities', 'provisions', 'duties_taxes',
+                         'sundry_creditors', 'non_current_liabilities', 'profit_loss_ac',
+                         'branch_division', 'suspense'}
+
+            grouped = {}
+            for led in ledgers_raw:
+                if not isinstance(led, dict):
+                    continue
+                name = str(led.get('@NAME', '') or led.get('NAME', '') or '').strip()
+                if isinstance(name, dict):
+                    name = name.get('#text', '')
+                name = str(name).strip()
+                if not name:
+                    continue
+                parent = str(led.get('PARENT', '') or '').strip()
+                if isinstance(parent, dict):
+                    parent = parent.get('#text', '')
+                parent = str(parent).strip()
+                root = self._resolve_root_group(parent, parent_map) if parent else ''
+                category = cat_map.get(root, 'other')
+                if category == 'other':
+                    category = cat_map.get(parent.lower().strip(), 'other')
+                if category == 'other':
+                    continue  # Skip unclassified
+
+                closing = self._signed_num(led.get('CLOSINGBALANCE', 0))  # signed
+                opening = self._signed_num(led.get('OPENINGBALANCE', 0))
+                # Tally sign convention: DR balances are positive, CR are negative.
+                # For asset accounts → positive value = asset (good)
+                # For liability accounts → typically CR balance (negative in Tally signed)
+                #   we flip sign so liability total reads as positive
+                display_amount = closing
+                if category in LIAB_CATS:
+                    display_amount = -closing
+                # Skip ledgers with zero closing balance to keep the report tidy
+                if abs(display_amount) < 0.01 and abs(opening) < 0.01:
+                    continue
+
+                key = category
+                if key not in grouped:
+                    grouped[key] = {
+                        'category': category,
+                        'side': 'asset' if category in ASSET_CATS else 'liability',
+                        'total': 0.0,
+                        'ledgers': [],
+                    }
+                grouped[key]['total'] += display_amount
+                grouped[key]['ledgers'].append({
+                    'name': name,
+                    'parent_group': parent,
+                    'amount': round(display_amount, 2),
+                    'opening': round(opening if category in ASSET_CATS else -opening, 2),
+                })
+
+            for k in grouped:
+                grouped[k]['total'] = round(grouped[k]['total'], 2)
+                grouped[k]['ledgers'].sort(key=lambda x: -abs(x['amount']))
+
+            out['groups'] = grouped
+            out['raw_ledger_count'] = len(ledgers_raw)
+            assets = sum(g['total'] for g in grouped.values() if g['side'] == 'asset')
+            liabs = sum(g['total'] for g in grouped.values() if g['side'] == 'liability')
+            out['totals'] = {
+                'assets': round(assets, 2),
+                'liabilities': round(liabs, 2),
+                'difference': round(assets - liabs, 2),  # Should ideally be ~0 (P&L ac fills the gap)
+            }
+            logger.info(f"  [BS {out['fy']}] {len(grouped)} group categories, Assets=Rs.{assets:,.0f} / Liabilities=Rs.{liabs:,.0f} / Diff=Rs.{(assets-liabs):,.0f}")
+        except Exception as e:
+            logger.warning(f"  Balance Sheet fetch failed: {e}")
+        return out
+
+    def fy_label(self, fy_start: date) -> str:
+        """2025-04-01 → '2025-26'."""
+        return f"{fy_start.year}-{str(fy_start.year + 1)[-2:]}"
+
     def fetch_all_ledgers(self) -> List[Dict]:
         """Fetch ALL ledgers from Tally* using Export Data approach (most compatible).
         Excludes Sundry Debtors/Creditors on our side after fetching."""
@@ -2368,7 +2517,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.2.0-group-walker',
+                'agent_version': '9.3.0-balance-sheet-snapshot',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2425,7 +2574,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.2.0-group-walker',
+                'agent_version': '9.3.0-balance-sheet-snapshot',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -2959,11 +3108,23 @@ class FlowraSyncAgent:
             self.reconcile_with_backend('contra_vouchers', [v.get('voucher_id', '') for v in all_contra_combined if v.get('voucher_id')])
             self.report_progress('phase_complete', phase='contra_vouchers', count=len(all_contra_combined))
 
-            # --- Phase 10: All Ledgers (Bank, Cash, Income, Expense, Assets, Liabilities, Capital, etc.) ---
+            # --- Phase 10: All Ledgers (Balance Sheet + P&L) ---
             logger.info("--- Phase 10: All Ledgers (Balance Sheet + P&L) ---")
             self.report_progress('phase_start', phase='ledgers')
             all_ledgers = self.tally.fetch_all_ledgers()
             bank_cash = []
+
+            # --- Phase 10b: FY-scoped Balance Sheet snapshot (per FY)
+            # This uses Tally's BS report semantics with SVFROMDATE/SVTODATE so closing
+            # balances are FY-end accurate (not running cumulative across FYs).
+            for fy in fys_to_sync:
+                fy_start, fy_end = fy_to_dates(fy)
+                bs = self.tally.fetch_balance_sheet(fy_start, fy_end)
+                if bs and bs.get('groups'):
+                    self.save_cache(f'balance_sheet_{fy}', bs)
+                    self.sync_to_backend('balance_sheet_snapshot', [bs], id_key='fy')
+                else:
+                    logger.warning(f"  Balance Sheet snapshot for FY {fy}: empty or failed")
             if all_ledgers:
                 self.save_cache('all_ledgers', all_ledgers)
                 self.sync_to_backend('all_ledgers', all_ledgers)

@@ -506,23 +506,31 @@ const BalanceSheetView = ({ data }) => {
   return (
     <div data-testid="bs-view" className="space-y-4">
       {data.message && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">{data.message}</div>}
+      {data.source === 'tally_bs_snapshot' && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 inline-flex">
+          <span className="text-[10px]">✓</span> Tally BS Snapshot — FY-scoped from {data.fy_start} to {data.fy_end}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-3">
           <GroupSection title="Assets" groups={data.assets || []} total={data.total_assets || 0} color="#10b981"/>
         </div>
         <div className="space-y-3">
-          <GroupSection title="Liabilities" groups={data.liabilities || []} total={data.total_liabilities || 0} color="#ef4444"/>
-          <GroupSection title="Capital & Reserves" groups={data.capital || []} total={data.total_capital || 0} color="#8b5cf6"/>
+          <GroupSection title="Liabilities & Capital" groups={data.liabilities || []} total={data.total_liabilities || 0} color="#ef4444"/>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
           <div className="text-[10px] text-green-600 uppercase font-semibold">Total Assets</div>
           <div className="text-lg font-bold text-green-700">{fmtRs(data.total_assets)}</div>
         </div>
         <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
           <div className="text-[10px] text-red-600 uppercase font-semibold">Liabilities + Capital</div>
-          <div className="text-lg font-bold text-red-700">{fmtRs(data.total_liabilities_capital)}</div>
+          <div className="text-lg font-bold text-red-700">{fmtRs(data.total_liabilities)}</div>
+        </div>
+        <div className={`rounded-xl p-3 text-center border ${Math.abs(data.difference || 0) < 1 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+          <div className="text-[10px] uppercase font-semibold text-slate-600">Difference</div>
+          <div className={`text-lg font-bold ${Math.abs(data.difference || 0) < 1 ? 'text-emerald-700' : 'text-amber-700'}`}>{fmtRs(data.difference || 0)}</div>
         </div>
       </div>
     </div>
