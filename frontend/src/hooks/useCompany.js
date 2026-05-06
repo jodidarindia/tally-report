@@ -25,6 +25,7 @@ export function useCompany(isAuthenticated) {
     return saved;
   });
   const [showCompanySelector, setShowCompanySelector] = useState(false);
+  const [branchPartyCount, setBranchPartyCount] = useState(0);
 
   // Sync X-Company-ID header
   useEffect(() => {
@@ -44,6 +45,20 @@ export function useCompany(isAuthenticated) {
     }
     localStorage.setItem('flowra_exclude_branches', excludeBranches ? 'true' : 'false');
   }, [excludeBranches]);
+
+  // Refresh branch-party count + auto-detect if needed
+  useEffect(() => {
+    if (!selectedCompany || !isAuthenticated) return;
+    axios.get(`${API}/settings/branch-ledgers`).then(r => {
+      const cnt = r.data?.data?.count || 0;
+      setBranchPartyCount(cnt);
+      if (excludeBranches && cnt === 0) {
+        axios.get(`${API}/settings/branch-ledgers/detect`).then(d => {
+          setBranchPartyCount(d.data?.data?.count || 0);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [selectedCompany, isAuthenticated, excludeBranches]);
 
   // Auto-detect branch ledgers on company change
   useEffect(() => {
@@ -112,7 +127,7 @@ export function useCompany(isAuthenticated) {
     selectedFY, setSelectedFY,
     selectedCompany, selectCompany, resetCompany,
     companyMappings,
-    excludeBranches, toggleBranches,
+    excludeBranches, toggleBranches, branchPartyCount,
     showCompanySelector, setShowCompanySelector,
     initFromUser,
   };

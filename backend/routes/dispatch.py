@@ -431,6 +431,58 @@ async def get_dispatch_summary(request: Request, date: Optional[str] = None, com
 # AUTO-CREATE CARDS FROM INVOICES (date-based)
 # ═══════════════════════════════════════════════════════
 
+async def _auto_create_cards_helper(tenant_id: str, company_id: str, from_date: str) -> int:
+    """Internal helper — creates dispatch cards from sales vouchers. Used by both
+    the manual /dispatch/auto-create endpoint and the sync hook in sync.py."""
+    if not from_date or not tenant_id:
+        return 0
+    q = {"tenant_id": tenant_id, "company_id": company_id}
+
+    existing = set(await db.dispatch_cards.distinct("invoice_number", q))
+    sales_q = {**q, "voucher_date": {"$gte": from_date}}
+    sales = await db.sales_vouchers.find(sales_q, {"_id": 0}).to_list(50000)
+    new_sales = [
+        s for s in sales
+        if s.get("voucher_id") not in existing
+        and (s.get("reference_number") or "") not in existing
+    ]
+    if not new_sales:
+        return 0
+
+    dispatch_employees = await db.users.find(
+        {**q, "role": "dispatch"}, {"_id": 0, "username": 1}
+    ).to_list(50)
+    usernames = [e["username"] for e in dispatch_employees]
+    last_assigned = await db.dispatch_cards.find_one(
+        q, {"_id": 0, "assigned_to": 1}, sort=[("created_at", -1)]
+    )
+    last_idx = 0
+    if last_assigned and last_assigned.get("assigned_to") in usernames:
+        last_idx = usernames.index(last_assigned["assigned_to"])
+
+    now = datetime.now(timezone.utc).isoformat()
+    created = 0
+    for i, sale in enumerate(new_sales):
+        inv_num = sale.get("reference_number") or sale.get("voucher_id", "")
+        assigned = usernames[(last_idx + i + 1) % len(usernames)] if usernames else None
+        card = {
+            "card_id": f"DSP-{uuid.uuid4().hex[:8].upper()}", "card_type": "invoice",
+            "invoice_number": inv_num, "voucher_id": sale.get("voucher_id", ""),
+            "party_name": sale.get("party_name", ""), "items": sale.get("items", []),
+            "total_amount": safe_num(sale.get("total_amount")), "voucher_date": sale.get("voucher_date", ""),
+            "salesman": sale.get("salesman", ""), "destination_city": "",
+            "status": "queued" if assigned else "new", "assigned_to": assigned,
+            "total_boxes": 0, "transport_name": "", "transport_charges": 0,
+            "porter_name": "", "porter_charges": 0, "lr_number": "",
+            "physical_check": False, "notes": "", "documents": {},
+            "status_history": [{"status": "new", "at": now, "by": "system"},
+                               *([{"status": "queued", "at": now, "by": "system"}] if assigned else [])],
+            "created_at": now, "created_by": "system", **q}
+        await db.dispatch_cards.insert_one(card)
+        created += 1
+    return created
+
+
 @router.post("/dispatch/auto-create")
 async def auto_create_from_invoices(request: Request):
     """Create dispatch cards for sales invoices from a given date. Only sales invoices, no sales orders."""
@@ -452,42 +504,9 @@ async def auto_create_from_invoices(request: Request):
         await db.dispatch_settings.update_one(q, {"$set": {**q, "start_date": from_date,
             "auto_create_enabled": True, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
-        existing = set(await db.dispatch_cards.distinct("invoice_number", q))
-        # Only sales vouchers (not sales orders), from the given date
-        sales_q = {**q, "voucher_date": {"$gte": from_date}}
-        sales = await db.sales_vouchers.find(sales_q, {"_id": 0}).to_list(50000)
-        new_sales = [s for s in sales if s.get("voucher_id") not in existing and s.get("reference_number") not in existing]
-
-        if not new_sales:
+        created = await _auto_create_cards_helper(ctx.get("tenant_id", ""), ctx.get("company_id", ""), from_date)
+        if created == 0:
             return APIResponse(success=True, data={"created": 0}, message="No new invoices to create cards for")
-
-        dispatch_employees = await db.users.find({**q, "role": "dispatch"}, {"_id": 0, "username": 1}).to_list(50)
-        usernames = [e["username"] for e in dispatch_employees]
-        last_assigned = await db.dispatch_cards.find_one(q, {"_id": 0, "assigned_to": 1}, sort=[("created_at", -1)])
-        last_idx = 0
-        if last_assigned and last_assigned.get("assigned_to") in usernames:
-            last_idx = usernames.index(last_assigned["assigned_to"])
-
-        now = datetime.now(timezone.utc).isoformat()
-        created = 0
-        for i, sale in enumerate(new_sales):
-            inv_num = sale.get("reference_number") or sale.get("voucher_id", "")
-            assigned = usernames[(last_idx + i + 1) % len(usernames)] if usernames else None
-            card = {
-                "card_id": f"DSP-{uuid.uuid4().hex[:8].upper()}", "card_type": "invoice",
-                "invoice_number": inv_num, "voucher_id": sale.get("voucher_id", ""),
-                "party_name": sale.get("party_name", ""), "items": sale.get("items", []),
-                "total_amount": safe_num(sale.get("total_amount")), "voucher_date": sale.get("voucher_date", ""),
-                "salesman": sale.get("salesman", ""), "destination_city": "",
-                "status": "queued" if assigned else "new", "assigned_to": assigned,
-                "total_boxes": 0, "transport_name": "", "transport_charges": 0,
-                "porter_name": "", "porter_charges": 0, "lr_number": "",
-                "physical_check": False, "notes": "", "documents": {},
-                "status_history": [{"status": "new", "at": now, "by": "system"},
-                                   *([{"status": "queued", "at": now, "by": "system"}] if assigned else [])],
-                "created_at": now, "created_by": "system", **q}
-            await db.dispatch_cards.insert_one(card)
-            created += 1
         return APIResponse(success=True, data={"created": created, "from_date": from_date},
                            message=f"{created} dispatch cards created from {from_date}")
     except Exception as e:

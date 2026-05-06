@@ -253,7 +253,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-280px)]">
           <table className="data-table min-w-[800px]" data-testid="inventory-table">
             <thead>
               <tr>
@@ -263,8 +263,8 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                 <th>Category</th>
                 <SortHeader field="quantity" label="Quantity" className="numeric" />
                 <th>Unit</th>
-                <SortHeader field="price" label="Price" className="numeric" />
-                <SortHeader field="value" label="Value" className="numeric" />
+                <SortHeader field="price" label="Price (Pre-GST)" className="numeric" />
+                <SortHeader field="value" label="Value (Pre-GST)" className="numeric" />
                 <th className="numeric">Reorder Level</th>
                 <th>Status</th>
               </tr>

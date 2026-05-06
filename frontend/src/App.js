@@ -189,6 +189,7 @@ function App() {
         onSwitchCompany={() => company.setShowCompanySelector(true)}
         excludeBranches={company.excludeBranches}
         onToggleBranches={company.toggleBranches}
+        branchPartyCount={company.branchPartyCount}
         syncStatus={syncStatus}
         onLogout={handleLogout}
         onOpenProfile={() => setShowProfile(true)}

@@ -42,6 +42,14 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
   });
 
   useEffect(() => {
+    // Don't fetch sales-frequency mid-typing — only when both dates are set, or both empty
+    if (activeTab === 'sales-frequency') {
+      const s = dateFilter.start_date, e = dateFilter.end_date;
+      const bothEmpty = !s && !e;
+      const bothSet = !!s && !!e;
+      if (!bothEmpty && !bothSet) return;       // partial state — wait
+      if (bothSet && s > e) return;              // invalid range — wait
+    }
     fetchData();
   }, [activeTab, dateFilter, selectedFY, excludeBranches]);
 
@@ -309,7 +317,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 </button>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-340px)]">
                   <table className="data-table min-w-[900px]" data-testid="movement-table">
                     <thead>
                       <tr>
@@ -498,22 +506,26 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 )}
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-460px)]">
                   <table className="data-table min-w-[700px]" data-testid="sales-frequency-table">
                     <thead>
                       <tr>
-                        <th>Item Name</th>
-                        <th className="numeric">Transaction Count</th>
-                        <th className="numeric">Total Qty Sold</th>
-                        <th className="numeric">Unique Customers</th>
-                        <th className="numeric">Total Revenue</th>
-                        <th className="numeric">Avg Qty/Transaction</th>
+                        <SortTh field="item_name" label="Item Name" />
+                        <SortTh field="transaction_count" label="Transaction Count" className="numeric" />
+                        <SortTh field="total_quantity_sold" label="Total Qty Sold" className="numeric" />
+                        <SortTh field="unique_customers" label="Unique Customers" className="numeric" />
+                        <SortTh field="total_revenue" label="Total Revenue" className="numeric" />
+                        <SortTh field="avg_quantity_per_transaction" label="Avg Qty/Transaction" className="numeric" />
                         <th>Top Customers</th>
                       </tr>
                     </thead>
                     <tbody>
                       {salesFrequency.length > 0 ? (
-                        salesFrequency.map((item, idx) => (
+                        [...salesFrequency].sort((a, b) => {
+                          const dir = sortDir === 'asc' ? 1 : -1;
+                          if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
+                          return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+                        }).map((item, idx) => (
                           <tr key={idx}>
                             <td className="font-medium text-slate-900">{item.item_name}</td>
                             <td className="numeric">
@@ -668,19 +680,23 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                       FY {selectedFY || 'All'} — {customerItemsData.total_items} items across {customerItemsData.total_vouchers} invoices
                     </p>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="overflow-auto max-h-[calc(100vh-380px)]">
                     <table className="data-table min-w-[600px]" data-testid="customer-items-data-table">
                       <thead>
                         <tr>
-                          <th>Item Name</th>
-                          <th className="numeric">Quantity</th>
-                          <th className="numeric">Avg Rate</th>
-                          <th className="numeric">Amount</th>
-                          <th className="numeric">Invoices</th>
+                          <SortTh field="item_name" label="Item Name" />
+                          <SortTh field="quantity" label="Quantity" className="numeric" />
+                          <SortTh field="avg_rate" label="Avg Rate (Pre-GST)" className="numeric" />
+                          <SortTh field="amount" label="Amount (Pre-GST)" className="numeric" />
+                          <SortTh field="voucher_count" label="Invoices" className="numeric" />
                         </tr>
                       </thead>
                       <tbody>
-                        {customerItemsData.items?.map((item, idx) => (
+                        {[...(customerItemsData.items || [])].sort((a, b) => {
+                          const dir = sortDir === 'asc' ? 1 : -1;
+                          if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
+                          return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+                        }).map((item, idx) => (
                           <tr key={idx} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`customer-item-row-${idx}`}>
                             <td className="font-medium text-slate-800">
                               <span className="text-slate-400 mr-2 text-xs">{idx + 1}.</span>{item.item_name}
@@ -696,7 +712,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                           <td>TOTAL</td>
                           <td className="numeric">{customerItemsData.total_quantity?.toLocaleString('en-IN')}</td>
                           <td className="numeric"></td>
-                          <td className="numeric text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                          <td className="numeric text-[#2563EB]">Rs.{customerItemsData.total_amount?.toLocaleString('en-IN', { maximumFractionDigits: 2 })} <span className="text-xs font-normal text-slate-500">(Pre-GST)</span></td>
                           <td className="numeric">{customerItemsData.total_vouchers}</td>
                         </tr>
                       </tbody>

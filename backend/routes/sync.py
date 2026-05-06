@@ -148,6 +148,22 @@ async def receive_agent_sync(request: dict):
                     )
                 if operations:
                     await db.sales_vouchers.bulk_write(operations)
+
+                # Auto-create dispatch cards if enabled for this tenant/company
+                try:
+                    settings = await db.dispatch_settings.find_one(
+                        {"tenant_id": req_tenant_id, "company_id": req_company_id},
+                        {"_id": 0}
+                    )
+                    if settings and settings.get("auto_create_enabled") and settings.get("start_date"):
+                        from routes.dispatch import _auto_create_cards_helper
+                        created_n = await _auto_create_cards_helper(
+                            req_tenant_id, req_company_id, settings.get("start_date", "")
+                        )
+                        if created_n:
+                            logger.info(f"Auto-created {created_n} dispatch cards from sync")
+                except Exception as auto_err:
+                    logger.warning(f"Dispatch auto-create skipped: {auto_err}")
             logger.info(f"Synced {len(data)} sales vouchers")
 
         elif data_type == 'customers':

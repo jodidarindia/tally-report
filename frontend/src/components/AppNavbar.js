@@ -7,7 +7,7 @@ const AppNavbar = ({
   user, navItems, currentPage, setCurrentPage,
   selectedFY, setSelectedFY, fyOptions,
   selectedCompany, companyMappings, onSwitchCompany,
-  excludeBranches, onToggleBranches,
+  excludeBranches, onToggleBranches, branchPartyCount = 0,
   syncStatus, onLogout, onOpenProfile, onReplayTour,
   mobileMenuOpen, setMobileMenuOpen,
 }) => {
@@ -91,13 +91,17 @@ const AppNavbar = ({
               <button
                 onClick={onToggleBranches}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${excludeBranches ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-green-200 bg-green-50 text-green-700'}`}
-                title={excludeBranches ? 'Branch/Depot sales excluded — click to include' : 'Branch/Depot sales included — click to exclude'}
+                title={excludeBranches
+                  ? (branchPartyCount > 0
+                      ? `Excluding ${branchPartyCount} branch/depot ledger(s) — click to include`
+                      : 'Toggle ON but no branches detected for this company')
+                  : `Branch/Depot sales included — click to exclude (${branchPartyCount} detected)`}
                 data-testid="branch-toggle"
               >
                 <div className={`w-6 h-3.5 rounded-full relative transition-colors ${excludeBranches ? 'bg-amber-500' : 'bg-green-500'}`}>
                   <div className={`absolute top-0.5 w-2.5 h-2.5 bg-white rounded-full shadow transition-transform ${excludeBranches ? 'translate-x-3' : 'translate-x-0.5'}`} />
                 </div>
-                <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? 'Excluded' : 'Included'}</span>
+                <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? `Excluded${branchPartyCount > 0 ? ` (${branchPartyCount})` : ''}` : 'Included'}</span>
               </button>
             </div>
 

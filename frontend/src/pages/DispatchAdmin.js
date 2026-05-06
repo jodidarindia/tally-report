@@ -136,13 +136,19 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
     <div data-testid="dispatch-admin">
       <div className="flex flex-col gap-3 mb-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-          <div><h1 className="text-lg sm:text-xl font-bold text-slate-900">Dispatch Management</h1></div>
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900">Dispatch Management</h1>
+            <p className="text-[11px] text-slate-500 mt-0.5">All dispatch cards are for the latest FY</p>
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-              <Calendar size={13} className="text-slate-400"/>
-              <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="text-xs bg-transparent border-0 outline-none w-28" data-testid="start-date" title="Card creation start date"/>
+            <div className="flex flex-col">
+              <label className="text-[9px] text-slate-500 uppercase font-semibold mb-0.5 tracking-wider">Card creation start date</label>
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                <Calendar size={13} className="text-slate-400"/>
+                <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="text-xs bg-transparent border-0 outline-none w-28" data-testid="start-date" title="Auto-create dispatch cards from this date forward"/>
+              </div>
             </div>
-            <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50" data-testid="auto-create-btn">
+            <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50 self-end" data-testid="auto-create-btn">
               <Package size={13}/>{creating?'Creating...':'Create Cards'}
             </button>
           </div>
@@ -150,8 +156,7 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
         {/* Date filter - affects all tabs */}
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-slate-500 font-semibold uppercase">View Date:</span>
-          <input type="date" value={filterDate} onChange={e=>{setFilterDate(e.target.value);setRefreshKey(k=>k+1);}} className="text-xs border border-slate-200 rounded-lg px-2 py-1" data-testid="filter-date"/>
-          <span className="text-[10px] text-slate-400">FY: {selectedFY}</span>
+          <input type="date" value={filterDate} onChange={e=>{setFilterDate(e.target.value);setRefreshKey(k=>k+1);}} className="text-xs border border-slate-200 rounded-lg px-2 py-1" data-testid="filter-date" title="Filter cards visible on the board"/>
         </div>
       </div>
 
