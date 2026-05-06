@@ -349,19 +349,38 @@ const PLView = ({ data, view, setView, sortField, sortDir, toggleSort }) => {
         </div>
       </div>
 
-      {/* Summary */}
+      {/* Summary — Tally-style breakdown */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+          <div className="text-xs text-green-600 mb-1">Sales (Net)</div>
+          <div className="text-lg font-bold text-green-700">{fmtRs(data.total_sales)}</div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <div className="text-xs text-red-500 mb-1">Purchases (Net)</div>
+          <div className="text-lg font-bold text-red-600">{fmtRs(data.total_purchases)}</div>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <div className="text-xs text-emerald-600 mb-1">Indirect Income</div>
+          <div className="text-lg font-bold text-emerald-700">{fmtRs(data.indirect_income)}</div>
+        </div>
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+          <div className="text-xs text-orange-500 mb-1">Indirect Expense</div>
+          <div className="text-lg font-bold text-orange-600">{fmtRs(data.indirect_expense)}</div>
+        </div>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-          <div className="text-sm text-green-600 mb-1">Total Income</div>
-          <div className="text-2xl font-bold text-green-700">{fmtRs(data.total_income)}</div>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
+          <div className="text-sm text-blue-600 mb-1">Gross Profit</div>
+          <div className={`text-2xl font-bold ${(data.gross_profit || 0) >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmtRs(data.gross_profit)}</div>
         </div>
-        <div className="bg-red-50 border border-red-200 rounded-xl p-5">
-          <div className="text-sm text-red-500 mb-1">Total Expense</div>
-          <div className="text-2xl font-bold text-red-600">{fmtRs(data.total_expense)}</div>
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+          <div className="text-sm text-slate-600 mb-1">Stock Movement</div>
+          <div className="text-base font-medium text-slate-700">Open: {fmtRs(data.opening_stock)}</div>
+          <div className="text-base font-medium text-slate-700">Close: {fmtRs(data.closing_stock)}</div>
         </div>
-        <div className={`rounded-xl p-5 border ${data.net_profit_loss >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+        <div className={`rounded-xl p-5 border ${(data.net_profit_loss || 0) >= 0 ? 'bg-indigo-50 border-indigo-200' : 'bg-amber-50 border-amber-200'}`}>
           <div className="text-sm text-slate-600 mb-1">Net Profit / Loss</div>
-          <div className={`text-2xl font-bold ${data.net_profit_loss >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmtRs(data.net_profit_loss)}</div>
+          <div className={`text-2xl font-bold ${(data.net_profit_loss || 0) >= 0 ? 'text-indigo-700' : 'text-red-600'}`}>{fmtRs(data.net_profit_loss)}</div>
         </div>
       </div>
 

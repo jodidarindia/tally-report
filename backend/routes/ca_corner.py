@@ -168,7 +168,10 @@ async def get_cash_flow(request: Request, fy: str = ""):
 
 @router.get("/ca-corner/profit-loss")
 async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
-    """Get P&L report. view=annual or monthly."""
+    """Get P&L report. Computes totals from FY-scoped vouchers (Sales, Purchases) +
+    JV-derived indirect income/expense activity. Falls back to stored profit_loss
+    document for ledger breakdown lists (income/expense ledger names).
+    """
     try:
         ctx = await get_tenant_context(request)
         user = await get_current_user(request, db)
@@ -176,97 +179,170 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             return APIResponse(success=False, error="Authentication required")
 
         q = _build_q(ctx)
-        company_id = q.get("company_id", "")
 
-        # Get stored P&L data
-        pl = await db.profit_loss.find_one(
-            {"tenant_id": q.get("tenant_id", ""), "company_id": company_id}, {"_id": 0}
-        )
-        if not pl:
-            return APIResponse(success=True, data={
-                "income": [], "expense": [],
-                "total_income": 0, "total_expense": 0, "net_profit_loss": 0,
-                "view": view, "monthly": []
-            })
-
-        if view == "annual":
-            return APIResponse(success=True, data={
-                "income": pl.get("income", []),
-                "expense": pl.get("expense", []),
-                "total_income": pl.get("total_income", 0),
-                "total_expense": pl.get("total_expense", 0),
-                "net_profit_loss": pl.get("net_profit_loss", 0),
-                "view": "annual",
-            })
-
-        # Monthly view: compute from vouchers
-        months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
-        month_nums = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
-
+        # Fetch FY-scoped voucher totals (this is the accurate source of truth)
         sales_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
         purchase_v = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(50000)
-        receipt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+        cn_v = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+        dn_v = await db.debit_notes.find(q, {"_id": 0}).to_list(5000)
+        jv_v = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
         if fy:
             sales_v = filter_vouchers_by_fy(sales_v, fy)
             purchase_v = filter_vouchers_by_fy(purchase_v, fy)
-            receipt_v = filter_vouchers_by_fy(receipt_v, fy)
+            cn_v = filter_vouchers_by_fy(cn_v, fy)
+            dn_v = filter_vouchers_by_fy(dn_v, fy)
+            jv_v = filter_vouchers_by_fy(jv_v, fy)
 
-        # Build monthly totals
-        monthly_data = []
-        for i, (m_name, m_num) in enumerate(zip(months, month_nums)):
-            month_sales = 0
-            month_purchases = 0
-            month_receipts = 0
+        total_sales = sum(safe_num(v.get("total_amount")) for v in sales_v)
+        total_purchases = sum(safe_num(v.get("total_amount")) for v in purchase_v)
+        total_credit_notes = sum(safe_num(v.get("total_amount")) for v in cn_v)  # Sales reversal
+        total_debit_notes = sum(safe_num(v.get("total_amount")) for v in dn_v)   # Purchase reversal
 
-            for v in sales_v:
-                vd = v.get("voucher_date", v.get("date", ""))
-                if vd:
-                    try:
-                        d = datetime.fromisoformat(vd.replace("Z", ""))
-                        if d.month == m_num:
-                            month_sales += abs(safe_num(v.get("amount", 0)))
-                    except Exception:
-                        pass
+        # Net Sales = Sales - Credit Notes; Net Purchases = Purchases - Debit Notes
+        net_sales = total_sales - total_credit_notes
+        net_purchases = total_purchases - total_debit_notes
 
-            for v in purchase_v:
-                vd = v.get("voucher_date", v.get("date", ""))
-                if vd:
-                    try:
-                        d = datetime.fromisoformat(vd.replace("Z", ""))
-                        if d.month == m_num:
-                            month_purchases += abs(safe_num(v.get("amount", 0)))
-                    except Exception:
-                        pass
+        # Indirect income/expense from JV ledger entries (FY-filtered)
+        # Group by parent_group on the entry's ledger
+        all_ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
+        ledger_to_category = {l.get("ledger_name", "").lower().strip(): l.get("category", "other") for l in all_ledgers}
+        ledger_to_parent = {l.get("ledger_name", "").lower().strip(): l.get("parent_group", "") for l in all_ledgers}
 
-            for v in receipt_v:
-                vd = v.get("voucher_date", v.get("date", ""))
-                if vd:
-                    try:
-                        d = datetime.fromisoformat(vd.replace("Z", ""))
-                        if d.month == m_num:
-                            month_receipts += abs(safe_num(v.get("amount", 0)))
-                    except Exception:
-                        pass
+        indirect_income = 0.0
+        indirect_expense = 0.0
+        direct_expense_misc = 0.0  # Direct Expense (not purchases)
+        direct_income_misc = 0.0   # Direct Income (not sales)
+        ledger_activity = {}  # ledger_name -> {amount, parent, category, is_debit_dominant}
 
-            gross_profit = month_sales - month_purchases
-            monthly_data.append({
-                "month": m_name,
-                "sales": round(month_sales, 2),
-                "purchases": round(month_purchases, 2),
-                "receipts": round(month_receipts, 2),
-                "gross_profit": round(gross_profit, 2),
-            })
+        # Scan ledger_entries across ALL voucher types — most P&L activity flows through
+        # payment / receipt / JV vouchers (e.g., paying rent via bank = payment voucher
+        # with DR Rent, CR Bank). JVs alone miss ~90% of expense activity.
+        rcpt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+        contra_v = await db.contra_vouchers.find(q, {"_id": 0}).to_list(20000) if 'contra_vouchers' in await db.list_collection_names() else []
+        if fy:
+            rcpt_v = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date', '')} for r in rcpt_v], fy)
+            contra_v = filter_vouchers_by_fy(contra_v, fy)
 
-        return APIResponse(success=True, data={
-            "income": pl.get("income", []),
-            "expense": pl.get("expense", []),
-            "total_income": pl.get("total_income", 0),
-            "total_expense": pl.get("total_expense", 0),
-            "net_profit_loss": pl.get("net_profit_loss", 0),
-            "view": "monthly",
-            "monthly": monthly_data,
-        })
+        for vouch in jv_v + rcpt_v + contra_v + sales_v + purchase_v + cn_v + dn_v:
+            for entry in vouch.get("ledger_entries", []) or []:
+                lname = (entry.get("ledger_name") or "").strip()
+                if not lname:
+                    continue
+                amt = safe_num(entry.get("amount"))
+                is_dr = bool(entry.get("is_debit"))
+                cat = ledger_to_category.get(lname.lower(), "other")
+                if cat not in ("indirect_income", "indirect_expense", "direct_income", "direct_expense"):
+                    continue
+
+                # Skip ledgers under Sales Accounts / Purchase Accounts — these are
+                # already captured in voucher header totals (total_sales / total_purchases)
+                # so summing their entries would double-count.
+                parent_lower = ledger_to_parent.get(lname.lower(), "").lower().strip()
+                if parent_lower in ("sales accounts", "purchase accounts"):
+                    continue
+
+                # Sign convention:
+                #   Income ledgers: CR = positive income, DR = reversal (negative)
+                #   Expense ledgers: DR = positive expense, CR = reversal (negative)
+                if cat == "indirect_income":
+                    indirect_income += (-amt if is_dr else amt)
+                elif cat == "direct_income":
+                    direct_income_misc += (-amt if is_dr else amt)
+                elif cat == "indirect_expense":
+                    indirect_expense += (amt if is_dr else -amt)
+                elif cat == "direct_expense":
+                    direct_expense_misc += (amt if is_dr else -amt)
+
+                # Track per-ledger for breakdown
+                if lname not in ledger_activity:
+                    ledger_activity[lname] = {
+                        "ledger_name": lname,
+                        "parent_group": ledger_to_parent.get(lname.lower(), ""),
+                        "category": cat,
+                        "amount": 0.0,
+                    }
+                if cat in ("indirect_expense", "direct_expense"):
+                    ledger_activity[lname]["amount"] += (amt if is_dr else -amt)
+                else:
+                    ledger_activity[lname]["amount"] += (-amt if is_dr else amt)
+
+        # Stock — best-effort from synced inventory (may be 0 if not yet synced)
+        inventory = await db.inventory.find(q, {"_id": 0}).to_list(5000)
+        opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
+        closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+
+        # Build income / expense breakdown lists
+        income_breakdown = []
+        expense_breakdown = []
+        for la in ledger_activity.values():
+            if la["category"] in ("indirect_income", "direct_income") and abs(la["amount"]) > 0.01:
+                income_breakdown.append({
+                    "ledger_name": la["ledger_name"], "parent_group": la["parent_group"],
+                    "amount": round(la["amount"], 2),
+                })
+            elif la["category"] in ("indirect_expense", "direct_expense") and abs(la["amount"]) > 0.01:
+                expense_breakdown.append({
+                    "ledger_name": la["ledger_name"], "parent_group": la["parent_group"],
+                    "amount": round(la["amount"], 2),
+                })
+        income_breakdown.sort(key=lambda x: -abs(x["amount"]))
+        expense_breakdown.sort(key=lambda x: -abs(x["amount"]))
+
+        # Tally formula:
+        #   Trading Account: Sales + Closing Stock = Opening Stock + Purchases + Direct Expenses + Gross Profit
+        #   → Gross Profit = (Net Sales + Closing Stock + Direct Income) - (Opening Stock + Net Purchases + Direct Expense)
+        gross_profit = (net_sales + closing_stock + direct_income_misc) - (opening_stock + net_purchases + direct_expense_misc)
+
+        # Net Profit = Gross Profit + Indirect Income - Indirect Expense
+        net_profit = gross_profit + indirect_income - indirect_expense
+
+        total_income = net_sales + direct_income_misc + indirect_income
+        total_expense = net_purchases + direct_expense_misc + indirect_expense
+
+        result = {
+            "fy": fy,
+            "view": view,
+            # Header totals
+            "total_sales": round(net_sales, 2),
+            "total_purchases": round(net_purchases, 2),
+            "opening_stock": round(opening_stock, 2),
+            "closing_stock": round(closing_stock, 2),
+            "indirect_income": round(indirect_income, 2),
+            "indirect_expense": round(indirect_expense, 2),
+            "direct_income": round(direct_income_misc, 2),
+            "direct_expense": round(direct_expense_misc, 2),
+            # Final figures
+            "gross_profit": round(gross_profit, 2),
+            "net_profit_loss": round(net_profit, 2),
+            "total_income": round(total_income, 2),
+            "total_expense": round(total_expense, 2),
+            # Breakdowns (for tables)
+            "income": income_breakdown,
+            "expense": expense_breakdown,
+        }
+
+        # Monthly view: per-month sales/purchases/gross-profit
+        if view == "monthly":
+            months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+            month_nums = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
+            monthly_data = []
+            for m_name, m_num in zip(months, month_nums):
+                m_sales = sum(safe_num(v.get("total_amount")) for v in sales_v
+                              if (v.get("voucher_date", "")[:10] and len(v.get("voucher_date", "")) >= 10
+                                  and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num))
+                m_purchases = sum(safe_num(v.get("total_amount")) for v in purchase_v
+                                  if (v.get("voucher_date", "")[:10] and len(v.get("voucher_date", "")) >= 10
+                                      and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num))
+                monthly_data.append({
+                    "month": m_name,
+                    "sales": round(m_sales, 2),
+                    "purchases": round(m_purchases, 2),
+                    "gross_profit": round(m_sales - m_purchases, 2),
+                })
+            result["monthly"] = monthly_data
+
+        return APIResponse(success=True, data=result)
     except Exception as e:
         logger.error(f"P&L error: {e}")
         return APIResponse(success=False, error=str(e))

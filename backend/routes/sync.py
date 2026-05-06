@@ -246,6 +246,7 @@ async def receive_agent_sync(request: dict):
                                 "party_name": cn.get('party_name', ''),
                                 "total_amount": cn.get('total_amount', 0),
                                 "items": cn.get('items', []),
+                                "ledger_entries": cn.get('ledger_entries', []),
                                 "narration": cn.get('narration', ''),
                                 "reference_number": cn.get('reference_number', ''),
                                 "last_synced": sync_time,

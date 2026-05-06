@@ -1058,6 +1058,62 @@ class TallyCollectionClient:
 
     # ---- SUNDRY CREDITORS (Collection) ----
 
+    def fetch_creditors_from_all_ledgers(self) -> List[Dict]:
+        """Fallback: derive Sundry Creditors from group-walked all-ledgers query.
+        Used when the IsSundryCreditor TDL filter returns nothing (older Tally builds).
+        """
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraCredFB</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraCredFB" ISINITIALIZE="Yes">
+<TYPE>Ledger</TYPE>
+<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDGERPHONE, LEDGERMOBILE, LEDGERCONTACT, STATENAME</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml, debug_name='creditors_fb')
+            if not data:
+                return []
+            ledgers_raw = self._get_collection_items(data, 'LEDGER')
+            if not ledgers_raw:
+                found = self._find_deep(data, 'LEDGER')
+                if isinstance(found, list):
+                    ledgers_raw = found
+                elif isinstance(found, dict):
+                    ledgers_raw = [found]
+                else:
+                    return []
+            parent_map = self.fetch_group_parent_map()
+            creditors = []
+            for lg in ledgers_raw:
+                if not isinstance(lg, dict):
+                    continue
+                name = str(lg.get('NAME', lg.get('@NAME', '')) or '').strip()
+                if not name:
+                    continue
+                parent = str(lg.get('PARENT', '') or '').strip()
+                root = self._resolve_root_group(parent, parent_map) if parent else ''
+                if root != 'sundry creditors':
+                    continue
+                creditors.append({
+                    'creditor_name': name,
+                    'ledger_group': parent or 'Sundry Creditors',
+                    'outstanding_amount': self._num(lg.get('CLOSINGBALANCE', 0)),
+                    'opening_balance': self._num(lg.get('OPENINGBALANCE', 0)),
+                    'phone': str(lg.get('LEDGERPHONE', lg.get('LEDGERMOBILE', '')) or '').strip(),
+                    'contact_person': str(lg.get('LEDGERCONTACT', '') or '').strip(),
+                    'state': str(lg.get('STATENAME', '') or '').strip(),
+                })
+            logger.info(f"  Fallback fetched {len(creditors)} sundry creditors via group walker")
+            return creditors
+        except Exception as e:
+            logger.warning(f"  Creditors fallback failed: {e}")
+            return []
+
     def fetch_sundry_creditors(self) -> List[Dict]:
         """Fetch Sundry Creditors (vendors/suppliers) using TDL Collection."""
         logger.info("  Requesting Sundry Creditors (Collection)...")
@@ -1438,6 +1494,65 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     # ---- BANK & CASH LEDGER BALANCES ----
 
+    def fetch_group_parent_map(self) -> Dict[str, str]:
+        """Fetch all groups and their parent → returns {group_name: parent_group_name}.
+        Used to walk sub-group chain when classifying ledgers (e.g., "Salaries" →
+        "Indirect Expenses"). Without this, deeply-nested ledgers default to 'other'.
+        """
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraGroupsHier</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraGroupsHier" ISINITIALIZE="Yes">
+<TYPE>Group</TYPE>
+<FETCH>NAME, PARENT</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        result = {}
+        try:
+            data = self._post(xml, debug_name='groups_hier')
+            if not data:
+                return result
+            groups = self._get_collection_items(data, 'GROUP')
+            if not groups:
+                found = self._find_deep(data, 'GROUP')
+                if isinstance(found, list):
+                    groups = found
+                elif isinstance(found, dict):
+                    groups = [found]
+                else:
+                    return result
+            for g in groups:
+                if not isinstance(g, dict):
+                    continue
+                name = g.get('@NAME', '') or g.get('NAME', '')
+                if isinstance(name, dict):
+                    name = name.get('#text', '')
+                parent = g.get('PARENT', '')
+                if isinstance(parent, dict):
+                    parent = parent.get('#text', '')
+                name = str(name or '').strip()
+                parent = str(parent or '').strip()
+                if name:
+                    result[name.lower()] = parent.lower()
+            logger.info(f"  Fetched {len(result)} group hierarchies")
+        except Exception as e:
+            logger.warning(f"  Group hierarchy fetch failed: {e}")
+        return result
+
+    def _resolve_root_group(self, group_name: str, parent_map: Dict[str, str], depth: int = 0) -> str:
+        """Walk up the parent chain to find the root group. Returns root name in lowercase."""
+        if depth > 12 or not group_name:
+            return group_name.lower() if group_name else ''
+        gn = group_name.lower().strip()
+        parent = parent_map.get(gn, '')
+        if not parent or parent == gn:
+            return gn
+        return self._resolve_root_group(parent, parent_map, depth + 1)
+
     def fetch_all_ledgers(self) -> List[Dict]:
         """Fetch ALL ledgers from Tally* using Export Data approach (most compatible).
         Excludes Sundry Debtors/Creditors on our side after fetching."""
@@ -1454,39 +1569,8 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-        # Root group classification map
-        GROUP_CATEGORY = {
-            # Bank & Cash
-            'bank accounts': 'bank', 'bank od accounts': 'bank_od', 'cash-in-hand': 'cash',
-            # Income
-            'sales accounts': 'direct_income', 'direct income': 'direct_income', 'direct incomes': 'direct_income',
-            'indirect income': 'indirect_income', 'indirect incomes': 'indirect_income',
-            # Expense
-            'purchase accounts': 'direct_expense', 'direct expenses': 'direct_expense', 'direct expense': 'direct_expense',
-            'indirect expenses': 'indirect_expense', 'indirect expense': 'indirect_expense',
-            'manufacturing expenses': 'direct_expense',
-            # Capital & Reserves
-            'capital account': 'capital', "partner's capital account": 'capital',
-            'reserves & surplus': 'reserves', 'reserves and surplus': 'reserves',
-            # Loans
-            'secured loans': 'secured_loans', 'unsecured loans': 'unsecured_loans',
-            'loans (liability)': 'unsecured_loans',
-            # Liabilities
-            'current liabilities': 'current_liabilities', 'provisions': 'provisions',
-            'duties & taxes': 'duties_taxes', 'duties and taxes': 'duties_taxes',
-            'non-current liabilities': 'non_current_liabilities',
-            # Assets
-            'current assets': 'current_assets', 'deposits (asset)': 'current_assets',
-            'loans & advances (asset)': 'current_assets', 'loans and advances (asset)': 'current_assets',
-            'stock-in-hand': 'stock_in_hand',
-            'fixed assets': 'fixed_assets',
-            'investments': 'investments',
-            # Special
-            'profit & loss a/c': 'profit_loss_ac', 'profit and loss a/c': 'profit_loss_ac',
-            'misc. expenses (asset)': 'misc_expense',
-            'suspense a/c': 'suspense', 'suspense account': 'suspense',
-            'branch / divisions': 'branch_division',
-        }
+        # Use shared category map (28 reserved Tally root groups)
+        GROUP_CATEGORY = self._get_group_category_map()
 
         # Groups to EXCLUDE (synced separately)
         EXCLUDE_GROUPS = {'sundry debtors', 'sundry creditors'}
@@ -1526,6 +1610,9 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 logger.warning("  No ledger data in Export Data response — trying fallback...")
                 return self._fetch_ledgers_fallback()
 
+            # Fetch group hierarchy so we can walk parent chain for sub-grouped ledgers
+            parent_map = self.fetch_group_parent_map()
+
             results = []
             for led in ledgers_raw:
                 if not isinstance(led, dict):
@@ -1544,22 +1631,24 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     parent = parent.get('#text', '')
                 parent = str(parent or '').strip()
 
-                # Skip Sundry Debtors/Creditors
-                if parent.lower().strip() in EXCLUDE_GROUPS:
+                # Walk parent chain to root group (handles sub-groups like Salaries → Indirect Expenses)
+                root_group = self._resolve_root_group(parent, parent_map) if parent else ''
+
+                # Skip Sundry Debtors/Creditors (synced separately) — check both immediate and root
+                if parent.lower().strip() in EXCLUDE_GROUPS or root_group in EXCLUDE_GROUPS:
                     continue
 
                 # Balances
                 opening = self._safe_float(led.get('OPENINGBALANCE', 0))
                 closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
 
-                # Classify by parent group
-                parent_lower = parent.lower().strip()
-                category = GROUP_CATEGORY.get(parent_lower, 'other')
-
-                # If not matched directly, try partial matching
+                # Classify by ROOT group first (most reliable), fall back to immediate parent
+                category = GROUP_CATEGORY.get(root_group, 'other')
+                if category == 'other':
+                    category = GROUP_CATEGORY.get(parent.lower().strip(), 'other')
                 if category == 'other':
                     for group_key, cat_val in GROUP_CATEGORY.items():
-                        if group_key in parent_lower:
+                        if group_key in (root_group + ' ' + parent.lower()):
                             category = cat_val
                             break
 
@@ -1612,6 +1701,8 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     ledgers_raw = [found]
                 else:
                     return []
+            # Fetch group hierarchy for sub-group walking
+            parent_map = self.fetch_group_parent_map()
             results = []
             for led in ledgers_raw:
                 if not isinstance(led, dict):
@@ -1626,15 +1717,17 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 if isinstance(parent, dict):
                     parent = parent.get('#text', '')
                 parent = str(parent or '').strip()
-                if parent.lower().strip() in EXCLUDE_GROUPS:
+                root_group = self._resolve_root_group(parent, parent_map) if parent else ''
+                if parent.lower().strip() in EXCLUDE_GROUPS or root_group in EXCLUDE_GROUPS:
                     continue
                 opening = self._safe_float(led.get('OPENINGBALANCE', 0))
                 closing = self._safe_float(led.get('CLOSINGBALANCE', 0))
-                parent_lower = parent.lower().strip()
-                category = GROUP_CATEGORY.get(parent_lower, 'other')
+                category = GROUP_CATEGORY.get(root_group, 'other')
+                if category == 'other':
+                    category = GROUP_CATEGORY.get(parent.lower().strip(), 'other')
                 if category == 'other':
                     for gk, cv in GROUP_CATEGORY.items():
-                        if gk in parent_lower:
+                        if gk in (root_group + ' ' + parent.lower()):
                             category = cv
                             break
                 results.append({
@@ -1649,28 +1742,46 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             return []
 
     def _get_group_category_map(self):
+        # Tally has 28 reserved root groups. We map each to a backend category.
+        # The walker (`_resolve_root_group`) hits these as terminal nodes — sub-groups
+        # like "Salaries" → "Indirect Expenses" → root match here.
         return {
-            'bank accounts': 'bank', 'bank od accounts': 'bank_od', 'cash-in-hand': 'cash',
-            'sales accounts': 'direct_income', 'direct income': 'direct_income', 'direct incomes': 'direct_income',
+            # Bank & Cash (Tally reserved root names)
+            'bank accounts': 'bank',
+            'bank od a/c': 'bank_od', 'bank od accounts': 'bank_od', 'bank o/d a/c': 'bank_od',
+            'bank occ a/c': 'bank_od', 'bank cc accounts': 'bank_od', 'bank o.d. a/c': 'bank_od',
+            'cash-in-hand': 'cash', 'cash in hand': 'cash',
+            # Income
+            'sales accounts': 'direct_income',
+            'direct income': 'direct_income', 'direct incomes': 'direct_income',
             'indirect income': 'indirect_income', 'indirect incomes': 'indirect_income',
-            'purchase accounts': 'direct_expense', 'direct expenses': 'direct_expense', 'direct expense': 'direct_expense',
+            # Expense
+            'purchase accounts': 'direct_expense',
+            'direct expenses': 'direct_expense', 'direct expense': 'direct_expense',
             'indirect expenses': 'indirect_expense', 'indirect expense': 'indirect_expense',
             'manufacturing expenses': 'direct_expense',
+            # Capital & Reserves
             'capital account': 'capital', "partner's capital account": 'capital',
             'reserves & surplus': 'reserves', 'reserves and surplus': 'reserves',
+            # Loans
             'secured loans': 'secured_loans', 'unsecured loans': 'unsecured_loans',
             'loans (liability)': 'unsecured_loans',
+            # Liabilities
             'current liabilities': 'current_liabilities', 'provisions': 'provisions',
             'duties & taxes': 'duties_taxes', 'duties and taxes': 'duties_taxes',
             'non-current liabilities': 'non_current_liabilities',
+            # Assets
             'current assets': 'current_assets', 'deposits (asset)': 'current_assets',
             'loans & advances (asset)': 'current_assets', 'loans and advances (asset)': 'current_assets',
             'stock-in-hand': 'stock_in_hand', 'fixed assets': 'fixed_assets',
             'investments': 'investments',
+            # Special
             'profit & loss a/c': 'profit_loss_ac', 'profit and loss a/c': 'profit_loss_ac',
-            'misc. expenses (asset)': 'misc_expense',
+            'misc. expenses (asset)': 'misc_expense', 'misc expenses (asset)': 'misc_expense',
             'suspense a/c': 'suspense', 'suspense account': 'suspense',
-            'branch / divisions': 'branch_division',
+            'branch / divisions': 'branch_division', 'branch/divisions': 'branch_division',
+            # Sundry — handled separately but kept here for root-walker safety
+            'sundry creditors': 'sundry_creditors',
         }
 
 
@@ -2257,7 +2368,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.1.0-jv-direction',
+                'agent_version': '9.2.0-group-walker',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2314,7 +2425,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.1.0-jv-direction',
+                'agent_version': '9.2.0-group-walker',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -2817,6 +2928,9 @@ class FlowraSyncAgent:
             logger.info("--- Phase 8: Sundry Creditors ---")
             self.report_progress('phase_start', phase='sundry_creditors')
             creditors = self.tally.fetch_sundry_creditors()
+            if not creditors:
+                logger.info("  Primary creditor fetch returned empty — running group-walker fallback")
+                creditors = self.tally.fetch_creditors_from_all_ledgers()
             if creditors:
                 self.save_cache('sundry_creditors', creditors)
                 self.sync_to_backend('sundry_creditors', creditors)

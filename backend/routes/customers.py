@@ -1038,7 +1038,6 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if branch_parties:
             branch_set = set(p.lower() for p in branch_parties)
             synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
-        synced_map = {safe_str(c.get("customer_name")).lower(): c for c in synced_customers if c.get("customer_name")}
 
         # FY boundary for opening balance calculation
         fy_start_str = None
@@ -1172,39 +1171,52 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                 net_credit = credit - debit  # positive reduces customer OS
                 customer_jv[party] = customer_jv.get(party, 0) + net_credit
 
+        # Restrict to synced customers only — prevents non-debtor parties (depots, expense
+        # ledgers) from sneaking into Payment Behaviour
+        synced_lower_to_canonical = {(sc.get("customer_name") or "").lower().strip(): sc.get("customer_name") for sc in synced_customers if sc.get("customer_name")}
+
         behavior_map = {}
-        for voucher in all_sales:
-            party = voucher.get("party_name", "Unknown")
-            if not party or party.strip().lower() in {"unknown", "n/a", "none", ""}:
+        # Pre-seed behavior_map with all synced customers (so a customer with OB but no FY
+        # activity still appears with their opening balance)
+        for sc in synced_customers:
+            name = sc.get("customer_name")
+            if not name:
                 continue
+            ob = round(opening_balance_map.get(name, 0), 2)
+            behavior_map[name] = {
+                "customer_name": name,
+                "ledger_group": sc.get("ledger_group", ""),
+                "phone": sc.get("phone", ""),
+                "state": sc.get("state", ""),
+                "tally_outstanding": safe_num(sc.get("outstanding_amount")),
+                "total_transactions": 0,
+                "total_amount": 0,
+                "opening_balance": ob,
+                "average_transaction": 0,
+                "outstanding_amount": 0,
+                "paid_amount": 0,
+                "credit_note_total": 0,
+                "journal_credit": 0,
+                "receipt_count": 0,
+                "payment_ratio": 0,
+                "payment_pattern": "regular",
+                "average_payment_delay": 0,
+                "credit_score": 0,
+                "oldest_invoice_days": 0,
+                "first_transaction": None,
+                "last_transaction": None,
+                "invoices": []
+            }
+
+        for voucher in all_sales:
+            party_raw = voucher.get("party_name", "")
+            if not party_raw or party_raw.strip().lower() in {"unknown", "n/a", "none", ""}:
+                continue
+            party = synced_lower_to_canonical.get(party_raw.lower().strip())
+            if not party:
+                continue  # Skip non-debtor parties (creditors, depots, etc.)
             amount = safe_num(voucher.get("total_amount"))
             v_date_str = voucher.get("voucher_date", "")
-
-            if party not in behavior_map:
-                synced = synced_map.get(party.lower(), {})
-                ob = round(opening_balance_map.get(party, 0), 2)
-                behavior_map[party] = {
-                    "customer_name": party,
-                    "phone": synced.get("phone", ""),
-                    "state": synced.get("state", ""),
-                    "total_transactions": 0,
-                    "total_amount": 0,
-                    "opening_balance": ob,
-                    "average_transaction": 0,
-                    "outstanding_amount": 0,
-                    "paid_amount": 0,
-                    "credit_note_total": 0,
-                    "journal_credit": 0,
-                    "receipt_count": 0,
-                    "payment_ratio": 0,
-                    "payment_pattern": "regular",
-                    "average_payment_delay": 0,
-                    "credit_score": 0,
-                    "oldest_invoice_days": 0,
-                    "first_transaction": v_date_str,
-                    "last_transaction": v_date_str,
-                    "invoices": []
-                }
 
             behavior_map[party]["total_transactions"] += 1
             behavior_map[party]["total_amount"] += amount
@@ -1227,24 +1239,16 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                 pass
 
         # Add payment vouchers (DR party — e.g., cheque-bounce refunds) as DR-side activity
+        # Restricted to synced customers so non-debtor payment vouchers don't leak in
         for pmt in all_payments:
-            party = (pmt.get("party_name") or "").strip()
+            party_raw = (pmt.get("party_name") or "").strip()
+            if not party_raw:
+                continue
+            party = synced_lower_to_canonical.get(party_raw.lower())
             if not party:
                 continue
             amount = safe_num(pmt.get("amount"))
             v_date_str = pmt.get("voucher_date", "")
-            if party not in behavior_map:
-                synced = synced_map.get(party.lower(), {})
-                ob = round(opening_balance_map.get(party, 0), 2)
-                behavior_map[party] = {
-                    "customer_name": party, "phone": synced.get("phone", ""), "state": synced.get("state", ""),
-                    "total_transactions": 0, "total_amount": 0, "opening_balance": ob,
-                    "average_transaction": 0, "outstanding_amount": 0, "paid_amount": 0,
-                    "credit_note_total": 0, "journal_credit": 0, "receipt_count": 0,
-                    "payment_ratio": 0, "payment_pattern": "regular", "average_payment_delay": 0,
-                    "credit_score": 0, "oldest_invoice_days": 0,
-                    "first_transaction": v_date_str, "last_transaction": v_date_str, "invoices": []
-                }
             behavior_map[party]["total_transactions"] += 1
             behavior_map[party]["total_amount"] += amount
             if v_date_str:
@@ -1281,35 +1285,8 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             except (ValueError, TypeError):
                 pass
 
-        # Also add customers with only receipt activity (no sales in data)
-        for sc in synced_customers:
-            name = sc.get("customer_name")
-            if not name or name in behavior_map:
-                continue
-            if customer_payments.get(name.lower().strip(), 0) > 0 or safe_num(sc.get("outstanding_amount")) > 0 or opening_balance_map.get(name, 0) != 0:
-                ob = round(opening_balance_map.get(name, 0), 2)
-                behavior_map[name] = {
-                    "customer_name": name,
-                    "phone": sc.get("phone", ""),
-                    "state": sc.get("state", ""),
-                    "total_transactions": 0,
-                    "total_amount": 0,
-                    "opening_balance": ob,
-                    "average_transaction": 0,
-                    "outstanding_amount": safe_num(sc.get("outstanding_amount")),
-                    "paid_amount": 0,
-                    "credit_note_total": 0,
-                    "journal_credit": 0,
-                    "receipt_count": 0,
-                    "payment_ratio": 0,
-                    "payment_pattern": "no_transactions",
-                    "average_payment_delay": 0,
-                    "credit_score": 0,
-                    "oldest_invoice_days": 0,
-                    "first_transaction": None,
-                    "last_transaction": None,
-                    "invoices": []
-                }
+        # All synced customers are already in behavior_map (pre-seeded earlier), so no
+        # additional pass needed here.
 
         for party, data in behavior_map.items():
             party_key = party.lower().strip()
@@ -1439,6 +1416,15 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             del data["invoices"]
 
         customers = list(behavior_map.values())
+
+        # Filter: drop customers with no FY activity AND zero opening balance AND zero
+        # Tally outstanding (these are dormant ledgers — no signal for payment behaviour)
+        customers = [
+            c for c in customers
+            if c.get("total_transactions", 0) > 0
+            or abs(c.get("opening_balance", 0)) > 0.5
+            or abs(c.get("tally_outstanding", 0)) > 0.5
+        ]
 
         if customer:
             customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
