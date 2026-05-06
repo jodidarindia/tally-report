@@ -880,7 +880,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
       <p className="text-xs text-slate-400 mb-4">Payment behavior is calculated for the selected financial year. Opening balance carries forward from prior FYs. Click a row for detailed breakdown.</p>
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-380px)]">
           <table className="data-table min-w-[900px]" data-testid="payment-behavior-table">
             <thead>
               <tr>

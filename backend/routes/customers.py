@@ -360,7 +360,9 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                     # No FY invoices but outstanding exists → it's all from opening balance
                     # Use FY-start as reference for aging
                     try:
-                        fy_start_date = date_type(*[int(x) for x in fy_start.split("-")])
+                        if not fy_start_str:
+                            raise ValueError("no fy_start_str")
+                        fy_start_date = date_type(*[int(x) for x in fy_start_str.split("-")])
                         days_from_fy_start = (today - fy_start_date).days
                         cust["oldest_invoice_days"] = max(cust.get("oldest_invoice_days", 0), days_from_fy_start)
                         if days_from_fy_start > 90:

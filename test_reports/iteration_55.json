@@ -1,0 +1,63 @@
+{
+  "summary": "Iteration 55: CRM bug fixes verification. Backend fixes (Outstanding endpoint, JV per-line math, Sundry Debtor filter, Days Overdue, fy_start_str fix, payment-behavior, targets) all PASS — 8/8 pytest tests + curl spot-check confirms 4 Sundry Debtors, no creditors, Krishna jv_credit=-4243, oldest_invoice_days populated (194/348/350/399). HOWEVER the frontend has a CRITICAL regression: CRM page crashes immediately with 'ReferenceError: SortTh is not defined' on the default Targets tab — the SortTh component is defined locally inside the outstanding tab IIFE (line 352) but is also used inside the targets tab block (lines 591-596) where it is OUT OF SCOPE. This blocks ALL frontend testing of the CRM page (Targets, Outstanding, Payment Behaviour tabs are unreachable).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "CustomerCRM.js — Targets tab (default activeTab)",
+        "issue": "Uncaught ReferenceError: SortTh is not defined. SortTh is declared inside the outstanding-tab IIFE (line 352, scoped to that closure) but is also rendered inside the targets-tab block at lines 591-596 where it is not in scope. Since useState defaults activeTab='targets' (line 12), the page crashes on every CRM load — the dev runtime overlay shows 'Uncaught runtime errors: SortTh is not defined' and no CRM content is rendered. crm-page testid is never present. This is a hard regression introduced with the sticky/sortable headers refactor.",
+        "selector": "[data-testid=\"crm-page\"] (never mounts)",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "features_tested": {
+    "backend_outstanding_no_fy": "PASS — returns success, customers list, no creditors, oldest_invoice_days populated",
+    "backend_outstanding_fy_2025_26": "PASS — required fields opening_balance/total_sales/paid_amount/journal_credit/outstanding_amount all present",
+    "backend_jv_per_line_math": "PASS — Krishna Sales Corporation, RAIPUR shows journal_credit=-4243 (per-line DR/CR), not voucher-total",
+    "backend_only_sundry_debtors": "PASS — all 4 returned customers have ledger_group='Sundry Debtors', zero creditors",
+    "backend_days_overdue_populated": "PASS — oldest_invoice_days=194/348/350/399 across 4 customers",
+    "backend_payment_behavior": "PASS — returns success with customers array",
+    "backend_targets": "PASS — returns success",
+    "frontend_crm_loads": "FAIL — Page crashes with ReferenceError: SortTh is not defined (default Targets tab)",
+    "frontend_targets_sortable_headers": "BLOCKED — page crash prevents reaching Targets tab",
+    "frontend_outstanding_sticky_headers": "BLOCKED — page crash prevents reaching Outstanding tab",
+    "frontend_outstanding_sundry_debtors_only": "BLOCKED — page crash",
+    "frontend_payment_behavior_sticky_sort": "BLOCKED — page crash"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration55_crm_outstanding.py",
+    "/app/test_reports/pytest/iteration55_results.xml"
+  ],
+  "action_items": [
+    "FIX CRITICAL: Move SortTh component definition out of the outstanding-tab IIFE (currently lines 347-368) and define it at the top of the CustomerCRM functional component (after the state hooks, before the JSX return), OR redefine SortTh inside the targets-tab block. Same applies if Outstanding-tab is hidden via FY-completed branch. The current code crashes the page whenever activeTab='targets' (default) before any tab interaction.",
+    "After fix, retest: (a) /crm loads without React error, (b) Targets tab default render shows sortable headers and clicking 'Customer Name' / 'Target' / 'Achievement %' changes order, (c) Outstanding tab thead remains sticky during tbody scroll inside max-h-[calc(100vh-340px)] wrapper, (d) Payment Behaviour tab thead engages sticky inside the new max-h wrapper added at line 883."
+  ],
+  "critical_code_review_comments": [
+    "Component scoping bug: SortTh in CustomerCRM.js line 352 is a function-component declared inside an IIFE bound to activeTab==='outstanding'. It is referenced from the activeTab==='targets' branch (lines 591-596) where the IIFE has not run, hence ReferenceError. This was missed during the sortable-header refactor.",
+    "Both Outstanding and Targets tabs share the same sortField/sortDir state but each has its own .sort() block — fine, but SortTh duplication / lifting needs to handle both handlers.",
+    "Backend customers.py outstanding endpoint correctly uses get_jv_party_amount for line-by-line JV DR/CR parsing, returns small per-line jv_credit (-4243 for Krishna), filters to Sundry Debtors only, and populates oldest_invoice_days by bypassing FY-filter for invoice age (verified via curl).",
+    "fy_start_str fix on line 363 of customers.py confirmed — endpoint returns 200 OK without UndefinedName crash."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration55_crm_outstanding.py"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 pytest tests passed)",
+    "frontend": "0% — CRM page crashes on load with ReferenceError, all UI testing blocked"
+  },
+  "test_credentials": {
+    "admin": "admin / admin123",
+    "company_id": "03f638d1-eab0-47ee-aed6-59049ebb5207"
+  },
+  "seed_data_creation": "None — used existing Tally synced data",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend CRM math is fully verified — DO NOT re-test backend unless customers.py changes. The blocker is purely a frontend scoping bug in CustomerCRM.js (SortTh out of scope on Targets tab). Main agent should hoist SortTh to a component-level declaration (or duplicate it inside targets block). After fix, run Playwright: login via localStorage flowra_token + flowra_user + flowra_company_id, navigate to /crm, confirm [data-testid=crm-page] mounts, then test sticky thead by scrolling tbody (>200px) inside the max-h-[calc(100vh-340px)] wrapper for Outstanding/Targets and the new max-h-[calc(100vh-380px)] wrapper for Payment Behaviour, plus click [data-testid=sort-crm-customer_name] etc to verify sort changes row order.",
+  "rca_of_the_issue": "Root cause: During the recent sortable-header refactor, the developer extracted a SortTh inline component inside an IIFE only invoked when activeTab==='outstanding' (line 347 onwards). When activeTab==='targets' (the initial state), React renders the targets branch which references <SortTh /> at lines 591-596. JavaScript closure scoping means SortTh is undefined in the targets render scope, throwing ReferenceError before any DOM mounts. Reproduction: open /crm with admin login — page is blank with the dev error overlay. Mitigation: Define SortTh once at the component top level (between state hooks and return), parameterised by handleSort (or pass sortField/sortDir/setSortField/setSortDir as props). Each tab can wrap its own .sort() logic but reuse the single SortTh."
+}
