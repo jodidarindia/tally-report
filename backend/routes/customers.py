@@ -213,6 +213,7 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             if p:
                 customer_cn_total[p] = customer_cn_total.get(p, 0) + safe_num(cn.get("total_amount"))
         customer_jv_adjustment = {}
+        customer_jv_debit = {}  # Track DR-only portion separately for the Adjustment column
         for jv in fy_jvs:
             p = safe_str(jv.get("party_name")).strip().lower()
             if p:
@@ -220,6 +221,8 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 debit, credit = get_jv_party_amount(jv)
                 net_credit = credit - debit  # Positive = reduces outstanding
                 customer_jv_adjustment[p] = customer_jv_adjustment.get(p, 0) + net_credit
+                if debit > 0:
+                    customer_jv_debit[p] = customer_jv_debit.get(p, 0) + debit
 
         customer_map = {}
         customer_vouchers = {}
@@ -242,7 +245,9 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 "opening_balance": ob,
                 "tally_outstanding": safe_num(sc.get("outstanding_amount")),  # Tally closing balance
                 "outstanding_amount": 0,
-                "total_sales": 0,
+                "total_sales": 0,        # Total DR-side (sales + payment vouchers + JV DR)
+                "sales_only": 0,         # Only sales vouchers
+                "adjustment_dr": 0,      # Non-sales DR (payment vouchers + JV DR)
                 "voucher_count": 0,
                 "last_transaction": None,
                 "aging_0_30": 0.0, "aging_30_60": 0.0,
@@ -264,10 +269,10 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             v_date_str = voucher.get("voucher_date", "")
 
             customer_map[party]["total_sales"] += amount
+            customer_map[party]["sales_only"] += amount
             customer_map[party]["voucher_count"] += 1
             if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
                 customer_map[party]["last_transaction"] = v_date_str
-
             try:
                 parts = v_date_str.split("-")
                 if len(parts) == 3:
@@ -280,8 +285,9 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 customer_vouchers[party].append({"amount": amount, "days_old": 0})
 
         # Enrich synced customers with FY payment-voucher activity (DR party — e.g.,
-        # cheque-bounce refund, expense advance, debit-side adjustment). The Tally Sync
-        # Agent stores these inside receipt_vouchers with voucher_type='payment'.
+        # cheque-bounce refund, expense advance). Stored in receipt_vouchers with
+        # voucher_type='payment'. Booked into total_sales (DR side) AND adjustment_dr
+        # so the UI can show non-sales DR movements separately.
         for pmt in fy_payments:
             party_raw = (pmt.get("party_name") or "").strip()
             if not party_raw:
@@ -291,7 +297,8 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
                 continue
             amount = safe_num(pmt.get("amount"))
             v_date_str = pmt.get("voucher_date", "")
-            customer_map[party]["total_sales"] += amount  # DR side (treated like sales for math)
+            customer_map[party]["total_sales"] += amount  # DR side
+            customer_map[party]["adjustment_dr"] += amount
             customer_map[party]["voucher_count"] += 1
             if v_date_str and v_date_str > (customer_map[party].get("last_transaction") or ""):
                 customer_map[party]["last_transaction"] = v_date_str
@@ -332,6 +339,16 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             cust["receipt_count"] = len([r for r in fy_receipts if (r.get("party_name") or "").lower().strip() == party_key])
             cust["credit_note_total"] = round(cn_credit, 2)
             cust["journal_credit"] = round(jv_adjustment, 2)
+            # Add JV DR-only into the visible Adjustment column (already includes payment vouchers)
+            cust["adjustment_dr"] = round(cust.get("adjustment_dr", 0) + customer_jv_debit.get(party_key, 0), 2)
+
+            # Tally-verified badge: only meaningful when viewing today's FY (since
+            # customers.outstanding_amount stores Tally's current closing balance).
+            today_fy_year = today.year if today.month >= 4 else today.year - 1
+            is_base_fy_view = (fy_start_str == f"{today_fy_year}-04-01") or not fy_start_str
+            cust["tally_verified"] = bool(
+                is_base_fy_view and abs(cust["outstanding_amount"] - cust.get("tally_outstanding", 0)) < 1.0
+            )
 
             # FIFO aging on outstanding
             voucher_list = customer_vouchers.get(party, [])

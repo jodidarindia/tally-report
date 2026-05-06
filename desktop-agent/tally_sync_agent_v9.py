@@ -562,6 +562,26 @@ class TallyCollectionClient:
         except:
             return 0.0
 
+    def _signed_num(self, val):
+        """Like _num but preserves sign — used for ledger entries where Tally encodes
+        debit as negative and credit as positive in AMOUNT (or vice versa).
+        """
+        if val is None:
+            return 0.0
+        if isinstance(val, dict):
+            val = val.get('#text', val.get('$', '0'))
+        s = str(val).replace(',', '').strip()
+        if not s or s in ('None', 'null'):
+            return 0.0
+        try:
+            return float(s.split()[0])
+        except:
+            return 0.0
+
+    def _safe_float(self, val):
+        """Alias used by ledger-fetch helpers — preserves sign."""
+        return self._signed_num(val)
+
     def _qty_unit(self, val):
         if val is None:
             return 0.0, 'Pcs'
@@ -1158,7 +1178,8 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     if amount > 0:
                         break
 
-            # Ledger entries
+            # Ledger entries — capture per-line debit/credit direction so the
+            # backend can compute correct outstanding/JV math without heuristics.
             ledger_entries = []
             le = v.get('ALLLEDGERENTRIES.LIST', v.get('LEDGERENTRIES.LIST', []))
             if isinstance(le, dict):
@@ -1168,9 +1189,28 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     if not isinstance(entry, dict):
                         continue
                     lname = str(entry.get('LEDGERNAME', '')).strip()
-                    lamt = self._num(entry.get('AMOUNT', 0))
+                    raw_amt = entry.get('AMOUNT', 0)
+                    signed = self._signed_num(raw_amt)
+                    lamt = abs(signed)
+                    # Tally convention: ISDEEMEDPOSITIVE='Yes' → debit; 'No' → credit.
+                    # Fallback: signed AMOUNT < 0 means debit (older Tally exports).
+                    idp = entry.get('ISDEEMEDPOSITIVE', entry.get('@ISDEEMEDPOSITIVE', ''))
+                    if isinstance(idp, dict):
+                        idp = idp.get('#text', '')
+                    idp_str = str(idp or '').strip().lower()
+                    if idp_str in ('yes', 'true', '1'):
+                        is_debit = True
+                    elif idp_str in ('no', 'false', '0'):
+                        is_debit = False
+                    else:
+                        is_debit = signed < 0
                     if lname:
-                        ledger_entries.append({'ledger_name': lname, 'amount': lamt})
+                        ledger_entries.append({
+                            'ledger_name': lname,
+                            'amount': lamt,
+                            'is_debit': is_debit,
+                            'dr_or_cr': 'Dr' if is_debit else 'Cr',
+                        })
                     if amount == 0 and lamt > 0:
                         amount = lamt
                     if not party or party == 'Unknown':
@@ -1203,13 +1243,13 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     'narration': str(v.get('NARRATION', '') or '')
                 })
             elif vtype == 'journal':
-                # Journals: compute debit and credit per ledger entry
+                # Journals: compute debit and credit per ledger entry using captured direction
                 debit_total = 0.0
                 credit_total = 0.0
                 for entry in ledger_entries:
                     amt = entry.get('amount', 0)
-                    if amt < 0:
-                        debit_total += abs(amt)
+                    if entry.get('is_debit'):
+                        debit_total += amt
                     else:
                         credit_total += amt
 
@@ -2217,7 +2257,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.0.0-reconcile',
+                'agent_version': '9.1.0-jv-direction',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2274,7 +2314,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.0.0-reconcile',
+                'agent_version': '9.1.0-jv-direction',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -2897,6 +2937,8 @@ class FlowraSyncAgent:
             total_purchases = len(all_purchases_combined)
             total_dn = len(all_debit_notes_combined)
             total_contra = len(all_contra_combined)
+            income_count = sum(1 for l in (all_ledgers or []) if l.get('category') in ('direct_income', 'indirect_income'))
+            expense_count = sum(1 for l in (all_ledgers or []) if l.get('category') in ('direct_expense', 'indirect_expense'))
             logger.info("")
             logger.info(f"[DONE] {sync_mode.capitalize()} sync completed at {datetime.now().strftime('%H:%M:%S')}")
             logger.info(f"  FYs synced:     {', '.join(fys_to_sync)}")

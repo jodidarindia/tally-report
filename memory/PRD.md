@@ -95,18 +95,20 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas migration target, 3-tier backup plan, DO vs Atlas comparison).
 
 ## Changelog — Feb 2026 (CRM Stability)
-- Fixed `customers.py` UndefinedName crash (`fy_start` → `fy_start_str`) on line 363 that broke Outstanding aging fallback for opening-balance-only customers
-- Hoisted `SortTh` + `handleSort` to top of `CustomerCRM.js` component scope (was previously trapped inside the Outstanding-tab IIFE causing `ReferenceError: SortTh is not defined` on default Targets tab)
-- Added `max-h-[calc(100vh-380px)]` wrapper to PaymentBehaviorTab so its sticky `<thead>` engages on vertical scroll (already in place for Outstanding + Targets tabs)
-- **CRM Outstanding root-cause rewrite:** Source of truth is now the `customers` collection (synced from Tally Sundry Debtors group). Removed auto-add of parties from `sales_vouchers` that was leaking creditors (e.g., Epsilon Petrochem) and depot ledgers into the Outstanding tab. Removed hard-coded `SUNDRY_DEBTOR_GROUPS` filter that was dropping 36/37 real customers whose Tally sub-group is "Chhattisgarh Distributor"/"MP Distributor"/"Orrisa Distributor". Receipt/CN/JV aggregation now uses lowercase party keys for case-insensitive match with the customer master.
-- **Dashboard Overdue digest guard:** Drop overdue invoices for parties whose `customers.outstanding_amount` is ≤ 0 (Tally closing balance is the source of truth — prevents stale invoices from appearing as "overdue" when receipts aren't bill-allocated, e.g., Abhishek paid in full but allocation wasn't synced).
-- **OB anchor fix (per Tally export validation):** Tally master `OpeningBalance` reflects today's calendar FY (Tally auto-rolls into the new FY on 1-Apr each year). Code now anchors `customers.opening_balance` against today's FY-start instead of the stale `sync_status.financial_year` label.
-- **Payment-voucher classification fix:** The Tally Sync Agent stores payment vouchers (DR party — e.g., cheque-bounce refunds, expense advances) inside `receipt_vouchers` collection with `voucher_type='payment'`. The API was double-counting them as receipts (CR party), causing OB discrepancies (e.g., Indian Sales FY 26-27 showed OS=-76076 instead of +76076 because the ₹76076 cheque-bounce payment was reducing the balance instead of increasing it). Fixed in `customers.py` (Outstanding + Payment Behaviour endpoints) and `utils.py` (Overdue Digest) to split receipt_vouchers into receipts vs payments and treat payments as DR-side activity.
-- **Validated against user's Tally exports**:
-  - FY 25-26: **36/36 customers' Closing Balance match Tally exactly**, OB matches 31/36 (5 small diffs from synced JV data lacking explicit DR/CR direction per ledger entry — needs Tally agent enhancement)
-  - FY 26-27: All spot-checked customers (Indian Sales, Krishna, Saanvi, Shri Ram) match **OB and CB perfectly** ✅
-- **Payment Behaviour endpoint** — applied the same OB anchor + payment-voucher split + case-insensitive lookup + JV net (debit−credit) fix. Krishna/Indian Sales/Ankit/Saanvi/Shri Ram outstanding all match Tally CB exactly.
-- **Insider Result fixes:** Lifecycle StatCards (Active/Inactive/Lost/Total) are now clickable to filter the customer list with selected-state ring; dropdown options show counts e.g. "Active (26)"; renderForecast/renderSpip/renderConcentration have defensive `|| []` fallbacks; catch block logs full error to console with status code in toast.
+- Fixed `customers.py` UndefinedName crash, hoisted `SortTh` in `CustomerCRM.js`, added sticky-header wrappers
+- **CRM Outstanding rewrite:** Source of truth = `customers` collection; removed creditor leak (Epsilon Petrochem) and group-name filter false-negatives
+- **Dashboard Overdue digest:** Skip parties with `customers.outstanding_amount ≤ 0`
+- **OB anchor fix:** Anchored against today's calendar FY (Tally master OB = today's open FY due to auto-roll)
+- **Payment-voucher classification fix:** Tally agent stores payment vouchers (DR party) in `receipt_vouchers` with `voucher_type='payment'`. API now splits the collection and treats payments as DR-side activity (sales math) instead of CR
+- **Adjustment column added** to Outstanding tab — separates pure sales (`sales_only`) from non-sales DR (`adjustment_dr` = payment vouchers + JV debits like interest charges). Validated against user's Tally export: Indian Sales FY 26-27 shows Sales=₹0, Adjustment=₹85,293 (76,076 cheque-bounce payment + 9,217 interest JV) — exactly matching Tally
+- **Tally Verified ✓ green badge** added next to customer name when computed OS reconciles to `customers.outstanding_amount` (Tally master CB) AND viewing today's FY. FY 26-27 shows 9/9 customers verified vs Tally export
+- **Tally Sync Agent v9.1.0-jv-direction:**
+  - Added missing `_safe_float` method (was crashing fallback ledger fetch)
+  - Fixed `income_count`/`expense_count` undefined error at end of sync
+  - **Per-line DR/CR direction now captured in `ledger_entries`** using `ISDEEMEDPOSITIVE` attribute + signed AMOUNT fallback. Each entry now has `is_debit: bool` and `dr_or_cr: 'Dr'/'Cr'` fields. Backend `get_jv_party_amount()` already honors these (priority 1) — next user sync will close the remaining 5 OB mismatches automatically
+  - Added `_signed_num()` helper that preserves sign (the old `_num()` always returned `abs()`, which broke JV debit detection)
+  - Bumped `agent_version` to `9.1.0-jv-direction`
+- **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
 
 ## Known Minor (Out of Scope, FYI)
 - `AppNavbar.js:81` has `<span>` nested inside `<option>` causing a React hydration warning. Not a functional bug.

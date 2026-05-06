@@ -376,13 +376,14 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 </button>
               </div>
             <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-340px)]">
-                <table className="data-table min-w-[1000px]" data-testid="outstanding-table">
+                <table className="data-table min-w-[1100px]" data-testid="outstanding-table">
                   <thead>
                     <tr>
                       <SortTh field="customer_name" label="Customer Name" />
                       <th>Group</th>
                       <SortTh field="opening_balance" label="Opening Bal" className="numeric" />
-                      <SortTh field="total_sales" label="Total Sales" className="numeric" />
+                      <SortTh field="total_sales" label="Sales" className="numeric" />
+                      <SortTh field="adjustment_dr" label="Adjustment" className="numeric" />
                       <SortTh field="paid_amount" label="Paid" className="numeric" />
                       <SortTh field="outstanding_amount" label="Outstanding" className="numeric" />
                       <SortTh field="oldest_invoice_days" label="Days Old" className="numeric" />
@@ -402,15 +403,37 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                           overdue: 'bg-orange-100 text-orange-700',
                           critical: 'bg-red-100 text-red-700'
                         };
+                        const verified = !!customer.tally_verified;
                         return (
                       <tr key={idx}>
-                        <td className="font-medium text-slate-900">{customer.customer_name}</td>
+                        <td className="font-medium text-slate-900">
+                          <span className="inline-flex items-center gap-1.5">
+                            {customer.customer_name}
+                            {verified && (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                title={`Tally Verified — closing balance reconciles with Tally master (Rs.${(customer.tally_outstanding||0).toLocaleString('en-IN', {maximumFractionDigits: 0})})`}
+                                data-testid={`tally-verified-${idx}`}
+                              >
+                                <span className="text-[8px]">✓</span> Tally
+                              </span>
+                            )}
+                          </span>
+                        </td>
                         <td className="text-slate-500 text-xs">{customer.ledger_group || '-'}</td>
                         <td className="numeric text-slate-500">
                           {(customer.opening_balance || 0) !== 0 ? `Rs.${(customer.opening_balance || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '-'}
                         </td>
                         <td className="numeric text-slate-600">
-                          Rs.{(customer.total_sales || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                          Rs.{(customer.sales_only || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                        </td>
+                        <td
+                          className="numeric text-amber-700"
+                          title="Non-sales debits (payment vouchers TO party + JV debits like interest charges)"
+                        >
+                          {(customer.adjustment_dr || 0) !== 0
+                            ? `Rs.${(customer.adjustment_dr || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}`
+                            : '-'}
                         </td>
                         <td className="numeric text-emerald-600">
                           Rs.{(customer.paid_amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
