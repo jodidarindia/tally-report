@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Download, Shield, FileArchive, RefreshCw, CheckCircle2 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 

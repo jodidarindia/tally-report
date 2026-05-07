@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Menu, X, Building2, RefreshCw, ChevronDown, User, LogOut, PlayCircle
+  Menu, X, Building2, RefreshCw, ChevronDown, User, LogOut, PlayCircle, FileArchive
 } from 'lucide-react';
 
 const AppNavbar = ({
@@ -142,6 +142,15 @@ const AppNavbar = ({
                   {(user?.companies || []).length > 1 && (
                     <button onClick={() => { onSwitchCompany(); setShowUserMenu(false); }} className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2" data-testid="switch-company-btn">
                       <Building2 size={14} className="text-slate-400" /> Switch Company
+                    </button>
+                  )}
+                  {role === 'admin' && (
+                    <button
+                      onClick={() => { setCurrentPage('data-export'); setShowUserMenu(false); }}
+                      className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+                      data-testid="export-data-btn"
+                    >
+                      <FileArchive size={14} className="text-slate-400" /> Export Your Data
                     </button>
                   )}
                   <hr className="my-1 border-slate-100" />

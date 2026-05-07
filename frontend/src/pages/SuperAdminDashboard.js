@@ -7,9 +7,10 @@ import {
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
   UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart, Download,
-  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift
+  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift, Database
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
+import SuperAdminBackups from './SuperAdminBackups';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -251,6 +252,7 @@ const SuperAdminDashboard = ({ token }) => {
     { id: 'renewals', label: 'Renewals', icon: Calendar },
     { id: 'referrals', label: 'Referrals', icon: Gift },
     { id: 'questionnaires', label: 'Leads', icon: FileText },
+    { id: 'backups', label: 'Backups', icon: Database },
     { id: 'activity', label: 'Activity', icon: Activity },
   ];
 
@@ -858,6 +860,9 @@ const SuperAdminDashboard = ({ token }) => {
 
       {/* ===== ACTIVITY TAB ===== */}
       {activeTab === 'activity' && <ActivityLog />}
+
+      {/* ===== BACKUPS TAB ===== */}
+      {activeTab === 'backups' && <SuperAdminBackups />}
 
       {/* ===== MODALS ===== */}
 

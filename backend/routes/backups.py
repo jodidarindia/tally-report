@@ -91,7 +91,12 @@ async def run_backup_now(request: Request):
             err = (stderr or b"").decode(errors="ignore")[-500:]
             return APIResponse(success=False, error=f"Backup script failed (exit {proc.returncode}): {err}")
         log = (stdout or b"").decode(errors="ignore")[-500:]
-        await log_audit(db, sa, "super_admin.backup_run", details={"log": log}, ip=get_client_ip(request))
+        await log_audit(
+            "super_admin.backup_run",
+            sa.get("username", ""),
+            details=log,
+            ip_address=get_client_ip(request),
+        )
         return APIResponse(success=True, message="Backup completed", data={"log": log})
     except Exception as e:
         logger.exception("Backup run error")
@@ -110,7 +115,12 @@ async def download_backup(filename: str, request: Request):
     fp = BACKUP_DIR / filename
     if not fp.exists():
         return APIResponse(success=False, error="Backup not found")
-    await log_audit(db, sa, "super_admin.backup_download", details={"filename": filename}, ip=get_client_ip(request))
+    await log_audit(
+        "super_admin.backup_download",
+        sa.get("username", ""),
+        target=filename,
+        ip_address=get_client_ip(request),
+    )
     return FileResponse(fp, media_type="application/gzip", filename=filename)
 
 
@@ -125,7 +135,12 @@ async def delete_backup(filename: str, request: Request):
     if not fp.exists():
         return APIResponse(success=False, error="Backup not found")
     fp.unlink()
-    await log_audit(db, sa, "super_admin.backup_delete", details={"filename": filename}, ip=get_client_ip(request))
+    await log_audit(
+        "super_admin.backup_delete",
+        sa.get("username", ""),
+        target=filename,
+        ip_address=get_client_ip(request),
+    )
     return APIResponse(success=True, message="Backup deleted")
 
 
@@ -197,9 +212,13 @@ async def export_tenant_data(request: Request):
 
     buf.seek(0)
     fname = f"flowra_data_export_{tenant_id[:8]}_{ts}.zip"
-    await log_audit(db, user, "admin.data_export",
-                     details={"counts": counts, "filename": fname},
-                     ip=get_client_ip(request))
+    await log_audit(
+        "admin.data_export",
+        user.get("username", ""),
+        tenant_id=tenant_id,
+        details=f"counts={counts}, filename={fname}",
+        ip_address=get_client_ip(request),
+    )
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/zip",

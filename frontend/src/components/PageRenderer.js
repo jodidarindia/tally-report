@@ -15,6 +15,7 @@ import CACorner from '../pages/CACorner';
 import InsiderResult from '../pages/InsiderResult';
 import DispatchAdmin from '../pages/DispatchAdmin';
 import SalesmanOrderApp from '../pages/SalesmanOrderApp';
+import UserAdminDataExport from '../pages/UserAdminDataExport';
 
 const FeatureLocked = ({ featureId }) => (
   <div className="flex items-center justify-center h-[60vh]" data-testid="feature-locked">
@@ -72,6 +73,13 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     }
     case 'salesman-orders': {
       return <SalesmanOrderApp user={user} selectedFY={selectedFY} companyId={selectedCompany} />;
+    }
+    case 'data-export': {
+      // Tenant admin only — DPDP right-to-portability download
+      if (user?.role !== 'admin' && user?.role !== 'super_admin') {
+        return <FeatureLocked featureId="data_export" />;
+      }
+      return <UserAdminDataExport />;
     }
     default: return gated('dashboard', <Dashboard selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
   }
