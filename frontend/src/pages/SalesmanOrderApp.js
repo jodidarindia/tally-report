@@ -30,9 +30,10 @@ export default function SalesmanOrderApp({ user, selectedFY, companyId }) {
    SALESMAN VIEW — Place orders, view history
    ═══════════════════════════════════════════════════════ */
 function SalesmanView({ companyId, selectedFY }) {
-  const [tab, setTab] = useState('new'); // new | orders | beats
+  const [tab, setTab] = useState('dashboard'); // dashboard | new | orders | beats
   const [customers, setCustomers] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [stats, setStats] = useState(null);
   const [selCustomer, setSelCustomer] = useState(null);
   const [viewOrder, setViewOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,15 +42,17 @@ function SalesmanView({ companyId, selectedFY }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [cr, or] = await Promise.all([
+      const [cr, or_, st] = await Promise.all([
         axios.get(`${API}/api/salesman-orders/my-customers?company_id=${companyId||''}`, {headers:hdr()}),
         axios.get(`${API}/api/salesman-orders/orders?company_id=${companyId||''}`, {headers:hdr()}),
+        axios.get(`${API}/api/salesman-orders/my-stats?company_id=${companyId||''}&fy=${selectedFY||''}`, {headers:hdr()}),
       ]);
       if(cr.data.success) setCustomers(cr.data.data.customers||[]);
-      if(or.data.success) setOrders(or.data.data.orders||[]);
+      if(or_.data.success) setOrders(or_.data.data.orders||[]);
+      if(st.data.success) setStats(st.data.data||null);
     } catch(e) { console.error(e); }
     setLoading(false);
-  }, [companyId, hdr]);
+  }, [companyId, hdr, selectedFY]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -61,9 +64,16 @@ function SalesmanView({ companyId, selectedFY }) {
         <h1 className="text-lg sm:text-xl font-bold text-slate-900">Sales Orders</h1>
       </div>
       <div className="flex gap-1 mb-4 border-b border-slate-200 overflow-x-auto">
-        {[{id:'new',label:'New Order'},{id:'orders',label:`My Orders (${orders.length})`},{id:'beats',label:'Beat Plan'}].map(t=>
+        {[
+          {id:'dashboard',label:'Dashboard'},
+          {id:'new',label:'New Order'},
+          {id:'orders',label:`My Orders (${orders.length})`},
+          {id:'beats',label:'Beat Plan'},
+        ].map(t=>
           <button key={t.id} onClick={()=>setTab(t.id)} className={`px-3 sm:px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition ${tab===t.id?'border-blue-600 text-blue-600':'border-transparent text-slate-500 hover:text-slate-700'}`} data-testid={`tab-${t.id}`}>{t.label}</button>)}
       </div>
+
+      {tab==='dashboard' && <SalesmanDashboard stats={stats} fy={selectedFY}/>}
 
       {tab==='new' && !selCustomer && (
         <div className="space-y-2" data-testid="customer-list">
@@ -239,7 +249,12 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   const removeFromCart = (idx) => { setCart(cart.filter((_,i)=>i!==idx)); };
 
   const total = cart.reduce((s,c)=>s+(c.quantity*c.price), 0);
-  const filtered = catSearch ? catalog.filter(c=>c.item_name.toLowerCase().includes(catSearch.toLowerCase())) : catalog;
+  // Global search across name + part_number
+  const filtered = catSearch ? catalog.filter(c => {
+    const s = catSearch.toLowerCase();
+    return (c.item_name||'').toLowerCase().includes(s)
+        || (c.part_number||'').toLowerCase().includes(s);
+  }) : catalog;
 
   const submit = async () => {
     if(cart.length===0) return toast.error('Add items to cart');
@@ -268,6 +283,7 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
             <div key={i} className="flex items-start gap-2 py-1.5 border-b border-blue-100 last:border-0">
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium text-slate-800 truncate">{c.item_name}</div>
+                {c.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {c.part_number}</div>}
                 <div className="text-[10px] text-slate-500">Rs.{c.price} x {c.quantity} = Rs.{fmt(c.quantity*c.price)}</div>
               </div>
               <div className="flex items-center gap-1">
@@ -290,14 +306,15 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
 
       {/* Catalog */}
       <div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-        <input value={catSearch} onChange={e=>setCatSearch(e.target.value)} placeholder="Search products..." className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="cat-search"/></div>
+        <input value={catSearch} onChange={e=>setCatSearch(e.target.value)} placeholder="Search by name or part number..." className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="cat-search"/></div>
       <div className="space-y-1.5" data-testid="catalog">
         {filtered.map((item,i)=>(
           <div key={i} className="bg-white rounded-lg border border-slate-200 p-2.5 flex items-center justify-between" data-testid={`cat-${i}`}>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
-              <div className="flex gap-3 text-[10px] text-slate-500">
-                <span>Rs.{item.price}</span>
+              {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
+              <div className="flex gap-3 text-[10px] text-slate-500 flex-wrap">
+                <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
                 <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>Stock: {item.stock_qty} {item.unit}</span>
                 {item.stock_group && <span className="hidden sm:inline">{item.stock_group}</span>}
               </div>
@@ -355,7 +372,10 @@ function OrderDetailModal({ order, onClose, isAdmin, hdr }) {
               {(o.items||[]).map((it,i)=>(
                 <div key={i} className="px-3 py-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-800 truncate">{it.item_name}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-slate-800 truncate">{it.item_name}</div>
+                      {it.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {it.part_number}</div>}
+                    </div>
                     <span className="text-xs text-slate-600 flex-shrink-0">x{it.quantity} @ Rs.{it.price} = <strong>Rs.{fmt(it.amount)}</strong></span>
                   </div>
                   {it.remark && <div className="text-[10px] text-slate-400 mt-0.5 italic">{it.remark}</div>}
@@ -447,3 +467,90 @@ function MiniStat({ label, value, amount, color }) {
   return <div className="bg-white rounded-lg border border-slate-200 p-2"><div className="text-[9px] text-slate-500">{label}</div><div className="text-sm font-bold" style={{color}}>{value}</div><div className="text-[9px] text-slate-400">Rs.{fmt(amount)}</div></div>;
 }
 function Loader() { return <div className="flex items-center justify-center h-48"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"/></div>; }
+
+function SalesmanDashboard({ stats, fy }) {
+  if (!stats) return <p className="text-center text-xs text-slate-400 py-6" data-testid="dashboard-empty">No stats available.</p>;
+  if (!stats.has_master) return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-800" data-testid="dashboard-no-master">
+      You haven't been mapped as a salesman by your admin yet. Once your admin adds your name in the Salesman Performance page (with a target & customer list for FY {fy}), your dashboard will populate here automatically.
+    </div>
+  );
+  const ach = stats.achievement_percentage || 0;
+  const achColor = ach >= 100 ? 'text-green-600 bg-green-100' : ach >= 75 ? 'text-blue-600 bg-blue-100' : ach >= 50 ? 'text-amber-600 bg-amber-100' : 'text-red-600 bg-red-100';
+  const fmtNum = (n) => Number(n||0).toLocaleString('en-IN', {maximumFractionDigits:0});
+
+  return (
+    <div className="space-y-3" data-testid="salesman-dashboard">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        <KPI label="Achieved" value={`Rs.${fmtNum(stats.achieved_amount)}`} sub={`${stats.total_customers} customers`} color="blue" testid="kpi-achieved"/>
+        <KPI label="Expected (YTD)" value={`Rs.${fmtNum(stats.expected_target)}`} sub={`Annual: Rs.${fmtNum(stats.annual_target)}`} color="slate" testid="kpi-expected"/>
+        <KPI label="Monthly Target" value={`Rs.${fmtNum(stats.monthly_target)}`} sub={`Quarterly: Rs.${fmtNum(stats.quarterly_target)}`} color="slate" testid="kpi-monthly"/>
+        <div className={`rounded-lg p-2.5 ${achColor}`} data-testid="kpi-achievement">
+          <div className="text-[10px] uppercase tracking-wide opacity-70">Achievement</div>
+          <div className="text-xl sm:text-2xl font-bold mt-0.5">{ach}%</div>
+          <div className="text-[10px] opacity-70 mt-0.5">{ach >= 100 ? 'Target met!' : 'vs YTD-prorated'}</div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden" data-testid="customer-breakdown">
+        <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-slate-700">Customer-wise Sales (FY {stats.fy})</h3>
+          <span className="text-[10px] text-slate-400">{stats.customers.length} active</span>
+        </div>
+        <div className="max-h-80 overflow-y-auto">
+          {stats.customers.length === 0 && <p className="text-center text-xs text-slate-400 py-6">No sales recorded yet.</p>}
+          {stats.customers.map((c, i) => (
+            <details key={i} className="border-b border-slate-100 last:border-0 group" data-testid={`cust-${i}`}>
+              <summary className="px-3 py-2 cursor-pointer hover:bg-slate-50 flex items-center justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-slate-800 truncate">{c.customer_name}</div>
+                  <div className="text-[10px] text-slate-500">{c.count} order{c.count !== 1 ? 's' : ''} · {c.items.length} item{c.items.length !== 1 ? 's' : ''}</div>
+                </div>
+                <span className="text-xs font-semibold text-blue-600 flex-shrink-0">Rs.{fmtNum(c.amount)}</span>
+              </summary>
+              <div className="px-3 pb-2 bg-slate-50 text-[10px]">
+                {c.items.slice(0, 20).map((it, j) => (
+                  <div key={j} className="flex justify-between py-0.5">
+                    <span className="truncate">{it.item_name}</span>
+                    <span className="text-slate-500 flex-shrink-0 ml-2">x{it.quantity} = Rs.{fmtNum(it.amount)}</span>
+                  </div>
+                ))}
+                {c.items.length > 20 && <div className="text-[10px] text-slate-400 italic mt-1">+{c.items.length - 20} more line items</div>}
+              </div>
+            </details>
+          ))}
+        </div>
+      </div>
+
+      {stats.items_sold && stats.items_sold.length > 0 && (
+        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden" data-testid="items-sold">
+          <div className="px-3 py-2 border-b border-slate-100">
+            <h3 className="text-xs font-semibold text-slate-700">Top Items Sold</h3>
+          </div>
+          <div className="max-h-60 overflow-y-auto">
+            {stats.items_sold.slice(0, 25).map((it, i) => (
+              <div key={i} className="px-3 py-1.5 border-b border-slate-50 last:border-0 flex items-center justify-between text-xs">
+                <span className="truncate flex-1 min-w-0">{it.item_name}</span>
+                <span className="text-slate-500 flex-shrink-0 ml-2">Qty {fmtNum(it.quantity)} · Rs.{fmtNum(it.revenue)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KPI({ label, value, sub, color = 'slate', testid }) {
+  const colorMap = {
+    blue: 'bg-blue-50 border-blue-100 text-blue-900',
+    slate: 'bg-white border-slate-200 text-slate-900',
+  };
+  return (
+    <div className={`rounded-lg border p-2.5 ${colorMap[color]}`} data-testid={testid}>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-base sm:text-lg font-bold mt-0.5 truncate">{value}</div>
+      {sub && <div className="text-[10px] text-slate-400 mt-0.5 truncate">{sub}</div>}
+    </div>
+  );
+}

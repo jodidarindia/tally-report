@@ -168,6 +168,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
     { id: 'performance', label: 'Performance', icon: TrendingUp },
     { id: 'items', label: 'Item-wise Sales', icon: Package },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
+    { id: 'beats', label: 'Beat Plans', icon: Calendar },
     { id: 'manage', label: 'Manage Salesmen', icon: Users },
   ];
 
@@ -467,6 +468,11 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
         <SalesmanOrderApp user={{role: 'admin'}} selectedFY={selectedFY} companyId={companyId} />
       )}
 
+      {/* ========== BEAT PLANS TAB ========== */}
+      {activeTab === 'beats' && (
+        <BeatPlansAdmin companyId={companyId} masterList={masterList} customers={customers} />
+      )}
+
       {/* ========== MANAGE TAB ========== */}
       {activeTab === 'manage' && (
         <div className="space-y-3">
@@ -618,3 +624,131 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
 };
 
 export default SalesmanPerformance;
+
+// ─── Beat Plans Admin Tab ────────────────────────────────────────────────
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function BeatPlansAdmin({ companyId, masterList, customers }) {
+  const [selSalesman, setSelSalesman] = useState('');
+  const [beats, setBeats] = useState([]); // [{customer_name, day_of_week, frequency}]
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const hdr = useCallback(() => ({
+    Authorization: `Bearer ${localStorage.getItem('flowra_token')}`,
+    'X-Company-Id': companyId || '',
+  }), [companyId]);
+
+  const loadBeats = useCallback(async (sm) => {
+    if (!sm) { setBeats([]); return; }
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/salesman-orders/beats?salesman=${encodeURIComponent(sm)}&company_id=${companyId || ''}`, { headers: hdr() });
+      if (r.data.success) setBeats((r.data.data.beats || []).map(b => ({
+        customer_name: b.customer_name, day_of_week: b.day_of_week, frequency: b.frequency || 'weekly',
+      })));
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [companyId, hdr]);
+
+  useEffect(() => { loadBeats(selSalesman); }, [selSalesman, loadBeats]);
+
+  const addRow = () => setBeats(p => [...p, { customer_name: '', day_of_week: 'Mon', frequency: 'weekly' }]);
+  const updateRow = (i, key, val) => setBeats(p => p.map((b, idx) => idx === i ? { ...b, [key]: val } : b));
+  const removeRow = (i) => setBeats(p => p.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    if (!selSalesman) { toast.error('Select a salesman first'); return; }
+    setSaving(true);
+    try {
+      const r = await axios.post(`${API}/salesman-orders/beats`,
+        { salesman: selSalesman, beats: beats.filter(b => b.customer_name) },
+        { headers: hdr() });
+      if (r.data.success) toast.success(r.data.message); else toast.error(r.data.error);
+    } catch { toast.error('Save failed'); }
+    setSaving(false);
+  };
+
+  // Group beats by day for visualization
+  const byDay = DAYS.reduce((acc, d) => {
+    acc[d] = beats.filter(b => b.day_of_week === d);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-4" data-testid="beat-plans-admin">
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-3">
+          <div className="flex-1">
+            <label className="text-[11px] text-slate-500 font-semibold uppercase block mb-1">Salesman</label>
+            <select value={selSalesman} onChange={e => setSelSalesman(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="beat-salesman-select">
+              <option value="">— Select salesman —</option>
+              {masterList.map((m, i) => <option key={i} value={m.salesman_name}>{m.salesman_name}</option>)}
+            </select>
+          </div>
+          {selSalesman && <>
+            <button onClick={addRow} className="px-3 py-2 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 flex items-center gap-1.5" data-testid="add-beat-btn">
+              <Plus size={13} /> Add Beat
+            </button>
+            <button onClick={save} disabled={saving} className="px-3 py-2 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5" data-testid="save-beats-btn">
+              <Save size={13} /> {saving ? 'Saving...' : 'Save Plan'}
+            </button>
+          </>}
+        </div>
+        {!selSalesman && <p className="text-xs text-slate-400 italic">Select a salesman to view or edit their beat plan.</p>}
+      </div>
+
+      {selSalesman && (loading ? (
+        <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>
+      ) : (
+        <>
+          {/* Grid view: per-day customer mapping */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-slate-100"><h3 className="text-xs font-semibold text-slate-700">Weekly Plan ({beats.length} beat{beats.length !== 1 ? 's' : ''})</h3></div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 p-3">
+              {DAYS.map(day => (
+                <div key={day} className="bg-slate-50 rounded-lg p-2 min-h-[100px]" data-testid={`day-col-${day}`}>
+                  <div className="text-[10px] uppercase font-bold text-slate-600 mb-1.5">{day}</div>
+                  {byDay[day].length === 0 && <p className="text-[9px] text-slate-400 italic">No visits</p>}
+                  {byDay[day].map((b, i) => (
+                    <div key={i} className="bg-white rounded px-1.5 py-1 text-[10px] mb-1 border border-slate-100">
+                      {b.customer_name || <span className="text-slate-400 italic">(unset)</span>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Editable rows */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-slate-100"><h3 className="text-xs font-semibold text-slate-700">Edit Beats</h3></div>
+            <div className="divide-y divide-slate-100">
+              {beats.length === 0 && <p className="text-xs text-slate-400 italic px-3 py-6 text-center">No beats yet. Click "Add Beat" to create one.</p>}
+              {beats.map((b, i) => (
+                <div key={i} className="px-3 py-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center" data-testid={`beat-row-${i}`}>
+                  <div className="flex-1 min-w-0 w-full sm:w-auto">
+                    <SearchableSelect value={b.customer_name} onChange={v => updateRow(i, 'customer_name', v)}
+                      options={customers.map(c => ({ value: c, label: c }))} placeholder="Select customer" />
+                  </div>
+                  <select value={b.day_of_week} onChange={e => updateRow(i, 'day_of_week', e.target.value)}
+                    className="text-xs border border-slate-200 rounded px-2 py-1.5" data-testid={`beat-day-${i}`}>
+                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  <select value={b.frequency} onChange={e => updateRow(i, 'frequency', e.target.value)}
+                    className="text-xs border border-slate-200 rounded px-2 py-1.5" data-testid={`beat-freq-${i}`}>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Bi-weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                  <button onClick={() => removeRow(i)} className="text-red-500 hover:bg-red-50 p-1.5 rounded" data-testid={`beat-remove-${i}`}><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ))}
+    </div>
+  );
+}

@@ -13,6 +13,8 @@ const AppNavbar = ({
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef(null);
+  const role = user?.role || '';
+  const showBranchToggle = role === 'admin' || role === 'super_admin';
 
   useEffect(() => {
     const handler = (e) => {
@@ -86,6 +88,7 @@ const AppNavbar = ({
               <span className="text-[10px] text-slate-400 hidden sm:inline">{syncStatus?.last_sync ? 'Synced' : 'No sync'}</span>
             </div>
 
+            {showBranchToggle && (
             <div className="flex items-center gap-1.5" data-testid="branch-toggle-wrapper">
               <span className="text-[10px] text-slate-400 hidden sm:inline">Branch</span>
               <button
@@ -104,6 +107,7 @@ const AppNavbar = ({
                 <span className="hidden sm:inline whitespace-nowrap">{excludeBranches ? `Excluded${branchPartyCount > 0 ? ` (${branchPartyCount})` : ''}` : 'Included'}</span>
               </button>
             </div>
+            )}
 
             <div className="relative" ref={userMenuRef}>
               <button

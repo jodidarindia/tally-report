@@ -79,6 +79,201 @@ def _filter_branch_vouchers(vouchers, branch_set):
     return [v for v in vouchers if v.get("party_name") not in branch_set]
 
 
+@router.patch("/inventory/items/{item_id}/abc")
+async def set_abc_category(request: Request, item_id: str):
+    """Set A/B/C/D classification for a single inventory item.
+    Body: { "abc_category": "A" | "B" | "C" | "D" | "" }  (empty unsets)
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        cat = (body.get("abc_category") or "").strip().upper()
+        if cat and cat not in ("A", "B", "C", "D"):
+            return APIResponse(success=False, error="abc_category must be A, B, C, or D")
+        q = _build_query(ctx, body.get("company_id"))
+        update = {"$set": {"abc_category": cat}} if cat else {"$unset": {"abc_category": ""}}
+        result = await db.inventory_items.update_one({**q, "item_id": item_id}, update)
+        if result.matched_count == 0:
+            # Try by item_name fallback (item_id sometimes is the name)
+            result = await db.inventory_items.update_one({**q, "item_name": item_id}, update)
+        return APIResponse(success=True, data={"matched": result.matched_count, "modified": result.modified_count})
+    except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/inventory/abc/auto-assign")
+async def auto_assign_abc(request: Request):
+    """Bulk-assign A/B/C/D using Pareto / 80-15-4-1 rule on FY revenue:
+       A = top 80% of revenue, B = next 15%, C = next 4%, D = remainder.
+    Body: { "fy": "2026-27", "company_id": "..." }
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        fy = body.get("fy") or ""
+        q = _build_query(ctx, body.get("company_id"))
+
+        # Pull sales vouchers and tally per item_name (FY-scoped if provided)
+        sales = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "items": 1}).to_list(50000)
+        if fy:
+            from utils import filter_vouchers_by_fy
+            sales = filter_vouchers_by_fy(sales, fy)
+        from collections import defaultdict
+        rev_by_item = defaultdict(float)
+        for v in sales:
+            for vi in v.get("items", []) or []:
+                iname = (vi.get("item") or vi.get("item_name") or "").strip().lower()
+                if not iname:
+                    continue
+                rev_by_item[iname] += abs(safe_num(vi.get("amount") or vi.get("value") or 0))
+
+        total_rev = sum(rev_by_item.values())
+        if total_rev <= 0:
+            return APIResponse(success=False, error="No sales revenue found for the selected FY")
+
+        # Sort items by revenue descending, then assign A/B/C/D by cumulative %
+        sorted_items = sorted(rev_by_item.items(), key=lambda x: -x[1])
+        cum = 0.0
+        item_to_abc = {}
+        for iname, rev in sorted_items:
+            cum += rev
+            pct = cum / total_rev * 100
+            if pct <= 80:
+                item_to_abc[iname] = "A"
+            elif pct <= 95:
+                item_to_abc[iname] = "B"
+            elif pct <= 99:
+                item_to_abc[iname] = "C"
+            else:
+                item_to_abc[iname] = "D"
+
+        # Apply to inventory_items
+        all_inv = await db.inventory_items.find(q, {"_id": 0, "item_id": 1, "item_name": 1}).to_list(50000)
+        modified = 0
+        for it in all_inv:
+            iname = (it.get("item_name") or "").strip().lower()
+            if iname in item_to_abc:
+                await db.inventory_items.update_one(
+                    {**q, "item_id": it.get("item_id")},
+                    {"$set": {"abc_category": item_to_abc[iname]}},
+                )
+                modified += 1
+            else:
+                # Items with zero revenue → D
+                await db.inventory_items.update_one(
+                    {**q, "item_id": it.get("item_id")},
+                    {"$set": {"abc_category": "D"}},
+                )
+
+        # Counts
+        counts = {"A": 0, "B": 0, "C": 0, "D": 0}
+        for v in item_to_abc.values():
+            counts[v] += 1
+        counts["D"] += len(all_inv) - len(item_to_abc)
+
+        return APIResponse(success=True, data={"counts": counts, "modified": modified, "total_items": len(all_inv)})
+    except Exception as e:
+        logger.error(f"ABC auto-assign error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/inventory/category-sales")
+async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """For an ABC category, return:
+      - items in that category with FY qty + revenue
+      - per-item top customers (qty + revenue)
+    Used by the Inventory Analytics "Category Sales" tab.
+    """
+    try:
+        from collections import defaultdict
+        from utils import filter_vouchers_by_fy
+        ctx = await get_tenant_context(request)
+        cat = (abc or "").upper().strip()
+        if cat not in ("A", "B", "C", "D"):
+            return APIResponse(success=False, error="abc must be A, B, C, or D")
+        q = _build_query(ctx, company_id)
+
+        items = await db.inventory_items.find({**q, "abc_category": cat},
+                                               {"_id": 0, "item_id": 1, "item_name": 1,
+                                                "part_number": 1, "stock_group": 1,
+                                                "quantity": 1, "price": 1, "standard_price": 1}).to_list(5000)
+        if not items:
+            return APIResponse(success=True, data={"abc": cat, "items": [], "summary": {"items": 0, "revenue": 0, "qty": 0}})
+
+        sales = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "party_name": 1, "items": 1}).to_list(50000)
+        if fy:
+            sales = filter_vouchers_by_fy(sales, fy)
+
+        # Aggregate per-item: total qty/revenue + per-customer breakdown + frequency
+        per_item = {}
+        for it in items:
+            per_item[(it.get("item_name") or "").lower().strip()] = {
+                "item_name": it.get("item_name", ""),
+                "part_number": it.get("part_number", ""),
+                "stock_group": it.get("stock_group", ""),
+                "current_stock": safe_num(it.get("quantity")),
+                "standard_price": safe_num(it.get("standard_price") or it.get("price")),
+                "total_qty": 0.0,
+                "total_revenue": 0.0,
+                "order_count": 0,    # frequency: number of distinct sales vouchers containing this item
+                "customers": defaultdict(lambda: {"qty": 0.0, "revenue": 0.0, "count": 0}),
+            }
+
+        for v in sales:
+            party = (v.get("party_name") or "").strip()
+            for vi in v.get("items", []) or []:
+                iname = (vi.get("item") or vi.get("item_name") or "").strip().lower()
+                if iname not in per_item:
+                    continue
+                qty = abs(safe_num(vi.get("quantity")))
+                rev = abs(safe_num(vi.get("amount") or vi.get("value") or 0))
+                row = per_item[iname]
+                row["total_qty"] += qty
+                row["total_revenue"] += rev
+                row["order_count"] += 1
+                if party:
+                    cb = row["customers"][party]
+                    cb["qty"] += qty
+                    cb["revenue"] += rev
+                    cb["count"] += 1
+
+        # Finalize: convert customers dict to sorted list, aggregate totals
+        result_items = []
+        sum_rev = 0.0
+        sum_qty = 0.0
+        for row in per_item.values():
+            top_customers = sorted(
+                [{"customer_name": k, "qty": round(v["qty"], 2),
+                  "revenue": round(v["revenue"], 2), "count": v["count"]}
+                 for k, v in row["customers"].items()],
+                key=lambda x: -x["revenue"],
+            )[:10]
+            sum_rev += row["total_revenue"]
+            sum_qty += row["total_qty"]
+            result_items.append({
+                "item_name": row["item_name"],
+                "part_number": row["part_number"],
+                "stock_group": row["stock_group"],
+                "current_stock": row["current_stock"],
+                "standard_price": row["standard_price"],
+                "total_qty": round(row["total_qty"], 2),
+                "total_revenue": round(row["total_revenue"], 2),
+                "order_count": row["order_count"],
+                "top_customers": top_customers,
+            })
+        result_items.sort(key=lambda x: -x["total_revenue"])
+
+        return APIResponse(success=True, data={
+            "abc": cat, "fy": fy, "items": result_items,
+            "summary": {"items": len(result_items),
+                        "revenue": round(sum_rev, 2),
+                        "qty": round(sum_qty, 2)},
+        })
+    except Exception as e:
+        logger.error(f"Category sales error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.get("/inventory/items")
 async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None, fy: Optional[str] = None):
     try:

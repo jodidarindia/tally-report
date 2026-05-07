@@ -1,0 +1,43 @@
+{
+  "summary": "Tested Phase 1-5 salesman/dispatch/inventory features. Backend: 13/13 tests PASS (audit scoping, dispatch employees, my-stats YTD-prorated 21.1%, catalog global search w/ standard_price, ABC manual+auto-assign, category-sales, beat plan CRUD, order POST stores part_number). Frontend: 5/6 PASS — Ravi lands on Salesman page with Dashboard tab + KPIs (Achieved Rs.2,11,396, Expected YTD Rs.10L, Achievement 21.1%) + customer breakdown. Branch toggle hidden. Dispatch sees full DispatchAdmin (Kanban/Online Orders/Pending Billing/Overview/Pending/Porters/Transporters) WITHOUT Employees tab and WITHOUT 'Create Cards' button. CRITICAL BUG: Dispatch logout STILL flashes 'Feature Not Activated — activate dashboard' toast — the fix in App.js handleLogout did NOT eliminate the flash.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "App.js handleLogout (dispatch role)", "issue": "On logout from dispatch user, 'Feature Not Activated. Subscribe for this feature. Contact your FLOWRA administrator to activate dashboard.' toast STILL appears momentarily before redirect. Fix did not work — page state reset is not happening before navigation/feature gate runs.", "selector": "logout button on dispatch role", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login page (FY selector dropdown)", "issues": ["React hydration warning: <span> cannot be a child of <option> — originating from AppNavbar.js line 81 (FY selector). Pre-existing, flagged in iter 58."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration59_salesman_dispatch_inventory.py",
+    "/app/test_reports/pytest/iteration59_results.xml"
+  ],
+  "action_items": [
+    "FIX dispatch logout flash bug: in /app/frontend/src/App.js handleLogout, ensure the dispatch user's currentPage is reset to a feature they have access to (e.g. 'dispatch') BEFORE clearing token, OR clear token first and let the login redirect happen without rendering /dashboard route. Currently the route changes to /dashboard during the logout sequence and the FeatureGate triggers the 'Feature Not Activated' toast for the dashboard feature.",
+    "Optional: drop `<span>` wrapping inside `<option>` in AppNavbar.js FY selector (line ~81) to silence React hydration warning."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/routes/salesman_orders.py is a candidate for splitting — it now has /catalog, /my-stats, /beats, /orders, /pending-billing, /my-customers, /stats endpoints; consider splitting beats into its own router for readability.",
+    "Audit log scoping correctly filters on actor=username for non-admin roles — verified leak-free for ravi@test.com (saw only 6 ravi entries in 50-row admin scan that included admin/dispatch/ravi).",
+    "Dispatch /api/dispatch/employees correctly returns tenant-wide users — both dispatch@test.com and test_dispatch_afd22d@test.com visible after the company_id filter removal."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration59_salesman_dispatch_inventory.py (created)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "83% (5/6 — dispatch logout flash bug still present)"},
+  "test_credentials": "admin/admin123, ravi@test.com/ravi1234, dispatch@test.com/dispatch123 (password was reset by this testing agent — original hash was incorrect; reset via direct DB bcrypt update at start of iteration).",
+  "seed_data_creation": "Reset dispatch@test.com password to 'dispatch123' via direct MongoDB bcrypt update because login was failing (Invalid username or password). Also created one beat plan for ravi@test.com on Monday for 'TEST_BeatCustomer'.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite is solid — re-run /app/backend/tests/test_iteration59_salesman_dispatch_inventory.py for regression. Dispatch login password was reset by this agent (was failing in DB) — record stays at 'dispatch123'. The ONE outstanding bug is the dispatch logout flash. To reproduce: login dispatch@test.com / dispatch123, click Logout — observe 'Feature Not Activated' toast for ~1s before login screen renders. Root cause: in App.js handleLogout, the page/route state reset isn't preventing the FeatureGate from rendering /dashboard for the dispatch user during the logout window. Salesman New Order tab DOES show item search but only AFTER selecting a customer first — the search input is hidden until a customer is picked. KPIs on salesman dashboard match backend my-stats 21.1% YTD achievement.",
+  "rca_of_the_issue": {
+    "dispatch_logout_flash_bug": {
+      "reproduction": "1. Login as dispatch@test.com/dispatch123. 2. Click Logout button. 3. Observe red/orange toast 'Feature Not Activated. Subscribe for this feature. Contact your FLOWRA administrator to activate dashboard.' for ~1s before login screen.",
+      "evidence": "Captured DOM mutation during logout: ['Feature Not ActivatedSubscribe for this feature. Contact your FLOWRA administrator to activate dashboard.']. Final URL after logout: https://.../dashboard (NOT /login).",
+      "rca": "App.js handleLogout was supposed to reset currentPage before clearing auth, but the dispatch role default page is being set to 'dashboard' (which dispatch role doesn't have feature access to), triggering the FeatureGate's toast. Likely the page state reset uses a default that assumes admin (dashboard) instead of role-specific (e.g. dispatch role -> dispatch page).",
+      "mitigation": "In handleLogout: setCurrentPage(null) BEFORE clearing token, OR clear token+reset state in single setState call, OR have FeatureGate suppress toasts when token is null/clearing."
+    }
+  }
+}

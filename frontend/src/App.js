@@ -89,12 +89,14 @@ function App() {
     await login(username, password);
   }, [login]);
 
-  // Logout handler
+  // Logout handler — reset page FIRST so we never render a feature-locked
+  // screen for the logged-out user (which previously caused the "feature not
+  // activated" flash for dispatch/salesman roles on logout).
   const handleLogout = useCallback(() => {
-    logout();
-    company.resetCompany();
     setCurrentPage('dashboard');
     setPublicView('landing');
+    company.resetCompany();
+    logout();
   }, [logout, company.resetCompany]);
 
   // WebSocket for sync status

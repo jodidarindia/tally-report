@@ -111,6 +111,13 @@ async def receive_agent_sync(request: dict):
             t_filter["company_id"] = req_company_id
 
         if data_type == 'inventory':
+            # Preserve user-set fields (abc_category, etc.) across syncs by
+            # snapshotting them before the delete-and-reinsert.
+            existing = await db.inventory_items.find(t_filter, {"_id": 0, "item_name": 1, "abc_category": 1}).to_list(50000)
+            user_field_map = {(e.get("item_name") or "").lower().strip(): {
+                "abc_category": e.get("abc_category"),
+            } for e in existing if e.get("abc_category")}
+
             await db.inventory_items.delete_many(t_filter)
             if data:
                 docs = []
@@ -120,6 +127,10 @@ async def receive_agent_sync(request: dict):
                     doc['last_updated'] = doc['last_updated'].isoformat()
                     doc['tenant_id'] = req_tenant_id
                     doc['company_id'] = req_company_id
+                    # Re-apply user-managed fields
+                    saved = user_field_map.get((doc.get("item_name") or "").lower().strip())
+                    if saved and saved.get("abc_category"):
+                        doc["abc_category"] = saved["abc_category"]
                     docs.append(doc)
                 if docs:
                     await db.inventory_items.insert_many(docs)

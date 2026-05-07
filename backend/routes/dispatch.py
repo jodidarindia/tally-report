@@ -348,9 +348,14 @@ async def record_porter_payment(request: Request):
 
 @router.get("/dispatch/employees")
 async def get_dispatch_employees(request: Request):
+    """List dispatch employees for this tenant. Users are tenant-wide (no
+    company_id), so we filter ONLY by tenant_id, not the full _q() filter."""
     try:
         ctx = await get_tenant_context(request)
-        employees = await db.users.find({**_q(ctx), "role": "dispatch"}, {"_id": 0, "password_hash": 0}).to_list(50)
+        q = {"role": "dispatch"}
+        if ctx and ctx.get("tenant_id"):
+            q["tenant_id"] = ctx["tenant_id"]
+        employees = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(50)
         return APIResponse(success=True, data={"employees": employees})
     except Exception as e:
         return APIResponse(success=False, error=str(e))
@@ -450,7 +455,7 @@ async def _auto_create_cards_helper(tenant_id: str, company_id: str, from_date: 
         return 0
 
     dispatch_employees = await db.users.find(
-        {**q, "role": "dispatch"}, {"_id": 0, "username": 1}
+        {"tenant_id": q.get("tenant_id", ""), "role": "dispatch"}, {"_id": 0, "username": 1}
     ).to_list(50)
     usernames = [e["username"] for e in dispatch_employees]
     last_assigned = await db.dispatch_cards.find_one(
@@ -724,7 +729,7 @@ async def close_of_day_pdf(request: Request, date: Optional[str] = None, company
 
 
 async def _round_robin_assign(tq):
-    employees = await db.users.find({**tq, "role": "dispatch"}, {"_id": 0, "username": 1}).to_list(50)
+    employees = await db.users.find({"tenant_id": tq.get("tenant_id", ""), "role": "dispatch"}, {"_id": 0, "username": 1}).to_list(50)
     if not employees:
         return None
     usernames = [e["username"] for e in employees]

@@ -71,26 +71,144 @@ async def get_my_customers(request: Request, company_id: Optional[str] = None):
 
 @router.get("/salesman-orders/catalog")
 async def get_catalog(request: Request, search: Optional[str] = None, company_id: Optional[str] = None):
-    """Get product catalog with real-time stock & Tally price."""
+    """Get product catalog with real-time stock & Tally price.
+    Search matches against item_name OR part_number (global search).
+    Returns ALL items including zero-stock — salesman still needs the standard
+    sale price to quote the customer.
+    """
     try:
         ctx = await get_tenant_context(request)
         q = _q(ctx, company_id)
         inv_q = {**q}
         if search:
-            inv_q["item_name"] = {"$regex": search, "$options": "i"}
-        items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(500)
+            s = search.strip()
+            inv_q["$or"] = [
+                {"item_name": {"$regex": s, "$options": "i"}},
+                {"part_number": {"$regex": s, "$options": "i"}},
+            ]
+        items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(2000)
         catalog = [{
             "item_name": it.get("item_name", ""),
             "item_id": it.get("item_id", ""),
-            "part_number": it.get("part_number", ""),
+            "part_number": it.get("part_number", "") or "",
             "stock_qty": safe_num(it.get("quantity", 0)),
-            "price": safe_num(it.get("price", 0)),
+            # Standard sale price from Tally (STDPRICE). Falls back to last-sale
+            # `price` so older synced data still works until next agent sync.
+            "price": safe_num(it.get("standard_price") or it.get("price", 0)),
+            "standard_price": safe_num(it.get("standard_price") or it.get("price", 0)),
             "unit": it.get("unit", ""),
             "stock_group": it.get("stock_group", ""),
         } for it in items]
         return APIResponse(success=True, data={"items": catalog, "total": len(catalog)})
     except Exception as e:
         logger.error(f"Catalog error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# SALESMAN DASHBOARD (own targets, achievement, customer breakdown)
+# ═══════════════════════════════════════════════════════
+
+@router.get("/salesman-orders/my-stats")
+async def get_my_stats(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """Return logged-in salesman's target + achievement + customer breakdown
+    for the requested FY (defaults to current FY).
+    """
+    try:
+        from utils import get_current_fy, filter_vouchers_by_fy
+        from datetime import date as _date
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        q = _q(ctx, company_id)
+        target_fy = fy or get_current_fy()
+
+        # Find salesman master record (case-insensitive)
+        sname = user.get("name", "")
+        master = await db.salesman_master.find_one({**q, "salesman_name": sname}, {"_id": 0})
+        if not master:
+            master = await db.salesman_master.find_one(
+                {**q, "salesman_name": {"$regex": f"^{sname}$", "$options": "i"}}, {"_id": 0})
+        if not master:
+            return APIResponse(success=True, data={
+                "salesman_name": sname, "fy": target_fy, "has_master": False,
+                "monthly_target": 0, "quarterly_target": 0, "annual_target": 0,
+                "expected_target": 0, "achieved_amount": 0, "achievement_percentage": 0,
+                "customers": [], "items_sold": [],
+            })
+
+        # FY-scoped target + customer mapping
+        fy_targets = master.get("fy_targets", {}).get(target_fy, {
+            "monthly_target": master.get("monthly_target", 0),
+            "quarterly_target": master.get("quarterly_target", 0),
+        })
+        monthly_target = safe_num(fy_targets.get("monthly_target"))
+        quarterly_target = safe_num(fy_targets.get("quarterly_target"))
+        annual_target = monthly_target * 12 if monthly_target else 0
+
+        fy_customers = master.get("fy_customers", {}).get(target_fy, master.get("customers", []))
+        fy_customers_lower = {c.lower().strip() for c in fy_customers}
+
+        # Pull FY-scoped sales vouchers and filter to this salesman's customers
+        all_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+        v_fy = filter_vouchers_by_fy(all_v, target_fy)
+
+        per_customer = {}  # name → {amount, count, items: {item: {qty, amount}}}
+        per_item = {}      # item → {qty, revenue}
+        total_achieved = 0.0
+
+        for v in v_fy:
+            party = (v.get("party_name") or "").strip()
+            if party.lower() not in fy_customers_lower:
+                continue
+            amt = safe_num(v.get("total_amount"))
+            total_achieved += amt
+            row = per_customer.setdefault(party, {"customer_name": party, "amount": 0, "count": 0, "items": []})
+            row["amount"] += amt
+            row["count"] += 1
+            for it in v.get("items", []) or []:
+                iname = (it.get("item_name") or "").strip()
+                if not iname:
+                    continue
+                qty = safe_num(it.get("quantity"))
+                rev = safe_num(it.get("amount"))
+                row["items"].append({"item_name": iname, "quantity": qty, "amount": rev})
+                ag = per_item.setdefault(iname, {"item_name": iname, "quantity": 0, "revenue": 0})
+                ag["quantity"] += qty
+                ag["revenue"] += rev
+
+        # Achievement % vs YTD-prorated target (for current FY) or annual (past FY)
+        today = _date.today()
+        cur_fy_year = today.year if today.month >= 4 else today.year - 1
+        cur_fy = f"{cur_fy_year}-{str(cur_fy_year + 1)[-2:]}"
+        if target_fy == cur_fy:
+            months_elapsed = today.month - 3 if today.month >= 4 else today.month + 9
+            months_elapsed = max(1, min(12, months_elapsed))
+            expected_target = monthly_target * months_elapsed
+        else:
+            expected_target = annual_target
+
+        achievement = 0
+        if expected_target > 0:
+            achievement = round(total_achieved / expected_target * 100, 1)
+
+        return APIResponse(success=True, data={
+            "salesman_name": master.get("salesman_name", sname),
+            "fy": target_fy,
+            "has_master": True,
+            "monthly_target": monthly_target,
+            "quarterly_target": quarterly_target if quarterly_target else monthly_target * 3,
+            "annual_target": annual_target,
+            "expected_target": round(expected_target, 2),
+            "achieved_amount": round(total_achieved, 2),
+            "achievement_percentage": achievement,
+            "total_customers": len(per_customer),
+            "customers": sorted(per_customer.values(), key=lambda x: -x["amount"]),
+            "items_sold": sorted(per_item.values(), key=lambda x: -x["revenue"])[:50],
+        })
+    except Exception as e:
+        logger.error(f"my-stats error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
@@ -123,6 +241,7 @@ async def create_order(request: Request):
             total += amt
             order_items.append({
                 "item_name": it.get("item_name", ""),
+                "part_number": it.get("part_number", "") or "",
                 "quantity": qty,
                 "price": price,
                 "amount": amt,

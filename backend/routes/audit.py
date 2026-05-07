@@ -25,17 +25,23 @@ async def get_audit_logs(
         if not user:
             return APIResponse(success=False, error="Authentication required")
 
+        role = user.get("role", "")
         q = {}
-        if user.get("role") == "super_admin":
+        if role == "super_admin":
             pass  # super admin sees all
-        elif user.get("role") == "admin":
+        elif role == "admin":
+            # Useradmin sees ALL activity for their tenant
             q["tenant_id"] = user.get("tenant_id", "")
         else:
+            # Salesman / dispatch / employee → see ONLY own activity
             q["tenant_id"] = user.get("tenant_id", "")
+            own_actor = user.get("username") or user.get("name") or ""
+            # Match either username or display name (audit logs sometimes record either)
+            q["$or"] = [{"actor": own_actor}, {"actor_username": own_actor}]
 
         if action:
             q["action"] = action
-        if actor:
+        if actor and role in ("admin", "super_admin"):
             q["actor"] = actor
 
         logs = await db.audit_logs.find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
@@ -53,9 +59,13 @@ async def get_audit_action_types(request: Request):
         if not user:
             return APIResponse(success=False, error="Authentication required")
 
+        role = user.get("role", "")
         q = {}
-        if user.get("role") != "super_admin":
+        if role != "super_admin":
             q["tenant_id"] = user.get("tenant_id", "")
+        if role not in ("admin", "super_admin"):
+            own_actor = user.get("username") or user.get("name") or ""
+            q["$or"] = [{"actor": own_actor}, {"actor_username": own_actor}]
 
         actions = await db.audit_logs.distinct("action", q)
         return APIResponse(success=True, data={"actions": sorted(actions)})

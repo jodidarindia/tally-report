@@ -234,6 +234,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
 
   const tabs = [
     { id: 'movement', label: 'Movement Analysis', icon: TrendingUp },
+    { id: 'category-sales', label: 'Category Sales', icon: BarChart3 },
     { id: 'below-cost', label: 'Below Cost Sales', icon: AlertTriangle },
     { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 },
     { id: 'customer-items', label: 'Customer Items', icon: Users }
@@ -368,6 +369,9 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
               </div>
             </div>
           )}
+
+          {/* Category Sales (A/B/C/D drill-down) */}
+          {activeTab === 'category-sales' && <CategorySalesTab fy={selectedFY} formatNum={formatNum} />}
 
           {/* Below Cost Sales */}
           {activeTab === 'below-cost' && (
@@ -748,3 +752,127 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
 };
 
 export default InventoryAnalytics;
+
+// ─── Category Sales Tab (A/B/C/D drill-down) ──────────────────────────────
+function CategorySalesTab({ fy, formatNum }) {
+  const [activeABC, setActiveABC] = useState('A');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    axios.get(`${API}/inventory/category-sales?abc=${activeABC}&fy=${fy || ''}`)
+      .then(r => { if (!cancelled && r.data?.success) setData(r.data.data); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeABC, fy]);
+
+  const downloadExcel = () => {
+    if (!data || !data.items.length) return;
+    const rows = [['ABC', 'Item', 'Part No', 'Stock Group', 'Current Stock', 'Sale Price', 'FY Qty', 'FY Revenue', 'Order Frequency', 'Top Customer', 'Top Customer Revenue']];
+    data.items.forEach(it => {
+      const top = (it.top_customers || [])[0];
+      rows.push([data.abc, it.item_name, it.part_number || '', it.stock_group || '',
+        it.current_stock, it.standard_price, it.total_qty, it.total_revenue,
+        it.order_count, top?.customer_name || '', top?.revenue || 0]);
+    });
+    const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `category_sales_${data.abc}_${fy || 'all'}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const ABC_COLORS = { A: '#10b981', B: '#3b82f6', C: '#f59e0b', D: '#94a3b8' };
+  const ABC_DESC = {
+    A: 'Top 80% of revenue (highest value items)',
+    B: 'Next 15% of revenue',
+    C: 'Next 4% of revenue',
+    D: 'Remaining 1% (slow / dead stock)',
+  };
+
+  const filtered = !data ? [] : (search
+    ? data.items.filter(it => (it.item_name || '').toLowerCase().includes(search.toLowerCase())
+        || (it.part_number || '').toLowerCase().includes(search.toLowerCase()))
+    : data.items);
+
+  return (
+    <div data-testid="category-sales-tab">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mb-4">
+        {['A', 'B', 'C', 'D'].map(letter => (
+          <button key={letter} onClick={() => setActiveABC(letter)} data-testid={`abc-pill-${letter}`}
+            className={`text-left rounded-xl p-3 sm:p-4 border-2 transition-all ${activeABC === letter ? 'shadow-md' : 'border-slate-200 hover:border-slate-300'}`}
+            style={activeABC === letter ? { borderColor: ABC_COLORS[letter], background: ABC_COLORS[letter] + '10' } : {}}>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-white text-sm" style={{ background: ABC_COLORS[letter] }}>{letter}</div>
+              <div className="text-[10px] sm:text-xs text-slate-500 font-medium leading-tight">{ABC_DESC[letter]}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-3 py-2.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-white text-xs" style={{ background: ABC_COLORS[activeABC] }}>{activeABC}</span>
+              Category {activeABC} — {data?.summary?.items || 0} items
+            </h3>
+            {data && <p className="text-[11px] text-slate-500 mt-0.5">FY {data.fy || '—'} · Total qty {formatNum(data.summary.qty)} · Revenue ₹{formatNum(data.summary.revenue)}</p>}
+          </div>
+          <div className="flex gap-2 items-center">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search item / part #" className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg" data-testid="abc-item-search" />
+            </div>
+            <button onClick={downloadExcel} className="text-xs flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700" data-testid="abc-export-csv">
+              <Download size={13} /> Export CSV
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12"><div className="loading-spinner" /></div>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto">
+            {filtered.length === 0 && <p className="text-center text-sm text-slate-400 py-10">No items in category {activeABC} {search ? `matching "${search}"` : ''}.</p>}
+            {filtered.map((it, i) => (
+              <details key={i} className="border-b border-slate-100 last:border-0 group" data-testid={`abc-item-${i}`}>
+                <summary className="px-3 py-2.5 cursor-pointer hover:bg-slate-50">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs sm:text-sm font-medium text-slate-900 truncate">{it.item_name}</div>
+                      <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                        {it.part_number && <span className="font-mono">P/N: {it.part_number}</span>}
+                        {it.stock_group && <span>{it.stock_group}</span>}
+                        <span>Stock: {formatNum(it.current_stock)}</span>
+                        <span>Sale: ₹{formatNum(it.standard_price)}</span>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-xs sm:text-sm font-bold text-slate-900">₹{formatNum(it.total_revenue)}</div>
+                      <div className="text-[10px] text-slate-500">Qty {formatNum(it.total_qty)} · {it.order_count} orders</div>
+                    </div>
+                  </div>
+                </summary>
+                <div className="bg-slate-50 px-3 py-2 border-t border-slate-100">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1.5">Top Customers</div>
+                  {(!it.top_customers || it.top_customers.length === 0) && <p className="text-[11px] text-slate-400 italic">No customer transactions in this FY.</p>}
+                  {(it.top_customers || []).map((c, j) => (
+                    <div key={j} className="flex items-center justify-between text-[11px] py-0.5">
+                      <span className="truncate flex-1 min-w-0 text-slate-700">{j + 1}. {c.customer_name}</span>
+                      <span className="text-slate-500 flex-shrink-0 ml-3">Qty {formatNum(c.qty)} · ₹{formatNum(c.revenue)} · {c.count}x</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

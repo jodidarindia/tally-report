@@ -631,6 +631,8 @@ class TallyCollectionClient:
 <FETCH>PARTNUMBER</FETCH>
 <FETCH>PARTNO</FETCH>
 <FETCH>MAILINGNAME</FETCH>
+<FETCH>STANDARDPRICE</FETCH>
+<FETCH>STDPRICE</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
 <COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
@@ -639,6 +641,7 @@ class TallyCollectionClient:
 <COMPUTE>OPRATE : $$NumValue:$OpeningRate</COMPUTE>
 <COMPUTE>OPVAL : $$NumValue:$OpeningValue</COMPUTE>
 <COMPUTE>OPQTY : $$String:$OpeningBalance:"TailUnits"</COMPUTE>
+<COMPUTE>STDPRC : $$NumValue:$StandardPrice</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -766,10 +769,19 @@ class TallyCollectionClient:
             if rate == 0 and qty > 0 and value > 0:
                 rate = round(value / qty, 2)
 
+            # Standard sale price (Tally STDPRICE master) — independent of stock
+            # so even zero-qty items get a price for salesman quoting.
+            std_price = self._num(si.get('STDPRC', 0))
+            if std_price == 0:
+                std_price = self._num(si.get('STANDARDPRICE', si.get('STDPRICE', 0)))
+            if std_price == 0 and rate > 0:
+                std_price = rate  # fallback to last closing rate
+
             items.append({
                 'item_id': name, 'item_name': name,
                 'part_number': part_no,
                 'quantity': qty, 'unit': unit, 'price': rate,
+                'standard_price': std_price,
                 'category': parent, 'stock_group': parent,
                 'reorder_level': 10.0,
                 'opening_quantity': opening_qty,
@@ -2545,7 +2557,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.5.0-creditor-fix',
+                'agent_version': '9.6.0-stdprice',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2602,7 +2614,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.5.0-creditor-fix',
+                'agent_version': '9.6.0-stdprice',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",

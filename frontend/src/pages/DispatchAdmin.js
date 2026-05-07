@@ -13,7 +13,7 @@ const fmt = n => { if(!n||n===0) return '0'; if(Math.abs(n)>=100000) return `Rs.
 const STATUS_COLORS = { new:'#64748b', queued:'#3b82f6', processing:'#f59e0b', packed:'#8b5cf6', dispatched:'#10b981', info_shared:'#06b6d4', hold:'#ef4444' };
 const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}); } catch { return iso; } };
 
-export default function DispatchAdmin({ selectedFY, companyId }) {
+export default function DispatchAdmin({ selectedFY, companyId, isEmployee = false }) {
   const [tab, setTab] = useState('board');
   const [summary, setSummary] = useState(null);
   const [porterSettlement, setPorterSettlement] = useState([]);
@@ -127,7 +127,9 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
     {id:'pending', label:`Pending (${pendingCards.length})`},
     {id:'porters', label:'Porters'},
     {id:'transporters', label:'Transporters'},
-    {id:'employees', label:'Employees'},
+    // Employees tab is admin-only — dispatch employees can view their own dispatch board
+    // but should not see/manage the employee roster.
+    ...(isEmployee ? [] : [{id:'employees', label:'Employees'}]),
   ];
 
   if(loading) return <div className="flex items-center justify-center h-48"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
@@ -141,16 +143,16 @@ export default function DispatchAdmin({ selectedFY, companyId }) {
             <p className="text-[11px] text-slate-500 mt-0.5">All dispatch cards are for the latest FY</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex flex-col">
+            {!isEmployee && <div className="flex flex-col">
               <label className="text-[9px] text-slate-500 uppercase font-semibold mb-0.5 tracking-wider">Card creation start date</label>
               <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
                 <Calendar size={13} className="text-slate-400"/>
                 <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="text-xs bg-transparent border-0 outline-none w-28" data-testid="start-date" title="Auto-create dispatch cards from this date forward"/>
               </div>
-            </div>
-            <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50 self-end" data-testid="auto-create-btn">
+            </div>}
+            {!isEmployee && <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50 self-end" data-testid="auto-create-btn">
               <Package size={13}/>{creating?'Creating...':'Create Cards'}
-            </button>
+            </button>}
           </div>
         </div>
         {/* Date filter - affects all tabs */}
@@ -331,6 +333,7 @@ function SettlementTab({type, settlement, items, onAdd, onEdit, onDelete, onPay}
 function OnlineOrdersTab({ companyId, hdr }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selOrder, setSelOrder] = useState(null);
   useEffect(() => {
     axios.get(`${API}/api/salesman-orders/orders?company_id=${companyId||''}&limit=100`, {headers:hdr()})
       .then(r => { if(r.data.success) setOrders((r.data.data.orders||[]).filter(o=>['approved','billed','hold'].includes(o.status))); })
@@ -340,23 +343,71 @@ function OnlineOrdersTab({ companyId, hdr }) {
   const STATUS_C = { approved:'#3b82f6', billed:'#10b981', hold:'#8b5cf6' };
   if(loading) return <div className="flex items-center justify-center h-24"><div className="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
   return <div className="space-y-2" data-testid="online-orders-tab">
-    <p className="text-xs text-slate-500 mb-2">Approved, billed, or on-hold salesman orders. Rejected orders are not shown here.</p>
+    <p className="text-xs text-slate-500 mb-2">Approved, billed, or on-hold salesman orders. Click any card to see line-item details.</p>
     {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No online orders</p>}
-    {orders.map(o=><div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3">
+    {orders.map(o=><button key={o.order_id} onClick={()=>setSelOrder(o)} className="w-full text-left bg-white rounded-xl border border-slate-200 p-3 hover:border-blue-300 hover:shadow-sm transition" data-testid={`online-order-${o.order_id}`}>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2"><span className="text-xs font-mono text-slate-400">{o.order_id}</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{background:(STATUS_C[o.status]||'#94a3b8')+'20',color:STATUS_C[o.status]||'#94a3b8'}}>{o.status?.toUpperCase()}</span></div>
           <div className="text-sm font-semibold text-slate-900 truncate">{o.customer_name}</div>
-          <div className="text-[10px] text-slate-500">by {o.salesman} | {toIST(o.created_at)}</div>
+          <div className="text-[10px] text-slate-500">by {o.salesman} | {toIST(o.created_at)} | {(o.items||[]).length} item(s)</div>
         </div>
         <div className="text-right flex-shrink-0">
           <div className="text-sm font-bold text-slate-900">Rs.{fmt(o.total_amount)}</div>
           {o.invoice_number && <div className="text-[10px] text-green-600 font-semibold">Inv: {o.invoice_number}</div>}
         </div>
       </div>
-    </div>)}
+    </button>)}
+    {selOrder && <OnlineOrderDetailModal order={selOrder} onClose={()=>setSelOrder(null)}/>}
   </div>;
+}
+
+function OnlineOrderDetailModal({ order, onClose }) {
+  const o = order;
+  const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}); } catch { return iso; } };
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="online-order-detail-modal">
+      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-0.5"><span className="text-[10px] font-mono text-slate-400">{o.order_id}</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-600">{o.status?.toUpperCase()}</span></div>
+            <h3 className="text-sm font-semibold text-slate-900 truncate">{o.customer_name}</h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg" data-testid="close-order-modal"><X size={16} className="text-slate-500"/></button>
+        </div>
+        <div className="overflow-y-auto px-4 py-3 space-y-3 flex-1">
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div><span className="text-slate-500">Salesman:</span> <strong>{o.salesman}</strong></div>
+            <div><span className="text-slate-500">Created:</span> <strong>{toIST(o.created_at)}</strong></div>
+            <div><span className="text-slate-500">Total:</span> <strong className="text-blue-600">Rs.{fmt(o.total_amount)}</strong></div>
+            {o.invoice_number && <div><span className="text-slate-500">Invoice:</span> <strong className="text-green-600">{o.invoice_number}</strong></div>}
+          </div>
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold uppercase text-slate-600">Items ({(o.items||[]).length})</div>
+            <div className="divide-y divide-slate-100">
+              {(o.items||[]).map((it, i) => (
+                <div key={i} className="px-3 py-2 flex items-start justify-between gap-2 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-800 truncate">{it.item_name}</div>
+                    {it.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {it.part_number}</div>}
+                    {it.remark && <div className="text-[10px] text-slate-500 italic">{it.remark}</div>}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div>x{it.quantity} @ Rs.{it.price}</div>
+                    <div className="text-slate-700 font-semibold">Rs.{fmt(it.amount)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {o.notes && <div className="bg-amber-50 border border-amber-100 rounded-lg p-2 text-[11px] text-amber-800"><strong>Salesman note:</strong> {o.notes}</div>}
+          {o.admin_notes && <div className="bg-blue-50 border border-blue-100 rounded-lg p-2 text-[11px] text-blue-800"><strong>Admin note:</strong> {o.admin_notes}</div>}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PendingBillingTab({ companyId, hdr }) {

@@ -23,6 +23,9 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   const [editingReorder, setEditingReorder] = useState(null);
   const [reorderValue, setReorderValue] = useState('');
   const [autoReorderLoading, setAutoReorderLoading] = useState(false);
+  const [autoAbcLoading, setAutoAbcLoading] = useState(false);
+  const [editingAbc, setEditingAbc] = useState(null);
+  const [abcFilter, setAbcFilter] = useState('all');
 
   useEffect(() => {
     fetchInventory();
@@ -113,19 +116,50 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
     } catch { toast.error('Failed to update reorder level'); }
   };
 
+  const setAbc = async (itemId, abc) => {
+    try {
+      const res = await axios.patch(`${API}/inventory/items/${encodeURIComponent(itemId)}/abc`, { abc_category: abc });
+      if (res.data?.success) {
+        toast.success(`Set to ${abc || '—'}`);
+        setEditingAbc(null);
+        // Optimistic update
+        setItems(prev => prev.map(it => it.item_id === itemId ? {...it, abc_category: abc} : it));
+      } else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed to set ABC category'); }
+  };
+
+  const autoAssignAbc = async () => {
+    if (!window.confirm('Auto-assign A/B/C/D using Pareto analysis?\n\nA = top 80% revenue\nB = next 15%\nC = next 4%\nD = remainder (incl. zero-revenue items)\n\nThis will overwrite existing tags.')) return;
+    setAutoAbcLoading(true);
+    try {
+      const res = await axios.post(`${API}/inventory/abc/auto-assign`, { fy: selectedFY || '' });
+      if (res.data?.success) {
+        const c = res.data.data.counts;
+        toast.success(`Done — A:${c.A} B:${c.B} C:${c.C} D:${c.D}`);
+        fetchInventory();
+      } else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Auto-assign failed'); }
+    finally { setAutoAbcLoading(false); }
+  };
+
+  const ABC_COLORS = { A:'#10b981', B:'#3b82f6', C:'#f59e0b', D:'#94a3b8' };
+
   const filteredItems = items.filter(item => {
     const term = searchTerm.toLowerCase();
     const matchesSearch = (item.item_name || '').toLowerCase().includes(term) || (item.part_number || '').toLowerCase().includes(term);
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
-    return matchesSearch && matchesCategory && matchesGroup;
+    const matchesAbc = abcFilter === 'all' || (item.abc_category || '') === abcFilter;
+    return matchesSearch && matchesCategory && matchesGroup && matchesAbc;
   }).sort((a, b) => {
     const dir = sortDir === 'asc' ? 1 : -1;
     if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
     if (sortField === 'quantity') return dir * ((a.quantity || 0) - (b.quantity || 0));
     if (sortField === 'price') return dir * ((a.price || 0) - (b.price || 0));
+    if (sortField === 'standard_price') return dir * ((a.standard_price || a.price || 0) - (b.standard_price || b.price || 0));
     if (sortField === 'value') return dir * (((a.quantity || 0) * (a.price || 0)) - ((b.quantity || 0) * (b.price || 0)));
     if (sortField === 'stock_group') return dir * (a.stock_group || '').localeCompare(b.stock_group || '');
+    if (sortField === 'abc_category') return dir * ((a.abc_category || 'Z').localeCompare(b.abc_category || 'Z'));
     return 0;
   });
 
@@ -183,6 +217,16 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
           >
             <RefreshCw size={14} className={autoReorderLoading ? 'animate-spin' : ''} />
             {autoReorderLoading ? 'Calculating...' : 'Auto Reorder'}
+          </button>
+          <button
+            onClick={autoAssignAbc}
+            disabled={autoAbcLoading}
+            className="flex items-center gap-1.5 text-xs sm:text-sm px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+            data-testid="auto-abc-btn"
+            title="Auto-assign A/B/C/D using Pareto (80-15-4-1) revenue analysis"
+          >
+            <Sparkles size={14} className={autoAbcLoading ? 'animate-pulse' : ''} />
+            {autoAbcLoading ? 'Analyzing...' : 'Auto ABC'}
           </button>
           <button data-testid="export-csv-button" onClick={() => exportData('csv')} className="btn-primary flex items-center gap-1.5 text-xs sm:text-sm">
             <Download size={14} /> CSV
@@ -250,6 +294,22 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
               ))}
             </select>
           </div>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
+            <select
+              data-testid="abc-filter-select"
+              value={abcFilter}
+              onChange={(e) => setAbcFilter(e.target.value)}
+              className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white text-sm"
+            >
+              <option value="all">All ABC</option>
+              <option value="A">A only</option>
+              <option value="B">B only</option>
+              <option value="C">C only</option>
+              <option value="D">D only</option>
+              <option value="">Untagged</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -260,10 +320,11 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                 <SortHeader field="item_name" label="Item Name" />
                 <th>Part No.</th>
                 <SortHeader field="stock_group" label="Stock Group" />
-                <th>Category</th>
+                <SortHeader field="abc_category" label="ABC" />
                 <SortHeader field="quantity" label="Quantity" className="numeric" />
                 <th>Unit</th>
-                <SortHeader field="price" label="Price (Pre-GST)" className="numeric" />
+                <SortHeader field="standard_price" label="Sale Price" className="numeric" />
+                <SortHeader field="price" label="Cost (Pre-GST)" className="numeric" />
                 <SortHeader field="value" label="Value (Pre-GST)" className="numeric" />
                 <th className="numeric">Reorder Level</th>
                 <th>Status</th>
@@ -280,9 +341,30 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                       <td className="font-medium text-slate-900">{item.item_name}</td>
                       <td className="text-slate-500 text-xs">{item.part_number || '-'}</td>
                       <td className="text-slate-600">{item.stock_group || '-'}</td>
-                      <td>{item.category || '-'}</td>
+                      <td>
+                        {editingAbc === item.item_id ? (
+                          <div className="flex items-center gap-1">
+                            {['A','B','C','D',''].map(v => (
+                              <button key={v||'X'} onClick={() => setAbc(item.item_id, v)}
+                                className="w-7 h-6 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-100"
+                                style={v ? {color: ABC_COLORS[v]} : {color:'#94a3b8'}}
+                                data-testid={`abc-set-${item.item_id}-${v||'clear'}`}>{v || '—'}</button>
+                            ))}
+                            <button onClick={() => setEditingAbc(null)} className="text-slate-400"><X size={12}/></button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setEditingAbc(item.item_id)}
+                            className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-200 hover:bg-slate-50 cursor-pointer"
+                            style={item.abc_category ? {color: ABC_COLORS[item.abc_category], background: ABC_COLORS[item.abc_category]+'15', borderColor: ABC_COLORS[item.abc_category]+'40'} : {color:'#94a3b8'}}
+                            data-testid={`abc-edit-${item.item_id}`}
+                            title="Click to set A/B/C/D">
+                            {item.abc_category || '—'}
+                          </button>
+                        )}
+                      </td>
                       <td className="numeric font-semibold">{item.quantity}</td>
                       <td>{item.unit}</td>
+                      <td className="numeric font-semibold text-emerald-700">₹{(item.standard_price || item.price || 0).toLocaleString('en-IN')}</td>
                       <td className="numeric">₹{(item.price || 0).toLocaleString('en-IN')}</td>
                       <td className="numeric font-semibold">₹{itemValue.toLocaleString('en-IN')}</td>
                       <td className="numeric">
@@ -317,7 +399,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                 })
               ) : (
                 <tr>
-                  <td colSpan="8" className="text-center py-8 text-slate-500">
+                  <td colSpan="11" className="text-center py-8 text-slate-500">
                     No items found
                   </td>
                 </tr>

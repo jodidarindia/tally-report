@@ -13,7 +13,6 @@ import ActivityLog from '../pages/ActivityLog';
 import ReferAndEarn from '../pages/ReferAndEarn';
 import CACorner from '../pages/CACorner';
 import InsiderResult from '../pages/InsiderResult';
-import DispatchTerminal from '../pages/DispatchTerminal';
 import DispatchAdmin from '../pages/DispatchAdmin';
 import SalesmanOrderApp from '../pages/SalesmanOrderApp';
 
@@ -53,8 +52,19 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     case 'insider': return gated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'dispatch': {
       const role = user?.role;
-      if (role === 'dispatch') return <DispatchTerminal selectedFY={selectedFY} companyId={selectedCompany} />;
+      // Dispatch employees get the SAME UX as useradmin (all tabs + features) —
+      // ONLY the Employees tab is hidden and create-card / start-date controls
+      // are gated. This is enforced via the `isEmployee` prop on DispatchAdmin.
+      if (role === 'dispatch') return <DispatchAdmin selectedFY={selectedFY} companyId={selectedCompany} isEmployee={true} />;
       return gated('dispatch', <DispatchAdmin selectedFY={selectedFY} companyId={selectedCompany} />);
+    }
+    case 'salesman': {
+      // Salesmen never see the useradmin Salesman Performance page —
+      // route them to their own ordering app instead.
+      if (user?.role === 'salesman') {
+        return <SalesmanOrderApp user={user} selectedFY={selectedFY} companyId={selectedCompany} />;
+      }
+      return gated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     }
     case 'salesman-orders': {
       return <SalesmanOrderApp user={user} selectedFY={selectedFY} companyId={selectedCompany} />;

@@ -464,10 +464,23 @@ async def get_salesman_performance_detailed(
 
                 customer_breakdown.append(row)
 
-            # Weighted average: weighted by revenue contribution
+            # Achievement %: compare to YTD-prorated target.
+            # If FY is current (in-progress), expected target = monthly_target × months_elapsed.
+            # If FY is completed, expected target = annual_target.
+            from datetime import date as _date
+            today = _date.today()
+            cur_fy_year = today.year if today.month >= 4 else today.year - 1
+            cur_fy = f"{cur_fy_year}-{str(cur_fy_year + 1)[-2:]}"
+            if target_fy == cur_fy:
+                months_elapsed = today.month - 3 if today.month >= 4 else today.month + 9
+                months_elapsed = max(1, min(12, months_elapsed))
+                expected_target = monthly_target * months_elapsed
+            else:
+                expected_target = annual_target
+
             weighted_achievement = 0
-            if annual_target > 0 and total_achieved > 0:
-                weighted_achievement = round(total_achieved / annual_target * 100, 1)
+            if expected_target > 0 and total_achieved > 0:
+                weighted_achievement = round(total_achieved / expected_target * 100, 1)
 
             # Items sold by this salesman
             items = salesman_items.get(salesman, {})
@@ -480,6 +493,7 @@ async def get_salesman_performance_detailed(
                 "monthly_target": monthly_target,
                 "quarterly_target": quarterly_target if quarterly_target else monthly_target * 3,
                 "annual_target": annual_target,
+                "expected_target": round(expected_target, 2),
                 "achieved_amount": round(total_achieved, 2),
                 "achievement_percentage": weighted_achievement,
                 "total_customers": len(customers_data),
