@@ -32,6 +32,10 @@ const FeatureLocked = ({ featureId }) => (
 );
 
 const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeBranches, token }) => {
+  // Don't render anything once the user is being logged out — prevents the
+  // "Feature Not Activated" flash for non-admin roles whose default page
+  // (e.g. 'dashboard') isn't in their feature list.
+  if (!user || !token) return null;
   const features = user?.features || [];
   const isActive = (f) => features.includes(f);
   const gated = (featureId, component) => isActive(featureId) ? component : <FeatureLocked featureId={featureId} />;

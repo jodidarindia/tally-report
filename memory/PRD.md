@@ -115,6 +115,70 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 
 ## Changelog — May 2026 (CA Corner Tally-Parity Phase)
 - **Balance Sheet rewrite (`/api/ca-corner/balance-sheet`):**
+  - Now derived from synced `all_ledgers` + customers + creditors with proper Tally sign convention.
+  - Auto-balances via Profit & Loss A/c residual (TA = TL).
+  - Validated against user's BSheet26-27.pdf: Capital, Loans, Fixed Assets, Investments, Branch/Divisions, Non-Current Liability — all match exactly.
+- **P&L rewrite (`/api/ca-corner/profit-loss`):**
+  - Sums `all_ledgers.closing_balance` by parent_group for current FY — perfectly matches Tally output.
+  - Heuristic catch-all for Salary Accounts, Local Thela Gaadi, etc. under Indirect Expenses.
+  - Validated FY26-27: Sales 35,36,521.28, Purchase 32,49,829.94, Indirect Income 3,959, Direct Expense 88,110 — all exact.
+- **Tally Agent v9.5.0-creditor-fix**: fixed `skip_excludes` bug; added Salary/Wages/Rent/Travel mappings; signed-balance P&L summary.
+- **Inventory model**: added stock value fields (was being silently dropped by Pydantic).
+- **Tests**: `/app/backend/tests/test_ca_corner_bs_pl.py` (4/4 pass).
+
+## Changelog — May 2026 (Salesman / Dispatch / Inventory Phase)
+
+### Salesman (Useradmin side)
+- **Achievement % bug fixed**: `/api/salesman/performance` now compares against YTD-prorated target (`monthly_target × months_elapsed_in_FY`) instead of full annual. Ankit (and any over-achiever) now reflects correct >100% achievement when monthly target is met.
+- **Beat Plans tab** added to Salesman Performance page — admin can pick a salesman, add day-of-week customer beats with weekly/biweekly/monthly frequency, and save. Visualises a 6-day weekly grid + editable rows.
+
+### Salesman (Salesman login)
+- **Activity feed scoping**: salesman/dispatch/employee roles now see ONLY their own audit logs. Admin/super_admin still see everything for the tenant. (`/api/audit/logs`, `/api/audit/actions`)
+- **Salesman menu routing fix**: clicking "Salesman" while logged in as a salesman now correctly opens `SalesmanOrderApp` (not the useradmin's `SalesmanPerformance`). Bug was reproducible on Activity → Salesman menu transition.
+- **Branch toggle hidden** for salesman & dispatch roles (admin-only filter).
+- **FY selector active** for salesman (was always wired — confirmed working with `selectedFY` prop drilling into `my-stats`).
+- **Salesman Dashboard** with KPI cards (Achieved, Expected YTD, Monthly Target, Achievement %) + customer-wise breakdown drill-down + top items sold. Endpoint: `GET /api/salesman-orders/my-stats?fy=...`
+- **New Order — global search**: catalog search now matches against item_name OR part_number. Part numbers shown in catalog rows, cart rows, and order detail modal.
+- **Standard Sale Price**: catalog returns `standard_price` field (Tally STDPRICE master) — falls back to `price` (closing rate) until v9.6 sync. Zero-stock items still show their standard price.
+
+### Dispatch
+- **Dispatch employees not appearing**: `/api/dispatch/employees` was filtering by `company_id` but users are tenant-wide → returned 0. Now filters by `tenant_id` only.
+- **Dispatch employee parity**: dispatch role now renders the SAME `DispatchAdmin` page as useradmin with `isEmployee={true}` — only the **Employees tab is hidden**. All other tabs (Kanban, Online Orders, Pending Billing, Overview, Pending, Porters, Transporters), date selector, and Create Cards button remain available.
+- **Online Order details modal**: Online Order tab cards are now clickable → opens detail modal with order metadata, line-items (with part numbers), notes, and admin notes.
+- **Logout flash fix** (CRITICAL): "Feature Not Activated" toast no longer flashes on dispatch logout. Root cause: `PageRenderer` was rendering `<FeatureLocked>` for the post-logout transition. Fix: PageRenderer returns `null` when `!user || !token`.
+
+### Inventory
+- **A/B/C/D ABC categorisation** replaces the old Category column.
+  - Manual: click any A/B/C/D pill in the row to assign.
+  - Bulk: "Auto ABC" button runs Pareto 80-15-4-1 across the FY's revenue.
+  - Filter: dropdown to slice by A/B/C/D/Untagged.
+  - Preserved across re-syncs (sync.py snapshots `abc_category` before delete-and-reinsert).
+- **Sales Price column** (Tally STDPRICE) added to Inventory table.
+- **Inventory Analytics → Category Sales** new tab:
+  - 4 large A/B/C/D pill cards.
+  - Drill-down: items in selected category with FY revenue, qty, order frequency, current stock, sale price.
+  - Per-item: top customers (qty + revenue + transaction count).
+  - CSV export per category.
+
+### Tally Agent (v9.6.0-stdprice)
+- Fetches `STANDARDPRICE` (and `STDPRICE` fallback) per stock item.
+- Stores `standard_price` on each `inventory_items` row.
+- Re-served at `/flowra-desktop-agent.py`. **User must re-sync to see real STDPRICE**; until then, `standard_price` falls back to closing rate.
+
+### Models / Sync
+- `InventoryItem` model: added `standard_price`, `abc_category`, `opening_quantity`, `opening_rate`, `opening_value`, `closing_value`.
+- `salesman_orders.py`: order POST now stores `part_number` per item.
+- `sync.py`: inventory sync preserves user-assigned `abc_category` across delete-and-reinsert.
+
+### New Backend Endpoints
+- `GET  /api/salesman-orders/my-stats?fy=...` (logged-in salesman dashboard)
+- `PATCH /api/inventory/items/{id}/abc` (single ABC set/clear)
+- `POST /api/inventory/abc/auto-assign` (Pareto bulk classification)
+- `GET  /api/inventory/category-sales?abc=A&fy=...` (drill-down)
+
+### Tests
+- `/app/backend/tests/test_iteration59_salesman_dispatch_inventory.py` — 13/13 pass (audit scoping, dispatch employees visibility, my-stats, catalog global search, ABC manual + auto + drill-down, beat plan CRUD, order POST stores part_number).
+- **Balance Sheet rewrite (`/api/ca-corner/balance-sheet`):**
   - Now derived from synced `all_ledgers` + customers + creditors with proper Tally sign convention (asset side flips, liability side keeps).
   - Auto-balances via Profit & Loss A/c residual (Opening Balance computed so TA = TL).
   - Validated against user's BSheet26-27.pdf: Capital, Loans, Fixed Assets, Investments, Branch/Divisions, Non-Current Liability — all match exactly. Sundry Debtors within ~₹16K of Tally master (cleared on next re-sync).

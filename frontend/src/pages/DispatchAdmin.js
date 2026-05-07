@@ -143,16 +143,16 @@ export default function DispatchAdmin({ selectedFY, companyId, isEmployee = fals
             <p className="text-[11px] text-slate-500 mt-0.5">All dispatch cards are for the latest FY</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {!isEmployee && <div className="flex flex-col">
+            <div className="flex flex-col">
               <label className="text-[9px] text-slate-500 uppercase font-semibold mb-0.5 tracking-wider">Card creation start date</label>
               <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
                 <Calendar size={13} className="text-slate-400"/>
                 <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="text-xs bg-transparent border-0 outline-none w-28" data-testid="start-date" title="Auto-create dispatch cards from this date forward"/>
               </div>
-            </div>}
-            {!isEmployee && <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50 self-end" data-testid="auto-create-btn">
+            </div>
+            <button onClick={autoCreate} disabled={creating} className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50 self-end" data-testid="auto-create-btn">
               <Package size={13}/>{creating?'Creating...':'Create Cards'}
-            </button>}
+            </button>
           </div>
         </div>
         {/* Date filter - affects all tabs */}
