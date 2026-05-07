@@ -38,6 +38,8 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
   const [currentFy, setCurrentFy] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [exporting, setExporting] = useState(null);
+  // ownership[customer_lower] = owner_salesman_name (FY-scoped)
+  const [ownership, setOwnership] = useState({});
 
   const [formData, setFormData] = useState({
     salesman_name: '',
@@ -53,10 +55,11 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
     setLoading(true);
     try {
       const fyParam = selectedFY ? `fy=${selectedFY}` : '';
-      const [perfRes, custRes, masterRes] = await Promise.all([
+      const [perfRes, custRes, masterRes, ownRes] = await Promise.all([
         axios.get(`${API}/salesman/performance-detailed?${fyParam}&duration=${duration}`),
         axios.get(`${API}/customers/outstanding?${fyParam}`),
         axios.get(`${API}/salesman/master?${fyParam}`),
+        axios.get(`${API}/salesman/customer-ownership?${fyParam}`),
       ]);
       setPerformance(perfRes.data?.data?.salesman || []);
       setPeriods(perfRes.data?.data?.periods || { months: [], month_labels: {}, quarters: [] });
@@ -68,6 +71,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
       const mData = masterRes.data?.data || {};
       setMasterList(mData.salesmen || []);
       setFyLocked(mData.fy_locked || false);
+      setOwnership(ownRes.data?.data?.ownership || {});
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -100,7 +104,13 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
         resetForm();
         fetchData();
       } else {
-        toast.error(res.data?.error || 'Failed to save');
+        // Conflict: show details with longer duration so user can read the list
+        const conflicts = res.data?.data?.conflicts;
+        if (conflicts && conflicts.length) {
+          toast.error(res.data.error, { duration: 8000 });
+        } else {
+          toast.error(res.data?.error || 'Failed to save');
+        }
       }
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to save salesman');
@@ -604,7 +614,21 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                   multiple={true}
                   disabled={fyLocked}
                   testId="customer-mapping-select"
+                  disabledOptions={(() => {
+                    // Lock customers already mapped to a DIFFERENT salesman.
+                    // Customers mapped to the salesman being edited remain selectable
+                    // (so they show as already-checked and can be unchecked to unmap).
+                    const editingName = (formData.salesman_name || '').trim().toLowerCase();
+                    const out = {};
+                    for (const [cust, owner] of Object.entries(ownership || {})) {
+                      if ((owner || '').trim().toLowerCase() !== editingName) {
+                        out[cust] = owner;
+                      }
+                    }
+                    return out;
+                  })()}
                 />
+                <p className="text-[10px] text-slate-400 mt-1">A customer can only be mapped to one salesman per FY. Customers locked here are owned by another salesman — unmap them there first if you want to reassign.</p>
               </div>
 
               <div className="flex gap-3 pt-2">

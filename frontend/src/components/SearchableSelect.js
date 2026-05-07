@@ -11,6 +11,10 @@ import { Search, ChevronDown, X, Check } from 'lucide-react';
  *  - multiple: boolean — checkbox mode
  *  - disabled: boolean
  *  - testId: string
+ *  - disabledOptions: { [optionLower]: string } — map of disabled options to a
+ *      reason/owner label. The option remains visible (so users see WHO owns it)
+ *      but cannot be toggled. Selected values that appear in this map remain
+ *      selected and CAN be unselected (so unmapping still works).
  */
 const SearchableSelect = ({
   options = [],
@@ -20,6 +24,7 @@ const SearchableSelect = ({
   multiple = false,
   disabled = false,
   testId = 'searchable-select',
+  disabledOptions = {},
 }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -101,27 +106,34 @@ const SearchableSelect = ({
           <div className="overflow-y-auto flex-1">
             {filtered.length === 0 ? (
               <div className="px-3 py-4 text-xs text-slate-400 text-center">No results found</div>
-            ) : filtered.map((opt, i) => (
+            ) : filtered.map((opt, i) => {
+              const lockedReason = disabledOptions[(opt || '').toLowerCase().trim()];
+              const isLocked = !!lockedReason && !isSelected(opt);  // already-selected items can still be removed
+              return (
               <button
                 key={i}
                 type="button"
-                onClick={() => handleSelect(opt)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-blue-50 transition-colors ${
-                  isSelected(opt) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'
-                }`}
+                onClick={() => { if (!isLocked) handleSelect(opt); }}
+                disabled={isLocked}
+                title={isLocked ? `Already mapped to ${lockedReason}` : ''}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors ${
+                  isLocked ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'hover:bg-blue-50'
+                } ${isSelected(opt) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'}`}
                 data-testid={`${testId}-option-${i}`}
               >
                 {multiple && (
                   <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                    isSelected(opt) ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                    isSelected(opt) ? 'bg-blue-600 border-blue-600' : isLocked ? 'border-slate-200 bg-slate-100' : 'border-slate-300'
                   }`}>
                     {isSelected(opt) && <Check size={10} className="text-white" />}
                   </div>
                 )}
-                <span className="truncate">{opt}</span>
-                {!multiple && isSelected(opt) && <Check size={12} className="ml-auto text-blue-600 flex-shrink-0" />}
+                <span className="truncate flex-1">{opt}</span>
+                {isLocked && <span className="text-[9px] text-amber-600 italic flex-shrink-0 ml-1 truncate max-w-[40%]">→ {lockedReason}</span>}
+                {!multiple && !isLocked && isSelected(opt) && <Check size={12} className="ml-auto text-blue-600 flex-shrink-0" />}
               </button>
-            ))}
+              );
+            })}
           </div>
           {multiple && (
             <div className="p-2 border-t border-slate-100 flex items-center justify-between">

@@ -176,6 +176,38 @@ async def create_salesman(request: Request):
         email = body.get("email", "")
 
         tq = _build_query(ctx)
+
+        # ─── Single-salesman-per-customer enforcement (per-FY) ───
+        # Walk every other salesman master for this tenant; if the requested
+        # customer list overlaps with an existing FY mapping under a DIFFERENT
+        # salesman, reject the save with a precise conflict report.
+        if customers:
+            customer_set = {c.strip().lower() for c in customers if c}
+            others = await db.salesman_master.find(
+                {**tq, "salesman_name": {"$ne": salesman_name}}, {"_id": 0},
+            ).to_list(500)
+            conflicts = []  # [{customer, owner}]
+            for o in others:
+                o_fy_map = o.get("fy_customers", {})
+                o_customers_for_fy = set(c.strip().lower() for c in o_fy_map.get(fy, []))
+                # Fall back to legacy `customers` field only if there's no FY-specific record
+                if not o_customers_for_fy and not o_fy_map:
+                    o_customers_for_fy = set(c.strip().lower() for c in o.get("customers", []))
+                clash = customer_set & o_customers_for_fy
+                if clash:
+                    for c in clash:
+                        conflicts.append({"customer": c, "owner": o.get("salesman_name", "")})
+            if conflicts:
+                # Compact human-readable error + structured payload for the UI
+                pretty = ", ".join(f'"{c["customer"]}" (mapped to {c["owner"]})' for c in conflicts[:5])
+                if len(conflicts) > 5:
+                    pretty += f", and {len(conflicts) - 5} more"
+                return APIResponse(
+                    success=False,
+                    error=f"Cannot map customers already assigned to another salesman: {pretty}. Unmap them from the other salesman first.",
+                    data={"conflicts": conflicts, "fy": fy},
+                )
+
         existing = await db.salesman_master.find_one({**tq, "salesman_name": salesman_name}, {"_id": 0})
 
         if existing:
@@ -245,6 +277,32 @@ async def create_salesman(request: Request):
         )
     except Exception as e:
         logger.error(f"Error creating salesman: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/salesman/customer-ownership")
+async def get_customer_ownership(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
+    """Return a map { customer_name → owner_salesman_name } for a given FY,
+    so the UI can disable already-mapped customers in the multi-select dropdown
+    (and show which salesman currently owns each).
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        tq = _build_query(ctx, company_id)
+        target_fy = fy or get_current_fy()
+        masters = await db.salesman_master.find(tq, {"_id": 0}).to_list(500)
+        ownership = {}
+        for m in masters:
+            fy_map = m.get("fy_customers", {})
+            cust = fy_map.get(target_fy)
+            if not cust and not fy_map:
+                cust = m.get("customers", [])
+            for c in (cust or []):
+                key = c.strip().lower()
+                if key:
+                    ownership[key] = m.get("salesman_name", "")
+        return APIResponse(success=True, data={"ownership": ownership, "fy": target_fy})
+    except Exception as e:
         return APIResponse(success=False, error=str(e))
 
 
