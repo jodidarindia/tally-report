@@ -33,6 +33,11 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 - P2: Automated payment follow-up reminders (Resend email + WhatsApp)
 - P2: "Sync Health" weekly email digest to admins
 - P2: MongoDB Atlas migration (Tier-2 — point-in-time recovery on top of today's Tier-1 dumps)
+- P2: Busy Agent v1.1 parity catch-up with Tally v9.6:
+  - Populate `standard_price` from Busy's Sale Rate master (currently only `price` from `Master1.D1`)
+  - Capture per-line DR/CR direction (`is_debit` / `dr_or_cr`) on `ledger_entries` so CA Corner Adjustment column + CN-reversal honouring work for Busy customers
+  - Bump `agent_version` to `1.1.0-parity` and re-serve at `/flowra-busy-agent.py`
+  - Regression test file: `/app/backend/tests/test_busy_agent_parity.py`
 
 ## Desktop Sync Agents
 - **Tally (v9)** — `/app/desktop-agent/tally_sync_agent_v9.py` (mature, production)
