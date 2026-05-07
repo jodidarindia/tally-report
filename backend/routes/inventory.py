@@ -183,15 +183,28 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
       - items in that category with FY qty + revenue
       - per-item top customers (qty + revenue)
     Used by the Inventory Analytics "Category Sales" tab.
+
+    Honors the 'X-Exclude-Branches: true' header — branch transfers are
+    excluded from both totals and customer breakdowns.
     """
     try:
         from collections import defaultdict
         from utils import filter_vouchers_by_fy
+        from routes.branch_ledgers import get_branch_parties
         ctx = await get_tenant_context(request)
         cat = (abc or "").upper().strip()
         if cat not in ("A", "B", "C", "D"):
             return APIResponse(success=False, error="abc must be A, B, C, or D")
         q = _build_query(ctx, company_id)
+
+        # Branch exclusion (driven by global navbar toggle via X-Exclude-Branches header)
+        exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
+        branch_set = set()
+        if exclude_branches:
+            tid = (ctx or {}).get("tenant_id") or ""
+            cid = (ctx or {}).get("company_id") or company_id or ""
+            bp = await get_branch_parties(tid, cid)
+            branch_set = {p.lower().strip() for p in bp}
 
         items = await db.inventory_items.find({**q, "abc_category": cat},
                                                {"_id": 0, "item_id": 1, "item_name": 1,
@@ -215,12 +228,15 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
                 "standard_price": safe_num(it.get("standard_price") or it.get("price")),
                 "total_qty": 0.0,
                 "total_revenue": 0.0,
-                "order_count": 0,    # frequency: number of distinct sales vouchers containing this item
+                "order_count": 0,
                 "customers": defaultdict(lambda: {"qty": 0.0, "revenue": 0.0, "count": 0}),
             }
 
         for v in sales:
             party = (v.get("party_name") or "").strip()
+            # Skip branch transfers entirely when toggle is on
+            if branch_set and party.lower() in branch_set:
+                continue
             for vi in v.get("items", []) or []:
                 iname = (vi.get("item") or vi.get("item_name") or "").strip().lower()
                 if iname not in per_item:
@@ -270,7 +286,8 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
                         "qty": round(sum_qty, 2)},
         })
     except Exception as e:
-        logger.error(f"Category sales error: {e}")
+        import traceback
+        logger.error(f"Category sales error: {e}\n{traceback.format_exc()}")
         return APIResponse(success=False, error=str(e))
 
 

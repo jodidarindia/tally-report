@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import {
   Users, TrendingUp, Award, Plus, X, Package, ChevronDown, ChevronUp,
@@ -783,6 +783,16 @@ function BeatPlansAdmin({ companyId, masterList, customers }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Customers mapped to the SELECTED salesman only — not the global customer list.
+  // Falls back to global list when no salesman is selected (rare; UI gates it).
+  const mappedCustomers = useMemo(() => {
+    if (!selSalesman) return [];
+    const m = (masterList || []).find(x => x.salesman_name === selSalesman);
+    if (!m) return [];
+    const list = m.customers || m.mapped_customers || [];
+    return Array.isArray(list) && list.length > 0 ? list : (customers || []);
+  }, [selSalesman, masterList, customers]);
+
   const hdr = useCallback(() => ({
     Authorization: `Bearer ${localStorage.getItem('flowra_token')}`,
     'X-Company-Id': companyId || '',
@@ -846,6 +856,11 @@ function BeatPlansAdmin({ companyId, masterList, customers }) {
           </>}
         </div>
         {!selSalesman && <p className="text-xs text-slate-400 italic">Select a salesman to view or edit their beat plan.</p>}
+        {selSalesman && mappedCustomers.length === 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-[11px] text-amber-800 mt-1" data-testid="no-mapped-customers">
+            <strong>{selSalesman}</strong> has no mapped customers yet. Open the <em>Manage Salesmen</em> tab and assign customers to this salesman before creating a beat plan.
+          </div>
+        )}
       </div>
 
       {selSalesman && (loading ? (
@@ -879,7 +894,7 @@ function BeatPlansAdmin({ companyId, masterList, customers }) {
                 <div key={i} className="px-3 py-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center" data-testid={`beat-row-${i}`}>
                   <div className="flex-1 min-w-0 w-full sm:w-auto">
                     <SearchableSelect value={b.customer_name} onChange={v => updateRow(i, 'customer_name', v)}
-                      options={customers} placeholder="Select customer" />
+                      options={mappedCustomers} placeholder={mappedCustomers.length ? "Select mapped customer" : "No customers mapped — open Manage tab to assign first"} />
                   </div>
                   <select value={b.day_of_week} onChange={e => updateRow(i, 'day_of_week', e.target.value)}
                     className="text-xs border border-slate-200 rounded px-2 py-1.5" data-testid={`beat-day-${i}`}>
