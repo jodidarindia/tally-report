@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+  <title>Security — FLOWRA Suite</title>
+  <meta name="description" content="How FLOWRA keeps your books safe. AES-256 encryption at rest, TLS 1.3 in transit, multi-tenant isolation, daily backups, Mumbai data residency." />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#0A0E1A" />
+  <link rel="canonical" href="https://flowralive.in/security" />
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/tokens.css" />
+
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; background:#0A0E1A; color:#E2E8F0; -webkit-font-smoothing:antialiased; }
+    h1, h2, h3 { font-family: 'Outfit', sans-serif; letter-spacing:-0.02em; }
+    .legal-prose h2 { color:#F8FAFC; font-size:1.5rem; font-weight:600; margin-top:2.5rem; margin-bottom:1rem; }
+    .legal-prose h3 { color:#E2E8F0; font-size:1.1rem; font-weight:600; margin-top:1.75rem; margin-bottom:0.75rem; }
+    .legal-prose p, .legal-prose li { color:#94A3B8; line-height:1.75; font-size:0.95rem; }
+    .legal-prose ul { list-style:disc; padding-left:1.5rem; margin:0.75rem 0 1rem; }
+    .legal-prose li { margin-bottom:0.5rem; }
+    .legal-prose strong { color:#E2E8F0; font-weight:600; }
+    .legal-prose a { color:#60A5FA; text-decoration:underline; text-underline-offset:2px; }
+    .legal-prose a:hover { color:#93C5FD; }
+    .legal-prose .lead { color:#CBD5E1; font-size:1.05rem; line-height:1.7; }
+
+    .pillar {
+      background: linear-gradient(180deg, #0F1729 0%, #0A0E1A 100%);
+      border: 1px solid #1E293B;
+      border-radius: 12px;
+      padding: 1.25rem;
+      transition: border-color 220ms ease;
+    }
+    .pillar:hover { border-color: rgba(37,99,235,0.5); }
+    .pillar h3 { margin-top:0 !important; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800/60 bg-[#0A0E1A]/90 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-5xl mx-auto px-5 sm:px-8 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2.5 group">
+        <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-blue-500/30 group-hover:scale-105 transition">F</div>
+        <span class="font-semibold text-white tracking-tight">FLOWRA</span>
+      </a>
+      <a href="/" class="text-xs text-slate-400 hover:text-white transition">← Back to home</a>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-5 sm:px-8 py-12 sm:py-16">
+    <div class="mb-10">
+      <div class="inline-block px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px] font-medium tracking-wider uppercase mb-4">Trust &amp; Security</div>
+      <h1 class="text-4xl sm:text-5xl font-light tracking-tight text-white mb-3">Security at FLOWRA</h1>
+      <p class="text-base text-slate-400 max-w-2xl">Your books are the heart of your business. Here's exactly how we protect them — no marketing fluff, just the controls.</p>
+    </div>
+
+    <!-- Pillar grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-12">
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">Encryption Everywhere</h3>
+        <p class="text-sm text-slate-400 mt-2">TLS 1.3 in transit, AES-256 at rest. Database volumes encrypted with separate KMS-managed keys.</p>
+      </div>
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">India Data Residency</h3>
+        <p class="text-sm text-slate-400 mt-2">All servers in Mumbai (ap-south-1 / bom1). Your books never leave India unless you explicitly enable a feature that requires it.</p>
+      </div>
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">Multi-Tenant Isolation</h3>
+        <p class="text-sm text-slate-400 mt-2">Every database query is scoped by tenant_id + company_id. Cross-customer data access is mathematically impossible.</p>
+      </div>
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">Daily Encrypted Backups</h3>
+        <p class="text-sm text-slate-400 mt-2">Automatic daily snapshots retained 30 days. Weekly snapshots retained 12 months. Restore tested quarterly.</p>
+      </div>
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">DPDP-Compliant</h3>
+        <p class="text-sm text-slate-400 mt-2">Built to India's Digital Personal Data Protection Act, 2023. Designated Grievance Officer with 7-day SLA.</p>
+      </div>
+      <div class="pillar">
+        <h3 class="text-base font-semibold text-white">Role-Based Access</h3>
+        <p class="text-sm text-slate-400 mt-2">Granular roles — admin, employee, salesman, dispatch, CA. Fine-grained permission per module.</p>
+      </div>
+    </div>
+
+    <article class="legal-prose">
+
+      <h2>1. Infrastructure</h2>
+      <ul>
+        <li>Application servers run on hardened Linux on DigitalOcean Mumbai (ap-south-1)</li>
+        <li>Database is MongoDB Atlas, M-tier dedicated cluster, replica-set with automatic failover</li>
+        <li>Network is locked to our private VPC; no direct database exposure to the public internet</li>
+        <li>Inbound traffic terminates at Cloudflare with WAF rules and rate limiting</li>
+      </ul>
+
+      <h2>2. Data protection</h2>
+
+      <h3>2.1 In transit</h3>
+      <ul>
+        <li>HSTS-enforced HTTPS, TLS 1.3 only, modern cipher suites</li>
+        <li>Certificate auto-rotation every 90 days via Let's Encrypt</li>
+        <li>The desktop sync agent uses the same TLS-pinned API endpoints</li>
+      </ul>
+
+      <h3>2.2 At rest</h3>
+      <ul>
+        <li>MongoDB Atlas storage encrypted with AES-256</li>
+        <li>Backup volumes encrypted with separate keys</li>
+        <li>Server disks encrypted with LUKS</li>
+        <li>Passwords hashed with bcrypt (cost 12) — no plaintext, no reversible storage</li>
+      </ul>
+
+      <h2>3. Authentication and access</h2>
+      <ul>
+        <li>Email + password with bcrypt-hashed credentials</li>
+        <li>Optional Google OAuth via Emergent-managed identity</li>
+        <li>JWT-based session tokens, signed with rotating HS512 keys</li>
+        <li>Session expiry, secure / HTTP-only cookies, SameSite=Lax</li>
+        <li>Brute-force protection: 5 failed attempts → exponential backoff</li>
+        <li>reCAPTCHA on the login page</li>
+        <li>Audit log of every admin action — exportable to CSV</li>
+      </ul>
+
+      <h2>4. Tenant isolation</h2>
+      <p>FLOWRA is a multi-tenant SaaS, meaning many customers share the same servers. We isolate them at the data layer:</p>
+      <ul>
+        <li>Every record carries <code class="text-blue-300 bg-blue-500/10 px-1 rounded">tenant_id</code> and <code class="text-blue-300 bg-blue-500/10 px-1 rounded">company_id</code> fields</li>
+        <li>Every query at every endpoint scopes by these fields — enforced both in middleware and at the route level</li>
+        <li>Compound indexes on these fields ensure performance doesn't tempt anyone to bypass them</li>
+        <li>Penetration tests and code review specifically check for tenant-leak bugs</li>
+      </ul>
+
+      <h2>5. The desktop sync agent</h2>
+      <ul>
+        <li>Open in source, written in Python, distributed as a standalone Windows .exe via official channels only</li>
+        <li>Reads Tally / Busy via the official XML / ODBC interfaces — never directly touches your data files</li>
+        <li>Authenticates with FLOWRA via your business token (revocable from the Tally Setup page)</li>
+        <li>All traffic over TLS 1.3 with TLS pinning to <code class="text-blue-300 bg-blue-500/10 px-1 rounded">api.flowralive.in</code></li>
+        <li>Local cache encrypted; auto-purged on logout</li>
+      </ul>
+
+      <h2>6. Backups and disaster recovery</h2>
+      <ul>
+        <li>Continuous oplog backup with point-in-time recovery (PITR) granularity to 5 minutes</li>
+        <li>Daily encrypted snapshots retained 30 days</li>
+        <li>Weekly snapshots retained 12 months</li>
+        <li>Quarterly restore drills — we actually test it, we don't just claim it</li>
+        <li>RTO target: 1 hour. RPO target: 5 minutes</li>
+      </ul>
+
+      <h2>7. Operational security</h2>
+      <ul>
+        <li>Production access is limited to a small list of named engineers</li>
+        <li>All production changes go through code review + automated CI tests</li>
+        <li>Secrets stored in encrypted environment variables — never in source code</li>
+        <li>Dependency vulnerability scanning (npm audit + pip-audit) on every deploy</li>
+        <li>Centralized log aggregation with anomaly detection</li>
+      </ul>
+
+      <h2>8. Compliance</h2>
+      <ul>
+        <li><strong>Digital Personal Data Protection Act, 2023 (DPDP)</strong> — fully compliant; Grievance Officer designated</li>
+        <li><strong>Information Technology Act, 2000</strong> — compliant data handling and grievance redressal</li>
+        <li><strong>GST Reverse Charge Mechanism</strong> — invoice-compliant for all subscription billing</li>
+        <li>Working towards <strong>SOC 2 Type II</strong> in 2027</li>
+      </ul>
+
+      <h2>9. Responsible disclosure</h2>
+      <p>Found a security issue? We want to hear about it. Please email <a href="mailto:security@flowralive.in">security@flowralive.in</a> with:</p>
+      <ul>
+        <li>Description of the issue and impact</li>
+        <li>Steps to reproduce</li>
+        <li>Your contact details (if you'd like credit)</li>
+      </ul>
+      <p>We commit to:</p>
+      <ul>
+        <li>Acknowledge receipt within 48 hours</li>
+        <li>Provide a status update within 7 days</li>
+        <li>Not take legal action against good-faith researchers who follow this policy</li>
+        <li>Public credit (if you want it) on a Hall of Fame page once the fix ships</li>
+      </ul>
+
+      <h2>10. Status and uptime</h2>
+      <p>Live status, incident history, and post-mortems are published at <a href="https://status.flowralive.in">status.flowralive.in</a>. We commit to <strong>99.5% monthly uptime</strong> and credit customers for any breach.</p>
+
+      <h2>11. Contact</h2>
+      <p>
+        <strong>Security team</strong><br>
+        Vulnerability reports: <a href="mailto:security@flowralive.in">security@flowralive.in</a><br>
+        Privacy / DPDP Grievance: <a href="mailto:privacy@flowralive.in">privacy@flowralive.in</a><br>
+        General support: <a href="mailto:support@flowralive.in">support@flowralive.in</a>
+      </p>
+    </article>
+  </main>
+
+  <footer class="border-t border-slate-800/60 mt-20">
+    <div class="max-w-5xl mx-auto px-5 sm:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+      <div>© <span id="year">2026</span> FLOWRA. All rights reserved. Made in India.</div>
+      <div class="flex items-center gap-4">
+        <a href="/privacy" class="hover:text-white transition">Privacy</a>
+        <a href="/terms" class="hover:text-white transition">Terms</a>
+        <a href="/security" class="hover:text-white transition">Security</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
