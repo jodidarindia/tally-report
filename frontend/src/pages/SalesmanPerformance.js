@@ -199,8 +199,8 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
         <p className="text-xs text-slate-400">Create salesman users from Profile &gt; Employees with role "Salesman"</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1" data-testid="salesman-tabs">
+      {/* Tabs — horizontally scrollable on mobile, inline on desktop */}
+      <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1 overflow-x-auto -mx-2 px-2 sm:mx-0 sm:px-1" data-testid="salesman-tabs">
         {tabs.map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -209,7 +209,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               data-testid={`salesman-tab-${tab.id}`}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs font-medium transition-colors flex-shrink-0 whitespace-nowrap ${
                 isActive ? 'bg-[#2563EB] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -879,7 +879,7 @@ function BeatPlansAdmin({ companyId, masterList, customers }) {
                 <div key={i} className="px-3 py-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center" data-testid={`beat-row-${i}`}>
                   <div className="flex-1 min-w-0 w-full sm:w-auto">
                     <SearchableSelect value={b.customer_name} onChange={v => updateRow(i, 'customer_name', v)}
-                      options={customers.map(c => ({ value: c, label: c }))} placeholder="Select customer" />
+                      options={customers} placeholder="Select customer" />
                   </div>
                   <select value={b.day_of_week} onChange={e => updateRow(i, 'day_of_week', e.target.value)}
                     className="text-xs border border-slate-200 rounded px-2 py-1.5" data-testid={`beat-day-${i}`}>

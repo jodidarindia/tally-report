@@ -371,7 +371,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
           )}
 
           {/* Category Sales (A/B/C/D drill-down) */}
-          {activeTab === 'category-sales' && <CategorySalesTab fy={selectedFY} formatNum={formatNum} />}
+          {activeTab === 'category-sales' && <CategorySalesTab fy={selectedFY} formatNum={fmt} />}
 
           {/* Below Cost Sales */}
           {activeTab === 'below-cost' && (
