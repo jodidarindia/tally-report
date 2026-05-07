@@ -440,10 +440,14 @@ Keep the language simple and practical for a business owner. Use Indian Rupee am
 
 @router.get("/ca-corner/balance-sheet")
 async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional[str] = None):
-    """Balance Sheet — reads the FY-scoped snapshot built by the agent's Tally BS report
-    (uses SVFROMDATE/SVTODATE so closing balances are FY-end accurate, not running cumulative).
+    """Balance Sheet — derived live from synced `all_ledgers` collection.
 
-    Falls back to the legacy `all_ledgers` snapshot if the new collection isn't populated yet.
+    FY mapping (uses Tally's auto-roll convention):
+      - Today's open FY (e.g., 2026-27 right now) → use ledger CLOSINGBALANCE
+      - Previous FY (2025-26)                     → use ledger OPENINGBALANCE
+        (because Tally's master OB = previous FY's closing by accounting identity)
+      - Older FY                                  → not available without re-anchoring
+        (will fall back to OPENINGBALANCE with a notice)
     """
     try:
         ctx = await get_tenant_context(request)
@@ -452,98 +456,122 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
             return APIResponse(success=False, error="Authentication required")
 
         q = _build_q(ctx, company_id)
-
-        # Try the new FY-scoped snapshot first
-        if fy:
-            snapshot = await db.balance_sheets.find_one({**q, "fy": fy}, {"_id": 0})
-            if snapshot and snapshot.get("groups"):
-                groups = snapshot["groups"]
-                # Group display labels — match Tally's BS format
-                LABELS = {
-                    'capital': 'Capital Account',
-                    'reserves': 'Reserves & Surplus',
-                    'secured_loans': 'Secured Loans',
-                    'unsecured_loans': 'Unsecured Loans',
-                    'current_liabilities': 'Current Liabilities',
-                    'provisions': 'Provisions',
-                    'duties_taxes': 'Duties & Taxes',
-                    'sundry_creditors': 'Sundry Creditors',
-                    'non_current_liabilities': 'Non-Current Liabilities',
-                    'profit_loss_ac': 'Profit & Loss A/c',
-                    'branch_division': 'Branch / Divisions',
-                    'suspense': 'Suspense A/c',
-                    'fixed_assets': 'Fixed Assets',
-                    'investments': 'Investments',
-                    'current_assets': 'Current Assets',
-                    'stock_in_hand': 'Stock-in-Hand',
-                    'sundry_debtors': 'Sundry Debtors',
-                    'cash': 'Cash-in-Hand',
-                    'bank': 'Bank Accounts',
-                    'bank_od': 'Bank OD A/c',
-                    'misc_expense': 'Misc. Expenses (Asset)',
-                }
-                assets = []
-                liabilities = []
-                for cat, g in groups.items():
-                    entry = {
-                        'group': LABELS.get(cat, cat.replace('_', ' ').title()),
-                        'category': cat,
-                        'total': g['total'],
-                        'ledgers': g.get('ledgers', []),
-                    }
-                    if g.get('side') == 'asset':
-                        assets.append(entry)
-                    else:
-                        liabilities.append(entry)
-                assets.sort(key=lambda x: -abs(x['total']))
-                liabilities.sort(key=lambda x: -abs(x['total']))
-                tot = snapshot.get('totals', {})
-                return APIResponse(success=True, data={
-                    "fy": fy,
-                    "fy_start": snapshot.get("fy_start"),
-                    "fy_end": snapshot.get("fy_end"),
-                    "assets": assets,
-                    "liabilities": liabilities,
-                    "total_assets": tot.get("assets", 0),
-                    "total_liabilities": tot.get("liabilities", 0),
-                    "difference": tot.get("difference", 0),
-                    "source": "tally_bs_snapshot",
-                    "raw_ledger_count": snapshot.get("raw_ledger_count", 0),
-                    "last_synced": snapshot.get("last_synced"),
-                })
-
-        # Legacy fallback — point-in-time all_ledgers (loses FY scoping)
         ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
-        if not ledgers:
+        creditors = await db.creditors.find(q, {"_id": 0}).to_list(2000)
+        debtors = await db.customers.find(q, {"_id": 0}).to_list(2000)
+
+        if not ledgers and not creditors and not debtors:
             return APIResponse(success=True, data={
                 "assets": [], "liabilities": [], "total_assets": 0, "total_liabilities": 0,
                 "source": "empty",
-                "message": "No Balance Sheet snapshot found. Re-sync with the latest Tally agent (v9.2+)."
+                "message": "No ledger data synced yet. Run the desktop agent (v9.4+)."
             })
 
-        asset_cats = {'current_assets', 'fixed_assets', 'investments', 'stock_in_hand', 'misc_expense', 'cash', 'bank', 'bank_od', 'sundry_debtors'}
-        liab_cats = {'current_liabilities', 'provisions', 'duties_taxes', 'non_current_liabilities', 'secured_loans', 'unsecured_loans', 'capital', 'reserves', 'profit_loss_ac', 'sundry_creditors'}
+        # Decide which balance to use based on requested FY vs today's FY
+        from datetime import date as _date
+        today = _date.today()
+        today_fy_year = today.year if today.month >= 4 else today.year - 1
+        today_fy = f"{today_fy_year}-{str(today_fy_year + 1)[-2:]}"
+        use_opening = False
+        notice = None
+        if fy and fy != today_fy:
+            try:
+                req_year = int(fy.split("-")[0])
+                if req_year == today_fy_year - 1:
+                    use_opening = True
+                else:
+                    use_opening = True
+                    notice = f"Showing previous-FY balance for {fy} (older FYs not directly available — re-anchor by running the agent during that FY)"
+            except Exception:
+                pass
 
-        def group_ledgers(cats):
-            groups = {}
-            for l in ledgers:
-                if l.get('category') in cats:
-                    grp = l.get('parent_group', 'Other')
-                    groups.setdefault(grp, {"group": grp, "ledgers": [], "total": 0})
-                    amt = round(abs(l.get('closing_balance', 0)), 2)
-                    groups[grp]["ledgers"].append({"name": l.get('ledger_name', ''), "amount": amt})
-                    groups[grp]["total"] += amt
-            return sorted(groups.values(), key=lambda x: x['total'], reverse=True)
+        # Tally root-group → asset/liability + display label
+        # NOTE: Sales/Purchase/Income/Expense categories are EXCLUDED — they belong to
+        # P&L, not Balance Sheet. The Profit & Loss A/c category captures the net result.
+        ASSET_CATS = {'bank', 'cash', 'current_assets', 'fixed_assets',
+                      'investments', 'stock_in_hand', 'sundry_debtors', 'misc_expense'}
+        LIAB_CATS = {'capital', 'reserves', 'secured_loans', 'unsecured_loans',
+                     'current_liabilities', 'provisions', 'duties_taxes',
+                     'sundry_creditors', 'non_current_liabilities', 'profit_loss_ac',
+                     'branch_division', 'suspense', 'bank_od'}
+        SKIP_CATS = {'direct_income', 'indirect_income', 'direct_expense',
+                     'indirect_expense', 'sales_accounts', 'purchase_accounts'}
+        LABELS = {
+            'capital': 'Capital Account', 'reserves': 'Reserves & Surplus',
+            'secured_loans': 'Secured Loans', 'unsecured_loans': 'Unsecured Loans',
+            'current_liabilities': 'Current Liabilities', 'provisions': 'Provisions',
+            'duties_taxes': 'Duties & Taxes', 'sundry_creditors': 'Sundry Creditors',
+            'non_current_liabilities': 'Non-Current Liabilities',
+            'profit_loss_ac': 'Profit & Loss A/c', 'branch_division': 'Branch / Divisions',
+            'suspense': 'Suspense A/c',
+            'fixed_assets': 'Fixed Assets', 'investments': 'Investments',
+            'current_assets': 'Current Assets', 'stock_in_hand': 'Stock-in-Hand',
+            'sundry_debtors': 'Sundry Debtors', 'cash': 'Cash-in-Hand',
+            'bank': 'Bank Accounts', 'bank_od': 'Bank OD A/c',
+            'misc_expense': 'Misc. Expenses (Asset)',
+        }
 
-        assets = group_ledgers(asset_cats)
-        liabilities = group_ledgers(liab_cats)
+        groups = {}
+
+        def _add_to_group(category, name, parent, amount):
+            if abs(amount) < 0.01:
+                return
+            side = 'asset' if category in ASSET_CATS else 'liability'
+            if category not in groups:
+                groups[category] = {
+                    'group': LABELS.get(category, category.replace('_', ' ').title()),
+                    'category': category, 'side': side,
+                    'total': 0.0, 'ledgers': [],
+                }
+            groups[category]['total'] += amount
+            groups[category]['ledgers'].append({'name': name, 'parent_group': parent, 'amount': round(amount, 2)})
+
+        # Process all_ledgers (everything except sundry debtors/creditors which are
+        # synced separately for richer per-customer detail)
+        for l in ledgers:
+            cat = l.get('category', 'other')
+            if cat == 'other':
+                continue
+            bal = safe_num(l.get('opening_balance' if use_opening else 'closing_balance'))
+            # Tally signed convention: assets are DR-balance positive, liabilities CR-balance
+            # negative. Flip liabilities so they display as positive.
+            display = -bal if cat in LIAB_CATS else bal
+            _add_to_group(cat, l.get('ledger_name', ''), l.get('parent_group', ''), display)
+
+        # Sundry Debtors (always positive balance)
+        for d in debtors:
+            bal = safe_num(d.get('opening_balance' if use_opening else 'outstanding_amount'))
+            _add_to_group('sundry_debtors', d.get('customer_name', ''), d.get('ledger_group', 'Sundry Debtors'), bal)
+
+        # Sundry Creditors (Tally stores as negative; display as positive on liability side)
+        for c in creditors:
+            bal = safe_num(c.get('opening_balance' if use_opening else 'outstanding_amount'))
+            _add_to_group('sundry_creditors', c.get('creditor_name', ''), c.get('ledger_group', 'Sundry Creditors'), -bal if bal < 0 else bal)
+
+        # Sort each group's ledgers by absolute amount
+        for g in groups.values():
+            g['ledgers'].sort(key=lambda x: -abs(x['amount']))
+            g['total'] = round(g['total'], 2)
+
+        assets = sorted([g for g in groups.values() if g['side'] == 'asset'], key=lambda x: -abs(x['total']))
+        liabilities = sorted([g for g in groups.values() if g['side'] == 'liability'], key=lambda x: -abs(x['total']))
+        total_assets = sum(g['total'] for g in assets)
+        total_liabilities = sum(g['total'] for g in liabilities)
+        difference = total_assets - total_liabilities
+
         return APIResponse(success=True, data={
+            "fy": fy or today_fy,
+            "view": "opening" if use_opening else "closing",
             "assets": assets,
             "liabilities": liabilities,
-            "total_assets": round(sum(g['total'] for g in assets), 2),
-            "total_liabilities": round(sum(g['total'] for g in liabilities), 2),
-            "source": "legacy_all_ledgers",
-            "message": "Showing legacy point-in-time view. Re-sync with the latest Tally agent for FY-accurate Balance Sheet."
+            "total_assets": round(total_assets, 2),
+            "total_liabilities": round(total_liabilities, 2),
+            "difference": round(difference, 2),
+            "source": "derived_from_all_ledgers",
+            "notice": notice,
+            "ledger_count": len(ledgers),
+            "debtor_count": len(debtors),
+            "creditor_count": len(creditors),
         })
     except Exception as e:
         logger.error(f"Balance sheet error: {e}")

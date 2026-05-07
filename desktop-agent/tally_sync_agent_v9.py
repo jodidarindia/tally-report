@@ -1059,54 +1059,33 @@ class TallyCollectionClient:
     # ---- SUNDRY CREDITORS (Collection) ----
 
     def fetch_creditors_from_all_ledgers(self) -> List[Dict]:
-        """Fallback: derive Sundry Creditors from group-walked all-ledgers query.
-        Used when the IsSundryCreditor TDL filter returns nothing (older Tally builds).
+        """Fallback: derive Sundry Creditors from the working `_fetch_ledgers_fallback`
+        query. The Collection-based query patterns Tally rejects in this build, but the
+        Function-based fallback (which gave us 212 ledgers) works. We just walk the
+        parent chain and pick anything whose root is "sundry creditors".
         """
-        company_tag = self._company_tag()
-        xml = f"""<ENVELOPE>
-<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraCredFB</ID></HEADER>
-<BODY><DESC>
-<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="FlowraCredFB" ISINITIALIZE="Yes">
-<TYPE>Ledger</TYPE>
-<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, LEDGERPHONE, LEDGERMOBILE, LEDGERCONTACT, STATENAME</FETCH>
-</COLLECTION>
-</TDLMESSAGE></TDL>
-</DESC></BODY></ENVELOPE>"""
         try:
-            data = self._post(xml, debug_name='creditors_fb')
-            if not data:
+            # Reuse the already-working fallback (returns ALL ledgers including the ones
+            # we normally skip in EXCLUDE_GROUPS). We re-call with skip_excludes=False.
+            all_leds = self._fetch_ledgers_fallback(skip_excludes=False)
+            if not all_leds:
+                logger.warning("  Creditor fallback: ledger fetch returned empty")
                 return []
-            ledgers_raw = self._get_collection_items(data, 'LEDGER')
-            if not ledgers_raw:
-                found = self._find_deep(data, 'LEDGER')
-                if isinstance(found, list):
-                    ledgers_raw = found
-                elif isinstance(found, dict):
-                    ledgers_raw = [found]
-                else:
-                    return []
             parent_map = self.fetch_group_parent_map()
             creditors = []
-            for lg in ledgers_raw:
-                if not isinstance(lg, dict):
-                    continue
-                name = str(lg.get('NAME', lg.get('@NAME', '')) or '').strip()
-                if not name:
-                    continue
-                parent = str(lg.get('PARENT', '') or '').strip()
+            for lg in all_leds:
+                parent = (lg.get('parent_group') or '').strip()
                 root = self._resolve_root_group(parent, parent_map) if parent else ''
-                if root != 'sundry creditors':
+                if root != 'sundry creditors' and parent.lower().strip() != 'sundry creditors':
                     continue
                 creditors.append({
-                    'creditor_name': name,
+                    'creditor_name': lg.get('ledger_name', ''),
                     'ledger_group': parent or 'Sundry Creditors',
-                    'outstanding_amount': self._num(lg.get('CLOSINGBALANCE', 0)),
-                    'opening_balance': self._num(lg.get('OPENINGBALANCE', 0)),
-                    'phone': str(lg.get('LEDGERPHONE', lg.get('LEDGERMOBILE', '')) or '').strip(),
-                    'contact_person': str(lg.get('LEDGERCONTACT', '') or '').strip(),
-                    'state': str(lg.get('STATENAME', '') or '').strip(),
+                    'outstanding_amount': lg.get('closing_balance', 0),
+                    'opening_balance': lg.get('opening_balance', 0),
+                    'phone': lg.get('phone', ''),
+                    'contact_person': lg.get('contact_person', ''),
+                    'state': lg.get('state', ''),
                 })
             logger.info(f"  Fallback fetched {len(creditors)} sundry creditors via group walker")
             return creditors
@@ -1821,8 +1800,11 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             return []
 
 
-    def _fetch_ledgers_fallback(self) -> List[Dict]:
-        """Fallback: fetch ledgers using simple TDL Collection with NO filter."""
+    def _fetch_ledgers_fallback(self, skip_excludes: bool = True) -> List[Dict]:
+        """Fallback: fetch ledgers using simple TDL Collection with NO filter.
+        Set skip_excludes=False to include Sundry Debtors / Creditors (used for the
+        creditors fallback derivation).
+        """
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraLedgersFB</ID></HEADER>
@@ -1831,11 +1813,11 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 <TDL><TDLMESSAGE>
 <COLLECTION NAME="FlowraLedgersFB" ISINITIALIZE="Yes">
 <TYPE>Ledger</TYPE>
-<FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE</FETCH>
+<FETCH>NAME, PARENT, OPENINGBALANCE, CLOSINGBALANCE, LEDGERPHONE, LEDGERMOBILE, LEDGERCONTACT, STATENAME</FETCH>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
-        EXCLUDE_GROUPS = {'sundry debtors', 'sundry creditors'}
+        EXCLUDE_GROUPS = {'sundry debtors', 'sundry creditors'} if skip_excludes else set()
         GROUP_CATEGORY = self._get_group_category_map()
         try:
             data = self._post(xml, debug_name='all_ledgers_fb')
@@ -1883,6 +1865,9 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     'ledger_name': name, 'parent_group': parent,
                     'category': category,
                     'opening_balance': round(opening, 2), 'closing_balance': round(closing, 2),
+                    'phone': str(led.get('LEDGERPHONE', led.get('LEDGERMOBILE', '')) or '').strip(),
+                    'contact_person': str(led.get('LEDGERCONTACT', '') or '').strip(),
+                    'state': str(led.get('STATENAME', '') or '').strip(),
                 })
             logger.info(f"  Fallback fetched {len(results)} ledgers")
             return results
@@ -2517,7 +2502,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.3.0-balance-sheet-snapshot',
+                'agent_version': '9.4.0-derived-bs',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2574,7 +2559,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.3.0-balance-sheet-snapshot',
+                'agent_version': '9.4.0-derived-bs',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3114,17 +3099,11 @@ class FlowraSyncAgent:
             all_ledgers = self.tally.fetch_all_ledgers()
             bank_cash = []
 
-            # --- Phase 10b: FY-scoped Balance Sheet snapshot (per FY)
-            # This uses Tally's BS report semantics with SVFROMDATE/SVTODATE so closing
-            # balances are FY-end accurate (not running cumulative across FYs).
-            for fy in fys_to_sync:
-                fy_start, fy_end = fy_to_dates(fy)
-                bs = self.tally.fetch_balance_sheet(fy_start, fy_end)
-                if bs and bs.get('groups'):
-                    self.save_cache(f'balance_sheet_{fy}', bs)
-                    self.sync_to_backend('balance_sheet_snapshot', [bs], id_key='fy')
-                else:
-                    logger.warning(f"  Balance Sheet snapshot for FY {fy}: empty or failed")
+            # Note: Balance Sheet snapshots are now computed on the backend from
+            # the synced `all_ledgers` collection (avoids extra Tally roundtrips
+            # which timeout on large company files). The backend uses today's FY
+            # closing_balance for current-FY view and opening_balance (= prev-FY
+            # closing) for prev-FY view.
             if all_ledgers:
                 self.save_cache('all_ledgers', all_ledgers)
                 self.sync_to_backend('all_ledgers', all_ledgers)

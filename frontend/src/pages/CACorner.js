@@ -505,12 +505,13 @@ const BalanceSheetView = ({ data }) => {
 
   return (
     <div data-testid="bs-view" className="space-y-4">
-      {data.message && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">{data.message}</div>}
-      {data.source === 'tally_bs_snapshot' && (
+      {data.notice && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">{data.notice}</div>}
+      {data.source === 'derived_from_all_ledgers' && (
         <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 inline-flex">
-          <span className="text-[10px]">✓</span> Tally BS Snapshot — FY-scoped from {data.fy_start} to {data.fy_end}
+          <span className="text-[10px]">✓</span> FY {data.fy} · {data.view === 'opening' ? 'Opening Balance view' : 'Closing Balance view'} · {data.ledger_count} ledgers + {data.debtor_count} debtors + {data.creditor_count} creditors
         </div>
       )}
+      {data.message && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">{data.message}</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-3">
           <GroupSection title="Assets" groups={data.assets || []} total={data.total_assets || 0} color="#10b981"/>
