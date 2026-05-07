@@ -169,6 +169,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
     { id: 'items', label: 'Item-wise Sales', icon: Package },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'beats', label: 'Beat Plans', icon: Calendar },
+    { id: 'beat-runs', label: 'Beat Runs', icon: Calendar },
     { id: 'manage', label: 'Manage Salesmen', icon: Users },
   ];
 
@@ -473,6 +474,11 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
         <BeatPlansAdmin companyId={companyId} masterList={masterList} customers={customers} />
       )}
 
+      {/* ========== BEAT RUNS (history) TAB ========== */}
+      {activeTab === 'beat-runs' && (
+        <BeatRunsAdmin companyId={companyId} masterList={masterList} />
+      )}
+
       {/* ========== MANAGE TAB ========== */}
       {activeTab === 'manage' && (
         <div className="space-y-3">
@@ -624,6 +630,149 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
 };
 
 export default SalesmanPerformance;
+
+// ─── Beat Runs Admin (read-only history viewer for any salesman) ─────────
+function BeatRunsAdmin({ companyId, masterList }) {
+  const [salesman, setSalesman] = useState('');
+  const [runs, setRuns] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selRun, setSelRun] = useState(null);
+  const [todayRun, setTodayRun] = useState(null);
+
+  const hdr = useCallback(() => ({
+    Authorization: `Bearer ${localStorage.getItem('flowra_token')}`,
+    'X-Company-Id': companyId || '',
+  }), [companyId]);
+
+  const fetchHistory = useCallback(async () => {
+    setLoading(true);
+    setRuns([]); setTodayRun(null); setSelRun(null);
+    try {
+      const url = `${API}/salesman-orders/beat-run/history?company_id=${companyId || ''}${salesman ? `&salesman=${encodeURIComponent(salesman)}` : ''}&limit=90`;
+      const r = await axios.get(url, { headers: hdr() });
+      if (r.data?.success) setRuns(r.data.data.runs || []);
+      if (salesman) {
+        const t = await axios.get(`${API}/salesman-orders/beat-run/today?company_id=${companyId || ''}&salesman=${encodeURIComponent(salesman)}`, { headers: hdr() });
+        if (t.data?.success) setTodayRun(t.data.data);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [companyId, hdr, salesman]);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  return (
+    <div className="space-y-3" data-testid="beat-runs-admin">
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4">
+        <label className="text-[11px] text-slate-500 font-semibold uppercase block mb-1">Salesman</label>
+        <select value={salesman} onChange={e => setSalesman(e.target.value)}
+          className="w-full sm:max-w-xs px-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="beat-runs-salesman-select">
+          <option value="">— All salesmen —</option>
+          {masterList.map((m, i) => <option key={i} value={m.salesman_name}>{m.salesman_name}</option>)}
+        </select>
+      </div>
+
+      {loading ? <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div> :
+        selRun ? (
+          <div data-testid="admin-history-detail">
+            <button onClick={() => setSelRun(null)} className="text-xs text-blue-600 mb-2 flex items-center gap-1" data-testid="admin-back-history">‹ Back</button>
+            <BeatRunReadOnlyView runDate={selRun.run_date} salesman={selRun.salesman} companyId={companyId} hdr={hdr} />
+          </div>
+        ) : (
+          <>
+            {todayRun && salesman && (
+              <div className="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg p-3" data-testid="admin-today-run">
+                <p className="text-[10px] uppercase font-bold text-blue-700 tracking-wider mb-0.5">Today's Run</p>
+                <BeatRunReadOnlyView runDate={todayRun.run_date} salesman={todayRun.salesman} companyId={companyId} hdr={hdr} embedded />
+              </div>
+            )}
+            <div className="space-y-2">
+              {runs.length === 0 && <p className="text-center text-xs text-slate-400 py-8 italic">No beat runs recorded yet.</p>}
+              {runs.map((r, i) => {
+                const date = (() => { try { return new Date(r.run_date).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }); } catch { return r.run_date; } })();
+                const pct = r.planned_count ? Math.round(r.visited_count / r.planned_count * 100) : 0;
+                return (
+                  <button key={i} onClick={() => setSelRun(r)} className="w-full text-left bg-white rounded-lg border border-slate-200 p-3 hover:border-blue-300" data-testid={`admin-history-${i}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs sm:text-sm font-semibold text-slate-800">{date}</div>
+                        <p className="text-[11px] text-slate-500">{r.salesman} · {r.visited_count}/{r.planned_count} planned · {r.unplanned_count} unplanned</p>
+                      </div>
+                      <div className="text-right">
+                        <div className={`text-base font-bold ${pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-blue-600' : pct >= 20 ? 'text-amber-600' : 'text-slate-400'}`}>{pct}%</div>
+                        <div className="text-[9px] text-slate-400">coverage</div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )
+      }
+    </div>
+  );
+}
+
+// Read-only renderer (used by Useradmin Beat Runs tab — no check-in allowed)
+function BeatRunReadOnlyView({ runDate, salesman, companyId, hdr, embedded = false }) {
+  const [run, setRun] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    axios.get(`${API}/salesman-orders/beat-run/today?company_id=${companyId || ''}&run_date=${runDate}&salesman=${encodeURIComponent(salesman)}`, { headers: hdr() })
+      .then(r => { if (r.data?.success) setRun(r.data.data); })
+      .finally(() => setLoading(false));
+  }, [runDate, salesman, companyId, hdr]);
+  if (loading) return <div className="flex items-center justify-center h-24"><div className="w-5 h-5 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div>;
+  if (!run) return <p className="text-center text-xs text-slate-400 py-6">Not found.</p>;
+  const dateLabel = (() => { try { return new Date(run.run_date).toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' }); } catch { return run.run_date; } })();
+  const visitedCount = (run.planned || []).filter(p => p.visited_at).length;
+  return (
+    <div className={embedded ? '' : 'space-y-3'}>
+      {!embedded && (
+        <div className="bg-white rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-2">
+          <div><h3 className="text-sm font-semibold text-slate-800">{dateLabel}</h3>
+            <p className="text-[11px] text-slate-500">{run.salesman} · {run.day_of_week}</p>
+          </div>
+          <div className="text-right"><div className="text-lg font-bold text-blue-600">{visitedCount}/{(run.planned || []).length}</div></div>
+        </div>
+      )}
+      <div className={embedded ? 'mt-2' : 'bg-white rounded-lg border border-slate-200 overflow-hidden'}>
+        {(run.planned || []).map((p, i) => {
+          const done = !!p.visited_at;
+          return (
+            <div key={i} className={`px-3 py-2 ${embedded ? '' : 'border-b border-slate-50 last:border-0'} flex items-center gap-2.5`}>
+              <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${done ? 'bg-green-500 text-white' : 'border-2 border-slate-300'}`}>
+                {done && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className={`text-xs ${done ? 'text-green-800 line-through' : 'text-slate-800'} truncate`}>{p.customer_name}</div>
+                {p.visited_at && <div className="text-[9px] text-slate-500">at {new Date(p.visited_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}</div>}
+              </div>
+            </div>
+          );
+        })}
+        {(run.unplanned || []).length > 0 && (
+          <>
+            <div className="px-3 py-1 text-[9px] uppercase font-bold text-amber-700 bg-amber-50">Unplanned</div>
+            {(run.unplanned || []).map((u, i) => (
+              <div key={i} className="px-3 py-2 border-b border-slate-50 last:border-0 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5"><span className="text-xs text-slate-800 truncate">{u.customer_name}</span>
+                    <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">NEW</span>
+                  </div>
+                  {u.details && <p className="text-[10px] text-slate-500">{u.details}</p>}
+                </div>
+                <span className="text-[9px] text-slate-400 flex-shrink-0">{new Date(u.added_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}</span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── Beat Plans Admin Tab ────────────────────────────────────────────────
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

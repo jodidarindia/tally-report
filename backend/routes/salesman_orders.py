@@ -613,3 +613,293 @@ async def mark_visited(beat_id: str, request: Request):
         return APIResponse(success=True, message="Visit recorded")
     except Exception as e:
         return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# BEAT RUN TODAY — daily field-coverage tracking
+# ═══════════════════════════════════════════════════════
+
+DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+DAY_NAMES_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+# Acceptable variants for each weekday — we match beat plan day_of_week against
+# either short or full names so the agent's existing data still works.
+DAY_VARIANTS = {DAY_NAMES[i]: {DAY_NAMES[i], DAY_NAMES_FULL[i], DAY_NAMES[i].lower(), DAY_NAMES_FULL[i].lower()} for i in range(7)}
+
+
+def _ist_today() -> str:
+    """Current date in IST (YYYY-MM-DD) — used as the run_date key."""
+    from datetime import datetime, timedelta
+    return (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+
+
+def _ist_dow(date_str: str) -> str:
+    """Day-of-week label for an IST date string."""
+    from datetime import datetime
+    return DAY_NAMES[datetime.strptime(date_str, "%Y-%m-%d").weekday()]
+
+
+def _is_locked(run_date: str) -> bool:
+    """A run is locked once the calendar day has passed (IST)."""
+    return run_date < _ist_today()
+
+
+async def _resolve_salesman_name(user, ctx) -> str:
+    """Resolve current user → salesman master name (case-insensitive)."""
+    if user.get("role") == "salesman":
+        sname = user.get("name", "")
+        master = await db.salesman_master.find_one(
+            {**_q(ctx), "salesman_name": {"$regex": f"^{sname}$", "$options": "i"}},
+            {"_id": 0, "salesman_name": 1},
+        )
+        return (master or {}).get("salesman_name", sname)
+    return user.get("name", "")
+
+
+@router.get("/salesman-orders/beat-run/today")
+async def get_beat_run_today(request: Request, salesman: Optional[str] = None, run_date: Optional[str] = None, company_id: Optional[str] = None):
+    """Return today's (or a specific date's) beat run for the logged-in salesman
+    (or, for admin, for the requested `salesman`). If no run exists yet, build
+    one from the salesman's beat plan filtered by today's day-of-week.
+
+    Response shape:
+      { salesman, run_date, day_of_week, locked,
+        planned: [{customer_name, beat_id, frequency, visited_at, notes}],
+        unplanned: [{visit_id, customer_name, details, added_at}] }
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        q = _q(ctx, company_id)
+
+        rd = run_date or _ist_today()
+        # Validate date format (YYYY-MM-DD)
+        try:
+            from datetime import datetime as _dt
+            _dt.strptime(rd, "%Y-%m-%d")
+        except Exception:
+            return APIResponse(success=False, error="run_date must be YYYY-MM-DD")
+
+        # Determine target salesman
+        if user.get("role") in ("admin", "super_admin"):
+            target = salesman or await _resolve_salesman_name(user, ctx)
+        else:
+            target = await _resolve_salesman_name(user, ctx)
+        if not target:
+            return APIResponse(success=False, error="No salesman context")
+
+        dow = _ist_dow(rd)
+        locked = _is_locked(rd)
+
+        # Find existing run
+        run = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+
+        if not run:
+            # Build from beat plan (read-only construction — written on first check-in).
+            # Match either short ('Mon') or full ('Monday') day_of_week values.
+            day_match = list(DAY_VARIANTS.get(dow, {dow}))
+            plan = await db.salesman_beats.find(
+                {**q, "salesman": target, "day_of_week": {"$in": day_match}}, {"_id": 0}
+            ).to_list(200)
+            run = {
+                "salesman": target, "run_date": rd, "day_of_week": dow,
+                "planned": [{
+                    "customer_name": b.get("customer_name", ""),
+                    "beat_id": b.get("beat_id", ""),
+                    "frequency": b.get("frequency", "weekly"),
+                    "visited_at": None, "notes": "",
+                } for b in plan],
+                "unplanned": [],
+                "created_at": None,
+            }
+
+        return APIResponse(success=True, data={
+            "salesman": run["salesman"], "run_date": rd, "day_of_week": dow,
+            "locked": locked,
+            "planned": run.get("planned", []),
+            "unplanned": run.get("unplanned", []),
+            "created_at": run.get("created_at"),
+        })
+    except Exception as e:
+        logger.error(f"beat-run/today error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/salesman-orders/beat-run/check-in")
+async def beat_run_check_in(request: Request):
+    """Toggle visited status for a planned customer in TODAY's run only.
+    Body: { customer_name: str, visited: bool, notes?: str, company_id?: str }
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        body = await request.json()
+        customer_name = (body.get("customer_name") or "").strip()
+        visited = bool(body.get("visited"))
+        notes = (body.get("notes") or "").strip()
+        if not customer_name:
+            return APIResponse(success=False, error="customer_name is required")
+
+        q = _q(ctx, body.get("company_id"))
+        rd = _ist_today()  # check-ins ALWAYS apply to today (server-enforced)
+        target = await _resolve_salesman_name(user, ctx)
+        # Admin can check in on behalf of a salesman (rare — for field auditing)
+        if user.get("role") in ("admin", "super_admin") and body.get("salesman"):
+            target = body.get("salesman")
+        dow = _ist_dow(rd)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Ensure run document exists (auto-create from plan if missing)
+        existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if not existing:
+            day_match = list(DAY_VARIANTS.get(dow, {dow}))
+            plan = await db.salesman_beats.find(
+                {**q, "salesman": target, "day_of_week": {"$in": day_match}}, {"_id": 0}
+            ).to_list(200)
+            existing = {
+                **q, "salesman": target, "run_date": rd, "day_of_week": dow,
+                "planned": [{
+                    "customer_name": b.get("customer_name", ""),
+                    "beat_id": b.get("beat_id", ""),
+                    "frequency": b.get("frequency", "weekly"),
+                    "visited_at": None, "notes": "",
+                } for b in plan],
+                "unplanned": [],
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+            await db.beat_runs.insert_one({**existing})
+
+        # Update the matching planned entry, or add it if not present (e.g., off-day visit)
+        planned = existing.get("planned", [])
+        found = False
+        for p in planned:
+            if (p.get("customer_name") or "").strip().lower() == customer_name.lower():
+                p["visited_at"] = now_iso if visited else None
+                if notes:
+                    p["notes"] = notes
+                found = True
+                break
+        if not found:
+            planned.append({
+                "customer_name": customer_name, "beat_id": "",
+                "frequency": "ad-hoc",
+                "visited_at": now_iso if visited else None,
+                "notes": notes,
+            })
+
+        await db.beat_runs.update_one(
+            {**q, "salesman": target, "run_date": rd},
+            {"$set": {"planned": planned, "updated_at": now_iso}},
+        )
+        return APIResponse(success=True, message="Check-in saved")
+    except Exception as e:
+        logger.error(f"beat-run/check-in error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/salesman-orders/beat-run/add-unplanned")
+async def beat_run_add_unplanned(request: Request):
+    """Add an unplanned visit (new prospect) to TODAY's run.
+    Body: { customer_name: str, details?: str, company_id?: str }
+    Marked with `is_new: true`. No CRM impact until the customer appears in Tally.
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        body = await request.json()
+        cname = (body.get("customer_name") or "").strip()
+        details = (body.get("details") or "").strip()
+        if not cname:
+            return APIResponse(success=False, error="customer_name is required")
+
+        q = _q(ctx, body.get("company_id"))
+        rd = _ist_today()  # always today — past dates locked
+        target = await _resolve_salesman_name(user, ctx)
+        dow = _ist_dow(rd)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        new_visit = {
+            "visit_id": f"UV-{uuid.uuid4().hex[:8].upper()}",
+            "customer_name": cname,
+            "details": details,
+            "is_new": True,
+            "added_at": now_iso,
+        }
+
+        existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if not existing:
+            day_match = list(DAY_VARIANTS.get(dow, {dow}))
+            plan = await db.salesman_beats.find(
+                {**q, "salesman": target, "day_of_week": {"$in": day_match}}, {"_id": 0}
+            ).to_list(200)
+            await db.beat_runs.insert_one({
+                **q, "salesman": target, "run_date": rd, "day_of_week": dow,
+                "planned": [{
+                    "customer_name": b.get("customer_name", ""),
+                    "beat_id": b.get("beat_id", ""),
+                    "frequency": b.get("frequency", "weekly"),
+                    "visited_at": None, "notes": "",
+                } for b in plan],
+                "unplanned": [new_visit],
+                "created_at": now_iso, "updated_at": now_iso,
+            })
+        else:
+            await db.beat_runs.update_one(
+                {**q, "salesman": target, "run_date": rd},
+                {"$push": {"unplanned": new_visit}, "$set": {"updated_at": now_iso}},
+            )
+        return APIResponse(success=True, data={"visit": new_visit}, message="Unplanned visit added")
+    except Exception as e:
+        logger.error(f"beat-run/add-unplanned error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/salesman-orders/beat-run/history")
+async def beat_run_history(request: Request,
+                            salesman: Optional[str] = None,
+                            from_date: Optional[str] = None,
+                            to_date: Optional[str] = None,
+                            company_id: Optional[str] = None,
+                            limit: int = 60):
+    """Return past beat runs.
+    - Salesman: only their own runs (server-enforced).
+    - Admin/super_admin: any salesman (or all if `salesman` not given).
+    Optional date filters use YYYY-MM-DD (IST). Default: last 60 runs.
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        q = _q(ctx, company_id)
+
+        if user.get("role") not in ("admin", "super_admin"):
+            q["salesman"] = await _resolve_salesman_name(user, ctx)
+        elif salesman:
+            q["salesman"] = salesman
+
+        if from_date or to_date:
+            date_q = {}
+            if from_date:
+                date_q["$gte"] = from_date
+            if to_date:
+                date_q["$lte"] = to_date
+            q["run_date"] = date_q
+
+        runs = await db.beat_runs.find(q, {"_id": 0}).sort("run_date", -1).limit(min(limit, 365)).to_list(min(limit, 365))
+        # Compute summary stats
+        for r in runs:
+            r["locked"] = _is_locked(r.get("run_date", ""))
+            planned = r.get("planned", [])
+            r["planned_count"] = len(planned)
+            r["visited_count"] = sum(1 for p in planned if p.get("visited_at"))
+            r["unplanned_count"] = len(r.get("unplanned", []))
+        return APIResponse(success=True, data={"runs": runs, "count": len(runs)})
+    except Exception as e:
+        logger.error(f"beat-run/history error: {e}")
+        return APIResponse(success=False, error=str(e))

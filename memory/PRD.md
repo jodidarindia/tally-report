@@ -126,6 +126,36 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - **Inventory model**: added stock value fields (was being silently dropped by Pydantic).
 - **Tests**: `/app/backend/tests/test_ca_corner_bs_pl.py` (4/4 pass).
 
+## Changelog — May 2026 (Beat Run Today — Field Coverage Tracking)
+
+### Salesman dashboard
+- **"Beat Run Today" tab** added (default after dashboard) — auto-derived from the salesman's beat plan filtered by today's day-of-week (IST).
+- Tap any planned customer to **toggle visited** (timestamp captured in IST).
+- **NEW unplanned visits** — text-box for customer name + details. Tagged `NEW` chip until that customer appears in synced Tally data (no CRM/sales impact until then).
+- **"Beat History" tab** — read-only list of past runs with coverage % per day. Click any row → detail view (locked, can't edit).
+
+### Useradmin Salesman page
+- **"Beat Runs" sub-tab** (next to Beat Plans) — pick a salesman from dropdown → see their Today panel + paginated history of past runs (last 90). Click any past run for detail.
+- Read-only viewer (BeatRunReadOnlyView) — admin can audit but not check-in retroactively.
+
+### Day-end lock
+- Server-side: `_is_locked(run_date) == run_date < _ist_today()` enforced on read.
+- Check-in endpoint always writes to **today's** date — past dates are unreachable from the UI (LOCKED badge + disabled controls) and the API itself ignores any older `run_date` body param.
+
+### New backend collection: `beat_runs`
+- One doc per `(tenant_id, company_id, salesman, run_date)`.
+- Auto-built on first read from `salesman_beats` (day-of-week match — supports both short "Mon" and full "Monday" labels).
+
+### New endpoints
+- `GET  /api/salesman-orders/beat-run/today?run_date=&salesman=&company_id=` — auto-builds from plan if missing.
+- `POST /api/salesman-orders/beat-run/check-in` — toggle visited (today only, server-enforced).
+- `POST /api/salesman-orders/beat-run/add-unplanned` — add NEW-tagged unplanned visit (today only).
+- `GET  /api/salesman-orders/beat-run/history?salesman=&from_date=&to_date=&limit=` — admin sees any salesman, salesman scoped to own.
+
+### Tests
+- `/app/backend/tests/test_iteration60_beat_run.py` — 5/5 pass.
+- Validates auto-build, check-in persistence, NEW tagging, past-date lock, role-scoped history.
+
 ## Changelog — May 2026 (Salesman / Dispatch / Inventory Phase)
 
 ### Salesman (Useradmin side)

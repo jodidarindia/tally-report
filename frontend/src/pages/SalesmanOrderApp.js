@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Package, Clock, CheckCircle2, XCircle, Search, Plus, X,
   User, FileText, ArrowRight, Pause, AlertTriangle, Hash, MessageSquare,
-  Calendar, ChevronDown, Minus, Eye
+  Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft,
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -66,6 +66,8 @@ function SalesmanView({ companyId, selectedFY }) {
       <div className="flex gap-1 mb-4 border-b border-slate-200 overflow-x-auto">
         {[
           {id:'dashboard',label:'Dashboard'},
+          {id:'beat-run',label:'Beat Run Today'},
+          {id:'history',label:'Beat History'},
           {id:'new',label:'New Order'},
           {id:'orders',label:`My Orders (${orders.length})`},
           {id:'beats',label:'Beat Plan'},
@@ -74,6 +76,8 @@ function SalesmanView({ companyId, selectedFY }) {
       </div>
 
       {tab==='dashboard' && <SalesmanDashboard stats={stats} fy={selectedFY}/>}
+      {tab==='beat-run' && <BeatRunView companyId={companyId} hdr={hdr} canCheckIn={true}/>}
+      {tab==='history' && <BeatHistoryView companyId={companyId} hdr={hdr} salesman={null} canCheckIn={true}/>}
 
       {tab==='new' && !selCustomer && (
         <div className="space-y-2" data-testid="customer-list">
@@ -467,6 +471,189 @@ function MiniStat({ label, value, amount, color }) {
   return <div className="bg-white rounded-lg border border-slate-200 p-2"><div className="text-[9px] text-slate-500">{label}</div><div className="text-sm font-bold" style={{color}}>{value}</div><div className="text-[9px] text-slate-400">Rs.{fmt(amount)}</div></div>;
 }
 function Loader() { return <div className="flex items-center justify-center h-48"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"/></div>; }
+
+// ─── Beat Run Today ──────────────────────────────────────────────────────
+function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheckIn = true }) {
+  const [run, setRun] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [unName, setUnName] = useState('');
+  const [unDetails, setUnDetails] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchRun = useCallback(async () => {
+    setLoading(true);
+    try {
+      const url = `${API}/api/salesman-orders/beat-run/today?company_id=${companyId||''}${runDate?`&run_date=${runDate}`:''}${salesman?`&salesman=${encodeURIComponent(salesman)}`:''}`;
+      const r = await axios.get(url, { headers: hdr() });
+      if (r.data?.success) setRun(r.data.data);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [companyId, hdr, runDate, salesman]);
+
+  useEffect(() => { fetchRun(); }, [fetchRun]);
+
+  const checkIn = async (customer_name, visited) => {
+    if (!canCheckIn || run?.locked) return;
+    try {
+      await axios.post(`${API}/api/salesman-orders/beat-run/check-in`,
+        { customer_name, visited, company_id: companyId || '', salesman: salesman || undefined },
+        { headers: hdr() });
+      fetchRun();
+    } catch { toast.error('Check-in failed'); }
+  };
+
+  const addUnplanned = async () => {
+    if (!unName.trim()) { toast.error('Enter customer name'); return; }
+    if (run?.locked) return;
+    setSubmitting(true);
+    try {
+      const r = await axios.post(`${API}/api/salesman-orders/beat-run/add-unplanned`,
+        { customer_name: unName.trim(), details: unDetails.trim(), company_id: companyId || '' },
+        { headers: hdr() });
+      if (r.data?.success) {
+        toast.success('Unplanned visit added');
+        setUnName(''); setUnDetails('');
+        fetchRun();
+      } else toast.error(r.data?.error || 'Failed');
+    } catch { toast.error('Failed'); }
+    setSubmitting(false);
+  };
+
+  if (loading) return <Loader/>;
+  if (!run) return <p className="text-center text-xs text-slate-400 py-6">No data.</p>;
+
+  const visitedCount = (run.planned||[]).filter(p => p.visited_at).length;
+  const total = (run.planned||[]).length;
+  const dateLabel = (() => { try { return new Date(run.run_date).toLocaleDateString('en-IN', {weekday:'long', day:'2-digit', month:'short', year:'numeric'}); } catch { return run.run_date; } })();
+
+  return (
+    <div className="space-y-3" data-testid="beat-run-view">
+      {/* Header */}
+      <div className="bg-white rounded-lg border border-slate-200 p-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <h3 className="text-sm font-semibold text-slate-800">{dateLabel}</h3>
+            {run.locked && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center gap-1" data-testid="locked-badge"><Lock size={10}/>LOCKED</span>}
+          </div>
+          <p className="text-[11px] text-slate-500">{run.salesman} · {run.day_of_week}</p>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="text-lg font-bold text-blue-600">{visitedCount}/{total}</div>
+          <div className="text-[10px] text-slate-500">planned visited</div>
+        </div>
+      </div>
+
+      {/* Planned visits checklist */}
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden" data-testid="planned-list">
+        <div className="px-3 py-2 border-b border-slate-100"><h4 className="text-xs font-semibold text-slate-700">Planned Visits ({total})</h4></div>
+        {total === 0 && <p className="text-center text-xs text-slate-400 py-6 italic">No customers scheduled for {run.day_of_week}.</p>}
+        {(run.planned||[]).map((p, i) => {
+          const done = !!p.visited_at;
+          return (
+            <button key={i} onClick={() => checkIn(p.customer_name, !done)}
+              disabled={!canCheckIn || run.locked}
+              className={`w-full text-left px-3 py-2.5 border-b border-slate-50 last:border-0 flex items-center gap-2.5 transition ${done?'bg-green-50':'hover:bg-slate-50'} ${(!canCheckIn || run.locked)?'cursor-not-allowed opacity-90':'cursor-pointer'}`}
+              data-testid={`planned-${i}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition ${done?'bg-green-500 text-white':'border-2 border-slate-300'}`}>
+                {done && <Check size={12}/>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className={`text-xs sm:text-sm ${done?'font-medium text-green-800 line-through':'font-medium text-slate-800'} truncate`}>{p.customer_name}</div>
+                <div className="text-[10px] text-slate-500">{p.frequency}{p.visited_at ? ` · visited ${new Date(p.visited_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}` : ''}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Unplanned visits */}
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden" data-testid="unplanned-list">
+        <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+          <h4 className="text-xs font-semibold text-slate-700">Unplanned Visits ({(run.unplanned||[]).length})</h4>
+        </div>
+        {(run.unplanned||[]).length === 0 && <p className="text-center text-[11px] text-slate-400 py-3 italic">None yet.</p>}
+        {(run.unplanned||[]).map((u, i) => (
+          <div key={i} className="px-3 py-2 border-b border-slate-50 last:border-0" data-testid={`unplanned-${i}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-slate-800 truncate">{u.customer_name}</span>
+                  <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold" data-testid="new-tag">NEW</span>
+                </div>
+                {u.details && <p className="text-[10px] text-slate-500 mt-0.5">{u.details}</p>}
+              </div>
+              <span className="text-[9px] text-slate-400 flex-shrink-0">{new Date(u.added_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}</span>
+            </div>
+          </div>
+        ))}
+        {canCheckIn && !run.locked && (
+          <div className="px-3 py-2.5 bg-slate-50 border-t border-slate-100">
+            <p className="text-[10px] text-slate-500 mb-1.5">Met someone outside the plan? Add quickly — tagged NEW until they appear in Tally.</p>
+            <input value={unName} onChange={e=>setUnName(e.target.value)} placeholder="Customer name *"
+              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5" data-testid="unplanned-name"/>
+            <input value={unDetails} onChange={e=>setUnDetails(e.target.value)} placeholder="Details (phone / location / what they need)"
+              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5" data-testid="unplanned-details"/>
+            <button onClick={addUnplanned} disabled={submitting || !unName.trim()}
+              className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded font-medium disabled:opacity-50" data-testid="add-unplanned-btn">
+              {submitting?'Adding...':'Add Unplanned Visit'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Beat History (read-only past runs) ─────────────────────────────────
+function BeatHistoryView({ companyId, hdr, salesman = null }) {
+  const [runs, setRuns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selRun, setSelRun] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    const url = `${API}/api/salesman-orders/beat-run/history?company_id=${companyId||''}${salesman?`&salesman=${encodeURIComponent(salesman)}`:''}&limit=60`;
+    axios.get(url, { headers: hdr() })
+      .then(r => { if (r.data?.success) setRuns(r.data.data.runs||[]); })
+      .finally(() => setLoading(false));
+  }, [companyId, hdr, salesman]);
+
+  if (loading) return <Loader/>;
+  if (selRun) return (
+    <div data-testid="history-detail">
+      <button onClick={()=>setSelRun(null)} className="text-xs text-blue-600 mb-2 flex items-center gap-1" data-testid="back-to-history"><ChevronLeft size={14}/>Back to history</button>
+      <BeatRunView companyId={companyId} hdr={hdr} runDate={selRun.run_date} salesman={selRun.salesman} canCheckIn={false}/>
+    </div>
+  );
+
+  return (
+    <div className="space-y-2" data-testid="beat-history-view">
+      {runs.length === 0 && <p className="text-center text-xs text-slate-400 py-8 italic">No past beat runs yet.</p>}
+      {runs.map((r, i) => {
+        const date = (() => { try { return new Date(r.run_date).toLocaleDateString('en-IN', {weekday:'short', day:'2-digit', month:'short', year:'numeric'}); } catch { return r.run_date; } })();
+        const pct = r.planned_count ? Math.round(r.visited_count / r.planned_count * 100) : 0;
+        return (
+          <button key={i} onClick={()=>setSelRun(r)} className="w-full text-left bg-white rounded-lg border border-slate-200 p-3 hover:border-blue-300 transition" data-testid={`history-row-${i}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-xs font-semibold text-slate-800">{date}</span>
+                  {r.locked && <span className="text-[8px] px-1 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center gap-0.5"><Lock size={9}/>LOCKED</span>}
+                </div>
+                {salesman === null && <p className="text-[10px] text-slate-500">{r.salesman}</p>}
+                <p className="text-[10px] text-slate-500">{r.visited_count}/{r.planned_count} planned · {r.unplanned_count} unplanned</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className={`text-base font-bold ${pct>=80?'text-green-600':pct>=50?'text-blue-600':pct>=20?'text-amber-600':'text-slate-400'}`}>{pct}%</div>
+                <div className="text-[9px] text-slate-400">coverage</div>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function SalesmanDashboard({ stats, fy }) {
   if (!stats) return <p className="text-center text-xs text-slate-400 py-6" data-testid="dashboard-empty">No stats available.</p>;
