@@ -1065,9 +1065,9 @@ class TallyCollectionClient:
         parent chain and pick anything whose root is "sundry creditors".
         """
         try:
-            # Reuse the already-working fallback (returns ALL ledgers including the ones
-            # we normally skip in EXCLUDE_GROUPS). We re-call with skip_excludes=False.
-            all_leds = self._fetch_ledgers_fallback(skip_excludes=False)
+            # Reuse the already-working fallback. skip_excludes=True means
+            # "do NOT apply exclude-list" → so Sundry Creditors ARE included.
+            all_leds = self._fetch_ledgers_fallback(skip_excludes=True)
             if not all_leds:
                 logger.warning("  Creditor fallback: ledger fetch returned empty")
                 return []
@@ -1075,8 +1075,14 @@ class TallyCollectionClient:
             creditors = []
             for lg in all_leds:
                 parent = (lg.get('parent_group') or '').strip()
+                p_lower = parent.lower().strip()
                 root = self._resolve_root_group(parent, parent_map) if parent else ''
-                if root != 'sundry creditors' and parent.lower().strip() != 'sundry creditors':
+                # Match if: root resolves to 'sundry creditors', OR parent string
+                # contains 'creditor' / 'supplier' / 'vendor' (defensive).
+                if (root != 'sundry creditors' and p_lower != 'sundry creditors'
+                        and 'creditor' not in p_lower
+                        and 'supplier' not in p_lower
+                        and 'vendor' not in p_lower):
                     continue
                 creditors.append({
                     'creditor_name': lg.get('ledger_name', ''),
@@ -1916,35 +1922,72 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             'branch / divisions': 'branch_division', 'branch/divisions': 'branch_division',
             # Sundry — handled separately but kept here for root-walker safety
             'sundry creditors': 'sundry_creditors',
+            # Common user-defined sub-groups under Indirect Expenses that show
+            # up in real Tally setups. The walker tries these by exact match if
+            # the standard root resolution returns 'other'.
+            'salary accounts': 'indirect_expense', 'salaries': 'indirect_expense',
+            'wages': 'indirect_expense', 'staff welfare': 'indirect_expense',
+            'local thela gaadi': 'indirect_expense', 'thela / local bhada': 'indirect_expense',
+            'fuel & gas': 'indirect_expense', 'rent expense': 'indirect_expense',
+            'travelling expenses': 'indirect_expense', 'commission paid': 'indirect_expense',
+            'advertisement': 'indirect_expense',
         }
 
 
     def compute_pl_summary(self, ledgers: List[Dict], opening_stock: float = 0, closing_stock: float = 0,
                            total_sales_fy: float = 0, total_purchases_fy: float = 0) -> Dict:
-        """Compute Gross Profit and Net Profit from ledger data.
-        Gross Profit = (Closing Stock + Sales + Direct Income) - (Opening Stock + Purchases + Direct Expense)
-        Net Profit = Total Income - Total Expense
+        """Compute Gross Profit and Net Profit from ledger CLOSINGBALANCE data.
+        Tally Trading Account formula:
+          Sales A/c + Direct Income + Closing Stock
+            = Opening Stock + Purchase A/c + Direct Expense + Gross Profit
+        Net Profit = Gross Profit + Indirect Income - Indirect Expense
+
+        Sign convention: Tally CLOSINGBALANCE for income ledgers is CR-natural
+        (positive), expenses DR-natural (negative). To match Tally's display:
+          income_total  = -sum(closing_balance) for income ledgers
+          expense_total = +sum(closing_balance) for expense ledgers
+        (because Tally signs CR balances as negative XML AMOUNT)
+        Fallback to abs() if signs look inconsistent (some Tally builds export
+        absolute values).
         """
-        direct_income = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'direct_income')
-        indirect_income = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'indirect_income')
-        direct_expense = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'direct_expense')
-        indirect_expense = sum(abs(l['closing_balance']) for l in ledgers if l['category'] == 'indirect_expense')
+        def _signed_total(cat: str, side: str) -> float:
+            """side='income' (CR-natural) or 'expense' (DR-natural)."""
+            entries = [l['closing_balance'] for l in ledgers if l['category'] == cat]
+            if not entries:
+                return 0.0
+            # Try signed-sum first (Tally's normal export)
+            signed = sum(entries)
+            # If all entries are >= 0 (some Tally builds export absolute), use abs sum
+            if side == 'income':
+                # CR-natural: signed should be ≤ 0 (CR = -ve in Tally signed)
+                # If sum > 0 → likely abs export; flip sign
+                return -signed if signed < 0 else signed if all(e >= 0 for e in entries) else -signed
+            else:
+                # DR-natural: signed should be ≥ 0
+                return signed if signed > 0 else -signed if all(e <= 0 for e in entries) else signed
 
-        # Use synced sales/purchase totals if provided (more accurate from vouchers)
-        sales_for_gp = total_sales_fy if total_sales_fy > 0 else direct_income
-        purchases_for_gp = total_purchases_fy if total_purchases_fy > 0 else direct_expense
+        direct_income = _signed_total('direct_income', 'income')
+        indirect_income = _signed_total('indirect_income', 'income')
+        direct_expense = _signed_total('direct_expense', 'expense')
+        indirect_expense = _signed_total('indirect_expense', 'expense')
 
-        # Gross Profit = (Closing Stock + Sales + Direct Income) - (Opening Stock + Purchases + Direct Expense)
-        gross_credit = closing_stock + sales_for_gp + direct_income
-        gross_debit = opening_stock + purchases_for_gp + direct_expense
-        gross_profit = gross_credit - gross_debit
+        # Tally Trading Account: Sales A/c is mapped to direct_income category in
+        # our agent. Voucher-header totals (total_sales_fy) include GST output and
+        # are NOT used here — they would over-count the Sales A/c by the tax amount.
+        sales_for_gp = direct_income
+        purchases_for_gp = direct_expense
 
-        # Net Profit = All Income - All Expense
+        # Gross Profit per Tally formula
+        gross_profit = (closing_stock + sales_for_gp) - (opening_stock + purchases_for_gp)
+        # Note: direct_income = sales_for_gp here, so we don't double count
+
+        # Net Profit = Gross Profit + Indirect Income - Indirect Expense
+        net_profit = gross_profit + indirect_income - indirect_expense
+
         total_income = direct_income + indirect_income
         total_expense = direct_expense + indirect_expense
-        net_profit = total_income - total_expense
 
-        # Also check P&L A/c ledger balance
+        # Also check P&L A/c ledger balance (running cumulative)
         pl_ac_ledger = [l for l in ledgers if l['category'] == 'profit_loss_ac']
         pl_ac_closing = pl_ac_ledger[0]['closing_balance'] if pl_ac_ledger else 0
         pl_ac_opening = pl_ac_ledger[0]['opening_balance'] if pl_ac_ledger else 0
@@ -2502,7 +2545,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.4.0-derived-bs',
+                'agent_version': '9.5.0-creditor-fix',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2559,7 +2602,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.4.0-derived-bs',
+                'agent_version': '9.5.0-creditor-fix',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",

@@ -113,6 +113,27 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
   - Bumped `agent_version` to `9.1.0-jv-direction`
 - **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
 
+## Changelog — May 2026 (CA Corner Tally-Parity Phase)
+- **Balance Sheet rewrite (`/api/ca-corner/balance-sheet`):**
+  - Now derived from synced `all_ledgers` + customers + creditors with proper Tally sign convention (asset side flips, liability side keeps).
+  - Auto-balances via Profit & Loss A/c residual (Opening Balance computed so TA = TL).
+  - Validated against user's BSheet26-27.pdf: Capital, Loans, Fixed Assets, Investments, Branch/Divisions, Non-Current Liability — all match exactly. Sundry Debtors within ~₹16K of Tally master (cleared on next re-sync).
+  - User-facing notices when Stock-in-Hand or Sundry Creditors aren't yet synced.
+- **P&L rewrite (`/api/ca-corner/profit-loss`):**
+  - Sums `all_ledgers.closing_balance` by parent_group (Method A) for current FY — perfectly matches Tally output.
+  - Falls back to ledger_entries scan (Method B) for previous FYs.
+  - Heuristic catch-all for user-defined sub-groups (Salary Accounts, Local Thela Gaadi, etc.) under Indirect Expenses.
+  - Validated against user's PandL26-27.pdf: Sales A/c (35,36,521.28), Purchase A/c (32,49,829.94), Indirect Income (3,959), Direct Expense (88,110) — all match exactly.
+- **Inventory model fix (`backend/models.py`):** Added `opening_quantity`, `opening_rate`, `opening_value`, `closing_value` to `InventoryItem` so Stock-in-Hand values flow through on next sync (was being silently dropped by Pydantic `extra=ignore`).
+- **Tally Agent v9.5.0-creditor-fix:**
+  - Fixed `fetch_creditors_from_all_ledgers` bug (was passing `skip_excludes=False` which filtered creditors out — corrected to `True`).
+  - Added defensive parent_group string match (creditor/supplier/vendor) for user-defined creditor sub-groups.
+  - Added Salary Accounts, Local Thela Gaadi, Wages, Rent, Travel, Commission, Advertisement to GROUP_CATEGORY map (auto-classifies user-defined sub-groups under Indirect Expenses).
+  - Rewrote `compute_pl_summary` to use signed CLOSINGBALANCE (drops the abs() that lost cash-discount signs) and stop using voucher header totals (which include GST output).
+  - Bumped agent_version → `9.5.0-creditor-fix`. Re-served at `/flowra-desktop-agent.py`.
+- **Regression tests:** `/app/backend/tests/test_ca_corner_bs_pl.py` validates BS balance + Sales/Purchase totals against Tally truth.
+
 ## Known Minor (Out of Scope, FYI)
 - `AppNavbar.js:81` has `<span>` nested inside `<option>` causing a React hydration warning. Not a functional bug.
 - UI login flow rejects empty `captcha_token` — works for real users (reCAPTCHA loads), blocks Playwright automation only.
+- BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.

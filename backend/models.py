@@ -34,6 +34,11 @@ class InventoryItem(BaseModel):
     category: Optional[str] = None
     stock_group: Optional[str] = None
     reorder_level: Optional[float] = None
+    # Stock value fields (for Balance Sheet & P&L)
+    opening_quantity: Optional[float] = None
+    opening_rate: Optional[float] = None
+    opening_value: Optional[float] = None
+    closing_value: Optional[float] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SalesVoucher(BaseModel):

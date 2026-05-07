@@ -168,9 +168,16 @@ async def get_cash_flow(request: Request, fy: str = ""):
 
 @router.get("/ca-corner/profit-loss")
 async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
-    """Get P&L report. Computes totals from FY-scoped vouchers (Sales, Purchases) +
-    JV-derived indirect income/expense activity. Falls back to stored profit_loss
-    document for ledger breakdown lists (income/expense ledger names).
+    """Get P&L report.
+
+    For the CURRENT FY (which is what Tally syncs by default), we sum directly
+    from `all_ledgers.closing_balance` grouped by parent_group. This matches
+    Tally's Profit & Loss A/c output exactly because Tally's CLOSINGBALANCE on
+    each ledger IS the FY net activity.
+
+    For PREVIOUS FYs, we fall back to summing ledger_entries inside FY-scoped
+    vouchers — less reliable due to DR/CR sign noise, but the only available
+    source until the agent gains per-FY P&L snapshots.
     """
     try:
         ctx = await get_tenant_context(request)
@@ -180,171 +187,231 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
 
         q = _build_q(ctx)
 
-        # Fetch FY-scoped voucher totals (this is the accurate source of truth)
-        sales_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
-        purchase_v = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(50000)
-        cn_v = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
-        dn_v = await db.debit_notes.find(q, {"_id": 0}).to_list(5000)
-        jv_v = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+        # Determine if we're asking for the current FY (Tally's auto-roll target)
+        from datetime import date as _date
+        today = _date.today()
+        today_fy_year = today.year if today.month >= 4 else today.year - 1
+        today_fy = f"{today_fy_year}-{str(today_fy_year + 1)[-2:]}"
+        is_current_fy = (not fy) or (fy == today_fy)
 
-        if fy:
-            sales_v = filter_vouchers_by_fy(sales_v, fy)
-            purchase_v = filter_vouchers_by_fy(purchase_v, fy)
-            cn_v = filter_vouchers_by_fy(cn_v, fy)
-            dn_v = filter_vouchers_by_fy(dn_v, fy)
-            jv_v = filter_vouchers_by_fy(jv_v, fy)
-
-        total_sales = sum(safe_num(v.get("total_amount")) for v in sales_v)
-        total_purchases = sum(safe_num(v.get("total_amount")) for v in purchase_v)
-        total_credit_notes = sum(safe_num(v.get("total_amount")) for v in cn_v)  # Sales reversal
-        total_debit_notes = sum(safe_num(v.get("total_amount")) for v in dn_v)   # Purchase reversal
-
-        # Net Sales = Sales - Credit Notes; Net Purchases = Purchases - Debit Notes
-        net_sales = total_sales - total_credit_notes
-        net_purchases = total_purchases - total_debit_notes
-
-        # Indirect income/expense from JV ledger entries (FY-filtered)
-        # Group by parent_group on the entry's ledger
         all_ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
-        ledger_to_category = {l.get("ledger_name", "").lower().strip(): l.get("category", "other") for l in all_ledgers}
-        ledger_to_parent = {l.get("ledger_name", "").lower().strip(): l.get("parent_group", "") for l in all_ledgers}
 
-        indirect_income = 0.0
-        indirect_expense = 0.0
-        direct_expense_misc = 0.0  # Direct Expense (not purchases)
-        direct_income_misc = 0.0   # Direct Income (not sales)
-        ledger_activity = {}  # ledger_name -> {amount, parent, category, is_debit_dominant}
+        sales_accounts = direct_income = indirect_income = 0.0
+        purchase_accounts = direct_expense = indirect_expense = 0.0
+        ledger_activity = {}
 
-        # Scan ledger_entries across ALL voucher types — most P&L activity flows through
-        # payment / receipt / JV vouchers (e.g., paying rent via bank = payment voucher
-        # with DR Rent, CR Bank). JVs alone miss ~90% of expense activity.
-        rcpt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
-        contra_v = await db.contra_vouchers.find(q, {"_id": 0}).to_list(20000) if 'contra_vouchers' in await db.list_collection_names() else []
-        if fy:
-            rcpt_v = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date', '')} for r in rcpt_v], fy)
-            contra_v = filter_vouchers_by_fy(contra_v, fy)
-
-        for vouch in jv_v + rcpt_v + contra_v + sales_v + purchase_v + cn_v + dn_v:
-            for entry in vouch.get("ledger_entries", []) or []:
-                lname = (entry.get("ledger_name") or "").strip()
-                if not lname:
+        if is_current_fy and all_ledgers:
+            # === Method A: Sum CLOSINGBALANCE by parent_group ===
+            # Tally agent's storage convention (validated against user's Tally PDF):
+            #   Sales A/c ledgers      → stored positive  (sum directly)
+            #   Income (Ind/Direct)    → stored positive  (sum directly)
+            #   Purchase A/c ledgers   → stored negative  (flip sign)
+            #   Expense (Ind/Direct)   → stored negative  (flip sign)
+            # Classification priority: parent_group first, then category.
+            # Already-counted ledgers are tracked to avoid double-counting (e.g.,
+            # a "direct_expense" ledger whose parent IS "Purchase Accounts" gets
+            # counted only under purchase_accounts).
+            counted = set()
+            for l in all_ledgers:
+                lname = (l.get("ledger_name") or "").strip()
+                parent = (l.get("parent_group") or "").lower().strip()
+                cat = l.get("category", "other")
+                bal = safe_num(l.get("closing_balance"))
+                if abs(bal) < 0.01:
                     continue
-                amt = safe_num(entry.get("amount"))
-                is_dr = bool(entry.get("is_debit"))
-                cat = ledger_to_category.get(lname.lower(), "other")
-                if cat not in ("indirect_income", "indirect_expense", "direct_income", "direct_expense"):
+                if lname.lower() in counted:
                     continue
 
-                # Skip ledgers under Sales Accounts / Purchase Accounts — these are
-                # already captured in voucher header totals (total_sales / total_purchases)
-                # so summing their entries would double-count.
-                parent_lower = ledger_to_parent.get(lname.lower(), "").lower().strip()
-                if parent_lower in ("sales accounts", "purchase accounts"):
-                    continue
-
-                # Sign convention:
-                #   Income ledgers: CR = positive income, DR = reversal (negative)
-                #   Expense ledgers: DR = positive expense, CR = reversal (negative)
-                if cat == "indirect_income":
-                    indirect_income += (-amt if is_dr else amt)
+                if parent == "sales accounts":
+                    delta = bal  # already positive
+                    sales_accounts += delta
+                    bucket = "income"
+                elif parent == "purchase accounts":
+                    delta = -bal  # flip negative → positive
+                    purchase_accounts += delta
+                    bucket = "expense"
                 elif cat == "direct_income":
-                    direct_income_misc += (-amt if is_dr else amt)
-                elif cat == "indirect_expense":
-                    indirect_expense += (amt if is_dr else -amt)
+                    delta = bal
+                    direct_income += delta
+                    bucket = "income"
+                elif cat == "indirect_income":
+                    delta = bal
+                    indirect_income += delta
+                    bucket = "income"
                 elif cat == "direct_expense":
-                    direct_expense_misc += (amt if is_dr else -amt)
-
-                # Track per-ledger for breakdown
-                if lname not in ledger_activity:
-                    ledger_activity[lname] = {
-                        "ledger_name": lname,
-                        "parent_group": ledger_to_parent.get(lname.lower(), ""),
-                        "category": cat,
-                        "amount": 0.0,
-                    }
-                if cat in ("indirect_expense", "direct_expense"):
-                    ledger_activity[lname]["amount"] += (amt if is_dr else -amt)
+                    delta = -bal  # flip
+                    direct_expense += delta
+                    bucket = "expense"
+                elif cat == "indirect_expense":
+                    delta = -bal  # flip
+                    indirect_expense += delta
+                    bucket = "expense"
+                # Heuristic catch-all for user-defined P&L sub-groups the agent
+                # didn't classify (e.g., "Salary Accounts", "Local Thela Gaadi"
+                # under Indirect Expenses). Recognised by parent_group string.
+                elif any(kw in parent for kw in (
+                    'salary', 'wages', 'thela', 'gaadi', 'fuel',
+                    'rent', 'travel', 'commission', 'advertisement',
+                )) and cat == "other":
+                    delta = -bal  # treat as indirect expense (DR-natural)
+                    indirect_expense += delta
+                    bucket = "expense"
                 else:
-                    ledger_activity[lname]["amount"] += (-amt if is_dr else amt)
+                    continue
 
-        # Stock — best-effort from synced inventory (may be 0 if not yet synced)
-        inventory = await db.inventory.find(q, {"_id": 0}).to_list(5000)
+                counted.add(lname.lower())
+                ledger_activity[lname] = {
+                    "ledger_name": lname,
+                    "parent_group": l.get("parent_group", ""),
+                    "category": cat,
+                    "amount": round(delta, 2),
+                    "bucket": bucket,
+                }
+            method_used = "all_ledgers_closing_balance"
+        else:
+            # === Method B: Sum ledger_entries from FY-scoped vouchers ===
+            # Used for previous FYs (less reliable due to DR/CR sign noise).
+            sales_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+            purchase_v = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(50000)
+            cn_v = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+            dn_v = await db.debit_notes.find(q, {"_id": 0}).to_list(5000)
+            jv_v = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+            rcpt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+            contra_v = await db.contra_vouchers.find(q, {"_id": 0}).to_list(20000) if 'contra_vouchers' in await db.list_collection_names() else []
+            if fy:
+                sales_v = filter_vouchers_by_fy(sales_v, fy)
+                purchase_v = filter_vouchers_by_fy(purchase_v, fy)
+                cn_v = filter_vouchers_by_fy(cn_v, fy)
+                dn_v = filter_vouchers_by_fy(dn_v, fy)
+                jv_v = filter_vouchers_by_fy(jv_v, fy)
+                rcpt_v = filter_vouchers_by_fy(rcpt_v, fy)
+                contra_v = filter_vouchers_by_fy(contra_v, fy)
+            ledger_meta = {(l.get("ledger_name") or "").lower().strip():
+                           {"category": l.get("category", "other"),
+                            "parent_group": (l.get("parent_group") or "").lower().strip()}
+                           for l in all_ledgers}
+            for vouch in jv_v + rcpt_v + contra_v + sales_v + purchase_v + cn_v + dn_v:
+                for entry in vouch.get("ledger_entries", []) or []:
+                    lname = (entry.get("ledger_name") or "").strip()
+                    if not lname:
+                        continue
+                    meta = ledger_meta.get(lname.lower(), {})
+                    cat = meta.get("category", "other")
+                    parent = meta.get("parent_group", "")
+                    amt = safe_num(entry.get("amount"))
+                    is_dr = bool(entry.get("is_debit"))
+                    if parent == "sales accounts" or cat == "direct_income":
+                        delta = (-amt if is_dr else amt)
+                        if parent == "sales accounts":
+                            sales_accounts += delta
+                        else:
+                            direct_income += delta
+                        bucket = "income"
+                    elif parent == "purchase accounts" or cat == "direct_expense":
+                        delta = (amt if is_dr else -amt)
+                        if parent == "purchase accounts":
+                            purchase_accounts += delta
+                        else:
+                            direct_expense += delta
+                        bucket = "expense"
+                    elif cat == "indirect_income":
+                        delta = (-amt if is_dr else amt)
+                        indirect_income += delta
+                        bucket = "income"
+                    elif cat == "indirect_expense":
+                        delta = (amt if is_dr else -amt)
+                        indirect_expense += delta
+                        bucket = "expense"
+                    else:
+                        continue
+                    if lname not in ledger_activity:
+                        ledger_activity[lname] = {
+                            "ledger_name": lname, "parent_group": meta.get("parent_group", ""),
+                            "category": cat, "amount": 0.0, "bucket": bucket,
+                        }
+                    ledger_activity[lname]["amount"] += delta
+            method_used = "ledger_entries_fy_scoped"
+
+        # Stock from inventory_items (after the model fix — values come through)
+        inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
         opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
         closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
 
-        # Build income / expense breakdown lists
-        income_breakdown = []
-        expense_breakdown = []
+        # Tally Trading Account formula:
+        #   Sales A/c + Direct Income + Closing Stock
+        #     = Opening Stock + Purchase A/c + Direct Expense + Gross Profit
+        gross_profit = ((sales_accounts + direct_income + closing_stock) -
+                        (opening_stock + purchase_accounts + direct_expense))
+        net_profit = gross_profit + indirect_income - indirect_expense
+        total_income = sales_accounts + direct_income + indirect_income
+        total_expense = purchase_accounts + direct_expense + indirect_expense
+
+        income_breakdown, expense_breakdown = [], []
         for la in ledger_activity.values():
-            if la["category"] in ("indirect_income", "direct_income") and abs(la["amount"]) > 0.01:
-                income_breakdown.append({
-                    "ledger_name": la["ledger_name"], "parent_group": la["parent_group"],
-                    "amount": round(la["amount"], 2),
-                })
-            elif la["category"] in ("indirect_expense", "direct_expense") and abs(la["amount"]) > 0.01:
-                expense_breakdown.append({
-                    "ledger_name": la["ledger_name"], "parent_group": la["parent_group"],
-                    "amount": round(la["amount"], 2),
-                })
+            if abs(la["amount"]) < 0.01:
+                continue
+            entry = {"ledger_name": la["ledger_name"], "parent_group": la["parent_group"],
+                     "amount": round(la["amount"], 2)}
+            (income_breakdown if la["bucket"] == "income" else expense_breakdown).append(entry)
         income_breakdown.sort(key=lambda x: -abs(x["amount"]))
         expense_breakdown.sort(key=lambda x: -abs(x["amount"]))
 
-        # Tally formula:
-        #   Trading Account: Sales + Closing Stock = Opening Stock + Purchases + Direct Expenses + Gross Profit
-        #   → Gross Profit = (Net Sales + Closing Stock + Direct Income) - (Opening Stock + Net Purchases + Direct Expense)
-        gross_profit = (net_sales + closing_stock + direct_income_misc) - (opening_stock + net_purchases + direct_expense_misc)
-
-        # Net Profit = Gross Profit + Indirect Income - Indirect Expense
-        net_profit = gross_profit + indirect_income - indirect_expense
-
-        total_income = net_sales + direct_income_misc + indirect_income
-        total_expense = net_purchases + direct_expense_misc + indirect_expense
-
         result = {
-            "fy": fy,
+            "fy": fy or today_fy,
             "view": view,
-            # Header totals
-            "total_sales": round(net_sales, 2),
-            "total_purchases": round(net_purchases, 2),
+            "method": method_used,
+            "total_sales": round(sales_accounts, 2),
+            "total_purchases": round(purchase_accounts, 2),
             "opening_stock": round(opening_stock, 2),
             "closing_stock": round(closing_stock, 2),
             "indirect_income": round(indirect_income, 2),
             "indirect_expense": round(indirect_expense, 2),
-            "direct_income": round(direct_income_misc, 2),
-            "direct_expense": round(direct_expense_misc, 2),
-            # Final figures
+            "direct_income": round(direct_income, 2),
+            "direct_expense": round(direct_expense, 2),
             "gross_profit": round(gross_profit, 2),
             "net_profit_loss": round(net_profit, 2),
             "total_income": round(total_income, 2),
             "total_expense": round(total_expense, 2),
-            # Breakdowns (for tables)
             "income": income_breakdown,
             "expense": expense_breakdown,
+            "stock_synced": closing_stock > 0 or opening_stock > 0,
         }
 
-        # Monthly view: per-month sales/purchases/gross-profit
+        # Notices
+        notices = []
+        if not result["stock_synced"]:
+            notices.append("Stock-in-Hand not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture closing stock values for accurate Gross Profit.")
+        if not is_current_fy:
+            notices.append(f"Showing previous FY ({fy}). For 100% Tally parity, re-anchor by running the agent during that FY — current view is reconstructed from FY-scoped vouchers.")
+        result["notices"] = notices
+
+        # Monthly view: per-month sales/purchases (uses voucher headers — used only
+        # for charting trends, not for absolute accuracy)
         if view == "monthly":
+            sv = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "total_amount": 1}).to_list(50000)
+            pv = await db.purchase_vouchers.find(q, {"_id": 0, "voucher_date": 1, "total_amount": 1}).to_list(50000)
+            if fy:
+                sv = filter_vouchers_by_fy(sv, fy)
+                pv = filter_vouchers_by_fy(pv, fy)
             months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
             month_nums = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
             monthly_data = []
             for m_name, m_num in zip(months, month_nums):
-                m_sales = sum(safe_num(v.get("total_amount")) for v in sales_v
-                              if (v.get("voucher_date", "")[:10] and len(v.get("voucher_date", "")) >= 10
-                                  and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num))
-                m_purchases = sum(safe_num(v.get("total_amount")) for v in purchase_v
-                                  if (v.get("voucher_date", "")[:10] and len(v.get("voucher_date", "")) >= 10
-                                      and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num))
-                monthly_data.append({
-                    "month": m_name,
-                    "sales": round(m_sales, 2),
-                    "purchases": round(m_purchases, 2),
-                    "gross_profit": round(m_sales - m_purchases, 2),
-                })
+                m_sales = sum(safe_num(v.get("total_amount")) for v in sv
+                              if len(v.get("voucher_date", "")) >= 10
+                              and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num)
+                m_purchases = sum(safe_num(v.get("total_amount")) for v in pv
+                                  if len(v.get("voucher_date", "")) >= 10
+                                  and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num)
+                monthly_data.append({"month": m_name,
+                                     "sales": round(m_sales, 2),
+                                     "purchases": round(m_purchases, 2),
+                                     "gross_profit": round(m_sales - m_purchases, 2)})
             result["monthly"] = monthly_data
 
         return APIResponse(success=True, data=result)
     except Exception as e:
-        logger.error(f"P&L error: {e}")
+        logger.exception(f"P&L error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
@@ -438,16 +505,136 @@ Keep the language simple and practical for a business owner. Use Indian Rupee am
 # BALANCE SHEET
 # ═══════════════════════════════════════════════════════
 
+# Tally root-group classification.  Used to bucket each ledger's parent group
+# into the Liability or Asset side and pick a display label.
+# Sign convention used by the desktop agent (Tally XML AMOUNT):
+#   stored balance > 0  → CR-natural (liability)
+#   stored balance < 0  → DR-natural (asset)
+# Display rule:
+#   Liability side: show as +stored
+#   Asset side    : show as -stored
+_LIAB_GROUPS = {
+    'capital_account':         {'label': 'Capital Account',          'parents': ('capital account', "partner's capital account", 'proprietor', 'reserves & surplus', 'reserves and surplus')},
+    'loans_liability':         {'label': 'Loans (Liability)',        'parents': ('loans (liability)', 'secured loans', 'unsecured loans', 'bank od a/c', 'bank o/d a/c', 'bank occ a/c', 'bank cc accounts', 'bank od accounts')},
+    'current_liabilities':     {'label': 'Current Liabilities',      'parents': ('current liabilities', 'duties & taxes', 'duties and taxes', 'provisions', 'sundry creditors', 'dealer deposit')},
+    'suspense':                {'label': 'Suspense A/c',             'parents': ('suspense a/c', 'suspense account')},
+    'non_current_liability':   {'label': 'Non-Current Liability',    'parents': ('non current liability', 'non-current liability', 'non-current liabilities')},
+    'profit_loss_ac':          {'label': 'Profit & Loss A/c',        'parents': ('profit & loss a/c', 'profit and loss a/c', 'profit & loss')},
+}
+_ASSET_GROUPS = {
+    'fixed_assets':   {'label': 'Fixed Assets',   'parents': ('fixed assets',)},
+    'investments':    {'label': 'Investments',    'parents': ('investments',)},
+    'current_assets': {'label': 'Current Assets', 'parents': ('current assets', 'bank accounts', 'cash-in-hand', 'cash in hand', 'stock-in-hand', 'stock in hand', 'sundry debtors', 'deposits (asset)', 'loans & advances (asset)', 'loans and advances (asset)')},
+    'misc_expense':   {'label': 'Misc. Expenses (Asset)', 'parents': ('misc. expenses (asset)', 'misc expenses (asset)', 'miscellaneous expenses (asset)')},
+    'branch_division':{'label': 'Branch / Divisions',     'parents': ('branch / divisions', 'branch/divisions')},
+}
+# P&L groups — must be excluded from BS entirely (the synthetic P&L A/c row carries
+# the net result instead).
+_PL_PARENTS = (
+    'sales accounts', 'purchase accounts',
+    'direct income', 'direct incomes', 'indirect income', 'indirect incomes',
+    'direct expenses', 'direct expense', 'indirect expenses', 'indirect expense',
+    'manufacturing expenses', 'salary accounts',
+)
+# Tally user-defined sub-groups commonly seen under Sundry Debtors (region-wise).
+# Anything else under "Distributor" / "Dealer" is treated as a debtor sub-group.
+_DEBTOR_PARENT_HINTS = ('distributor', 'sundry debtors', 'debtors', 'dealer', 'customer')
+_CREDITOR_PARENT_HINTS = ('sundry creditor', 'creditor', 'supplier', 'vendor')
+
+
+def _classify_parent(parent: str):
+    """Return (side, group_key, label) for a Tally parent_group name.
+    side ∈ {'asset', 'liability', 'pl', 'unknown'}.
+    """
+    p = (parent or '').lower().strip()
+    if not p:
+        return ('unknown', None, None)
+    if any(pl in p for pl in _PL_PARENTS) or p in _PL_PARENTS:
+        return ('pl', None, None)
+    for key, meta in _LIAB_GROUPS.items():
+        if p in meta['parents']:
+            return ('liability', key, meta['label'])
+    for key, meta in _ASSET_GROUPS.items():
+        if p in meta['parents']:
+            return ('asset', key, meta['label'])
+    # Heuristic fallbacks for user-defined sub-groups
+    if any(h in p for h in _CREDITOR_PARENT_HINTS):
+        return ('liability', 'current_liabilities', 'Current Liabilities')
+    if any(h in p for h in _DEBTOR_PARENT_HINTS):
+        return ('asset', 'current_assets', 'Current Assets')
+    return ('unknown', None, None)
+
+
+async def _compute_pl_net_profit(q: dict, fy: str) -> float:
+    """Compute net profit for an FY directly from synced vouchers (mirrors the
+    /ca-corner/profit-loss endpoint logic but trimmed to just net_profit)."""
+    sales_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+    purchase_v = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(50000)
+    cn_v = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+    dn_v = await db.debit_notes.find(q, {"_id": 0}).to_list(5000)
+    jv_v = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+    rcpt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
+
+    if fy:
+        sales_v = filter_vouchers_by_fy(sales_v, fy)
+        purchase_v = filter_vouchers_by_fy(purchase_v, fy)
+        cn_v = filter_vouchers_by_fy(cn_v, fy)
+        dn_v = filter_vouchers_by_fy(dn_v, fy)
+        jv_v = filter_vouchers_by_fy(jv_v, fy)
+        rcpt_v = filter_vouchers_by_fy(rcpt_v, fy)
+
+    net_sales = sum(safe_num(v.get("total_amount")) for v in sales_v) - sum(safe_num(v.get("total_amount")) for v in cn_v)
+    net_purchases = sum(safe_num(v.get("total_amount")) for v in purchase_v) - sum(safe_num(v.get("total_amount")) for v in dn_v)
+
+    all_ledgers = await db.all_ledgers.find(q, {"_id": 0, "ledger_name": 1, "category": 1, "parent_group": 1}).to_list(5000)
+    cat_of = {l.get("ledger_name", "").lower().strip(): l.get("category", "other") for l in all_ledgers}
+    parent_of = {l.get("ledger_name", "").lower().strip(): (l.get("parent_group") or "").lower().strip() for l in all_ledgers}
+
+    indirect_income = direct_income_misc = 0.0
+    indirect_expense = direct_expense_misc = 0.0
+    for vouch in jv_v + rcpt_v + sales_v + purchase_v + cn_v + dn_v:
+        for entry in vouch.get("ledger_entries", []) or []:
+            lname = (entry.get("ledger_name") or "").strip()
+            if not lname:
+                continue
+            cat = cat_of.get(lname.lower(), "other")
+            if cat not in ("indirect_income", "indirect_expense", "direct_income", "direct_expense"):
+                continue
+            parent_lower = parent_of.get(lname.lower(), "")
+            if parent_lower in ("sales accounts", "purchase accounts"):
+                continue
+            amt = safe_num(entry.get("amount"))
+            is_dr = bool(entry.get("is_debit"))
+            if cat == "indirect_income":
+                indirect_income += (-amt if is_dr else amt)
+            elif cat == "direct_income":
+                direct_income_misc += (-amt if is_dr else amt)
+            elif cat == "indirect_expense":
+                indirect_expense += (amt if is_dr else -amt)
+            elif cat == "direct_expense":
+                direct_expense_misc += (amt if is_dr else -amt)
+
+    inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(5000) if 'inventory_items' in (await db.list_collection_names()) else []
+    opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
+    closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+
+    gross_profit = (net_sales + closing_stock + direct_income_misc) - (opening_stock + net_purchases + direct_expense_misc)
+    return round(gross_profit + indirect_income - indirect_expense, 2)
+
+
 @router.get("/ca-corner/balance-sheet")
 async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional[str] = None):
-    """Balance Sheet — derived live from synced `all_ledgers` collection.
+    """Balance Sheet — derived live from synced `all_ledgers` + customers + creditors.
 
-    FY mapping (uses Tally's auto-roll convention):
-      - Today's open FY (e.g., 2026-27 right now) → use ledger CLOSINGBALANCE
-      - Previous FY (2025-26)                     → use ledger OPENINGBALANCE
-        (because Tally's master OB = previous FY's closing by accounting identity)
-      - Older FY                                  → not available without re-anchoring
-        (will fall back to OPENINGBALANCE with a notice)
+    Strategy (matches Tally's report layout):
+      1. Bucket each ledger by parent_group → root group (asset / liability).
+      2. Use customers collection authoritatively for Sundry Debtors (richer data).
+      3. Synthesize Profit & Loss A/c row from computed P&L (Opening = prev-FY net,
+         Current Period = this-FY net).
+      4. Sign convention: stored Tally amount → +ve = CR (liability); display flips
+         sign on asset side.
+      5. FY mapping (Tally auto-roll): today's FY → CLOSINGBALANCE; prev FY →
+         OPENINGBALANCE (= prev-FY's closing by accounting identity).
     """
     try:
         ctx = await get_tenant_context(request)
@@ -457,124 +644,192 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
 
         q = _build_q(ctx, company_id)
         ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
-        creditors = await db.creditors.find(q, {"_id": 0}).to_list(2000)
+        creditors = await db.creditors.find(q, {"_id": 0}).to_list(2000) if 'creditors' in await db.list_collection_names() else []
         debtors = await db.customers.find(q, {"_id": 0}).to_list(2000)
 
-        if not ledgers and not creditors and not debtors:
+        if not ledgers and not debtors:
             return APIResponse(success=True, data={
                 "assets": [], "liabilities": [], "total_assets": 0, "total_liabilities": 0,
                 "source": "empty",
-                "message": "No ledger data synced yet. Run the desktop agent (v9.4+)."
+                "message": "No ledger data synced yet. Run the desktop agent."
             })
 
-        # Decide which balance to use based on requested FY vs today's FY
+        # FY → balance field selection
         from datetime import date as _date
         today = _date.today()
         today_fy_year = today.year if today.month >= 4 else today.year - 1
         today_fy = f"{today_fy_year}-{str(today_fy_year + 1)[-2:]}"
+        req_fy = fy or today_fy
         use_opening = False
         notice = None
-        if fy and fy != today_fy:
+        if req_fy != today_fy:
             try:
-                req_year = int(fy.split("-")[0])
+                req_year = int(req_fy.split("-")[0])
                 if req_year == today_fy_year - 1:
                     use_opening = True
                 else:
                     use_opening = True
-                    notice = f"Showing previous-FY balance for {fy} (older FYs not directly available — re-anchor by running the agent during that FY)"
+                    notice = f"Showing previous-FY balance for {req_fy} (older FYs not directly available — re-anchor by running the agent during that FY)."
             except Exception:
                 pass
+        bal_field = 'opening_balance' if use_opening else 'closing_balance'
 
-        # Tally root-group → asset/liability + display label
-        # NOTE: Sales/Purchase/Income/Expense categories are EXCLUDED — they belong to
-        # P&L, not Balance Sheet. The Profit & Loss A/c category captures the net result.
-        ASSET_CATS = {'bank', 'cash', 'current_assets', 'fixed_assets',
-                      'investments', 'stock_in_hand', 'sundry_debtors', 'misc_expense'}
-        LIAB_CATS = {'capital', 'reserves', 'secured_loans', 'unsecured_loans',
-                     'current_liabilities', 'provisions', 'duties_taxes',
-                     'sundry_creditors', 'non_current_liabilities', 'profit_loss_ac',
-                     'branch_division', 'suspense', 'bank_od'}
-        SKIP_CATS = {'direct_income', 'indirect_income', 'direct_expense',
-                     'indirect_expense', 'sales_accounts', 'purchase_accounts'}
-        LABELS = {
-            'capital': 'Capital Account', 'reserves': 'Reserves & Surplus',
-            'secured_loans': 'Secured Loans', 'unsecured_loans': 'Unsecured Loans',
-            'current_liabilities': 'Current Liabilities', 'provisions': 'Provisions',
-            'duties_taxes': 'Duties & Taxes', 'sundry_creditors': 'Sundry Creditors',
-            'non_current_liabilities': 'Non-Current Liabilities',
-            'profit_loss_ac': 'Profit & Loss A/c', 'branch_division': 'Branch / Divisions',
-            'suspense': 'Suspense A/c',
-            'fixed_assets': 'Fixed Assets', 'investments': 'Investments',
-            'current_assets': 'Current Assets', 'stock_in_hand': 'Stock-in-Hand',
-            'sundry_debtors': 'Sundry Debtors', 'cash': 'Cash-in-Hand',
-            'bank': 'Bank Accounts', 'bank_od': 'Bank OD A/c',
-            'misc_expense': 'Misc. Expenses (Asset)',
-        }
+        # Build dedup set: customers that are also in all_ledgers (we keep customers'
+        # value and skip the all_ledgers duplicate)
+        customer_names = {(d.get('customer_name') or '').strip().lower() for d in debtors}
 
-        groups = {}
+        groups = {}  # key → {group, side, total, ledgers[]}
 
-        def _add_to_group(category, name, parent, amount):
+        def _add(side, key, label, name, parent, amount):
             if abs(amount) < 0.01:
                 return
-            side = 'asset' if category in ASSET_CATS else 'liability'
-            if category not in groups:
-                groups[category] = {
-                    'group': LABELS.get(category, category.replace('_', ' ').title()),
-                    'category': category, 'side': side,
-                    'total': 0.0, 'ledgers': [],
-                }
-            groups[category]['total'] += amount
-            groups[category]['ledgers'].append({'name': name, 'parent_group': parent, 'amount': round(amount, 2)})
+            if key not in groups:
+                groups[key] = {'group': label, 'side': side, 'total': 0.0, 'ledgers': []}
+            groups[key]['total'] += amount
+            groups[key]['ledgers'].append({'name': name, 'parent_group': parent, 'amount': round(amount, 2)})
 
-        # Process all_ledgers (everything except sundry debtors/creditors which are
-        # synced separately for richer per-customer detail)
+        # 1) Process all_ledgers
         for l in ledgers:
-            cat = l.get('category', 'other')
-            if cat == 'other':
+            name = l.get('ledger_name', '') or ''
+            if name.strip().lower() in customer_names:
+                continue  # customers collection is authoritative
+            parent = l.get('parent_group', '') or ''
+            side, key, label = _classify_parent(parent)
+            if side in ('pl', 'unknown'):
                 continue
-            bal = safe_num(l.get('opening_balance' if use_opening else 'closing_balance'))
-            # Tally signed convention: assets are DR-balance positive, liabilities CR-balance
-            # negative. Flip liabilities so they display as positive.
-            display = -bal if cat in LIAB_CATS else bal
-            _add_to_group(cat, l.get('ledger_name', ''), l.get('parent_group', ''), display)
+            stored = safe_num(l.get(bal_field))
+            display = stored if side == 'liability' else -stored  # flip sign for assets
+            _add(side, key, label, name, parent, display)
 
-        # Sundry Debtors (always positive balance)
+        # 1b) Closing Stock (from inventory_items, if values are synced)
+        inv_items = await db.inventory_items.find(q, {"_id": 0, "item_name": 1, "stock_group": 1, "opening_value": 1, "closing_value": 1}).to_list(50000)
+        stock_field = 'opening_value' if use_opening else 'closing_value'
+        stock_total = 0.0
+        stock_synced = False
+        for it in inv_items:
+            v = safe_num(it.get(stock_field))
+            if abs(v) > 0.01:
+                stock_synced = True
+                _add('asset', 'stock_in_hand', 'Stock-in-Hand',
+                     it.get('item_name', ''), it.get('stock_group', 'Stock-in-Hand'), v)
+                stock_total += v
+        # Roll up stock items into a single line if too many (>10) — keep top 10 + total row
+        if 'stock_in_hand' in groups and len(groups['stock_in_hand']['ledgers']) > 50:
+            top = sorted(groups['stock_in_hand']['ledgers'], key=lambda x: -abs(x['amount']))[:50]
+            groups['stock_in_hand']['ledgers'] = top
+
+        # 2) Sundry Debtors — from customers collection (authoritative)
         for d in debtors:
-            bal = safe_num(d.get('opening_balance' if use_opening else 'outstanding_amount'))
-            _add_to_group('sundry_debtors', d.get('customer_name', ''), d.get('ledger_group', 'Sundry Debtors'), bal)
+            stored = safe_num(d.get(bal_field if use_opening else 'outstanding_amount'))
+            # customers store outstanding_amount in DR-positive (already flipped).
+            # opening_balance in customers also stored DR-positive.
+            _add('asset', 'sundry_debtors', 'Sundry Debtors',
+                 d.get('customer_name', ''),
+                 d.get('ledger_group', 'Sundry Debtors'), stored)
 
-        # Sundry Creditors (Tally stores as negative; display as positive on liability side)
+        # 3) Sundry Creditors — from creditors collection if present
         for c in creditors:
-            bal = safe_num(c.get('opening_balance' if use_opening else 'outstanding_amount'))
-            _add_to_group('sundry_creditors', c.get('creditor_name', ''), c.get('ledger_group', 'Sundry Creditors'), -bal if bal < 0 else bal)
+            stored = safe_num(c.get(bal_field if use_opening else 'outstanding_amount'))
+            display = abs(stored) if stored != 0 else 0  # creditors are CR-natural; show as +ve liability
+            _add('liability', 'sundry_creditors', 'Sundry Creditors',
+                 c.get('creditor_name', ''),
+                 c.get('ledger_group', 'Sundry Creditors'), display)
 
-        # Sort each group's ledgers by absolute amount
+        # 4) Synthesize Profit & Loss A/c.
+        # Tally stores the current-FY net profit in the `profit_loss` collection
+        # (fetched by the agent from Tally's BS report) — that's the authoritative
+        # value for "Current Period". For "Opening Balance" we take the residual
+        # so TA = TL holds (mirrors Tally's own balancing behaviour — Opening
+        # Balance of P&L A/c is the accumulated prior-year retained earnings).
+        pl_doc = await db.profit_loss.find_one({"tenant_id": q.get("tenant_id", ""),
+                                                 "company_id": q.get("company_id", "")},
+                                                {"_id": 0})
+        stored_net = safe_num((pl_doc or {}).get("net_profit_loss")) if pl_doc else 0.0
+        if use_opening:
+            # Prev FY view: Tally's master OB does not include current-period P&L
+            # so just leave the residual to a single P&L A/c row (Opening Balance).
+            current_period = 0.0
+        else:
+            try:
+                current_period = stored_net if abs(stored_net) >= 0.01 else await _compute_pl_net_profit(q, req_fy)
+            except Exception as e:
+                logger.warning(f"BS: P&L compute failed: {e}")
+                current_period = stored_net
+
+        # Compute totals BEFORE adding P&L A/c so we know the residual
+        ta_partial = round(sum(g['total'] for g in groups.values() if g['side'] == 'asset'), 2)
+        tl_others = round(sum(g['total'] for g in groups.values() if g['side'] == 'liability'), 2)
+        if abs(current_period) >= 0.01:
+            _add('liability', 'profit_loss_ac', 'Profit & Loss A/c',
+                 'Current Period', 'Profit & Loss A/c', current_period)
+        # Opening Balance = residual that makes TA = TL (Tally's accounting identity)
+        opening_balance = round(ta_partial - tl_others - current_period, 2)
+        if abs(opening_balance) >= 0.01:
+            _add('liability', 'profit_loss_ac', 'Profit & Loss A/c',
+                 'Opening Balance', 'Profit & Loss A/c', opening_balance)
+
+        # Sort groups & ledgers
         for g in groups.values():
             g['ledgers'].sort(key=lambda x: -abs(x['amount']))
             g['total'] = round(g['total'], 2)
 
         assets = sorted([g for g in groups.values() if g['side'] == 'asset'], key=lambda x: -abs(x['total']))
         liabilities = sorted([g for g in groups.values() if g['side'] == 'liability'], key=lambda x: -abs(x['total']))
-        total_assets = sum(g['total'] for g in assets)
-        total_liabilities = sum(g['total'] for g in liabilities)
-        difference = total_assets - total_liabilities
+        # Tally always lists the standard groups even if zero — sort liabilities in canonical order
+        order_liab = ['capital_account', 'loans_liability', 'current_liabilities', 'sundry_creditors', 'suspense', 'non_current_liability', 'profit_loss_ac']
+        order_asset = ['fixed_assets', 'investments', 'current_assets', 'stock_in_hand', 'sundry_debtors', 'misc_expense', 'branch_division']
+
+        def _ordered(items, order, side):
+            keyed = {}
+            for it in items:
+                # key = lookup in groups dict
+                for k, g in groups.items():
+                    if g is it:
+                        keyed[k] = it
+                        break
+            out = []
+            for k in order:
+                if k in keyed:
+                    out.append(keyed[k])
+            for k, v in keyed.items():
+                if k not in order:
+                    out.append(v)
+            return out
+
+        assets = _ordered(assets, order_asset, 'asset')
+        liabilities = _ordered(liabilities, order_liab, 'liability')
+
+        total_assets = round(sum(g['total'] for g in assets), 2)
+        total_liabilities = round(sum(g['total'] for g in liabilities), 2)
+        difference = round(total_assets - total_liabilities, 2)
+
+        # User-friendly notices about data freshness
+        notices = []
+        if notice:
+            notices.append(notice)
+        if not stock_synced:
+            notices.append("Stock-in-Hand not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture closing stock values.")
+        if not creditors and not any(g.get('group') == 'Sundry Creditors' for g in liabilities):
+            notices.append("Sundry Creditors not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture supplier balances.")
 
         return APIResponse(success=True, data={
-            "fy": fy or today_fy,
+            "fy": req_fy,
             "view": "opening" if use_opening else "closing",
             "assets": assets,
             "liabilities": liabilities,
-            "total_assets": round(total_assets, 2),
-            "total_liabilities": round(total_liabilities, 2),
-            "difference": round(difference, 2),
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "difference": difference,
             "source": "derived_from_all_ledgers",
-            "notice": notice,
+            "notice": " ".join(notices) if notices else None,
+            "notices": notices,
             "ledger_count": len(ledgers),
             "debtor_count": len(debtors),
             "creditor_count": len(creditors),
+            "stock_synced": stock_synced,
         })
     except Exception as e:
-        logger.error(f"Balance sheet error: {e}")
+        logger.exception(f"Balance sheet error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
