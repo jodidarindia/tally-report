@@ -27,7 +27,7 @@ from reportlab.platypus import (
 
 OUT_DIR = "/app/frontend/public"
 BUILD_DATE = datetime.now().strftime("%d %B %Y")
-VERSION = "v3.0 (April 2026)"
+VERSION = "v3.1 (May 2026)"
 
 # ── Brand palette ────────────────────────────────────────
 PRIMARY   = colors.HexColor("#0052FF")
@@ -137,11 +137,91 @@ def build_whats_new():
     elems += [
         Paragraph("WHAT'S NEW", s["FlowraEyebrow"]),
         Paragraph("FLOWRA Insights — Latest Features", s["FlowraTitle"]),
-        Paragraph("Everything we've shipped through April 2026. Each update builds toward FLOWRA's promise: software that runs your business, quietly.", s["FlowraSubtitle"]),
+        Paragraph("Everything we've shipped through May 2026. Each update builds toward FLOWRA's promise: software that runs your business, quietly.", s["FlowraSubtitle"]),
         Spacer(1, 8),
     ]
 
     sections = [
+        # ── May 2026 — newest first ───────────────────────────────
+        ("Beat Run Today — Field Coverage Tracking", "NEW",
+         "Salesmen now have a one-tap daily beat sheet auto-derived from their plan. They tap a customer to mark visited, "
+         "log unplanned (NEW) visits, and see real-time coverage %. Day-end auto-locks past dates so the audit trail stays clean. "
+         "Admins audit any salesman's beat run from the useradmin Salesman → Beat Runs tab.",
+         [
+             "Auto-built from each salesman's beat plan filtered by today's day-of-week (IST)",
+             "Tap-to-toggle visited check-ins with IST timestamp",
+             "NEW chip for unplanned visits until that customer appears in synced Tally data",
+             "Read-only Beat History — past runs locked, click any row for detail view",
+             "Server-side day-end lock — the API itself rejects stale run_date params",
+             "Single-salesman-per-customer enforcement — prevents cross-mapping conflicts",
+         ]),
+        ("Inventory A/B/C/D Categorisation", "NEW",
+         "The old free-text Category field is replaced with proper Pareto A/B/C/D tiers. Tag manually with one click, or "
+         "run Auto-ABC to apply the 80-15-4-1 distribution across the FY revenue. Filters and a new Category Sales Analytics "
+         "tab let you slice the entire catalog by tier with drill-downs.",
+         [
+             "Manual: one-click A/B/C/D pill on every row",
+             "Bulk: Auto-ABC button runs Pareto 80-15-4-1 on FY revenue",
+             "Filter: dropdown to slice by A/B/C/D/Untagged",
+             "Preserved across re-syncs — sync.py snapshots assignments before delete-and-reinsert",
+             "Standard Sale Price column (Tally STDPRICE) added to Inventory table",
+             "Category Sales Analytics tab — top customers, qty, revenue, frequency per item, CSV export per category",
+         ]),
+        ("CA Corner — 100% Tally Parity", "ENHANCED",
+         "Balance Sheet and Profit & Loss now match Tally exactly. Built directly from synced ledgers with proper sign convention, "
+         "auto-balanced via P&L A/c residual. Validated against real customer FY26-27 exports — Sales, Purchases, Indirect Income, "
+         "Direct Expense match to the rupee.",
+         [
+             "Balance Sheet derived from all_ledgers + customers + creditors with correct asset/liability sign flips",
+             "P&L Method A — sums all_ledgers.closing_balance by parent_group for current FY (matches Tally exactly)",
+             "Heuristic catch-all for user-defined sub-groups (Salary Accounts, Local Thela Gaadi, Wages, Rent, Travel, etc.)",
+             "Automatic notices when Stock-in-Hand or Sundry Creditors aren't yet synced",
+             "Tally Verified ✓ green badge in CRM Outstanding when computed OS reconciles to Tally master",
+         ]),
+        ("Dispatch Employee Mirror View", "ENHANCED",
+         "Dispatch employees now see the SAME admin Dispatch Terminal — Kanban board, online orders, pending billing, porters, "
+         "transporters, date selector, create-cards — with only the Employees tab hidden. Logout no longer flashes a "
+         "'Feature Not Activated' toast (root-cause fix in PageRenderer).",
+         [
+             "Full feature parity with admin view (only Employees tab hidden)",
+             "Online Order tab cards now clickable → detail modal with line items, part numbers, notes",
+             "Tenant-wide visibility fix — /api/dispatch/employees now scopes by tenant, not company",
+             "Logout flash bug fixed — PageRenderer returns null when token cleared",
+         ]),
+        ("Backups & Tenant Data Export", "NEW",
+         "A two-tier data-protection layer. SuperAdmin can run on-demand or scheduled MongoDB dumps and download them anytime. "
+         "Every tenant admin can export their entire dataset as a ZIP for DPDP Act 2023 compliance — your data, your rights.",
+         [
+             "SuperAdmin → Backups tab: Run Now, list, download, delete",
+             "Daily 02:00 IST cron retains last 30 backups (gzipped mongodump archives)",
+             "Tenant admin → user menu → Export Your Data: ZIP with one JSON per collection + manifest",
+             "Strict tenant isolation — cross-tenant data, password hashes, system audit logs are never included",
+             "Every export and backup logged to the audit trail",
+         ]),
+        ("Salesman Dashboard & Performance", "NEW",
+         "Salesmen now land on a personal dashboard showing Achieved, Expected YTD, Monthly Target and Achievement %, "
+         "with customer-wise drill-downs and top items sold. Activity feed scoped to own audit logs only. "
+         "Achievement % bug fixed — now compares against YTD-prorated target, not full annual.",
+         [
+             "KPI cards: Achieved, Expected YTD, Monthly Target, Achievement % (FY-aware)",
+             "Customer-wise breakdown drill-down + top items sold",
+             "New Order: catalog search matches item_name OR part_number; part numbers in cart and order detail",
+             "Activity feed scoped to own logs (admin still sees everything for the tenant)",
+             "Beat Plans tab in admin Salesman page — visualise 6-day weekly grid + editable rows",
+         ]),
+        ("Tally Sync Agent v9.6.0", "ENHANCED",
+         "Captures STANDARDPRICE per stock item so the Salesman catalog and Inventory table show the right Tally master price. "
+         "Falls back to closing rate until first re-sync. Earlier v9.1/v9.5 fixes for JV direction, creditor filtering, "
+         "and signed P&L summary all rolled in.",
+         [
+             "STANDARDPRICE / STDPRICE captured per stock item → standard_price field",
+             "Per-line DR/CR direction in ledger_entries (ISDEEMEDPOSITIVE + signed AMOUNT fallback)",
+             "Creditor sub-group string-match (creditor/supplier/vendor) for user-defined groups",
+             "Salary, Wages, Rent, Travel, Commission, Advertisement auto-mapped to Indirect Expenses",
+             "Re-served at /flowra-desktop-agent.py — re-run Full Sync to refresh master prices",
+         ]),
+
+        # ── April 2026 ───────────────────────────────────────────
         ("Dispatch Terminal", "NEW",
          "A complete warehouse-floor companion. Convert approved orders into dispatch cards, "
          "track them through a Kanban swim-lane (Pending → Packed → Loaded → Out → Delivered), "
@@ -494,28 +574,36 @@ def build_training():
          "Customer Outstanding tab: ageing buckets (0–30, 31–60, 61–90, 90+), branch toggle (include/exclude branch transfers), search by name. "
          "Targets tab: set monthly targets per customer. Follow-ups tab: add notes with reminders."),
         ("6. Inventory",
-         "All stock items with quantity and value. Auto-Reorder: click the button to set smart reorder levels based on the last 2 months' sales velocity. Low-stock items are highlighted in red."),
+         "All stock items with quantity, value, and Sale Price (Tally STDPRICE master). Auto-Reorder: click the button to set smart reorder levels based on the last 2 months' sales velocity. Low-stock items are highlighted in red. "
+         "**A/B/C/D categorisation** — click any pill in the row to tag a single item, or click 'Auto-ABC' to apply Pareto 80-15-4-1 across the whole catalog. Filter the table by tier from the dropdown."),
         ("7. Analytics",
-         "Inventory movement (slow / fast movers), Below-cost sales, Sales frequency, Customer-item matrix, SPIP. Useful for monthly reviews."),
+         "Inventory movement (slow / fast movers), Below-cost sales, Sales frequency, Customer-item matrix, SPIP, and the new **Category Sales** tab — pick A/B/C/D and drill into each item's top customers, frequency, and current stock. CSV export per category."),
         ("8. Salesman Orders (if your plan includes it)",
          "Salesmen log in on their phone, see only their mapped customers and live stock, place an order, and submit. "
-         "Admins approve / reject / hold from the Salesman Orders → Approval Queue. Approved orders appear on the Dispatch Terminal automatically."),
+         "Admins approve / reject / hold from the Salesman Orders → Approval Queue. Approved orders appear on the Dispatch Terminal automatically. "
+         "Salesmen also get a personal **Dashboard** with Achieved / Expected YTD / Monthly Target / Achievement %, plus customer-wise drill-down."),
+        ("8a. Beat Run Today (Salesman)",
+         "Auto-derived from your beat plan filtered by today's day-of-week. Tap a customer to mark visited (IST timestamp). "
+         "Add unplanned visits in the NEW box — they're tagged NEW until the customer appears in synced Tally data. "
+         "**Beat History** is read-only — past dates are locked, click any row for the detail view. Admins audit any salesman's runs from useradmin Salesman → Beat Runs."),
         ("9. Dispatch Terminal (if your plan includes it)",
          "Kanban board with swim-lanes: Pending → Packed → Loaded → Out → Delivered. Drag cards across lanes as they progress. "
-         "Each card has: customer, items, transporter, LR number, document uploads. End-of-day: click 'Close of Day' for a PDF summary you can share on WhatsApp."),
+         "Each card has: customer, items, transporter, LR number, document uploads. End-of-day: click 'Close of Day' for a PDF summary you can share on WhatsApp. "
+         "Dispatch employees see the SAME admin view — only the Employees tab is hidden."),
         ("10. CA Corner",
          "Cash Flow: 3-section indirect method (Operating, Investing, Financing). "
-         "P&L: monthly + annual; click any ledger to drill into transactions. "
-         "Balance Sheet: Assets vs Liabilities + Capital, expandable. "
+         "P&L: monthly + annual; click any ledger to drill into transactions — **matches Tally exactly to the rupee**. "
+         "Balance Sheet: Assets vs Liabilities + Capital, expandable, auto-balanced via P&L A/c residual. "
          "AI Expense Insights: ask GPT-5.2 to find your largest cost-saving opportunities."),
         ("11. AI Reports & Insider Result",
          "Both use GPT-5.2 to write narrative reports in plain English. AI Reports gives you long-form analysis on demand; Insider Result surfaces the most pressing patterns as quick cards."),
         ("12. Sync History",
          "Timeline of every sync from your desktop agent. Each row shows date/time, FY, items synced, and which agent ran it (blue 'Tally vX' or amber 'Busy vX')."),
         ("13. Setup",
-         "First-time setup: download the Tally or Busy desktop agent, log in inside the agent with your FLOWRA credentials, point it at your Tally/Busy data folder, click Full Sync. Repeat for each company."),
-        ("14. Profile (top-right menu)",
-         "Profile & Security: change password, manage employees, manage salesmen, download your tenant data. Replay Tour: re-watch the onboarding tour. Switch Company: jump between synced companies. Logout."),
+         "First-time setup: download the Tally or Busy desktop agent, log in inside the agent with your FLOWRA credentials, point it at your Tally/Busy data folder, click Full Sync. Repeat for each company. "
+         "**Re-run Full Sync after upgrading to Tally agent v9.6.0** to capture STANDARDPRICE for every stock item."),
+        ("14. Profile & User Menu (top-right)",
+         "Profile & Security: change password, manage employees, manage salesmen. **Export Your Data**: download a ZIP of every record FLOWRA stores for your tenant (DPDP Act 2023 right-to-portability — manifest + one JSON per collection). Replay Tour: re-watch the onboarding tour. Switch Company: jump between synced companies. Logout."),
         ("15. Mobile Use",
          "FLOWRA is fully responsive — Dashboard, Sales, CRM, Salesman Orders and Dispatch all work on phones. The full menu collapses into a hamburger button (top-left). "
          "Salesmen are expected to work mainly on phones."),
@@ -627,7 +715,19 @@ def build_deployment_guide():
             ("Outstanding doesn't match Tally",        "Toggle the Branch filter in CRM. Branch ledgers can double-count if not excluded."),
         ], s),
 
-        Paragraph("9. Going to Production", s["FlowraH1"]),
+        Paragraph("9. Backups & Data Portability", s["FlowraH1"]),
+        Paragraph("FLOWRA runs Tier-1 backups on the host pod and gives every tenant a self-service data export.", s["FlowraBody"]),
+        bullets([
+            "Daily automated MongoDB dump at 02:00 IST — last 30 backups retained, gzipped archives",
+            "SuperAdmin → Backups tab: Run Now, list, download, delete on demand",
+            "Tier-2 (MongoDB Atlas point-in-time recovery, region: Mumbai) is the next migration step — see DATABASE_STRATEGY.md",
+            "Tenant Admin → user menu → Export Your Data: ZIP with one JSON per collection + manifest (DPDP Act 2023 right-to-portability)",
+            "Strict tenant isolation enforced server-side — your data is never mixed with another tenant's; password hashes and system audit logs are never included in your export",
+            "Every export and backup logged to the audit trail for compliance",
+        ], s),
+        Spacer(1, 12),
+
+        Paragraph("10. Going to Production", s["FlowraH1"]),
         bullets([
             "Set the agent to Auto-Start with Windows (right-click → Run on startup)",
             "Subscribe to FLOWRA Status (status.flowralive.in) for sync health alerts",
@@ -665,16 +765,15 @@ def build_coming_soon():
         feature_table([
             ("PyInstaller `.exe` installers",   "One-click setup for both Tally v9 and Busy v1 desktop agents. No Python install needed."),
             ("GSTR JSON Reconciliation",       "Upload GSTR-1 / 2B / 3B JSON inside CA Corner; auto-reconcile against your Tally / Busy vouchers, surface mismatches."),
-            ("SuperAdmin Backups + Per-tenant Data Export", "DPDP-grade right-to-portability. One-click download of any tenant's full data as JSON/Excel."),
-            ("MongoDB Atlas Migration",        "Production move from Emergent preview pod to Atlas M10 in Mumbai (ap-south-1)."),
+            ("MongoDB Atlas Migration (Tier-2)", "Production move to Atlas M10 in Mumbai (ap-south-1) with point-in-time recovery on top of today's daily Tier-1 dumps."),
             ("DigitalOcean Phase-1 Deployment", "Sub-domain architecture (insights / tasks / loyalty) live on production droplets."),
+            ("Audit Logs CSV Export",          "Full audit trail downloadable from SuperAdmin."),
         ], s),
 
         Paragraph("Mid-term (Q3-Q4 2026)", s["FlowraH1"]),
         feature_table([
             ("FLOWRA Tasks (suite app)",       "Team execution platform — assign, chase, close. tasks.flowralive.in"),
             ("FLOWRA Loyalty (suite app)",     "Loyalty engine for Indian retail — points, tiers, referrals, WhatsApp-native. loyalty.flowralive.in"),
-            ("Audit Logs CSV Export",          "Full audit trail downloadable from SuperAdmin."),
             ("Payment Follow-up Automation",   "Email + WhatsApp reminders triggered on overdue invoices. Resend + WhatsApp Business API."),
             ("Sync Health Email Digest",       "Weekly summary email — per-company sync health, errors, missing days."),
             ("In-app New Feature Spotlight",   "Auto-show modal on login when major features ship. Re-uses tour infra."),

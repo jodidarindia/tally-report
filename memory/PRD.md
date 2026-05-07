@@ -27,8 +27,12 @@ FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analyt
 ## Upcoming
 - P0: Ship `.exe` installer for Busy Agent (validate on a real Windows + Busy install with customer data)
 - P1: Compile Desktop Agent v9 (Tally) to `.exe`
+- P1: GST Portal integration (manual GSTR JSON upload + reconciliation in CA Corner)
+- P1: WhatsApp Automation (overdue payment reminders) — BLOCKED on user (AiSensy vs Meta Cloud API)
 - P2: Export Audit Logs to CSV
-- P2: Automated payment follow-up reminders
+- P2: Automated payment follow-up reminders (Resend email + WhatsApp)
+- P2: "Sync Health" weekly email digest to admins
+- P2: MongoDB Atlas migration (Tier-2 — point-in-time recovery on top of today's Tier-1 dumps)
 
 ## Desktop Sync Agents
 - **Tally (v9)** — `/app/desktop-agent/tally_sync_agent_v9.py` (mature, production)
@@ -112,6 +116,42 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
   - Added `_signed_num()` helper that preserves sign (the old `_num()` always returned `abs()`, which broke JV debit detection)
   - Bumped `agent_version` to `9.1.0-jv-direction`
 - **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
+
+## Changelog — May 2026 (Tier-1 Backups + DPDP Data Export)
+
+### SuperAdmin
+- **MongoDB backup system (Tier-1)** — `/app/scripts/backup_mongo.sh` runs `mongodump --gzip --archive` to `/app/backups/`, retention 30, daily 02:00 IST cron-ready.
+- **`/api/super-admin/backups*`** endpoints: list, run-now, download (gzip stream), delete (with path-traversal guard). All actions audit-logged.
+- **SuperAdmin → Backups tab** (new) in `SuperAdminDashboard.js` — Run Now button, list with size+timestamp, per-row download/delete, callout to Tier-2 (Atlas) plan.
+
+### Tenant Admin (DPDP right-to-portability)
+- **`/api/admin/data-export`** — streams a ZIP with one JSON file per tenant collection (25 collections) + `manifest.json`. Strict tenant isolation: server filters every query by `tenant_id`. `users.json` and `audit_logs.json` are never included.
+- **`/api/admin/data-export/preview`** — quick row-counts so admin sees what's in their export before downloading.
+- **User dropdown → "Export Your Data"** link added to `AppNavbar.js`, gated to `role === 'admin'`. Salesman/dispatch never see the link.
+- **`UserAdminDataExport.js`** — grouped preview (Sales/Purchases/Inventory/Salesman/Dispatch/Tally/AI) with one-click ZIP download.
+
+### Documentation refresh
+- `scripts/generate_flowra_pdfs.py` bumped to v3.1 (May 2026):
+  - **What's New** PDF — added 7 May-2026 sections (Beat Run Today, A/B/C/D Inventory, CA Corner Tally Parity, Dispatch Mirror View, Backups & Data Export, Salesman Dashboard, Tally Agent v9.6.0)
+  - **Training Booklet** — Inventory chapter now covers A/B/C/D pills + Auto-ABC; new chapter 8a "Beat Run Today"; Profile/User-Menu chapter mentions Export Your Data; CA Corner mentions "matches Tally exactly to the rupee"
+  - **Deployment Guide** — new chapter 9 "Backups & Data Portability" describing Tier-1 + DPDP export
+  - **Coming Soon** — removed "Backups + Per-tenant Data Export" (shipped); reframed Atlas migration as "Tier-2 on top of today's Tier-1 dumps"
+- All 7 PDFs regenerated under `/app/frontend/public/FLOWRA_*.pdf`.
+
+### Tests
+- `/app/backend/tests/test_iteration62_backups_data_export.py` — 7/7 PASS (super_admin gating, run-now writes archive, download streams gzip, path-traversal blocked, preview counts, ZIP validity + tenant isolation + no `users.json` leak, salesman role denied).
+- Frontend E2E (testing agent iter 60): 9/9 PASS (Backups tab Run Now → Download → Delete; admin Export ZIP download; salesman correctly hides Export Your Data link).
+
+### Files touched / created
+- `/app/scripts/backup_mongo.sh` (NEW, executable)
+- `/app/backend/routes/backups.py` (NEW, registered in server.py)
+- `/app/frontend/src/pages/SuperAdminBackups.js` (NEW, sonner toast)
+- `/app/frontend/src/pages/UserAdminDataExport.js` (NEW, sonner toast)
+- `/app/frontend/src/pages/SuperAdminDashboard.js` (added Backups tab)
+- `/app/frontend/src/components/PageRenderer.js` (added `data-export` route)
+- `/app/frontend/src/components/AppNavbar.js` (added Export Your Data link)
+- `/app/scripts/generate_flowra_pdfs.py` (May 2026 sections)
+- `/app/backend/tests/test_iteration62_backups_data_export.py` (NEW)
 
 ## Changelog — May 2026 (CA Corner Tally-Parity Phase)
 - **Balance Sheet rewrite (`/api/ca-corner/balance-sheet`):**
