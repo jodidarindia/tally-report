@@ -906,16 +906,132 @@ class TallyCollectionClient:
         logger.info(f"  Got {len(customers)} customer ledgers")
         return customers
 
+    # ---- VOUCHER TYPE MASTER (custom display names → parent category) ----
+
+    def fetch_voucher_type_map(self) -> Dict[str, List[str]]:
+        """Fetch all voucher type masters and return {parent_category: [display_names]}.
+
+        Tally users often customize voucher type names ("Goods Purchase",
+        "Bank Receipt", "Sales General", etc.). The reserved Tally `Voucher
+        Register` report only matches the EXACT `VOUCHERTYPENAME` filter,
+        so a single hard-coded filter like "Purchase" will silently return
+        zero rows for these tenants.
+
+        We fetch the full master list once per sync session and build a
+        parent→[display_names] map. Each display name is then queried
+        individually in the monthly fetcher.
+
+        Cached on `self._voucher_type_map` after first call.
+        Cache is invalidated automatically when the active company changes.
+        """
+        # Invalidate cache when switching to a different Tally company
+        if hasattr(self, '_voucher_type_map_company') and self._voucher_type_map_company != self.company:
+            self._voucher_type_map = None
+        if hasattr(self, '_voucher_type_map') and self._voucher_type_map is not None:
+            return self._voucher_type_map
+
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraVoucherTypes</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraVoucherTypes" ISINITIALIZE="Yes">
+<TYPE>VoucherType</TYPE>
+<FETCH>NAME</FETCH>
+<FETCH>PARENT</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+
+        result: Dict[str, List[str]] = {}
+        try:
+            data = self._post(xml, debug_name='voucher_types')
+            if data:
+                # Walk into the COLLECTION
+                coll = data
+                for k in ('ENVELOPE', 'BODY', 'DATA', 'COLLECTION'):
+                    if isinstance(coll, dict) and k in coll:
+                        coll = coll[k]
+                vts = coll.get('VOUCHERTYPE', []) if isinstance(coll, dict) else []
+                if isinstance(vts, dict):
+                    vts = [vts]
+                for vt in vts:
+                    if not isinstance(vt, dict):
+                        continue
+                    name = str(vt.get('NAME', vt.get('@NAME', '')) or '').strip()
+                    parent = str(vt.get('PARENT', '') or '').strip()
+                    if not name or not parent:
+                        continue
+                    result.setdefault(parent, []).append(name)
+                    # Also self-map so explicit filter "Sales" still hits if it exists
+                    if name.lower() != parent.lower():
+                        pass
+        except Exception as e:
+            logger.warning(f"  voucher type fetch failed: {e}")
+
+        # Always include the canonical reserved names as fallback so we never
+        # return an empty list — works on stock Tally setups too.
+        for canonical, parent in [
+            ("Sales", "Sales"), ("Purchase", "Purchase"),
+            ("Receipt", "Receipt"), ("Payment", "Payment"),
+            ("Journal", "Journal"), ("Credit Note", "Credit Note"),
+            ("Debit Note", "Debit Note"), ("Contra", "Contra"),
+            ("Stock Journal", "Stock Journal"),
+        ]:
+            result.setdefault(parent, [])
+            if canonical not in result[parent]:
+                result[parent].append(canonical)
+
+        self._voucher_type_map = result
+        self._voucher_type_map_company = self.company
+        total = sum(len(v) for v in result.values())
+        logger.info(f"  Voucher types: {total} display names across {len(result)} parents")
+        for parent, names in result.items():
+            if names:
+                logger.info(f"    {parent}: {len(names)} -> {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
+        return result
+
+    def _names_for_parent(self, parent: str) -> List[str]:
+        """Return all voucher-type display names matching a parent category.
+        Falls back to [parent] if master fetch returned nothing for that parent."""
+        try:
+            mp = self.fetch_voucher_type_map()
+        except Exception:
+            return [parent]
+        names = mp.get(parent) or [parent]
+        # De-dup case-insensitively while preserving order
+        seen = set()
+        out = []
+        for n in names:
+            k = n.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(n)
+        return out
+
     # ---- SALES VOUCHERS (Export Data with enhanced sanitization) ----
 
     def fetch_sales_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch sales vouchers for one month using Export Data + Voucher Register."""
+        """Fetch sales vouchers for one month using Export Data + Voucher Register.
+
+        Iterates over EVERY display name whose parent is "Sales" — handles
+        custom voucher types like "Sales General", "Material Out", etc."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting sales: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
-
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        for vt_name in self._names_for_parent("Sales"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -925,25 +1041,37 @@ class TallyCollectionClient:
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{fd_disp}</SVFROMDATE>
 <SVTODATE>{td_disp}</SVTODATE>
-<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'sales_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
-        return self._parse_vouchers(data, 'sales')
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml, debug_name=f'sales_{slug}_{from_date.strftime("%Y%m")}')
+            if not data:
+                continue
+            for v in self._parse_vouchers(data, 'sales'):
+                vid = v.get('voucher_id') or v.get('voucher_number')
+                if vid and vid in seen_ids:
+                    continue
+                if vid:
+                    seen_ids.add(vid)
+                all_vchs.append(v)
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
+        return all_vchs
 
     def fetch_receipts_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch receipt/payment vouchers for one month using Export Data."""
+        """Fetch receipt/payment vouchers for one month using Export Data.
+
+        Iterates every display name whose parent is "Receipt" or "Payment"."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting receipts: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
 
         all_receipts = []
-        for vtype_name in ("Receipt", "Payment"):
-            xml = f"""<ENVELOPE>
+        seen_ids = set()
+        for parent in ("Receipt", "Payment"):
+            for vtype_name in self._names_for_parent(parent):
+                xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -957,24 +1085,33 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-            slug = vtype_name.lower()
-            data = self._post(xml, debug_name=f'{slug}s_{from_date.strftime("%Y%m")}')
-            if data:
-                all_receipts.extend(self._parse_vouchers(data, 'receipt'))
-            time.sleep(SLEEP_BETWEEN_REQUESTS)
+                slug = re.sub(r'[^a-z0-9]+', '_', vtype_name.lower()).strip('_')
+                data = self._post(xml, debug_name=f'{parent.lower()}s_{slug}_{from_date.strftime("%Y%m")}')
+                if data:
+                    for v in self._parse_vouchers(data, 'receipt'):
+                        vid = v.get('voucher_id') or v.get('voucher_number')
+                        if vid and vid in seen_ids:
+                            continue
+                        if vid:
+                            seen_ids.add(vid)
+                        all_receipts.append(v)
+                time.sleep(SLEEP_BETWEEN_REQUESTS)
 
         return all_receipts
 
     # ---- CREDIT NOTES (monthly batches) ----
 
     def fetch_credit_notes_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch Credit Note vouchers for one month."""
+        """Fetch Credit Note vouchers for one month — iterates every Credit Note display name."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting credit notes: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
 
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        for vt_name in self._names_for_parent("Credit Note"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -984,25 +1121,37 @@ class TallyCollectionClient:
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{fd_disp}</SVFROMDATE>
 <SVTODATE>{td_disp}</SVTODATE>
-<VOUCHERTYPENAME>Credit Note</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'credit_notes_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
-        return self._parse_vouchers(data, 'sales')  # Same structure as sales
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml, debug_name=f'credit_notes_{slug}_{from_date.strftime("%Y%m")}')
+            if not data:
+                continue
+            for v in self._parse_vouchers(data, 'sales'):
+                vid = v.get('voucher_id') or v.get('voucher_number')
+                if vid and vid in seen_ids:
+                    continue
+                if vid:
+                    seen_ids.add(vid)
+                all_vchs.append(v)
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
+        return all_vchs
 
     # ---- JOURNAL VOUCHERS (Sundry Debtors only, monthly) ----
 
     def fetch_journals_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch Journal vouchers involving Sundry Debtors for one month."""
+        """Fetch Journal vouchers involving Sundry Debtors for one month —
+        iterates every Journal-parent display name."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting journals: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
 
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        for vt_name in self._names_for_parent("Journal"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -1012,16 +1161,24 @@ class TallyCollectionClient:
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{fd_disp}</SVFROMDATE>
 <SVTODATE>{td_disp}</SVTODATE>
-<VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'journals_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
-        raw = self._parse_vouchers(data, 'journal')
-        # Filter: only journals involving Sundry Debtors
-        return [j for j in raw if j.get('party_name', '')]
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml, debug_name=f'journals_{slug}_{from_date.strftime("%Y%m")}')
+            if not data:
+                continue
+            for j in self._parse_vouchers(data, 'journal'):
+                if not j.get('party_name', ''):
+                    continue
+                vid = j.get('voucher_id') or j.get('voucher_number')
+                if vid and vid in seen_ids:
+                    continue
+                if vid:
+                    seen_ids.add(vid)
+                all_vchs.append(j)
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
+        return all_vchs
 
     # ---- STOCK JOURNALS (monthly) ----
 
@@ -1054,13 +1211,16 @@ class TallyCollectionClient:
     # ---- PURCHASE VOUCHERS (monthly) ----
 
     def fetch_purchases_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch Purchase vouchers for one month."""
+        """Fetch Purchase vouchers for one month — iterates every Purchase display name."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting purchase vouchers: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
 
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        for vt_name in self._names_for_parent("Purchase"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -1070,25 +1230,36 @@ class TallyCollectionClient:
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{fd_disp}</SVFROMDATE>
 <SVTODATE>{td_disp}</SVTODATE>
-<VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'purchases_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
-        return self._parse_vouchers(data, 'purchase')
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml, debug_name=f'purchases_{slug}_{from_date.strftime("%Y%m")}')
+            if not data:
+                continue
+            for v in self._parse_vouchers(data, 'purchase'):
+                vid = v.get('voucher_id') or v.get('voucher_number')
+                if vid and vid in seen_ids:
+                    continue
+                if vid:
+                    seen_ids.add(vid)
+                all_vchs.append(v)
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
+        return all_vchs
 
     # ---- DEBIT NOTES (monthly) ----
 
     def fetch_debit_notes_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch Debit Note vouchers for one month."""
+        """Fetch Debit Note vouchers for one month — iterates every Debit Note display name."""
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
         logger.info(f"  Requesting debit notes: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
 
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        for vt_name in self._names_for_parent("Debit Note"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -1098,14 +1269,22 @@ class TallyCollectionClient:
 <EXPLODEFLAG>Yes</EXPLODEFLAG>
 <SVFROMDATE>{fd_disp}</SVFROMDATE>
 <SVTODATE>{td_disp}</SVTODATE>
-<VOUCHERTYPENAME>Debit Note</VOUCHERTYPENAME>
+<VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-
-        data = self._post(xml, debug_name=f'debit_notes_{from_date.strftime("%Y%m")}')
-        if not data:
-            return []
-        return self._parse_vouchers(data, 'purchase')  # Same structure as purchases
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml, debug_name=f'debit_notes_{slug}_{from_date.strftime("%Y%m")}')
+            if not data:
+                continue
+            for v in self._parse_vouchers(data, 'purchase'):
+                vid = v.get('voucher_id') or v.get('voucher_number')
+                if vid and vid in seen_ids:
+                    continue
+                if vid:
+                    seen_ids.add(vid)
+                all_vchs.append(v)
+            time.sleep(SLEEP_BETWEEN_REQUESTS)
+        return all_vchs
 
     # ---- SUNDRY CREDITORS (Collection) ----
 
@@ -2596,7 +2775,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.7.0-stdprice-multi',
+                'agent_version': '9.7.1-custom-vchtypes',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2653,7 +2832,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.7.0-stdprice-multi',
+                'agent_version': '9.7.1-custom-vchtypes',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",

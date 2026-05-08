@@ -122,6 +122,33 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
   - Bumped `agent_version` to `9.1.0-jv-direction`
 - **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
 
+## Changelog — May 2026 (Multi-tenant data integrity + Custom Voucher Types)
+
+### Tally Agent v9.7.1 — `9.7.1-custom-vchtypes` (CRITICAL)
+- **Custom voucher type support** — agents previously sent `<VOUCHERTYPENAME>Sales/Purchase/Receipt/...</VOUCHERTYPENAME>` which only matched literal Tally type names. For tenants with renamed voucher types (e.g., "Goods Purchase" / "Sales General" / "Bank Receipt" / "Cash Payment"), this returned ZERO vouchers despite stock journals + contra working fine.
+- New `fetch_voucher_type_map()` method pre-fetches all voucher type masters per company → builds `parent → [display_names]` map.
+- Sales / Purchase / Receipt / Payment / Journal / Credit Note / Debit Note fetchers now iterate every matching display name. De-dups by voucher_id.
+- Cache invalidates on company switch.
+- Re-served at `/flowra-desktop-agent.py`.
+
+### Backend — Duplicate Company Map fix
+- Root cause: `register_company_mapping()` looked up by `Fernet.encrypt(name)` which uses a random IV → `find_one` never matched → fresh UUID per sync request. With ~9 data types × 2 FYs × N retries, 9–19 dupes per company were the norm.
+- Fix: deterministic HMAC-SHA256 hash for lookups (`company_name_hash` field). Display name still Fernet-encrypted at rest.
+- Migration endpoint `POST /api/super-admin/dedup-companies` re-points all docs to the canonical UUID and de-dupes `users.companies`. Idempotent. Ran on production: removed 19 dupes, re-pointed 4,598 docs across 1 user.
+
+### Backend — WebSocket tenant scoping
+- `SyncWebSocketManager` was broadcasting every event to every connected client → tenants saw each other's sync progress.
+- Fix: client must send `{action:'subscribe', tenant_id}` on connect; server only delivers events whose `tenant_id` matches the subscriber.
+- `useSyncWebSocket(tenantId)` hook now requires tenant. Dashboard.js passes `user.tenant_id`.
+
+### Setup — Creditor Groups admin UI
+- New `CreditorGroupsPanel` mounted at the bottom of `Tally Setup`.
+- Dual-list (selected ↔ available with search) + "Restore defaults".
+- Saves via existing `POST /api/creditors/config`. Live, no re-sync needed.
+
+### Tests
+- `test_iteration64_dedup_companies.py` — 5/5 PASS (idempotent register, super-admin only, idempotent dedup, no dupe in user.companies, no dupe in /auth/me)
+
 ## Changelog — May 2026 (Tier-1 Backups + DPDP Data Export)
 
 ### SuperAdmin
