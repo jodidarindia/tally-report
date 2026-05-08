@@ -962,17 +962,60 @@ class TallyCollectionClient:
                 vts = coll.get('VOUCHERTYPE', []) if isinstance(coll, dict) else []
                 if isinstance(vts, dict):
                     vts = [vts]
+
+                # First pass — collect every voucher type with its raw NAME, PARENT
+                # and RESERVEDNAME (all are XML attributes; PARENT is a child element
+                # carrying its value in @ '#text' — xmltodict quirk because of TYPE="String").
+                def _flat_str(v) -> str:
+                    """Coerce xmltodict value (str | dict-with-#text) to plain string."""
+                    if v is None:
+                        return ''
+                    if isinstance(v, str):
+                        return v.strip()
+                    if isinstance(v, dict):
+                        # <PARENT TYPE="String">Foo</PARENT> -> {'@TYPE':'String','#text':'Foo'}
+                        return str(v.get('#text', '') or '').strip()
+                    return str(v).strip()
+
+                meta = {}  # name -> {parent, reserved}
                 for vt in vts:
                     if not isinstance(vt, dict):
                         continue
-                    name = str(vt.get('NAME', vt.get('@NAME', '')) or '').strip()
-                    parent = str(vt.get('PARENT', '') or '').strip()
-                    if not name or not parent:
+                    # NAME / RESERVEDNAME are attributes. xmltodict prefixes attrs with '@'.
+                    name = _flat_str(vt.get('@NAME') or vt.get('NAME'))
+                    reserved = _flat_str(vt.get('@RESERVEDNAME') or vt.get('RESERVEDNAME'))
+                    parent_raw = vt.get('PARENT')
+                    parent = _flat_str(parent_raw)
+                    if not name:
                         continue
-                    result.setdefault(parent, []).append(name)
-                    # Also self-map so explicit filter "Sales" still hits if it exists
-                    if name.lower() != parent.lower():
-                        pass
+                    meta[name] = {'parent': parent, 'reserved': reserved}
+
+                # Second pass — walk parent chain to find the canonical RESERVEDNAME.
+                # If an entry has empty RESERVEDNAME, climb up via PARENT until we find
+                # an ancestor that has one. This handles 2- and 3-level hierarchies
+                # like  Cash Receipt → App Cash Receipts (RESERVEDNAME=Receipt).
+                def _resolve_category(name: str, _seen=None) -> str:
+                    if _seen is None:
+                        _seen = set()
+                    if name in _seen or not name:
+                        return ''
+                    _seen.add(name)
+                    info = meta.get(name)
+                    if not info:
+                        return name  # unknown — fall through to using the name itself
+                    if info['reserved']:
+                        return info['reserved']
+                    par = info['parent']
+                    # Self-parent (root-of-its-own-tree) without RESERVEDNAME → use own name as category
+                    if not par or par == name:
+                        return name
+                    return _resolve_category(par, _seen)
+
+                for name, info in meta.items():
+                    category = _resolve_category(name)
+                    if not category:
+                        continue
+                    result.setdefault(category, []).append(name)
         except Exception as e:
             logger.warning(f"  voucher type fetch failed: {e}")
 
@@ -2449,7 +2492,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.7.1-custom-vchtypes")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.7.2-vchtype-fix")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2775,7 +2818,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.7.1-custom-vchtypes',
+                'agent_version': '9.7.2-vchtype-fix',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2832,7 +2875,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.7.1-custom-vchtypes',
+                'agent_version': '9.7.2-vchtype-fix',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3541,7 +3584,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.7.1-custom-vchtypes")
+        print("FLOWRA Tally Sync Agent v9.7.2-vchtype-fix")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag
