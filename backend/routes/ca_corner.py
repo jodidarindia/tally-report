@@ -57,11 +57,14 @@ async def get_cash_flow(request: Request, fy: str = ""):
         total_income = pl.get("total_income", 0) if pl else 0
         total_expense = pl.get("total_expense", 0) if pl else 0
 
-        # Get bank/cash ledgers
+        # Get bank/cash ledgers — agent stores discriminator under `category`,
+        # legacy/manual rows may use `ledger_type`. Honor either.
         bank_cash = await db.bank_cash_ledgers.find(q, {"_id": 0}).to_list(100)
-        cash_ledgers = [l for l in bank_cash if l.get("ledger_type") == "cash"]
-        bank_ledgers = [l for l in bank_cash if l.get("ledger_type") == "bank"]
-        od_ledgers = [l for l in bank_cash if l.get("ledger_type") == "bank_od"]
+        def _kind(l):
+            return l.get("category") or l.get("ledger_type") or ""
+        cash_ledgers = [l for l in bank_cash if _kind(l) == "cash"]
+        bank_ledgers = [l for l in bank_cash if _kind(l) == "bank"]
+        od_ledgers   = [l for l in bank_cash if _kind(l) == "bank_od"]
 
         cash_opening = sum(abs(l.get("opening_balance", 0)) for l in cash_ledgers)
         cash_closing = sum(abs(l.get("closing_balance", 0)) for l in cash_ledgers)
@@ -148,11 +151,27 @@ async def get_cash_flow(request: Request, fy: str = ""):
                 "od_balance": round(od_balance, 2),
             },
             "bank_details": [
+                # Normalize bank/loan balances to "owner-cash perspective":
+                #   - Asset accounts (Bank Accounts / Cash-in-Hand): keep raw sign
+                #     (positive = money you have, negative = overdrawn).
+                #   - Liability accounts (Bank OD / CC / OCC):  flip sign
+                #     (Tally stores CR balance as +ve = "you owe"; flipping makes
+                #      negative = you owe, positive = extra deposit / overpaid loan).
                 {
                     "name": l.get("ledger_name", ""),
-                    "type": l.get("ledger_type", ""),
-                    "opening": round(l.get("opening_balance", 0), 2),
-                    "closing": round(l.get("closing_balance", 0), 2),
+                    "type": l.get("category", l.get("ledger_type", "")),
+                    "opening": round(
+                        -1 * l.get("opening_balance", 0)
+                        if l.get("category") == "bank_od"
+                        else l.get("opening_balance", 0),
+                        2,
+                    ),
+                    "closing": round(
+                        -1 * l.get("closing_balance", 0)
+                        if l.get("category") == "bank_od"
+                        else l.get("closing_balance", 0),
+                        2,
+                    ),
                     "bank_name": l.get("bank_name", ""),
                     "account_number": l.get("account_number", ""),
                 }
@@ -644,8 +663,33 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
 
         q = _build_q(ctx, company_id)
         ledgers = await db.all_ledgers.find(q, {"_id": 0}).to_list(5000)
-        creditors = await db.creditors.find(q, {"_id": 0}).to_list(2000) if 'creditors' in await db.list_collection_names() else []
         debtors = await db.customers.find(q, {"_id": 0}).to_list(2000)
+        # Live-derive creditors from all_ledgers using the tenant's configurable
+        # creditor-group list (default: Sundry Creditors + Dealer Deposit +
+        # Unsecured Loans + Non Current Liability). The legacy `creditors`
+        # collection is kept as a secondary source for backwards compatibility.
+        try:
+            from routes.creditors import _get_creditor_groups
+            creditor_groups = await _get_creditor_groups(ctx.get("tenant_id", ""))
+        except Exception:
+            creditor_groups = ["Sundry Creditors", "Dealer Deposit", "Unsecured Loans", "Non Current Liability"]
+        cust_lower = {(d.get("customer_name") or "").strip().lower() for d in debtors}
+        derived_creditors = [
+            {
+                "creditor_name": l.get("name") or l.get("ledger_name") or "",
+                "ledger_group": l.get("parent_group", ""),
+                "outstanding_amount": float(l.get("closing_balance", 0) or 0),
+                "opening_balance": float(l.get("opening_balance", 0) or 0),
+            }
+            for l in ledgers
+            if l.get("parent_group") in creditor_groups
+            and (l.get("name") or l.get("ledger_name") or "").strip().lower() not in cust_lower
+        ]
+        legacy_creditors = (
+            await db.creditors.find(q, {"_id": 0}).to_list(2000)
+            if "creditors" in await db.list_collection_names() else []
+        )
+        creditors = derived_creditors or legacy_creditors
 
         if not ledgers and not debtors:
             return APIResponse(success=True, data={

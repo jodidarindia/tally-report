@@ -633,6 +633,9 @@ class TallyCollectionClient:
 <FETCH>MAILINGNAME</FETCH>
 <FETCH>STANDARDPRICE</FETCH>
 <FETCH>STDPRICE</FETCH>
+<FETCH>STANDARDPRICELIST</FETCH>
+<FETCH>STDPRICELIST</FETCH>
+<FETCH>BASICSELLINGPRICE</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
 <COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
@@ -642,6 +645,8 @@ class TallyCollectionClient:
 <COMPUTE>OPVAL : $$NumValue:$OpeningValue</COMPUTE>
 <COMPUTE>OPQTY : $$String:$OpeningBalance:"TailUnits"</COMPUTE>
 <COMPUTE>STDPRC : $$NumValue:$StandardPrice</COMPUTE>
+<COMPUTE>STDSPL : $$NumValue:$$LatestRate:$$StockDate:Yes:Yes:$Name:$BaseUnits</COMPUTE>
+<COMPUTE>STDSP2 : $$NumValue:$$LastSPRate:$Name:$$StockDate</COMPUTE>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
@@ -771,11 +776,45 @@ class TallyCollectionClient:
 
             # Standard sale price (Tally STDPRICE master) — independent of stock
             # so even zero-qty items get a price for salesman quoting.
+            # Try multiple Tally Prime field paths in priority order.
             std_price = self._num(si.get('STDPRC', 0))
             if std_price == 0:
+                std_price = self._num(si.get('STDSPL', 0))   # $$LatestRate function
+            if std_price == 0:
+                std_price = self._num(si.get('STDSP2', 0))   # $$LastSPRate function
+            if std_price == 0:
                 std_price = self._num(si.get('STANDARDPRICE', si.get('STDPRICE', 0)))
+            if std_price == 0:
+                std_price = self._num(si.get('BASICSELLINGPRICE', 0))
+            # Walk the STANDARDPRICELIST collection — Tally Prime stores a list of
+            # date-ranged std prices under <STANDARDPRICELIST><STANDARDPRICELIST.LIST>...
+            # Pick the most recent APPLICABLEFROM entry that's <= today (or just last).
+            if std_price == 0:
+                spl = si.get('STANDARDPRICELIST', si.get('STDPRICELIST', None))
+                if spl:
+                    # Normalize to list of entries
+                    entries = []
+                    if isinstance(spl, dict):
+                        sub = spl.get('STANDARDPRICELIST.LIST', spl.get('STDPRICELIST.LIST', spl))
+                        if isinstance(sub, list):
+                            entries = sub
+                        elif isinstance(sub, dict):
+                            entries = [sub]
+                    elif isinstance(spl, list):
+                        entries = spl
+                    # Try each entry's STDPRICE / RATE / SELLINGRATE
+                    for ent in entries:
+                        if not isinstance(ent, dict):
+                            continue
+                        for key in ('STDPRICE', 'RATE', 'SELLINGRATE', 'SALERATE', 'STANDARDPRICE'):
+                            val = self._num(ent.get(key, 0))
+                            if val > 0:
+                                std_price = val
+                                break
+                        if std_price > 0:
+                            break
             if std_price == 0 and rate > 0:
-                std_price = rate  # fallback to last closing rate
+                std_price = rate  # last-resort fallback to closing rate
 
             items.append({
                 'item_id': name, 'item_name': name,
@@ -2557,7 +2596,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.6.0-stdprice',
+                'agent_version': '9.7.0-stdprice-multi',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2614,7 +2653,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.6.0-stdprice',
+                'agent_version': '9.7.0-stdprice-multi',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",

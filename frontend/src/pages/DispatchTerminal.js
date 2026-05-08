@@ -140,7 +140,13 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
       {loading ? <div className="flex items-center justify-center h-48"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"/></div> : (
         <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-4 -mx-1 px-1" data-testid="kanban-board">
           {LANES.map(status => {
-            const cfg = STATUS_CFG[status]; const lane = filtered.filter(c=>c.status===status);
+            const cfg = STATUS_CFG[status];
+            let lane = filtered.filter(c=>c.status===status);
+            // For the "new" lane, sort by invoice number DESC so newest invoices surface first.
+            if (status === 'new') {
+              const invNum = c => { const n = parseInt(String(c.invoice_number||'').replace(/\D/g,''),10); return Number.isFinite(n) ? n : -1; };
+              lane = [...lane].sort((a,b) => invNum(b) - invNum(a));
+            }
             return (
               <div key={status} className="min-w-[220px] sm:min-w-[260px] w-[220px] sm:w-[260px] flex-shrink-0 rounded-xl border border-slate-200 flex flex-col" style={{background: cfg.bg+'60'}} data-testid={`lane-${status}`}>
                 <div className="p-2.5 sm:p-3 border-b flex items-center gap-2" style={{borderColor: cfg.color+'30'}}>
