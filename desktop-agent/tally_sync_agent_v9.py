@@ -2449,8 +2449,8 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9 (Reconciliation + Command Queue)")
-        logger.info("  Lightweight Collection Requests + Incremental Sync")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.7.1-custom-vchtypes")
+        logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
         # --- LOGIN-BASED AUTH ---
@@ -3539,6 +3539,11 @@ class FlowraSyncAgent:
 
 
 if __name__ == "__main__":
+    # Quick version check — `python flowra-desktop-agent.py --version`
+    if '--version' in sys.argv or '-V' in sys.argv:
+        print("FLOWRA Tally Sync Agent v9.7.1-custom-vchtypes")
+        print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
+        sys.exit(0)
     # Handle --logout flag
     if '--logout' in sys.argv:
         clear_auth_config()
