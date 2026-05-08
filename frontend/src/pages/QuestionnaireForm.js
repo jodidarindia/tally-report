@@ -11,7 +11,15 @@ const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const INDUSTRIES = ["Distributor / Wholesaler", "Manufacturer", "Retailer", "Trader / Commission Agent", "Service Provider", "Other"];
 const EMPLOYEE_RANGES = ["1-5", "6-15", "16-50", "51-200", "200+"];
 const TURNOVER_RANGES = ["Below Rs.50 Lakh", "Rs.50 Lakh - 2 Crore", "Rs.2 Crore - 10 Crore", "Rs.10 Crore - 50 Crore", "Above Rs.50 Crore"];
-const TALLY_VERSIONS = ["Tally Prime (Latest)", "Tally Prime (Older release)", "Tally ERP 9", "Not sure"];
+const TALLY_VERSIONS = [
+  "Tally Prime (Latest)",
+  "Tally Prime (Older release)",
+  "Tally ERP 9",
+  "Busy 21 / Busy 22 (Latest)",
+  "Busy 18 / 17 (Older)",
+  "Both Tally and Busy",
+  "Other / Not sure"
+];
 const REMOTE_ACCESS_OPTIONS = ["We don't - office only", "Tally on Mobile app", "Remote Desktop / TeamViewer", "WhatsApp photos from accountant", "Manual Excel exports emailed", "Other"];
 const TALLY_ROLES = ["Accountant / Bookkeeper", "Business Owner / Director", "Sales Team", "Warehouse / Inventory Team", "CA / External Auditor"];
 const PAIN_POINTS = [
@@ -44,7 +52,7 @@ const FEATURES_LIST = [
   "Mobile Access (phone & tablet)",
   "Multi-Company Support",
 ];
-const DECISION_FACTORS = ["Price / Value for money", "Ease of setup", "Data security & encryption", "Mobile access", "Specific features", "Customer support quality", "Integration with Tally* without changes"];
+const DECISION_FACTORS = ["Price / Value for money", "Ease of setup", "Data security & encryption", "Mobile access", "Specific features", "Customer support quality", "Integration with Tally* / Busy* without changes"];
 const TIMELINES = ["Immediately (this week)", "Within 1 month", "Within 3 months", "Just exploring / no timeline"];
 const DECISION_MAKERS = ["I am the decision maker", "Need to consult with partner / director", "IT team will evaluate", "CA / Auditor recommendation needed"];
 const BUDGETS = ["Below Rs.500/mo", "Rs.500 - Rs.1,000/mo", "Rs.1,000 - Rs.2,500/mo", "Rs.2,500 - Rs.4,000/mo", "Above Rs.4,000/mo"];
@@ -53,7 +61,7 @@ const NEXT_STEPS_OPTIONS = ["Start a 14-day free trial right now", "Schedule a l
 
 const STEPS = [
   { id: 'company', title: 'Company Info', icon: Building2 },
-  { id: 'tally', title: 'Tally* Usage', icon: ClipboardList },
+  { id: 'tally', title: 'Tally* / Busy* Usage', icon: ClipboardList },
   { id: 'pain', title: 'Pain Points', icon: ClipboardList },
   { id: 'features', title: 'Feature Priority', icon: ClipboardList },
   { id: 'decision', title: 'Decision & Budget', icon: Briefcase },
@@ -107,17 +115,51 @@ const QuestionnaireForm = ({ onBack }) => {
 
   if (submitted) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 max-w-md text-center" data-testid="questionnaire-success">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
-            <Check size={32} className="text-green-600" />
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl shadow-slate-900/5 p-8 max-w-2xl w-full text-center overflow-hidden" data-testid="questionnaire-success">
+          <div className="w-16 h-16 bg-gradient-to-br from-emerald-100 to-emerald-50 rounded-full flex items-center justify-center mx-auto mb-5 ring-4 ring-emerald-50">
+            <Check size={32} className="text-emerald-600" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 mb-3">Thank You!</h2>
-          <p className="text-slate-600 mb-6">We've received your requirements. Our team will reach out to you shortly with a personalized recommendation.</p>
-          <div className="flex gap-3 justify-center">
-            <button onClick={onBack} className="px-6 py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]" data-testid="back-to-home-btn">
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Thank You!</h2>
+          <p className="text-slate-600 mb-6 max-w-md mx-auto">
+            We've received your requirements. Our team will reach out shortly with a personalised recommendation.
+            In the meantime, here's a quick look at FLOWRA in action:
+          </p>
+
+          {/* Branded demo video — auto-plays muted, loops in the background */}
+          <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900 mb-6 aspect-video" data-testid="thank-you-demo-video">
+            <video
+              src="/flowra-demo.mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            >
+              Your browser does not support video playback.
+            </video>
+            <div className="absolute bottom-2 left-2 bg-black/50 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-full">
+              FLOWRA · 30-second tour
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 justify-center">
+            <button
+              onClick={onBack}
+              className="px-6 py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]"
+              data-testid="back-to-home-btn"
+            >
               Back to Home
             </button>
+            <a
+              href="/FLOWRA_Whats_New.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-6 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50"
+              data-testid="thank-you-whats-new-btn"
+            >
+              See What's New (PDF)
+            </a>
           </div>
         </div>
       </div>
@@ -187,16 +229,16 @@ const QuestionnaireForm = ({ onBack }) => {
           </div>
         );
 
-      case 1: // Tally Usage
+      case 1: // Tally / Busy Usage
         return (
           <div className="space-y-5" data-testid="step-tally">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Which Tally* version are you using?</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Which accounting software & version are you using?</label>
               {TALLY_VERSIONS.map(v => <Radio key={v} label={v} checked={form.tally_version === v} onChange={() => set('tally_version', v)} />)}
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Input label="How many companies in Tally*?" value={form.tally_companies} onChange={v => set('tally_companies', v)} placeholder="e.g. 3" />
-              <Input label="How many Tally* users / terminals?" value={form.tally_users} onChange={v => set('tally_users', v)} placeholder="e.g. 5" />
+              <Input label="How many companies in your accounting software?" value={form.tally_companies} onChange={v => set('tally_companies', v)} placeholder="e.g. 3" />
+              <Input label="How many users / terminals?" value={form.tally_users} onChange={v => set('tally_users', v)} placeholder="e.g. 5" />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Do you have multiple branches / depots?</label>
@@ -209,11 +251,11 @@ const QuestionnaireForm = ({ onBack }) => {
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">How do you currently access Tally* data remotely?</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">How do you currently access your accounting data remotely?</label>
               {REMOTE_ACCESS_OPTIONS.map(o => <Checkbox key={o} label={o} checked={form.remote_access.includes(o)} onChange={() => toggleArr('remote_access', o)} />)}
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Who uses Tally* in your organization?</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Who uses Tally* / Busy* in your organization?</label>
               <div className="grid sm:grid-cols-2 gap-1">
                 {TALLY_ROLES.map(r => <Checkbox key={r} label={r} checked={form.tally_users_roles.includes(r)} onChange={() => toggleArr('tally_users_roles', r)} />)}
               </div>
@@ -231,7 +273,7 @@ const QuestionnaireForm = ({ onBack }) => {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Describe your biggest daily challenge with Tally* data</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Describe your biggest daily challenge with your accounting data</label>
               <textarea value={form.biggest_challenge} onChange={e => set('biggest_challenge', e.target.value)}
                 className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB] min-h-[100px]"
                 placeholder="Tell us what slows you down the most..." data-testid="q-biggest-challenge" />
@@ -397,7 +439,7 @@ const QuestionnaireForm = ({ onBack }) => {
 
         {/* Disclaimer */}
         <p className="text-center text-[9px] text-slate-400 mt-6 max-w-lg mx-auto leading-relaxed">
-          Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.
+          Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.
         </p>
       </div>
     </div>

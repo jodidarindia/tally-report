@@ -122,6 +122,39 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
   - Bumped `agent_version` to `9.1.0-jv-direction`
 - **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
 
+## Changelog — May 2026 (Landing Page + Lead-Enquiry Refresh)
+
+### Public-facing pages — full Tally + Busy parity messaging
+- **LandingPage.js**:
+  - Hero kicker: `Tally* Analytics Platform` → `Tally* + Busy* Analytics Platform`
+  - Headline: `Tally* Data` → `Tally* / Busy* Data`
+  - Subline rewritten to mention A/B/C/D Pareto, beat plans, dispatch terminal
+  - 9 Feature cards (was 8): added **Backups & DPDP Data Export** card; Inventory now shows A/B/C/D + Auto-ABC; Salesman+Beat Plans card; CA Corner promotes Tally/Busy parity to-the-rupee
+  - 3 NEW badges (Inventory, Salesman, Backups)
+  - Pricing tiers refreshed:
+    - Starter adds Tally*/Busy* sync + Daily Backups
+    - Professional adds A/B/C/D Pareto + DPDP Export
+    - Enterprise adds Beat Plans + Salesman Dashboard + Tally/Busy Parity
+  - Footer trademark line: "Tally* and Busy* are trademarks of their respective owners…"
+- **QuestionnaireForm.js**:
+  - Step title `Tally* Usage` → `Tally* / Busy* Usage`
+  - Version dropdown adds Busy 21/22, Busy 18/17, "Both Tally and Busy"
+  - Decision factors mention "Integration with Tally* / Busy* without changes"
+- **SignupPage.js** demo mockup: nav adds `Beat Plan` tab, 4 KPIs updated to A-Items%, Beat Coverage, Outstanding; sync line "Tally* + Busy* connected"; Pro plan features list refreshed (A/B/C/D, Beat Plan + Beat Run, Daily Backups)
+
+### Lead-enquiry Thank You page now plays the demo video
+- Previously the post-submit page was a static Check-icon card. Now embeds the existing `/flowra-demo.mp4` autoplay+loop+muted in a 16:9 frame with a "FLOWRA · 30-second tour" badge.
+- Adds two CTAs: "Back to Home" and "See What's New (PDF)" linking to `/FLOWRA_Whats_New.pdf`.
+- File `flowra-demo.mp4` was previously orphaned in `/public` with NO frontend reference — wired up.
+
+### Sora 2 video regeneration — BLOCKED 🚫
+- `generate_video.py` updated with new May-2026 prompt (4-sec, 1280x720, FLOWRA branding, A/B/C/D pills, Tally + Busy synced badge).
+- `EMERGENT_LLM_KEY` budget exhausted on first 12-sec attempt — second 4-sec attempt returned `insufficient_balance`.
+- **Action required**: top up the universal key (Profile → Universal Key → Add Balance) then run `cd /app/backend && python3 generate_video.py` to swap in the fresh video.
+
+### Tests
+- `test_iteration66_landing_parity.py` — 4/4 PASS (landing serves; demo video > 100 KB; What's New PDF served; JS bundle mentions all 5 expected feature strings)
+
 ## Changelog — May 2026 (SuperAdmin parity catch-up)
 
 ### SuperAdmin pages — feature parity with modern UserAdmin

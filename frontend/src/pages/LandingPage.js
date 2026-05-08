@@ -18,7 +18,7 @@ const PLANS = [
     monthly: 999,
     annual: 9990,
     desc: 'Perfect for small businesses getting started',
-    features: ['Dashboard & Overview', 'Sales Voucher Tracking', 'Inventory Management', 'Tally* Sync', 'Setup & Configuration'],
+    features: ['Dashboard & Overview', 'Sales Voucher Tracking', 'Inventory Management', 'Tally* / Busy* Sync', 'Setup & Configuration', 'Daily MongoDB Backups'],
     maxCompanies: 1,
     maxEmployees: 2,
     popular: false
@@ -29,7 +29,7 @@ const PLANS = [
     monthly: 2499,
     annual: 24990,
     desc: 'For growing businesses needing deeper insights',
-    features: ['Everything in Starter', 'Customer CRM & Outstanding', 'Inventory Movement Analytics', 'Multi-Company Support (3)', 'Excel & PDF Exports'],
+    features: ['Everything in Starter', 'Customer CRM & Outstanding', 'Inventory Movement Analytics', 'A/B/C/D Pareto Categorisation', 'Multi-Company Support (3)', 'Excel & PDF Exports', 'DPDP Data Export (.zip)'],
     maxCompanies: 3,
     maxEmployees: 5,
     popular: true
@@ -40,7 +40,7 @@ const PLANS = [
     monthly: 3799,
     annual: 37990,
     desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'AI-Powered Reports (GPT)', 'Insider Result BI Analytics', 'CA Corner (P&L, Balance Sheet, AI)', 'Multi-Company Support (10)', 'Priority Support & Training'],
+    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'Beat Plans + Beat Run Today', 'Salesman Performance Dashboard', 'AI-Powered Reports (GPT-5.2)', 'Insider Result BI Analytics', 'CA Corner — 100% Tally/Busy Parity', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,
     maxEmployees: 20,
     popular: false
@@ -48,20 +48,21 @@ const PLANS = [
 ];
 
 const FEATURES = [
-  { icon: BarChart3, title: 'Inventory Analytics', desc: 'Movement analysis, below-cost detection, stock classification with clickable filters and Excel exports.' },
-  { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance.' },
-  { icon: Truck, title: 'Dispatch Terminal', desc: 'Warehouse Kanban board with LR tracking, document uploads, porter & transporter settlement, and Close-of-Day PDF.', isNew: true },
-  { icon: ShoppingCart, title: 'Salesman Orders', desc: 'Mobile-first order collection. Salesmen place orders on the go, admin approves, and invoices flow straight to dispatch.', isNew: true },
-  { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, natural language queries across your entire Tally* data.' },
-  { icon: Landmark, title: 'CA Corner', desc: 'Cash Flow, P&L with ledger drill-down, Balance Sheet, and AI expense insights — all synced from Tally*.', isNew: true },
-  { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, and concentration risk with Pareto charts.' },
-  { icon: Shield, title: 'Bank-Grade Security', desc: 'AES-256 encryption, bcrypt hashing, JWT auth, field-level PII encryption, multi-tenant data isolation.' },
+  { icon: BarChart3, title: 'Inventory Analytics', desc: 'A/B/C/D Pareto categorisation, movement analysis, below-cost detection. Auto-ABC button distributes 80-15-4-1 across FY revenue. New Category Sales tab drills into top customers per tier.', isNew: true },
+  { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance. Tally/Busy-verified outstanding ✓ badge.' },
+  { icon: Truck, title: 'Dispatch Terminal', desc: 'Warehouse Kanban with LR tracking, document uploads, porter & transporter settlement, online-orders panel sorted by invoice, and Close-of-Day PDF.' },
+  { icon: ShoppingCart, title: 'Salesman Orders & Beat Plans', desc: 'Mobile-first order collection. Daily Beat Run sheet auto-derived from your plan. Single-salesman-per-customer enforcement. FY-aware achievement %, customer-wise drill-down.', isNew: true },
+  { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, expense insights, natural-language queries across your entire Tally* / Busy* data.' },
+  { icon: Landmark, title: 'CA Corner — Tally/Busy Parity', desc: 'Cash Flow, P&L with ledger drill-down, Balance Sheet — matches your accounting software exactly to the rupee. AI expense insights powered by GPT-5.2.' },
+  { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, concentration risk with Pareto charts.' },
+  { icon: Database, title: 'Backups & DPDP Data Export', desc: 'Daily encrypted MongoDB dumps + one-click ZIP export of your full tenant data — DPDP Act 2023 right-to-portability compliant.', isNew: true },
+  { icon: Shield, title: 'Bank-Grade Security', desc: 'AES-256 encryption, bcrypt hashing, JWT auth, field-level PII encryption, multi-tenant data isolation, complete audit trail.' },
 ];
 
 const TESTIMONIALS = [
   { name: 'Rajesh Agarwal', company: 'Agarwal Auto Parts, Raipur', text: 'FLOWRA completely transformed how we track inventory. We identified 15 lakh in dead stock within the first week.', img: 'https://images.unsplash.com/photo-1695391396401-5fbb4bedafc1?w=120&h=120&fit=crop' },
   { name: 'Priya Sharma', company: 'Sharma Trading Co., Indore', text: 'The salesman performance module helped us increase collection efficiency by 40%. The FY-locked targets are brilliant.', img: 'https://images.unsplash.com/photo-1770627000564-3feb36aecbcd?w=120&h=120&fit=crop' },
-  { name: 'Vikram Patel', company: 'National Engineering Works', text: 'AI reports save us 3 hours daily. The Tally* sync is seamless — our data is always up to date without any manual work.', img: 'https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?w=120&h=120&fit=crop' },
+  { name: 'Vikram Patel', company: 'National Engineering Works', text: 'AI reports save us 3 hours daily. The Tally* / Busy* sync is seamless — our data is always up to date without any manual work.', img: 'https://images.pexels.com/photos/5920775/pexels-photo-5920775.jpeg?w=120&h=120&fit=crop' },
 ];
 
 const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
@@ -203,12 +204,12 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
       <section className="py-20 lg:py-28 bg-white" data-testid="hero-section">
         <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-12 items-center">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0052FF] mb-4">Tally* Analytics Platform</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0052FF] mb-4">Tally* + Busy* Analytics Platform</p>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-zinc-950 tracking-tighter leading-[1.05] mb-6" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
-              Unlock the full power of your <span className="text-[#0052FF]">Tally* Data</span>
+              Unlock the full power of your <span className="text-[#0052FF]">Tally* / Busy* Data</span>
             </h1>
             <p className="text-lg text-zinc-600 leading-relaxed mb-8 max-w-lg">
-              Real-time inventory analytics, sales tracking, CRM, and AI-powered insights — synced directly from Tally*. Built for Indian SMEs with bank-grade security.
+              Real-time inventory analytics with A/B/C/D Pareto, sales tracking, CRM, beat plans, dispatch terminal and AI-powered insights — synced directly from Tally* or Busy*. Built for Indian SMEs with bank-grade security.
             </p>
             <div className="flex flex-wrap gap-4">
               <button onClick={onNavigateToSignup} data-testid="hero-signup-btn" className="bg-[#0052FF] text-white rounded-sm px-8 py-3.5 font-bold text-base hover:bg-[#0039B3] transition-colors flex items-center gap-2">
@@ -279,7 +280,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
           <h2 className="text-3xl sm:text-4xl font-bold text-zinc-950 tracking-tight mb-4" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
             Everything you need to run your business smarter
           </h2>
-          <p className="text-zinc-600 text-lg mb-12 max-w-2xl">From inventory movement to AI-powered purchase orders, FLOWRA brings enterprise-grade analytics to every Tally* user.</p>
+          <p className="text-zinc-600 text-lg mb-12 max-w-2xl">From inventory A/B/C/D categorisation to AI-powered purchase orders, FLOWRA brings enterprise-grade analytics to every Tally* and Busy* user.</p>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {FEATURES.map((f, i) => (
@@ -305,7 +306,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               Your data stays yours. Period.
             </h2>
             <p className="text-zinc-400 text-lg leading-relaxed mb-8">
-              FLOWRA is built with security-first architecture. Your Tally* data is synced through an encrypted local agent — Tally* is never exposed to the internet.
+              FLOWRA is built with security-first architecture. Your Tally* or Busy* data is synced through an encrypted local agent — your accounting software is never exposed to the internet.
             </p>
             <div className="space-y-5">
               {[
@@ -338,7 +339,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
             <h2 className="text-3xl sm:text-4xl font-bold text-zinc-950 tracking-tight mb-4" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
               Simple, transparent pricing
             </h2>
-            <p className="text-zinc-600 text-lg mb-8">Choose the plan that fits your business. All plans include Tally* sync and secure cloud analytics.</p>
+            <p className="text-zinc-600 text-lg mb-8">Choose the plan that fits your business. All plans include Tally* and Busy* sync, and secure cloud analytics.</p>
 
             <div className="inline-flex bg-zinc-100 rounded-sm p-1">
               <button onClick={() => setBillingCycle('monthly')} className={`px-5 py-2 text-sm font-bold rounded-sm transition-colors ${billingCycle === 'monthly' ? 'bg-white text-zinc-950 shadow-sm' : 'text-zinc-500'}`}>Monthly</button>
@@ -432,7 +433,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               <span className="text-white font-bold">FLOWRA</span>
             </div>
             <p className="text-sm leading-relaxed">Organize. Automate. Accelerate.</p>
-            <p className="text-xs mt-3">Tally* analytics platform for Indian SMEs.</p>
+            <p className="text-xs mt-3">Tally* + Busy* analytics platform for Indian SMEs.</p>
             <p className="text-xs mt-2 text-zinc-500">A product by <strong className="text-zinc-300">JODIDAR INDIA</strong></p>
           </div>
           <div>
@@ -468,7 +469,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
           &copy; {new Date().getFullYear()} JODIDAR INDIA. All rights reserved. FLOWRA is a brand owned by JODIDAR INDIA.
         </div>
         <div className="max-w-7xl mx-auto px-6 mt-4 text-[10px] text-zinc-600 text-center leading-relaxed" data-testid="tally-disclaimer">
-          Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same is used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademark's distinct character or harm the holder's reputation.
+          Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same are used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademarks' distinct character or harm the holders' reputation.
         </div>
       </footer>
 

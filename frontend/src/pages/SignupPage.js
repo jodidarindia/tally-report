@@ -298,12 +298,12 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                       <span className="text-xs font-bold text-zinc-900">FLOWRA</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      {['Dashboard', 'Sales', 'CRM', 'Inventory', 'Analytics'].map((n, i) => (
+                      {['Dashboard', 'Sales', 'CRM', 'Inventory', 'Beat Plan', 'Analytics'].map((n, i) => (
                         <span key={n} className={`text-[10px] font-medium px-2 py-1 rounded ${i === 0 ? 'bg-[#0052FF] text-white' : 'text-zinc-500'}`}>{n}</span>
                       ))}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-zinc-500 border border-zinc-200 rounded px-1.5 py-0.5">FY 2025-26</span>
+                      <span className="text-[10px] text-zinc-500 border border-zinc-200 rounded px-1.5 py-0.5">FY 2026-27</span>
                       <div className="w-5 h-5 bg-[#0052FF] rounded-full" />
                     </div>
                   </div>
@@ -312,15 +312,15 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <p className="text-sm font-bold text-zinc-900">Dashboard</p>
-                        <p className="text-[10px] text-zinc-500">Last sync: 10/04/2026, 14:30 IST</p>
+                        <p className="text-[10px] text-zinc-500">Last sync: 08/05/2026, 14:30 IST · Tally* + Busy* connected</p>
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-2 mb-3">
                       {[
                         { label: 'Total Sales', value: 'Rs.52.3L', color: 'text-blue-600' },
-                        { label: 'Inventory Items', value: '156', color: 'text-purple-600' },
-                        { label: 'Low Stock', value: '23', color: 'text-red-600' },
-                        { label: 'FY Sales', value: 'Rs.52.3L', color: 'text-cyan-600' }
+                        { label: 'A-Items', value: '12 (78%)', color: 'text-emerald-600' },
+                        { label: 'Beat Coverage', value: '14/18', color: 'text-purple-600' },
+                        { label: 'Outstanding', value: 'Rs.8.4L', color: 'text-amber-600' }
                       ].map(s => (
                         <div key={s.label} className="bg-white border border-zinc-200 rounded p-2.5 animate-fade-in">
                           <p className="text-[9px] text-zinc-500">{s.label}</p>
@@ -375,7 +375,7 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                 <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-sm p-4">
                   <h3 className="text-sm font-bold text-blue-900 mb-2">Professional Plan Features Included</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {['Dashboard', 'Sales Tracking', 'Customer CRM', 'Inventory Mgmt', 'Movement Analytics', 'Sync History', 'Excel/PDF Exports', 'Multi-Company (3)'].map(f => (
+                    {['Dashboard', 'Sales Tracking', 'Customer CRM', 'Inventory + A/B/C/D', 'Beat Plan + Beat Run', 'Sync History', 'Daily Backups', 'Multi-Company (3)'].map(f => (
                       <div key={f} className="flex items-center gap-1.5 text-xs text-blue-800">
                         <Check size={12} className="text-blue-600" /> {f}
                       </div>
