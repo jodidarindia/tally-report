@@ -122,6 +122,18 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
   - Bumped `agent_version` to `9.1.0-jv-direction`
 - **Insider Result fixes:** Lifecycle StatCards clickable to filter; dropdown shows counts; defensive guards on Forecast/SPIP/Concentration tabs; verbose error logging
 
+## Changelog — May 2026 (SuperAdmin parity catch-up)
+
+### SuperAdmin pages — feature parity with modern UserAdmin
+- **Bug fix — Customer Health "0 emp"** when a tenant only has salesman/dispatch users (no legacy `role:employee` users). Root cause: 4 endpoints were filtering by `role:"employee"` only — a stale assumption. Multi-role tenants (salesman + dispatch + employee) showed phantom 0 counts.
+- Fixed in `routes/seller_panel.py` (`/customer-health`) + `routes/super_admin.py` (`/admins`, `/stats`, `/admins/{username}` delete-archive).
+- **Critical**: admin-deletion archiver was orphaning dispatch + salesman users. Now archives & deletes ALL non-admin roles.
+- **Customer Health table** now exposes per-module counts: purchase_vouchers, receipts, credit_notes, beat_runs, salesman_orders, dispatch_cards. Also shows staff_breakdown (`5 (3 sm · 2 dp)` style) and the desktop agent version each tenant last connected with.
+- **UI: module-coverage chips** on each health row — Beat / Orders / Dispatch with live counts → instant read on which tenants actually use which modules.
+
+### Tests
+- `test_iteration65_super_admin_parity.py` — 4/4 PASS (staff roles broadened, module coverage fields present, admins.employee_count, stats.total_employees).
+
 ## Changelog — May 2026 (Multi-tenant data integrity + Custom Voucher Types)
 
 ### Tally Agent v9.7.1 — `9.7.1-custom-vchtypes` (CRITICAL)

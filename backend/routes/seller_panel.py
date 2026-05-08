@@ -500,11 +500,29 @@ async def customer_health(request: Request):
                 {"_id": 0}
             )
 
-            # Data counts
+            # Data counts — extended to cover all current modules
             inv_count = await db.inventory_items.count_documents({"tenant_id": tid})
             sales_count = await db.sales_vouchers.count_documents({"tenant_id": tid})
             cust_count = await db.customers.count_documents({"tenant_id": tid})
-            emp_count = await db.users.count_documents({"tenant_id": tid, "role": "employee"})
+            purchase_count = await db.purchase_vouchers.count_documents({"tenant_id": tid})
+            receipt_count = await db.receipt_vouchers.count_documents({"tenant_id": tid})
+            credit_note_count = await db.credit_notes.count_documents({"tenant_id": tid})
+            beat_run_count = await db.beat_runs.count_documents({"tenant_id": tid})
+            salesman_order_count = await db.salesman_orders.count_documents({"tenant_id": tid})
+            dispatch_card_count = await db.dispatch_cards.count_documents({"tenant_id": tid})
+            # Count all non-admin staff (employee + dispatch + salesman roles).
+            # The legacy `role:"employee"` filter under-counted modern multi-role
+            # tenants — a tenant with 3 salesmen + 2 dispatch users showed 0.
+            emp_count = await db.users.count_documents({
+                "tenant_id": tid,
+                "role": {"$in": ["employee", "dispatch", "salesman"]},
+            })
+            staff_breakdown = {}
+            async for s in db.users.aggregate([
+                {"$match": {"tenant_id": tid, "role": {"$ne": "admin"}}},
+                {"$group": {"_id": "$role", "n": {"$sum": 1}}},
+            ]):
+                staff_breakdown[s["_id"]] = s["n"]
 
             # Days since last sync
             days_since_sync = None
@@ -542,13 +560,20 @@ async def customer_health(request: Request):
                 "active": admin.get("active", True),
                 "companies": companies_display,
                 "employee_count": emp_count,
+                "staff_breakdown": staff_breakdown,
                 "last_sync": last_sync.get("last_sync") if last_sync else None,
                 "agent_version": last_sync.get("agent_version", "") if last_sync else "",
                 "days_since_sync": days_since_sync,
                 "health_status": status,
                 "inventory_items": inv_count,
                 "sales_vouchers": sales_count,
+                "purchase_vouchers": purchase_count,
+                "receipts": receipt_count,
+                "credit_notes": credit_note_count,
                 "customers": cust_count,
+                "beat_runs": beat_run_count,
+                "salesman_orders": salesman_order_count,
+                "dispatch_cards": dispatch_card_count,
                 "total_paid": round(total_paid, 2),
                 "subscription_expires": subscription_expires_at(admin.get("subscription_start", ""), admin.get("subscription_months", 12)),
                 "days_left": days_until_expiry(admin.get("subscription_start", ""), admin.get("subscription_months", 12)),

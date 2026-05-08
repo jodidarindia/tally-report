@@ -700,16 +700,39 @@ const SuperAdminDashboard = ({ token }) => {
                 <tbody>
                   {healthData.map((h, i) => {
                     const statusColors = { active: 'bg-emerald-50 text-emerald-700', moderate: 'bg-amber-50 text-amber-700', inactive: 'bg-red-50 text-red-700', never_synced: 'bg-slate-100 text-slate-500' };
+                    // Build "5 emp (3 sm · 2 dp)" style breakdown
+                    const sb = h.staff_breakdown || {};
+                    const sbBits = [
+                      sb.salesman ? `${sb.salesman} sm` : null,
+                      sb.dispatch ? `${sb.dispatch} dp` : null,
+                      sb.employee ? `${sb.employee} emp` : null,
+                    ].filter(Boolean).join(' · ');
+                    const empLabel = sbBits ? `${h.employee_count} (${sbBits})` : `${h.employee_count}`;
                     return (
                       <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`health-row-${i}`}>
                         <td className="py-3 px-4">
                           <div className="font-medium text-slate-800">{h.name || h.username}</div>
-                          <div className="text-xs text-slate-400">{h.plan} · {h.employee_count} emp · {h.companies?.join(', ') || '—'}</div>
+                          <div className="text-xs text-slate-400" title={`${h.employee_count} non-admin users · ${sbBits || 'none'}`}>
+                            {h.plan} · {empLabel} emp · {h.companies?.join(', ') || '—'}
+                          </div>
+                          {/* Module-coverage chips — quick read on which modules a tenant actually uses */}
+                          {(h.beat_runs || h.salesman_orders || h.dispatch_cards) ? (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {h.beat_runs > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded">Beat {h.beat_runs}</span>}
+                              {h.salesman_orders > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">Orders {h.salesman_orders}</span>}
+                              {h.dispatch_cards > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Dispatch {h.dispatch_cards}</span>}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusColors[h.health_status] || 'bg-slate-100 text-slate-500'}`}>
                             {h.health_status?.replace('_', ' ')}
                           </span>
+                          {h.agent_version && (
+                            <div className="text-[9px] text-slate-400 mt-0.5" title="Tally desktop agent version last seen">
+                              {h.agent_version}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-slate-600 text-xs">
                           {h.last_sync ? (

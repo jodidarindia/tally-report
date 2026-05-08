@@ -47,7 +47,11 @@ async def list_admins(request: Request):
         result = []
         for admin in admins:
             tid = admin.get("tenant_id", "")
-            emp_count = await db.users.count_documents({"tenant_id": tid, "role": "employee"})
+            # Count all non-admin staff regardless of role (employee/dispatch/salesman).
+            emp_count = await db.users.count_documents({
+                "tenant_id": tid,
+                "role": {"$in": ["employee", "dispatch", "salesman"]},
+            })
             sync_status = await db.sync_status.find_one(
                 {"tenant_id": tid, "type": "agent_sync"}, {"_id": 0}
             )
@@ -251,22 +255,27 @@ async def delete_admin(username: str, request: Request):
         }
         await db.deleted_users.insert_one(admin_archive)
 
-        # 2. Archive all employees of this admin
-        employees = await db.users.find(
-            {"tenant_id": tenant_id, "role": "employee"},
+        # 2. Archive all staff of this admin (employee, dispatch, salesman roles)
+        # Legacy code only archived role=employee — left dispatch/salesman users
+        # orphaned in the DB. Fixed to cover every non-admin role.
+        staff = await db.users.find(
+            {"tenant_id": tenant_id, "role": {"$in": ["employee", "dispatch", "salesman"]}},
             {"_id": 0, "password_hash": 0}
         ).to_list(500)
-        for emp in employees:
+        for emp in staff:
             emp_archive = {
                 **emp,
                 "deleted_at": now,
                 "deleted_by": sa["username"],
                 "deletion_reason": "parent_admin_deleted",
                 "original_tenant_id": tenant_id,
-                "original_role": "employee",
+                "original_role": emp.get("role", "employee"),
             }
             await db.deleted_users.insert_one(emp_archive)
-        await db.users.delete_many({"tenant_id": tenant_id, "role": "employee"})
+        await db.users.delete_many({
+            "tenant_id": tenant_id,
+            "role": {"$in": ["employee", "dispatch", "salesman"]},
+        })
 
         # 3. Archive all tenant data into archived_tenant_data collection
         data_collections = [
@@ -307,13 +316,13 @@ async def delete_admin(username: str, request: Request):
         await log_audit(
             "admin_deleted", sa["username"],
             target=username,
-            details=f"Tenant: {tenant_id}, Employees: {len(employees)}, Data records archived: {total_archived}",
+            details=f"Tenant: {tenant_id}, Staff: {len(staff)}, Data records archived: {total_archived}",
             ip_address=get_client_ip(request)
         )
 
         return APIResponse(
             success=True,
-            message=f"Admin '{username}' deleted. {len(employees)} employees and {total_archived} data records archived for audit."
+            message=f"Admin '{username}' deleted. {len(staff)} staff and {total_archived} data records archived for audit."
         )
     except Exception as e:
         logger.error(f"Error deleting admin: {e}")
@@ -439,7 +448,10 @@ async def get_super_admin_stats(request: Request):
     try:
         total_admins = await db.users.count_documents({"role": "admin"})
         active_admins = await db.users.count_documents({"role": "admin", "active": True})
-        total_employees = await db.users.count_documents({"role": "employee"})
+        # All non-admin staff across the platform (employee + dispatch + salesman).
+        total_employees = await db.users.count_documents({
+            "role": {"$in": ["employee", "dispatch", "salesman"]}
+        })
 
         return APIResponse(success=True, data={
             "total_admins": total_admins,
@@ -617,7 +629,7 @@ async def dedup_companies(request: Request):
         # Default: dedup every tenant in one shot
         tenant_ids = (
             [target_tenant] if target_tenant
-            else await db.users.distinct("tenant_id", {"tenant_id": {"$ne": None, "$ne": ""}})
+            else await db.users.distinct("tenant_id", {"tenant_id": {"$nin": [None, ""]}})
         )
 
         results = []
