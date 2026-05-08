@@ -68,7 +68,7 @@ const SearchableSelect = ({
     : value === opt;
 
   return (
-    <div className="relative" ref={ref} data-testid={testId}>
+    <div className={`relative ${open ? 'z-[60]' : ''}`} ref={ref} data-testid={testId}>
       <button
         type="button"
         disabled={disabled}

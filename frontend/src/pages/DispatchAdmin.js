@@ -336,7 +336,24 @@ function OnlineOrdersTab({ companyId, hdr }) {
   const [selOrder, setSelOrder] = useState(null);
   useEffect(() => {
     axios.get(`${API}/api/salesman-orders/orders?company_id=${companyId||''}&limit=100`, {headers:hdr()})
-      .then(r => { if(r.data.success) setOrders((r.data.data.orders||[]).filter(o=>['approved','billed','hold'].includes(o.status))); })
+      .then(r => {
+        if(r.data.success) {
+          const filtered = (r.data.data.orders||[]).filter(o=>['approved','billed','hold'].includes(o.status));
+          // Sort: billed orders first by invoice_number DESC (numeric), then unbilled by created_at DESC
+          const invNum = o => {
+            const n = parseInt(String(o.invoice_number || '').replace(/\D/g, ''), 10);
+            return Number.isFinite(n) ? n : null;
+          };
+          filtered.sort((a, b) => {
+            const ia = invNum(a), ib = invNum(b);
+            if (ia !== null && ib !== null) return ib - ia;            // both billed → highest invoice first
+            if (ia !== null) return -1;                                  // billed before unbilled
+            if (ib !== null) return 1;
+            return String(b.created_at||'').localeCompare(String(a.created_at||'')); // both unbilled → newest first
+          });
+          setOrders(filtered);
+        }
+      })
       .finally(()=>setLoading(false));
   }, [companyId, hdr]);
   const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true}); } catch { return iso; } };

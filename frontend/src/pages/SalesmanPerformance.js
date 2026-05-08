@@ -909,13 +909,13 @@ function BeatPlansAdmin({ companyId, masterList, customers }) {
             </div>
           </div>
 
-          {/* Editable rows */}
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          {/* Editable rows — overflow-visible so the SearchableSelect dropdown isn't clipped */}
+          <div className="bg-white border border-slate-200 rounded-xl">
             <div className="px-3 py-2 border-b border-slate-100"><h3 className="text-xs font-semibold text-slate-700">Edit Beats</h3></div>
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-slate-100 overflow-visible">
               {beats.length === 0 && <p className="text-xs text-slate-400 italic px-3 py-6 text-center">No beats yet. Click "Add Beat" to create one.</p>}
               {beats.map((b, i) => (
-                <div key={i} className="px-3 py-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center" data-testid={`beat-row-${i}`}>
+                <div key={i} className="px-3 py-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center relative" data-testid={`beat-row-${i}`}>
                   <div className="flex-1 min-w-0 w-full sm:w-auto">
                     <SearchableSelect value={b.customer_name} onChange={v => updateRow(i, 'customer_name', v)}
                       options={mappedCustomers} placeholder={mappedCustomers.length ? "Select mapped customer" : "No customers mapped — open Manage tab to assign first"} />
