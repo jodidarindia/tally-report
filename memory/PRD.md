@@ -348,3 +348,26 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - `AppNavbar.js:81` has `<span>` nested inside `<option>` causing a React hydration warning. Not a functional bug.
 - UI login flow rejects empty `captcha_token` — works for real users (reCAPTCHA loads), blocks Playwright automation only.
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
+
+
+## Marketing Kit (May 2026 — NEW)
+- **15 Square Posters + 4 Carousels** — full HTML/CSS source at `/app/marketing-kit/posters.html`
+- Posters cover Hero, Beat Run, A/B/C/D Pareto, CA Corner parity, Backups+DPDP, Salesman Dashboard,
+  Dispatch Terminal, AI Reports, Outstanding CRM, Security/5-min setup, Made in India, Pricing ROI,
+  Testimonial, Try-Free CTA, WhatsApp Direct
+- Carousels: 5 Ways FLOWRA Pays Back · Beat Run 60-sec · Tally se data, FLOWRA se decisions (bilingual) · A/B/C/D Explained
+- All assets exported as 2160×2160 PNG (2× retina) via `/app/scripts/export_posters.py` (Playwright headless)
+- 38 PNGs in `/app/marketing-kit/exports/{posters,carousels}/`, bundled to `/app/marketing-kit/flowra-social-kit.zip` (~48 MB)
+- Captions ready-to-paste at `/app/marketing-kit/captions.md`
+- **Lead-Gen Strategy** at `/app/marketing-kit/strategy.md`: 30-day rolling content grid, WhatsApp-first deeplinks,
+  Meta Ads budget split (50% CTC / 25% Lead Form / 15% Reach / 10% Retarget), KPIs, qualification scripts
+
+## Customers Refactor (May 2026)
+- Extracted shared math from `routes/customers.py` (1554 → 1317 LOC) into pure-python module
+  `services/customer_metrics.py` (292 LOC, 0 DB / 0 FastAPI deps).
+- Functions: `fy_start_iso`, `base_fy_start_iso`, `split_by_fy`, `split_receipts_and_payments`,
+  `filter_branch_parties`, `compute_opening_balance_map`, `aggregate_party_credits`,
+  `apply_fifo_aging`, `aging_status`.
+- Eliminated the ~150-line duplicate Opening-Balance replay between `get_customer_outstanding`
+  and `get_payment_behavior`; behaviour preserved (regression tests pass).
+- Test files: `/app/backend/tests/test_iteration67_customer_metrics_refactor.py` (17 unit tests).

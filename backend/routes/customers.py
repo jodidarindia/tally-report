@@ -12,6 +12,17 @@ from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, g
 from services.auth_service import get_current_user
 from services.export_service import ExportService
 from services.tenant_context import get_tenant_context
+from services.customer_metrics import (
+    fy_start_iso,
+    base_fy_start_iso,
+    split_by_fy as _split_by_fy,
+    split_receipts_and_payments,
+    filter_branch_parties,
+    compute_opening_balance_map,
+    aggregate_party_credits,
+    apply_fifo_aging,
+    aging_status,
+)
 
 from services.audit_service import log_audit, get_client_ip
 from routes.branch_ledgers import get_branch_parties
@@ -60,50 +71,28 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(50000)
         all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(50000)
 
-        # The receipt_vouchers collection actually contains BOTH receipts (CR party = reduces OS)
-        # and payment vouchers (DR party = increases OS, e.g., cheque-bounce refund). Split by
-        # voucher_type so they affect the customer balance with the correct sign.
-        def _is_payment(v):
-            return (v.get("voucher_type") or "").strip().lower() == "payment"
-        all_receipts = [v for v in all_receipts_raw if not _is_payment(v)]
-        all_payments = [v for v in all_receipts_raw if _is_payment(v)]
+        # The receipt_vouchers collection holds receipts (CR party = reduces OS) AND
+        # payment vouchers (DR party = increases OS, e.g., cheque-bounce refund).
+        all_receipts, all_payments = split_receipts_and_payments(all_receipts_raw)
 
         # Filter branch parties from vouchers
         if branch_parties:
             bp_lower = set(p.lower().strip() for p in branch_parties)
-            all_sales = [v for v in all_sales if (v.get("party_name") or "").lower().strip() not in bp_lower]
-            all_receipts = [v for v in all_receipts if (v.get("party_name") or "").lower().strip() not in bp_lower]
-            all_payments = [v for v in all_payments if (v.get("party_name") or "").lower().strip() not in bp_lower]
-            all_credit_notes = [v for v in all_credit_notes if (v.get("party_name") or "").lower().strip() not in bp_lower]
-            all_journals = [v for v in all_journals if (v.get("party_name") or "").lower().strip() not in bp_lower]
+            all_sales = filter_branch_parties(all_sales, bp_lower)
+            all_receipts = filter_branch_parties(all_receipts, bp_lower)
+            all_payments = filter_branch_parties(all_payments, bp_lower)
+            all_credit_notes = filter_branch_parties(all_credit_notes, bp_lower)
+            all_journals = filter_branch_parties(all_journals, bp_lower)
 
         # Compute FY boundaries
-        fy_start_str = None
-        if fy:
-            try:
-                parts = fy.split('-')
-                start_year = int(parts[0])
-                fy_start_str = f"{start_year}-04-01"
-            except:
-                pass
+        fy_start_str = fy_start_iso(fy)
 
         # Split vouchers into pre-FY (opening) and current FY
-        def split_by_fy(vouchers, date_field='voucher_date'):
-            pre_fy = []
-            current_fy = []
-            for v in vouchers:
-                d = v.get(date_field, '')
-                if fy_start_str and d < fy_start_str:
-                    pre_fy.append(v)
-                else:
-                    current_fy.append(v)
-            return pre_fy, current_fy
-
-        _, fy_sales = split_by_fy(all_sales)
-        _, fy_receipts = split_by_fy(all_receipts)
-        _, fy_payments = split_by_fy(all_payments)
-        _, fy_cns = split_by_fy(all_credit_notes)
-        _, fy_jvs = split_by_fy(all_journals)
+        _, fy_sales = _split_by_fy(all_sales, fy_start_str)
+        _, fy_receipts = _split_by_fy(all_receipts, fy_start_str)
+        _, fy_payments = _split_by_fy(all_payments, fy_start_str)
+        _, fy_cns = _split_by_fy(all_credit_notes, fy_start_str)
+        _, fy_jvs = _split_by_fy(all_journals, fy_start_str)
 
         # FY-filter the current period
         if fy:
@@ -113,130 +102,24 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
             fy_cns = filter_vouchers_by_fy(fy_cns, fy)
             fy_jvs = filter_vouchers_by_fy(fy_jvs, fy)
 
-        # Compute opening balance per customer
-        # Tally's opening_balance = balance as of the START of Tally's selected FY (base FY).
-        # For the base FY: use Tally OB directly.
-        # For earlier FYs: reverse-compute by subtracting activity between requested and base FY.
-        # For later FYs: forward-compute by adding activity between base and requested FY.
-        # For non-customer parties (not in customers collection): use pure voucher sum.
-        opening_balance = {}
-        if fy_start_str:
-            # Tally's customer-master "OpeningBalance" attribute always reflects the
-            # OB at the start of whatever FY is currently active in Tally. Tally
-            # auto-rolls into the new FY on 1-Apr each year, so we anchor the
-            # synced opening_balance against TODAY's calendar FY (not against the
-            # potentially-stale sync_status.financial_year label).
-            today_fy_year = today.year if today.month >= 4 else today.year - 1
-            base_fy_start = f"{today_fy_year}-04-01"
+        # Compute opening balance per customer (Tally master OB anchored to today's
+        # FY, replayed forward/backward for any other requested FY).
+        base_fy_start = base_fy_start_iso(today)
+        opening_balance = compute_opening_balance_map(
+            synced_customers, all_sales, all_receipts, all_payments,
+            all_credit_notes, all_journals, fy_start_str, base_fy_start,
+        )
 
-            synced_names = set()
-            synced_lower_to_canonical = {}
-            for sc in synced_customers:
-                name = sc.get("customer_name")
-                if name:
-                    synced_names.add(name)
-                    synced_lower_to_canonical[name.lower().strip()] = name
-                    opening_balance[name] = safe_num(sc.get("opening_balance", 0))
-
-            def _resolve(p):
-                """Map any voucher party_name spelling to the canonical synced name."""
-                return synced_lower_to_canonical.get((p or "").lower().strip())
-
-            # Adjust Tally OB for customers if viewing a different FY
-            if fy_start_str != base_fy_start:
-                if fy_start_str < base_fy_start:
-                    # Backward: undo activity between req_fy_start and base_fy_start
-                    lo, hi = fy_start_str, base_fy_start
-                    for v in all_sales:
-                        p = _resolve(v.get('party_name'))
-                        if p and lo <= v.get('voucher_date', '') < hi:
-                            opening_balance[p] -= safe_num(v.get('total_amount'))
-                    for r in all_receipts:
-                        p = _resolve(r.get('party_name'))
-                        if p and lo <= r.get('voucher_date', '') < hi:
-                            opening_balance[p] += safe_num(r.get('amount'))
-                    for pmt in all_payments:
-                        p = _resolve(pmt.get('party_name'))
-                        if p and lo <= pmt.get('voucher_date', '') < hi:
-                            # Payment voucher DRs the customer (e.g., cheque-bounce refund)
-                            # → undoing means subtract DR
-                            opening_balance[p] -= safe_num(pmt.get('amount'))
-                    for cn in all_credit_notes:
-                        p = _resolve(cn.get('party_name'))
-                        if p and lo <= cn.get('voucher_date', '') < hi:
-                            opening_balance[p] += safe_num(cn.get('total_amount'))
-                    for jv in all_journals:
-                        p = _resolve(jv.get('party_name'))
-                        if p and lo <= jv.get('voucher_date', '') < hi:
-                            debit, credit = get_jv_party_amount(jv)
-                            # JV DR on customer increases their balance (we're undoing → subtract DR, add CR)
-                            opening_balance[p] += credit - debit
-                else:
-                    # Forward: add activity between base_fy_start and req_fy_start
-                    lo, hi = base_fy_start, fy_start_str
-                    for v in all_sales:
-                        p = _resolve(v.get('party_name'))
-                        if p and lo <= v.get('voucher_date', '') < hi:
-                            opening_balance[p] += safe_num(v.get('total_amount'))
-                    for r in all_receipts:
-                        p = _resolve(r.get('party_name'))
-                        if p and lo <= r.get('voucher_date', '') < hi:
-                            opening_balance[p] -= safe_num(r.get('amount'))
-                    for pmt in all_payments:
-                        p = _resolve(pmt.get('party_name'))
-                        if p and lo <= pmt.get('voucher_date', '') < hi:
-                            opening_balance[p] += safe_num(pmt.get('amount'))
-                    for cn in all_credit_notes:
-                        p = _resolve(cn.get('party_name'))
-                        if p and lo <= cn.get('voucher_date', '') < hi:
-                            opening_balance[p] -= safe_num(cn.get('total_amount'))
-                    for jv in all_journals:
-                        p = _resolve(jv.get('party_name'))
-                        if p and lo <= jv.get('voucher_date', '') < hi:
-                            debit, credit = get_jv_party_amount(jv)
-                            opening_balance[p] += debit - credit
-
-        # Compute current FY credits per customer (case-insensitive party keys)
-        customer_receipts = {}
-        customer_cn_total = {}
-        customer_payments_dr = {}  # Payment vouchers paid TO party → DR (increases OS)
-        customer_jv_adjustment = {}
-        customer_jv_debit = {}  # DR-only adjustments (JV DR + CN reversals) for the Adjustment column
-        for r in fy_receipts:
-            p = safe_str(r.get("party_name")).strip().lower()
-            if p:
-                customer_receipts[p] = customer_receipts.get(p, 0) + safe_num(r.get("amount"))
+        # Compute current-FY credits per customer
+        customer_receipts, customer_cn_total, customer_jv_adjustment, customer_jv_debit = \
+            aggregate_party_credits(fy_receipts, fy_cns, fy_jvs)
+        # Payment vouchers paid TO party → DR (increases OS). Aggregated separately
+        # so the UI can show non-sales DR movements distinct from JV DR.
+        customer_payments_dr = {}
         for pmt in fy_payments:
             p = safe_str(pmt.get("party_name")).strip().lower()
             if p:
                 customer_payments_dr[p] = customer_payments_dr.get(p, 0) + safe_num(pmt.get("amount"))
-        for cn in fy_cns:
-            p = safe_str(cn.get("party_name")).strip().lower()
-            if not p:
-                continue
-            # Honor per-ledger-entry direction when available (post-agent-v9.1 sync).
-            # If a CN's party-row is marked is_debit=True, it's a reversal that DR's the
-            # customer (rare but happens — e.g., undoing an over-credit). Subtract instead
-            # of adding to the CR-side total so the math reflects reality.
-            entries = cn.get('ledger_entries') or []
-            party_entry = next((e for e in entries if (e.get('ledger_name') or '').lower().strip() == p), None)
-            amt = safe_num(cn.get("total_amount"))
-            if party_entry and party_entry.get('is_debit'):
-                # Reversal: this CN actually DRs the customer
-                customer_cn_total[p] = customer_cn_total.get(p, 0) - amt
-                # Surface in adjustment column too
-                customer_jv_debit[p] = customer_jv_debit.get(p, 0) + amt
-            else:
-                customer_cn_total[p] = customer_cn_total.get(p, 0) + amt
-        for jv in fy_jvs:
-            p = safe_str(jv.get("party_name")).strip().lower()
-            if p:
-                # Use party-specific amount from ledger_entries (not total voucher amount)
-                debit, credit = get_jv_party_amount(jv)
-                net_credit = credit - debit  # Positive = reduces outstanding
-                customer_jv_adjustment[p] = customer_jv_adjustment.get(p, 0) + net_credit
-                if debit > 0:
-                    customer_jv_debit[p] = customer_jv_debit.get(p, 0) + debit
 
         customer_map = {}
         customer_vouchers = {}
@@ -381,64 +264,21 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
 
             # FIFO aging on outstanding
             voucher_list = customer_vouchers.get(party, [])
-            if cust["outstanding_amount"] > 0:
-                if voucher_list:
-                    voucher_list.sort(key=lambda x: x["days_old"], reverse=True)
-                    remaining = cust["outstanding_amount"]
-                    for v in voucher_list:
-                        if remaining <= 0:
-                            break
-                        alloc = min(v["amount"], remaining)
-                        days = v["days_old"]
-                        if days > 90:
-                            cust["aging_90_plus"] += alloc
-                        elif days > 60:
-                            cust["aging_60_90"] += alloc
-                        elif days > 30:
-                            cust["aging_30_60"] += alloc
-                        else:
-                            cust["aging_0_30"] += alloc
-                        remaining -= alloc
-                    if remaining > 0:
-                        cust["aging_0_30"] += remaining
-                else:
-                    # No FY invoices but outstanding exists → it's all from opening balance
-                    # Use FY-start as reference for aging
-                    try:
-                        if not fy_start_str:
-                            raise ValueError("no fy_start_str")
-                        fy_start_date = date_type(*[int(x) for x in fy_start_str.split("-")])
-                        days_from_fy_start = (today - fy_start_date).days
-                        cust["oldest_invoice_days"] = max(cust.get("oldest_invoice_days", 0), days_from_fy_start)
-                        if days_from_fy_start > 90:
-                            cust["aging_90_plus"] = cust["outstanding_amount"]
-                        elif days_from_fy_start > 60:
-                            cust["aging_60_90"] = cust["outstanding_amount"]
-                        elif days_from_fy_start > 30:
-                            cust["aging_30_60"] = cust["outstanding_amount"]
-                        else:
-                            cust["aging_0_30"] = cust["outstanding_amount"]
-                    except Exception:
-                        cust["aging_0_30"] = cust["outstanding_amount"]
+            aging, fallback_oldest = apply_fifo_aging(
+                cust["outstanding_amount"], voucher_list, today, fy_start_str,
+            )
+            cust["aging_0_30"] = aging["aging_0_30"]
+            cust["aging_30_60"] = aging["aging_30_60"]
+            cust["aging_60_90"] = aging["aging_60_90"]
+            cust["aging_90_plus"] = aging["aging_90_plus"]
+            if fallback_oldest:
+                cust["oldest_invoice_days"] = max(cust.get("oldest_invoice_days", 0), fallback_oldest)
 
             cust["overdue_amount"] = round(cust["aging_60_90"] + cust["aging_90_plus"], 2)
 
-            oldest = cust["oldest_invoice_days"]
-            if cust["outstanding_amount"] <= 0:
-                cust["status"] = "normal"
-                cust["status_label"] = "Normal"
-            elif oldest > 90:
-                cust["status"] = "critical"
-                cust["status_label"] = "Critical"
-            elif oldest > 60:
-                cust["status"] = "overdue"
-                cust["status_label"] = "Overdue"
-            elif oldest > 30:
-                cust["status"] = "at_risk"
-                cust["status_label"] = "At Risk"
-            else:
-                cust["status"] = "normal"
-                cust["status_label"] = "Normal"
+            cust["status"], cust["status_label"] = aging_status(
+                cust["outstanding_amount"], cust["oldest_invoice_days"],
+            )
 
         customers.sort(key=lambda c: c.get("customer_name", "").lower())
 
@@ -1017,10 +857,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         all_journals_raw = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
 
         # Split receipt_vouchers into actual receipts (CR party) vs payment vouchers (DR party)
-        def _is_pmt(v):
-            return (v.get("voucher_type") or "").strip().lower() == "payment"
-        all_receipts_raw = [v for v in all_receipts_raw_all if not _is_pmt(v)]
-        all_payments_raw = [v for v in all_receipts_raw_all if _is_pmt(v)]
+        all_receipts_raw, all_payments_raw = split_receipts_and_payments(all_receipts_raw_all)
 
         # Apply branch exclusion
         exclude_branches = request.headers.get("X-Exclude-Branches", "").lower() == "true"
@@ -1028,11 +865,12 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if exclude_branches:
             branch_parties = await get_branch_parties(ctx.get("tenant_id", ""), ctx.get("company_id", ""))
         if branch_parties:
-            all_sales_raw = [v for v in all_sales_raw if v.get("party_name") not in branch_parties]
-            all_receipts_raw = [v for v in all_receipts_raw if v.get("party_name") not in branch_parties]
-            all_payments_raw = [v for v in all_payments_raw if v.get("party_name") not in branch_parties]
-            all_credit_notes_raw = [v for v in all_credit_notes_raw if v.get("party_name") not in branch_parties]
-            all_journals_raw = [v for v in all_journals_raw if v.get("party_name") not in branch_parties]
+            bp_lower = set(p.lower().strip() for p in branch_parties)
+            all_sales_raw = filter_branch_parties(all_sales_raw, bp_lower)
+            all_receipts_raw = filter_branch_parties(all_receipts_raw, bp_lower)
+            all_payments_raw = filter_branch_parties(all_payments_raw, bp_lower)
+            all_credit_notes_raw = filter_branch_parties(all_credit_notes_raw, bp_lower)
+            all_journals_raw = filter_branch_parties(all_journals_raw, bp_lower)
 
         synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
         if branch_parties:
@@ -1040,33 +878,15 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
 
         # FY boundary for opening balance calculation
-        fy_start_str = None
-        if fy:
-            try:
-                parts = fy.split('-')
-                start_year = int(parts[0])
-                fy_start_str = f"{start_year}-04-01"
-            except:
-                pass
+        fy_start_str = fy_start_iso(fy)
 
         # Split vouchers into pre-FY (for opening balance) and current FY
-        def split_by_fy(vouchers, date_field='voucher_date'):
-            pre_fy = []
-            current_fy = []
-            for v in vouchers:
-                d = v.get(date_field, '')
-                if fy_start_str and d < fy_start_str:
-                    pre_fy.append(v)
-                else:
-                    current_fy.append(v)
-            return pre_fy, current_fy
-
         if fy:
-            pre_sales, fy_sales_raw = split_by_fy(all_sales_raw)
-            _, fy_receipts_raw = split_by_fy(all_receipts_raw)
-            _, fy_payments_raw = split_by_fy(all_payments_raw)
-            _, fy_cns_raw = split_by_fy(all_credit_notes_raw)
-            _, fy_jvs_raw = split_by_fy(all_journals_raw)
+            pre_sales, fy_sales_raw = _split_by_fy(all_sales_raw, fy_start_str)
+            _, fy_receipts_raw = _split_by_fy(all_receipts_raw, fy_start_str)
+            _, fy_payments_raw = _split_by_fy(all_payments_raw, fy_start_str)
+            _, fy_cns_raw = _split_by_fy(all_credit_notes_raw, fy_start_str)
+            _, fy_jvs_raw = _split_by_fy(all_journals_raw, fy_start_str)
 
             all_sales = filter_vouchers_by_fy(fy_sales_raw, fy)
             all_receipts = filter_vouchers_by_fy([{**r, 'voucher_date': r.get('voucher_date', '')} for r in fy_receipts_raw], fy)
@@ -1082,68 +902,11 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
             all_journals = all_journals_raw
 
         # Compute opening balance per customer (anchored to TODAY's FY where Tally master OB lives)
-        opening_balance_map = {}
-        if fy_start_str:
-            today_fy_year = today.year if today.month >= 4 else today.year - 1
-            base_fy_start = f"{today_fy_year}-04-01"
-
-            synced_lower_to_canonical = {}
-            for sc in synced_customers:
-                name = sc.get("customer_name")
-                if name:
-                    synced_lower_to_canonical[name.lower().strip()] = name
-                    opening_balance_map[name] = safe_num(sc.get("opening_balance", 0))
-
-            def _resolve(p):
-                return synced_lower_to_canonical.get((p or "").lower().strip())
-
-            if fy_start_str != base_fy_start:
-                if fy_start_str < base_fy_start:
-                    lo, hi = fy_start_str, base_fy_start
-                    for v in all_sales_raw:
-                        p = _resolve(v.get('party_name'))
-                        if p and lo <= v.get('voucher_date', '') < hi:
-                            opening_balance_map[p] -= safe_num(v.get('total_amount'))
-                    for r in all_receipts_raw:
-                        p = _resolve(r.get('party_name'))
-                        if p and lo <= r.get('voucher_date', '') < hi:
-                            opening_balance_map[p] += safe_num(r.get('amount'))
-                    for pmt in all_payments_raw:
-                        p = _resolve(pmt.get('party_name'))
-                        if p and lo <= pmt.get('voucher_date', '') < hi:
-                            opening_balance_map[p] -= safe_num(pmt.get('amount'))
-                    for cn in all_credit_notes_raw:
-                        p = _resolve(cn.get('party_name'))
-                        if p and lo <= cn.get('voucher_date', '') < hi:
-                            opening_balance_map[p] += safe_num(cn.get('total_amount'))
-                    for jv in all_journals_raw:
-                        p = _resolve(jv.get('party_name'))
-                        if p and lo <= jv.get('voucher_date', '') < hi:
-                            debit, credit = get_jv_party_amount(jv)
-                            opening_balance_map[p] += credit - debit
-                else:
-                    lo, hi = base_fy_start, fy_start_str
-                    for v in all_sales_raw:
-                        p = _resolve(v.get('party_name'))
-                        if p and lo <= v.get('voucher_date', '') < hi:
-                            opening_balance_map[p] += safe_num(v.get('total_amount'))
-                    for r in all_receipts_raw:
-                        p = _resolve(r.get('party_name'))
-                        if p and lo <= r.get('voucher_date', '') < hi:
-                            opening_balance_map[p] -= safe_num(r.get('amount'))
-                    for pmt in all_payments_raw:
-                        p = _resolve(pmt.get('party_name'))
-                        if p and lo <= pmt.get('voucher_date', '') < hi:
-                            opening_balance_map[p] += safe_num(pmt.get('amount'))
-                    for cn in all_credit_notes_raw:
-                        p = _resolve(cn.get('party_name'))
-                        if p and lo <= cn.get('voucher_date', '') < hi:
-                            opening_balance_map[p] -= safe_num(cn.get('total_amount'))
-                    for jv in all_journals_raw:
-                        p = _resolve(jv.get('party_name'))
-                        if p and lo <= jv.get('voucher_date', '') < hi:
-                            debit, credit = get_jv_party_amount(jv)
-                            opening_balance_map[p] += debit - credit
+        opening_balance_map = compute_opening_balance_map(
+            synced_customers, all_sales_raw, all_receipts_raw, all_payments_raw,
+            all_credit_notes_raw, all_journals_raw,
+            fy_start_str, base_fy_start_iso(today),
+        )
 
         # Build per-customer receipt totals (FY-filtered) — case-insensitive party keys
         customer_payments = {}
