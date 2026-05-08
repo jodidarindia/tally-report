@@ -592,3 +592,58 @@ async def process_renewal(username: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing renewal: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+
+# ─────────────────────────  Company-Mapping Dedup  ─────────────────────────
+
+@router.post("/super-admin/dedup-companies")
+async def dedup_companies(request: Request):
+    """Collapse duplicate company_mappings rows (caused by the legacy non-deterministic
+    Fernet lookup bug). Re-points all docs/users.companies to the canonical UUID and
+    deletes the obsolete mapping rows. Idempotent."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        from services.id_mapping_service import deduplicate_company_mappings
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        target_tenant = (body or {}).get("tenant_id")
+
+        # Default: dedup every tenant in one shot
+        tenant_ids = (
+            [target_tenant] if target_tenant
+            else await db.users.distinct("tenant_id", {"tenant_id": {"$ne": None, "$ne": ""}})
+        )
+
+        results = []
+        total_removed, total_repointed, total_users = 0, 0, 0
+        for t_id in tenant_ids:
+            if not t_id:
+                continue
+            r = await deduplicate_company_mappings(t_id)
+            results.append({"tenant_id": t_id, **{k: v for k, v in r.items() if k != "canonical"}})
+            total_removed += r.get("removed", 0)
+            total_repointed += r.get("repointed", 0)
+            total_users += r.get("users_updated", 0)
+
+        await log_audit(
+            "super_admin.dedup_companies",
+            sa["username"],
+            details=f"tenants={len(results)}, removed={total_removed}, repointed={total_repointed}",
+            ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, data={
+            "tenants_processed": len(results),
+            "duplicates_removed": total_removed,
+            "docs_repointed": total_repointed,
+            "users_updated": total_users,
+            "results": results,
+        }, message=f"Dedup complete — removed {total_removed} duplicate company mappings")
+    except Exception as e:
+        logger.error(f"dedup_companies error: {e}", exc_info=True)
+        return APIResponse(success=False, error=str(e))

@@ -378,32 +378,59 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
 
 
 class SyncWebSocketManager:
-    """Manages WebSocket connections for real-time sync status updates."""
+    """Manages WebSocket connections for real-time sync status updates.
+
+    Each connected client is associated with a tenant_id (sent by the client
+    on connect via {action:'subscribe', tenant_id:...}). Broadcasts honour
+    that scope so a sync running on tenant A never leaks to tenant B's UI.
+    """
 
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self.last_progress: dict = {}
+        # connection -> tenant_id (None = unscoped, used only for super-admin tools)
+        self.active_connections: dict = {}
+        # last progress payload per tenant_id (so a freshly-connected client
+        # gets the current state without waiting for the next broadcast)
+        self.last_progress_by_tenant: dict = {}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[websocket] = None
         logger.info(f"WebSocket client connected ({len(self.active_connections)} total)")
-        # Send last known progress on connect
-        if self.last_progress:
-            try:
-                await websocket.send_text(json.dumps(self.last_progress))
-            except Exception:
-                pass
+
+    def set_tenant(self, websocket: WebSocket, tenant_id: str):
+        if websocket in self.active_connections:
+            self.active_connections[websocket] = tenant_id
+            # Replay last known progress for this tenant
+            last = self.last_progress_by_tenant.get(tenant_id)
+            if last:
+                try:
+                    import asyncio
+                    asyncio.create_task(websocket.send_text(json.dumps(last)))
+                except Exception:
+                    pass
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+            self.active_connections.pop(websocket, None)
         logger.info(f"WebSocket client disconnected ({len(self.active_connections)} total)")
 
-    async def broadcast(self, message: dict):
-        self.last_progress = message
+    async def broadcast(self, message: dict, tenant_id: str = None):
+        """Send to clients matching tenant_id. If tenant_id is falsy, the
+        broadcast is treated as un-scoped (legacy callers — kept for
+        backwards-compat but discouraged). Caller SHOULD always pass tenant_id.
+        """
+        if tenant_id:
+            self.last_progress_by_tenant[tenant_id] = message
         disconnected = []
-        for connection in self.active_connections:
+        for connection, conn_tenant in list(self.active_connections.items()):
+            # Only deliver to clients that have subscribed to this tenant.
+            # Clients whose tenant is unknown (null) get nothing — prevents
+            # leaks during the brief window before the client subscribes.
+            if tenant_id and conn_tenant and conn_tenant != tenant_id:
+                continue
+            if tenant_id and not conn_tenant:
+                # client hasn't subscribed yet — don't leak across tenants
+                continue
             try:
                 await connection.send_text(json.dumps(message))
             except Exception:

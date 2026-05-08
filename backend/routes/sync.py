@@ -102,8 +102,7 @@ async def receive_agent_sync(request: dict):
                 'tenant_id': req_tenant_id,
                 'company_id': req_company_id
             },
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+            'timestamp': datetime.now(timezone.utc).isoformat()        }, tenant_id=req_tenant_id)
 
         # Build the tenant+company filter for deletions and upserts
         t_filter = {"tenant_id": req_tenant_id}
@@ -600,7 +599,7 @@ async def receive_agent_sync(request: dict):
                         'total_overdue_amount': digest['total_overdue_amount'],
                     },
                     'timestamp': datetime.now(timezone.utc).isoformat()
-                })
+                }, tenant_id=req_tenant_id)
             except Exception as digest_err:
                 logger.error(f"Error recomputing overdue digest: {digest_err}")
 
@@ -752,7 +751,7 @@ async def receive_sync_progress(request: dict):
             'event': event_type,
             'data': request,
             'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        }, tenant_id=req_tenant_id)
 
         return APIResponse(success=True, message="Progress received")
     except Exception as e:
@@ -762,16 +761,30 @@ async def receive_sync_progress(request: dict):
 
 @router.websocket("/ws/sync-status")
 async def websocket_sync_status(websocket: WebSocket):
-    """WebSocket endpoint for real-time sync status updates."""
+    """WebSocket endpoint for real-time sync status updates.
+
+    Client must subscribe to its tenant on connect:
+        { "action": "subscribe", "tenant_id": "<uuid>" }
+    Otherwise it receives nothing — guards against cross-tenant leak.
+    """
     await ws_manager.connect(websocket)
     try:
         while True:
             data = await websocket.receive_text()
             try:
                 msg = json.loads(data)
-                if msg.get('action') == 'get_status':
+                action = msg.get('action')
+                if action == 'subscribe':
+                    t_id = msg.get('tenant_id', '')
+                    if t_id:
+                        ws_manager.set_tenant(websocket, t_id)
+                        await websocket.send_json({'event': 'subscribed', 'tenant_id': t_id})
+                elif action == 'get_status':
                     t_id = msg.get('tenant_id', '')
                     c_id = msg.get('company_id', '')
+                    # Re-bind subscription if the client passes tenant on each call
+                    if t_id:
+                        ws_manager.set_tenant(websocket, t_id)
                     q = {'type': 'agent_sync'}
                     if t_id:
                         q['tenant_id'] = t_id

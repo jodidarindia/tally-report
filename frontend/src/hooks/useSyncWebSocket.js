@@ -2,13 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-export function useSyncWebSocket() {
+export function useSyncWebSocket(tenantId) {
   const [isConnected, setIsConnected] = useState(false);
   const [syncProgress, setSyncProgress] = useState(null);
   const [lastEvent, setLastEvent] = useState(null);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
+  const tenantIdRef = useRef(tenantId);
+  // Keep ref in sync so reconnects after login pick up the new tenant
+  useEffect(() => { tenantIdRef.current = tenantId; }, [tenantId]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -24,9 +27,12 @@ export function useSyncWebSocket() {
       ws.onopen = () => {
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
-        // Request current status
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ action: 'get_status' }));
+        // Subscribe to ONLY this tenant's sync events.
+        // Server will not send any broadcast until subscription is set.
+        const tid = tenantIdRef.current;
+        if (ws.readyState === WebSocket.OPEN && tid) {
+          ws.send(JSON.stringify({ action: 'subscribe', tenant_id: tid }));
+          ws.send(JSON.stringify({ action: 'get_status', tenant_id: tid }));
         }
       };
 
@@ -154,7 +160,10 @@ export function useSyncWebSocket() {
 
   const requestStatus = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ action: 'get_status' }));
+      wsRef.current.send(JSON.stringify({
+        action: 'get_status',
+        tenant_id: tenantIdRef.current
+      }));
     }
   }, []);
 

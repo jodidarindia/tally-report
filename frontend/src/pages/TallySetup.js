@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import CreditorGroupsPanel from '../components/CreditorGroupsPanel';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -359,6 +360,9 @@ const TallySetup = ({ companyId }) => {
           </div>
         </div>
       </div>
+
+      {/* Creditor Groups — per-tenant config */}
+      <CreditorGroupsPanel />
 
       {/* Confirmation Modal */}
       {confirmAction && (

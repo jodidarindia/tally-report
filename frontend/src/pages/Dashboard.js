@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Package, TrendingUp, AlertCircle, Activity, RefreshCw, Bell, Calendar, Clock, AlertTriangle, ChevronDown, ChevronUp, Phone, Database } from 'lucide-react';
 import { useSyncWebSocket } from '../hooks/useSyncWebSocket';
+import { useAuth } from '../hooks/useAuth';
 import SyncStatusBar from '../components/SyncStatusBar';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -16,7 +17,9 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const { isConnected: wsConnected, syncProgress } = useSyncWebSocket();
+  const { user } = useAuth();
+  // Scope sync events to this tenant — prevents cross-tenant WS leak.
+  const { isConnected: wsConnected, syncProgress } = useSyncWebSocket(user?.tenant_id);
 
   useEffect(() => {
     fetchData();
