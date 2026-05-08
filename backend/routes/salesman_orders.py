@@ -903,3 +903,414 @@ async def beat_run_history(request: Request,
     except Exception as e:
         logger.error(f"beat-run/history error: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+
+# ═══════════════════════════════════════════════════════
+# Beat Run — Monthly Report (admin only)
+# ═══════════════════════════════════════════════════════
+
+def _month_window(month: str):
+    """'2026-05' → ('2026-05-01', '2026-06-01'). Raises ValueError on bad input."""
+    from datetime import datetime as _dt
+    y, m = month.split("-")
+    y, m = int(y), int(m)
+    if not (1 <= m <= 12):
+        raise ValueError("month out of range")
+    start = f"{y:04d}-{m:02d}-01"
+    if m == 12:
+        end = f"{y+1:04d}-01-01"
+    else:
+        end = f"{y:04d}-{m+1:02d}-01"
+    # Touch _dt to validate
+    _dt.strptime(start, "%Y-%m-%d")
+    return start, end
+
+
+def _prev_month(month: str) -> str:
+    y, m = month.split("-")
+    y, m = int(y), int(m)
+    if m == 1:
+        return f"{y-1:04d}-12"
+    return f"{y:04d}-{m-1:02d}"
+
+
+def _summarize_runs(runs: list) -> dict:
+    """Aggregate a list of beat_runs docs → totals (planned, visited, unplanned, coverage_pct)."""
+    planned = sum(len(r.get("planned", []) or []) for r in runs)
+    visited = sum(
+        sum(1 for p in (r.get("planned") or []) if p.get("visited_at"))
+        for r in runs
+    )
+    unplanned = sum(len(r.get("unplanned", []) or []) for r in runs)
+    coverage_pct = round((visited / planned * 100), 1) if planned else 0.0
+    return {
+        "planned": planned,
+        "visited": visited,
+        "unplanned": unplanned,
+        "coverage_pct": coverage_pct,
+        "run_days": len(runs),
+    }
+
+
+@router.get("/salesman-orders/beat-run/monthly-report")
+async def beat_run_monthly_report(
+    request: Request,
+    month: Optional[str] = None,
+    salesman: Optional[str] = None,
+    company_id: Optional[str] = None,
+    trend_months: int = 6,
+):
+    """Monthly aggregated report (admin/super_admin only).
+    Returns totals, per-salesman, per-customer visit-frequency, daily breakdown, and
+    a last-N-month coverage trend for the sparkline.
+
+    Query: month=YYYY-MM (default current IST month), salesman (optional filter),
+    trend_months (1..24, default 6).
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        if user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+
+        month = month or _ist_today()[:7]
+        try:
+            start, end = _month_window(month)
+        except (ValueError, IndexError):
+            return APIResponse(success=False, error="month must be YYYY-MM")
+
+        trend_months = max(1, min(int(trend_months or 6), 24))
+
+        q = _q(ctx, company_id)
+        q["run_date"] = {"$gte": start, "$lt": end}
+        if salesman:
+            q["salesman"] = salesman
+
+        runs = await db.beat_runs.find(q, {"_id": 0}).to_list(20000)
+
+        # ── Top-level summary
+        summary = _summarize_runs(runs)
+        summary["salesmen_count"] = len({r.get("salesman", "") for r in runs if r.get("salesman")})
+        summary["month"] = month
+
+        # ── Per-salesman roll-up
+        per_sm_map: dict = {}
+        for r in runs:
+            name = r.get("salesman", "") or "—"
+            per_sm_map.setdefault(name, []).append(r)
+        per_salesman = []
+        for name, srunsx in per_sm_map.items():
+            row = {"salesman": name, **_summarize_runs(srunsx)}
+            per_salesman.append(row)
+        per_salesman.sort(key=lambda x: (-x["coverage_pct"], -x["visited"]))
+
+        # ── Per-customer visit frequency (visited customers + unplanned visits)
+        per_cust: dict = {}
+        for r in runs:
+            sm = r.get("salesman", "") or "—"
+            for p in (r.get("planned") or []):
+                if not p.get("visited_at"):
+                    continue
+                name = (p.get("customer_name") or "").strip()
+                if not name:
+                    continue
+                e = per_cust.setdefault(name, {
+                    "customer_name": name, "visit_count": 0,
+                    "last_visit_date": "", "salesmen": set(), "unplanned": False,
+                })
+                e["visit_count"] += 1
+                e["salesmen"].add(sm)
+                vd = (p.get("visited_at") or "")[:10]
+                if vd > e["last_visit_date"]:
+                    e["last_visit_date"] = vd
+            for u in (r.get("unplanned") or []):
+                name = (u.get("customer_name") or "").strip()
+                if not name:
+                    continue
+                e = per_cust.setdefault(name, {
+                    "customer_name": name, "visit_count": 0,
+                    "last_visit_date": "", "salesmen": set(), "unplanned": True,
+                })
+                e["visit_count"] += 1
+                e["unplanned"] = True
+                e["salesmen"].add(sm)
+                ad = (u.get("added_at") or "")[:10]
+                if ad > e["last_visit_date"]:
+                    e["last_visit_date"] = ad
+        per_customer = [
+            {**v, "salesmen": sorted(v["salesmen"])}
+            for v in per_cust.values()
+        ]
+        per_customer.sort(key=lambda x: (-x["visit_count"], x["customer_name"].lower()))
+
+        # ── Daily breakdown
+        daily_map: dict = {}
+        for r in runs:
+            d = r.get("run_date", "")
+            if not d:
+                continue
+            daily_map.setdefault(d, []).append(r)
+        daily_breakdown = []
+        for d in sorted(daily_map.keys()):
+            row = {"date": d, "day_of_week": _ist_dow(d), **_summarize_runs(daily_map[d])}
+            daily_breakdown.append(row)
+
+        # ── M-o-M trend (coverage % per month, oldest → newest)
+        trend = []
+        m_iter = month
+        # Collect oldest-first
+        months_in_order = []
+        for _ in range(trend_months):
+            months_in_order.append(m_iter)
+            m_iter = _prev_month(m_iter)
+        months_in_order.reverse()
+
+        for m in months_in_order:
+            try:
+                ms, me = _month_window(m)
+            except ValueError:
+                continue
+            tq = _q(ctx, company_id)
+            tq["run_date"] = {"$gte": ms, "$lt": me}
+            if salesman:
+                tq["salesman"] = salesman
+            mruns = await db.beat_runs.find(tq, {"_id": 0, "planned": 1, "unplanned": 1}).to_list(20000)
+            tsum = _summarize_runs(mruns)
+            trend.append({
+                "month": m,
+                "coverage_pct": tsum["coverage_pct"],
+                "planned": tsum["planned"],
+                "visited": tsum["visited"],
+                "unplanned": tsum["unplanned"],
+            })
+
+        return APIResponse(success=True, data={
+            "summary": summary,
+            "per_salesman": per_salesman,
+            "per_customer": per_customer,
+            "daily_breakdown": daily_breakdown,
+            "trend": trend,
+        })
+    except Exception as e:
+        logger.error(f"beat-run/monthly-report error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/salesman-orders/beat-run/monthly-report/export")
+async def beat_run_monthly_report_export(
+    request: Request,
+    month: Optional[str] = None,
+    salesman: Optional[str] = None,
+    company_id: Optional[str] = None,
+    format: str = "excel",
+):
+    """Excel (multi-sheet) or CSV export of the monthly beat-run report.
+    format=excel → 4-sheet workbook (summary, per_salesman, per_customer, raw_runs).
+    format=csv   → flat raw runs (one row per planned visit + one row per unplanned).
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        if user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+
+        month = month or _ist_today()[:7]
+        try:
+            start, end = _month_window(month)
+        except (ValueError, IndexError):
+            return APIResponse(success=False, error="month must be YYYY-MM")
+
+        q = _q(ctx, company_id)
+        q["run_date"] = {"$gte": start, "$lt": end}
+        if salesman:
+            q["salesman"] = salesman
+        runs = await db.beat_runs.find(q, {"_id": 0}).sort("run_date", 1).to_list(20000)
+
+        # Build flat raw rows (one per planned + one per unplanned visit)
+        flat: list = []
+        for r in runs:
+            sm = r.get("salesman", "")
+            d = r.get("run_date", "")
+            dow = r.get("day_of_week") or _ist_dow(d)
+            for p in (r.get("planned") or []):
+                flat.append({
+                    "Date": d,
+                    "Day": dow,
+                    "Salesman": sm,
+                    "Customer": p.get("customer_name", ""),
+                    "Type": "Planned",
+                    "Visited": "Yes" if p.get("visited_at") else "No",
+                    "Visited At (IST)": (p.get("visited_at") or "")[:19].replace("T", " "),
+                    "Notes": p.get("notes", ""),
+                    "Frequency": p.get("frequency", ""),
+                })
+            for u in (r.get("unplanned") or []):
+                flat.append({
+                    "Date": d,
+                    "Day": dow,
+                    "Salesman": sm,
+                    "Customer": u.get("customer_name", ""),
+                    "Type": "Unplanned",
+                    "Visited": "Yes",
+                    "Visited At (IST)": (u.get("added_at") or "")[:19].replace("T", " "),
+                    "Notes": u.get("details", ""),
+                    "Frequency": "—",
+                })
+
+        suffix = f"-{salesman}" if salesman else ""
+        fname_stem = f"flowra-beat-run-{month}{suffix}"
+
+        if format.lower() == "csv":
+            import csv as _csv
+            buf = io.StringIO()
+            if flat:
+                writer = _csv.DictWriter(buf, fieldnames=list(flat[0].keys()))
+                writer.writeheader()
+                writer.writerows(flat)
+            else:
+                buf.write("No beat runs in this month.\n")
+            data_bytes = buf.getvalue().encode("utf-8")
+            return StreamingResponse(
+                io.BytesIO(data_bytes),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={fname_stem}.csv"},
+            )
+
+        # Excel — multi-sheet
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill
+        wb = Workbook()
+        header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        stripe_fill = PatternFill(start_color="F0F4FF", end_color="F0F4FF", fill_type="solid")
+        title_font = Font(bold=True, color="0F1B4C", size=14)
+
+        def _write_sheet(ws, title, headers, rows):
+            ws.cell(row=1, column=1, value=title).font = title_font
+            ws.cell(row=2, column=1, value=f"Month: {month}{(' · ' + salesman) if salesman else ''}").font = Font(italic=True, color="64748B", size=10)
+            for ci, h in enumerate(headers, start=1):
+                c = ws.cell(row=4, column=ci, value=h)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center")
+            for ri, row in enumerate(rows, start=5):
+                for ci, h in enumerate(headers, start=1):
+                    val = row.get(h, "")
+                    c = ws.cell(row=ri, column=ci, value=val)
+                    if isinstance(val, (int, float)):
+                        c.alignment = Alignment(horizontal="right")
+                    if ri % 2 == 0:
+                        c.fill = stripe_fill
+            for col_cells in ws.columns:
+                try:
+                    length = max(len(str(cell.value)) for cell in col_cells if cell.value is not None)
+                    ws.column_dimensions[col_cells[0].column_letter].width = min(length + 2, 50)
+                except ValueError:
+                    pass
+
+        # Recompute the summary breakdowns inline (avoid re-querying)
+        summary = _summarize_runs(runs)
+        summary["salesmen_count"] = len({r.get("salesman", "") for r in runs if r.get("salesman")})
+
+        per_sm_map: dict = {}
+        for r in runs:
+            per_sm_map.setdefault(r.get("salesman", "") or "—", []).append(r)
+        per_salesman_rows = []
+        for name, srunsx in per_sm_map.items():
+            s = _summarize_runs(srunsx)
+            per_salesman_rows.append({
+                "Salesman": name,
+                "Run Days": s["run_days"],
+                "Planned": s["planned"],
+                "Visited": s["visited"],
+                "Unplanned": s["unplanned"],
+                "Coverage %": s["coverage_pct"],
+            })
+        per_salesman_rows.sort(key=lambda x: (-x["Coverage %"], -x["Visited"]))
+
+        per_cust: dict = {}
+        for r in runs:
+            sm = r.get("salesman", "") or "—"
+            for p in (r.get("planned") or []):
+                if not p.get("visited_at"):
+                    continue
+                name = (p.get("customer_name") or "").strip()
+                if not name:
+                    continue
+                e = per_cust.setdefault(name, {
+                    "Customer": name, "Visits": 0, "Last Visit": "",
+                    "Salesmen": set(), "Includes Unplanned": "No",
+                })
+                e["Visits"] += 1
+                e["Salesmen"].add(sm)
+                vd = (p.get("visited_at") or "")[:10]
+                if vd > e["Last Visit"]:
+                    e["Last Visit"] = vd
+            for u in (r.get("unplanned") or []):
+                name = (u.get("customer_name") or "").strip()
+                if not name:
+                    continue
+                e = per_cust.setdefault(name, {
+                    "Customer": name, "Visits": 0, "Last Visit": "",
+                    "Salesmen": set(), "Includes Unplanned": "No",
+                })
+                e["Visits"] += 1
+                e["Includes Unplanned"] = "Yes"
+                e["Salesmen"].add(sm)
+                ad = (u.get("added_at") or "")[:10]
+                if ad > e["Last Visit"]:
+                    e["Last Visit"] = ad
+        per_customer_rows = [
+            {**v, "Salesmen": ", ".join(sorted(v["Salesmen"]))}
+            for v in per_cust.values()
+        ]
+        per_customer_rows.sort(key=lambda x: (-x["Visits"], x["Customer"].lower()))
+
+        # Sheet 1 — Summary
+        ws1 = wb.active
+        ws1.title = "Summary"
+        _write_sheet(ws1, "Beat Run — Monthly Summary", ["Metric", "Value"], [
+            {"Metric": "Month", "Value": month},
+            {"Metric": "Salesman filter", "Value": salesman or "(All)"},
+            {"Metric": "Run Days", "Value": summary["run_days"]},
+            {"Metric": "Distinct Salesmen", "Value": summary["salesmen_count"]},
+            {"Metric": "Planned Visits", "Value": summary["planned"]},
+            {"Metric": "Visited", "Value": summary["visited"]},
+            {"Metric": "Unplanned Visits", "Value": summary["unplanned"]},
+            {"Metric": "Coverage %", "Value": summary["coverage_pct"]},
+        ])
+
+        ws2 = wb.create_sheet("By Salesman")
+        _write_sheet(ws2, "Per-Salesman Roll-up",
+                     ["Salesman", "Run Days", "Planned", "Visited", "Unplanned", "Coverage %"],
+                     per_salesman_rows)
+
+        ws3 = wb.create_sheet("By Customer")
+        _write_sheet(ws3, "Per-Customer Visit Frequency",
+                     ["Customer", "Visits", "Last Visit", "Salesmen", "Includes Unplanned"],
+                     per_customer_rows)
+
+        ws4 = wb.create_sheet("Raw Runs")
+        if flat:
+            _write_sheet(ws4, "Raw Visits", list(flat[0].keys()), flat)
+        else:
+            ws4.cell(row=1, column=1, value="No beat runs in this month.").font = title_font
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return StreamingResponse(
+            out,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={fname_stem}.xlsx"},
+        )
+    except Exception as e:
+        logger.error(f"beat-run/monthly-report/export error: {e}")
+        return APIResponse(success=False, error=str(e))

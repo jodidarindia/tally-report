@@ -657,6 +657,7 @@ export default SalesmanPerformance;
 
 // ─── Beat Runs Admin (read-only history viewer for any salesman) ─────────
 function BeatRunsAdmin({ companyId, masterList }) {
+  const [view, setView] = useState('daily');
   const [salesman, setSalesman] = useState('');
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -683,20 +684,38 @@ function BeatRunsAdmin({ companyId, masterList }) {
     setLoading(false);
   }, [companyId, hdr, salesman]);
 
-  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+  useEffect(() => { if (view === 'daily') fetchHistory(); }, [fetchHistory, view]);
 
   return (
     <div className="space-y-3" data-testid="beat-runs-admin">
-      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4">
-        <label className="text-[11px] text-slate-500 font-semibold uppercase block mb-1">Salesman</label>
-        <select value={salesman} onChange={e => setSalesman(e.target.value)}
-          className="w-full sm:max-w-xs px-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="beat-runs-salesman-select">
-          <option value="">— All salesmen —</option>
-          {masterList.map((m, i) => <option key={i} value={m.salesman_name}>{m.salesman_name}</option>)}
-        </select>
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <label className="text-[11px] text-slate-500 font-semibold uppercase block mb-1">Salesman</label>
+            <select value={salesman} onChange={e => setSalesman(e.target.value)}
+              className="w-full sm:max-w-xs px-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="beat-runs-salesman-select">
+              <option value="">— All salesmen —</option>
+              {masterList.map((m, i) => <option key={i} value={m.salesman_name}>{m.salesman_name}</option>)}
+            </select>
+          </div>
+          <div className="flex bg-slate-100 rounded-lg p-1" data-testid="beat-runs-view-toggle">
+            <button
+              onClick={() => setView('daily')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded ${view === 'daily' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
+              data-testid="beat-runs-tab-daily"
+            >Daily History</button>
+            <button
+              onClick={() => setView('monthly')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded ${view === 'monthly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
+              data-testid="beat-runs-tab-monthly"
+            >Monthly Report</button>
+          </div>
+        </div>
       </div>
 
-      {loading ? <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div> :
+      {view === 'monthly' ? (
+        <BeatRunMonthlyReport companyId={companyId} salesman={salesman} hdr={hdr} />
+      ) : loading ? <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" /></div> :
         selRun ? (
           <div data-testid="admin-history-detail">
             <button onClick={() => setSelRun(null)} className="text-xs text-blue-600 mb-2 flex items-center gap-1" data-testid="admin-back-history">‹ Back</button>
@@ -737,6 +756,291 @@ function BeatRunsAdmin({ companyId, masterList }) {
     </div>
   );
 }
+
+
+// ── Monthly Report (admin/super_admin) ─────────────────────────────────────
+function BeatRunMonthlyReport({ companyId, salesman, hdr }) {
+  const todayMonth = new Date().toISOString().slice(0, 7);
+  const [month, setMonth] = useState(todayMonth);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [showAllCustomers, setShowAllCustomers] = useState(false);
+
+  const fetchReport = useCallback(async () => {
+    setLoading(true);
+    setData(null);
+    try {
+      const url = `${API}/salesman-orders/beat-run/monthly-report?month=${month}${salesman ? `&salesman=${encodeURIComponent(salesman)}` : ''}&company_id=${companyId || ''}&trend_months=6`;
+      const r = await axios.get(url, { headers: hdr() });
+      if (r.data?.success) setData(r.data.data);
+      else toast.error(r.data?.error || 'Failed to load monthly report');
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Failed to load monthly report');
+    }
+    setLoading(false);
+  }, [companyId, hdr, month, salesman]);
+
+  useEffect(() => { fetchReport(); }, [fetchReport]);
+
+  const handleExport = async (fmt) => {
+    setExporting(true);
+    try {
+      const url = `${API}/salesman-orders/beat-run/monthly-report/export?month=${month}${salesman ? `&salesman=${encodeURIComponent(salesman)}` : ''}&company_id=${companyId || ''}&format=${fmt}`;
+      const r = await axios.get(url, { headers: hdr(), responseType: 'blob' });
+      const blob = new Blob([r.data], {
+        type: fmt === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `flowra-beat-run-${month}${salesman ? `-${salesman}` : ''}.${fmt === 'csv' ? 'csv' : 'xlsx'}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(a.href);
+      toast.success(`Downloaded ${fmt.toUpperCase()}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Export failed');
+    }
+    setExporting(false);
+  };
+
+  // Tiny inline SVG sparkline (no recharts overhead)
+  const Sparkline = ({ trend }) => {
+    if (!trend || trend.length === 0) return null;
+    const w = 220, h = 48, pad = 4;
+    const max = Math.max(100, ...trend.map(t => t.coverage_pct));
+    const stepX = (w - pad * 2) / Math.max(1, trend.length - 1);
+    const points = trend.map((t, i) => {
+      const x = pad + i * stepX;
+      const y = h - pad - (t.coverage_pct / max) * (h - pad * 2);
+      return [x, y, t];
+    });
+    const path = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+    const last = points[points.length - 1];
+    return (
+      <svg width={w} height={h} className="overflow-visible" data-testid="beat-runs-trend-sparkline">
+        <path d={path} fill="none" stroke="#2563EB" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {points.map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r={2.5} fill={i === points.length - 1 ? '#2563EB' : '#93C5FD'} />
+        ))}
+        <text x={last[0] + 6} y={last[1] + 4} fontSize="11" fontWeight="700" fill="#1E40AF">{last[2].coverage_pct}%</text>
+      </svg>
+    );
+  };
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-40" data-testid="monthly-report-loading">
+      <div className="w-6 h-6 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+    </div>;
+  }
+
+  const summary = data?.summary || {};
+  const perSalesman = data?.per_salesman || [];
+  const perCustomer = data?.per_customer || [];
+  const daily = data?.daily_breakdown || [];
+  const trend = data?.trend || [];
+  const empty = !summary.run_days;
+  const customersToShow = showAllCustomers ? perCustomer : perCustomer.slice(0, 20);
+  const monthLabel = (() => {
+    try {
+      const [y, m] = month.split('-');
+      return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    } catch { return month; }
+  })();
+
+  return (
+    <div className="space-y-3" data-testid="beat-runs-monthly-report">
+      {/* Month picker + export */}
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-[11px] text-slate-500 font-semibold uppercase block mb-1">Month</label>
+          <input type="month" value={month} onChange={e => setMonth(e.target.value)} max={todayMonth}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="monthly-report-month-input" />
+        </div>
+        <div className="ml-auto flex gap-2">
+          <button onClick={() => handleExport('csv')} disabled={exporting || empty}
+            className="px-3 py-2 text-xs font-semibold bg-slate-100 text-slate-700 rounded-lg flex items-center gap-1.5 disabled:opacity-40"
+            data-testid="monthly-report-export-csv">
+            <Download size={14} /> CSV
+          </button>
+          <button onClick={() => handleExport('excel')} disabled={exporting || empty}
+            className="px-3 py-2 text-xs font-semibold bg-blue-600 text-white rounded-lg flex items-center gap-1.5 disabled:opacity-40"
+            data-testid="monthly-report-export-excel">
+            <Download size={14} /> Excel (4 sheets)
+          </button>
+        </div>
+      </div>
+
+      {empty ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center" data-testid="monthly-report-empty">
+          <BarChart3 size={36} className="mx-auto text-slate-300 mb-3" />
+          <p className="text-sm text-slate-600 font-semibold">No beat runs in {monthLabel}</p>
+          <p className="text-xs text-slate-400 mt-1">{salesman ? `for ${salesman}` : 'for any salesman'}.</p>
+        </div>
+      ) : (
+        <>
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="monthly-report-summary">
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Coverage</p>
+              <p className={`text-2xl font-extrabold mt-1 ${summary.coverage_pct >= 80 ? 'text-green-600' : summary.coverage_pct >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>
+                {summary.coverage_pct}%
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">{summary.visited}/{summary.planned} visited</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Run Days</p>
+              <p className="text-2xl font-extrabold mt-1 text-slate-800">{summary.run_days}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">{summary.salesmen_count} salesmen</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Planned</p>
+              <p className="text-2xl font-extrabold mt-1 text-slate-800">{summary.planned}</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Unplanned</p>
+              <p className="text-2xl font-extrabold mt-1 text-purple-600">{summary.unplanned}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">walk-ins / new prospects</p>
+            </div>
+          </div>
+
+          {/* Trend sparkline */}
+          {trend.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center gap-4 flex-wrap" data-testid="monthly-report-trend">
+              <div>
+                <p className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">6-Month Coverage Trend</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">{trend[0]?.month} → {trend[trend.length - 1]?.month}</p>
+              </div>
+              <Sparkline trend={trend} />
+              <div className="text-[10px] text-slate-500 ml-auto grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {trend.map((t, i) => (
+                  <div key={i} className="text-center">
+                    <p className="text-[9px] text-slate-400">{t.month.slice(5)}</p>
+                    <p className={`font-bold ${t.coverage_pct >= 80 ? 'text-green-600' : t.coverage_pct >= 50 ? 'text-blue-600' : t.coverage_pct >= 1 ? 'text-amber-600' : 'text-slate-300'}`}>{t.coverage_pct}%</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Per-salesman table */}
+          {perSalesman.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="monthly-report-per-salesman">
+              <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">By Salesman ({perSalesman.length})</h4>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Salesman</th>
+                      <th className="px-3 py-2 text-right">Run Days</th>
+                      <th className="px-3 py-2 text-right">Planned</th>
+                      <th className="px-3 py-2 text-right">Visited</th>
+                      <th className="px-3 py-2 text-right">Unplanned</th>
+                      <th className="px-3 py-2 text-right">Coverage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perSalesman.map((s, i) => (
+                      <tr key={i} className="border-t border-slate-100" data-testid={`monthly-report-sm-${i}`}>
+                        <td className="px-3 py-2 font-semibold text-slate-800">{s.salesman}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{s.run_days}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{s.planned}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{s.visited}</td>
+                        <td className="px-3 py-2 text-right text-purple-600 font-semibold">{s.unplanned}</td>
+                        <td className={`px-3 py-2 text-right font-bold ${s.coverage_pct >= 80 ? 'text-green-600' : s.coverage_pct >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>{s.coverage_pct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Per-customer visit frequency */}
+          {perCustomer.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="monthly-report-per-customer">
+              <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Customer Visit Frequency ({perCustomer.length})</h4>
+                {perCustomer.length > 20 && (
+                  <button onClick={() => setShowAllCustomers(s => !s)} className="text-[11px] text-blue-600 font-semibold" data-testid="monthly-report-customers-toggle">
+                    {showAllCustomers ? 'Show top 20' : `Show all ${perCustomer.length}`}
+                  </button>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-right">Visits</th>
+                      <th className="px-3 py-2 text-left">Last Visit</th>
+                      <th className="px-3 py-2 text-left">Salesmen</th>
+                      <th className="px-3 py-2 text-center">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customersToShow.map((c, i) => (
+                      <tr key={i} className="border-t border-slate-100" data-testid={`monthly-report-cust-${i}`}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{c.customer_name}</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-700">{c.visit_count}</td>
+                        <td className="px-3 py-2 text-slate-500">{c.last_visit_date || '—'}</td>
+                        <td className="px-3 py-2 text-slate-500 truncate max-w-[180px]">{(c.salesmen || []).join(', ') || '—'}</td>
+                        <td className="px-3 py-2 text-center">
+                          {c.unplanned ? (
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-50 text-purple-700 rounded">UNPLANNED</span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-50 text-blue-700 rounded">PLANNED</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Daily breakdown */}
+          {daily.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid="monthly-report-daily">
+              <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Daily Breakdown ({daily.length} days)</h4>
+              </div>
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Day</th>
+                      <th className="px-3 py-2 text-right">Planned</th>
+                      <th className="px-3 py-2 text-right">Visited</th>
+                      <th className="px-3 py-2 text-right">Unplanned</th>
+                      <th className="px-3 py-2 text-right">Coverage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.map((d, i) => (
+                      <tr key={i} className="border-t border-slate-100" data-testid={`monthly-report-day-${i}`}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{d.date}</td>
+                        <td className="px-3 py-2 text-slate-500">{d.day_of_week}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{d.planned}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{d.visited}</td>
+                        <td className="px-3 py-2 text-right text-purple-600">{d.unplanned}</td>
+                        <td className={`px-3 py-2 text-right font-bold ${d.coverage_pct >= 80 ? 'text-green-600' : d.coverage_pct >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>{d.coverage_pct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 
 // Read-only renderer (used by Useradmin Beat Runs tab — no check-in allowed)
 function BeatRunReadOnlyView({ runDate, salesman, companyId, hdr, embedded = false }) {

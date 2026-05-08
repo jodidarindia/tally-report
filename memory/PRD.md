@@ -350,6 +350,26 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Beat Run Monthly Report (May 2026 — NEW)
+- New admin/super_admin reporting tab inside **Salesman Performance → Beat Runs**
+- Toggle: **Daily History** (existing) | **Monthly Report** (NEW)
+- Endpoints (admin-only — salesman role gets `Admin access required`):
+  - `GET /api/salesman-orders/beat-run/monthly-report?month=YYYY-MM&salesman=X&trend_months=N`
+    - Returns: `summary` (planned/visited/unplanned/coverage_pct/run_days/salesmen_count),
+      `per_salesman[]`, `per_customer[]`, `daily_breakdown[]`, `trend[]` (last 6 months)
+  - `GET /api/salesman-orders/beat-run/monthly-report/export?month=YYYY-MM&format=excel|csv`
+    - **Excel**: 4-sheet `.xlsx` (Summary · By Salesman · By Customer · Raw Runs)
+    - **CSV**: flat raw visit rows (one per planned + one per unplanned)
+- UI features:
+  - Month picker (max = current month)
+  - 4 KPI cards (Coverage / Run Days / Planned / Unplanned)
+  - 6-month coverage trend with inline SVG sparkline + per-month percentages
+  - Per-salesman roll-up table (visited/planned/unplanned/coverage %)
+  - Per-customer visit-frequency table (top 20, expandable to all, with planned/unplanned badge)
+  - Daily breakdown table (date / day / planned / visited / unplanned / coverage %)
+  - CSV + Excel export buttons
+- Test file: `/app/backend/tests/test_iteration68_beat_run_monthly_report.py` (9 tests, all pass)
+
 ## Marketing Kit (May 2026 — NEW)
 - **15 Square Posters + 4 Carousels** — full HTML/CSS source at `/app/marketing-kit/posters.html`
 - Posters cover Hero, Beat Run, A/B/C/D Pareto, CA Corner parity, Backups+DPDP, Salesman Dashboard,
