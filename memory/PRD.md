@@ -350,6 +350,18 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## P&L Monthly Gross Profit Fix (May 2026 — BUG FIX)
+- **Bug**: Monthly P&L computed `gross_profit = m_sales − m_purchases` using voucher-header `total_amount` which **includes GST** → noisy & wrong; also missed Direct Income / Direct Expense entirely.
+- **Fix** (in `routes/ca_corner.py` monthly view branch):
+  - Net sales/purchases per month derived from `items[].amount` (pre-GST line totals, verified vs Tally PDF).
+  - Credit notes / debit notes deduct from monthly net sales / purchases respectively.
+  - Direct Income / Direct Expense + Sales-Account / Purchase-Account adjustments picked up from `journal_vouchers.ledger_entries` using `all_ledgers` parent-group / category metadata.
+  - Receipts surfaced from `receipt_vouchers` (voucher_type=Receipt only).
+- **New M-o-M change fields** on every monthly row: `sales_change_pct`, `purchases_change_pct`, `gp_change_pct` (1st month is null; rest is `round((curr − prev)/abs(prev) × 100, 1)`).
+- **New `notices[]`** flags monthly GP as **Trading Profit** (excl. stock movement) and explains why it may differ from the FY-total GP.
+- **Frontend** (`pages/CACorner.js`) — Monthly P&L table now shows three M-o-M sub-rows (Sales / Purchases / GP) with a tiny `MoMCell` (▲▼ + colour: green=good direction, red=bad). Notice rendered as italic footer below the table.
+- Test file: `/app/backend/tests/test_iteration69_pl_monthly_gp_fix.py` (6 tests, all pass).
+
 ## Beat Run Monthly Report (May 2026 — NEW)
 - New admin/super_admin reporting tab inside **Salesman Performance → Beat Runs**
 - Toggle: **Daily History** (existing) | **Monthly Report** (NEW)

@@ -220,6 +220,16 @@ const CashFlowView = ({ data }) => {
   );
 };
 
+const MoMCell = ({ pct, positiveGood = true }) => {
+  if (pct === null || pct === undefined) return <span className="text-slate-300">—</span>;
+  const isUp = pct > 0;
+  const good = positiveGood ? isUp : !isUp;
+  const color = Math.abs(pct) < 0.1 ? 'text-slate-400'
+    : good ? 'text-green-600' : 'text-red-500';
+  const arrow = Math.abs(pct) < 0.1 ? '·' : (isUp ? '▲' : '▼');
+  return <span className={color}>{arrow} {Math.abs(pct).toFixed(1)}%</span>;
+};
+
 const FlowSection = ({ title, items, net, color }) => {
   const colors = { blue: 'bg-blue-50 border-blue-200 text-blue-800', amber: 'bg-amber-50 border-amber-200 text-amber-800', purple: 'bg-purple-50 border-purple-200 text-purple-800' };
   return (
@@ -399,15 +409,30 @@ const PLView = ({ data, view, setView, sortField, sortDir, toggleSort }) => {
                 {data.monthly.map((m, i) => <td key={i} className="numeric text-green-700">{fmtRs(m.sales)}</td>)}
                 <td className="numeric font-bold text-green-700">{fmtRs(data.monthly.reduce((s, m) => s + m.sales, 0))}</td>
               </tr>
+              <tr className="bg-green-50/30 text-[11px]" data-testid="pl-monthly-sales-mom">
+                <td className="text-slate-500 italic pl-4">M-o-M change</td>
+                {data.monthly.map((m, i) => <td key={i} className="numeric"><MoMCell pct={m.sales_change_pct} positiveGood /></td>)}
+                <td></td>
+              </tr>
               <tr className="bg-red-50/50">
                 <td className="font-semibold text-red-600">Purchases</td>
                 {data.monthly.map((m, i) => <td key={i} className="numeric text-red-600">{fmtRs(m.purchases)}</td>)}
                 <td className="numeric font-bold text-red-600">{fmtRs(data.monthly.reduce((s, m) => s + m.purchases, 0))}</td>
               </tr>
+              <tr className="bg-red-50/30 text-[11px]" data-testid="pl-monthly-purchases-mom">
+                <td className="text-slate-500 italic pl-4">M-o-M change</td>
+                {data.monthly.map((m, i) => <td key={i} className="numeric"><MoMCell pct={m.purchases_change_pct} positiveGood={false} /></td>)}
+                <td></td>
+              </tr>
               <tr className="border-t-2 border-slate-300">
                 <td className="font-bold text-slate-900">Gross Profit</td>
                 {data.monthly.map((m, i) => <td key={i} className={`numeric font-semibold ${m.gross_profit >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmtRs(m.gross_profit)}</td>)}
                 <td className="numeric font-bold text-blue-700">{fmtRs(data.monthly.reduce((s, m) => s + m.gross_profit, 0))}</td>
+              </tr>
+              <tr className="text-[11px]" data-testid="pl-monthly-gp-mom">
+                <td className="text-slate-500 italic pl-4">M-o-M change</td>
+                {data.monthly.map((m, i) => <td key={i} className="numeric"><MoMCell pct={m.gp_change_pct} positiveGood /></td>)}
+                <td></td>
               </tr>
               <tr>
                 <td className="text-slate-600">Receipts</td>
@@ -416,6 +441,15 @@ const PLView = ({ data, view, setView, sortField, sortDir, toggleSort }) => {
               </tr>
             </tbody>
           </table>
+          {(data.notices || []).length > 0 && (
+            <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50 space-y-1" data-testid="pl-monthly-notices">
+              {data.notices.map((n, i) => (
+                <p key={i} className="text-[11px] text-slate-500 italic flex gap-1.5">
+                  <span className="text-blue-500">ⓘ</span><span>{n}</span>
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

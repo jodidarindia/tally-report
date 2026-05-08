@@ -404,29 +404,151 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             notices.append(f"Showing previous FY ({fy}). For 100% Tally parity, re-anchor by running the agent during that FY — current view is reconstructed from FY-scoped vouchers.")
         result["notices"] = notices
 
-        # Monthly view: per-month sales/purchases (uses voucher headers — used only
-        # for charting trends, not for absolute accuracy)
+        # Monthly view: per-month net sales/purchases (ex-GST), direct income/expense,
+        # and receipts. Sales/purchase vouchers store NET amounts in `items[].amount`
+        # (pre-GST line totals — verified against Tally PDF). GST/discount/round-off
+        # are in `ledger_entries` and contribute via journal_vouchers when applicable.
+        #
+        # Note: monthly GP excludes opening/closing stock movement (we don't have
+        # monthly stock snapshots) — flagged in `notices` so the user knows the
+        # FY-total `gross_profit` may differ by the stock delta.
         if view == "monthly":
-            sv = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "total_amount": 1}).to_list(50000)
-            pv = await db.purchase_vouchers.find(q, {"_id": 0, "voucher_date": 1, "total_amount": 1}).to_list(50000)
+            sales_v = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+            purchase_v = await db.purchase_vouchers.find(q, {"_id": 0}).to_list(50000)
+            cn_v = await db.credit_notes.find(q, {"_id": 0}).to_list(20000)
+            dn_v = await db.debit_notes.find(q, {"_id": 0}).to_list(5000)
+            jv_v = await db.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
+            rcpt_v = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
             if fy:
-                sv = filter_vouchers_by_fy(sv, fy)
-                pv = filter_vouchers_by_fy(pv, fy)
+                sales_v = filter_vouchers_by_fy(sales_v, fy)
+                purchase_v = filter_vouchers_by_fy(purchase_v, fy)
+                cn_v = filter_vouchers_by_fy(cn_v, fy)
+                dn_v = filter_vouchers_by_fy(dn_v, fy)
+                jv_v = filter_vouchers_by_fy(jv_v, fy)
+                rcpt_v = filter_vouchers_by_fy(rcpt_v, fy)
+
+            ledger_meta = {(l.get("ledger_name") or "").lower().strip():
+                           {"category": l.get("category", "other"),
+                            "parent_group": (l.get("parent_group") or "").lower().strip()}
+                           for l in all_ledgers}
+
+            # 12 buckets keyed by FY-month (Apr=4 ... Mar=3)
+            buckets = {m: {"net_sales": 0.0, "net_purchases": 0.0,
+                           "direct_income": 0.0, "direct_expense": 0.0,
+                           "receipts": 0.0}
+                       for m in range(1, 13)}
+
+            def _month_of(date_str):
+                if not date_str or len(date_str) < 10:
+                    return None
+                try:
+                    return int(date_str[5:7])
+                except (ValueError, TypeError):
+                    return None
+
+            def _items_total(v):
+                return sum(safe_num(it.get("amount", 0)) for it in (v.get("items") or []))
+
+            # Sales: items[].amount is pre-GST net (verified vs Tally PDF parity)
+            for sv in sales_v:
+                m = _month_of(sv.get("voucher_date", ""))
+                if not m:
+                    continue
+                buckets[m]["net_sales"] += _items_total(sv)
+
+            # Credit notes (sales returns) reduce net sales
+            for cn in cn_v:
+                m = _month_of(cn.get("voucher_date", ""))
+                if not m:
+                    continue
+                items_amt = _items_total(cn)
+                # Some credit-note types may not have items[]; fall back to total_amount
+                if items_amt == 0:
+                    items_amt = safe_num(cn.get("total_amount"))
+                buckets[m]["net_sales"] -= items_amt
+
+            # Purchases (mirror)
+            for pv in purchase_v:
+                m = _month_of(pv.get("voucher_date", ""))
+                if not m:
+                    continue
+                buckets[m]["net_purchases"] += _items_total(pv)
+            for dn in dn_v:
+                m = _month_of(dn.get("voucher_date", ""))
+                if not m:
+                    continue
+                items_amt = _items_total(dn)
+                if items_amt == 0:
+                    items_amt = safe_num(dn.get("total_amount"))
+                buckets[m]["net_purchases"] -= items_amt
+
+            # Direct Income / Direct Expense from journal_vouchers' ledger_entries.
+            # These are typically booked separately (e.g., "Bulk Discount Allowed",
+            # "Freight Inward") and don't appear in sales/purchase items.
+            for jv in jv_v:
+                m = _month_of(jv.get("voucher_date", ""))
+                if not m:
+                    continue
+                for entry in (jv.get("ledger_entries") or []):
+                    lname = (entry.get("ledger_name") or "").strip().lower()
+                    if not lname:
+                        continue
+                    meta = ledger_meta.get(lname, {})
+                    cat = meta.get("category", "other")
+                    parent = meta.get("parent_group", "")
+                    amt = safe_num(entry.get("amount"))
+                    is_dr = bool(entry.get("is_debit"))
+                    if parent == "sales accounts":
+                        buckets[m]["net_sales"] += (-amt if is_dr else amt)
+                    elif parent == "purchase accounts":
+                        buckets[m]["net_purchases"] += (amt if is_dr else -amt)
+                    elif cat == "direct_income":
+                        buckets[m]["direct_income"] += (-amt if is_dr else amt)
+                    elif cat == "direct_expense":
+                        buckets[m]["direct_expense"] += (amt if is_dr else -amt)
+
+            # Receipts (CR-side of receipt_vouchers, voucher_type=Receipt)
+            for r in rcpt_v:
+                if (r.get("voucher_type") or "").strip().lower() != "receipt":
+                    continue
+                m = _month_of(r.get("voucher_date", ""))
+                if m:
+                    buckets[m]["receipts"] += abs(safe_num(r.get("amount", 0)))
+
             months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
             month_nums = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
             monthly_data = []
+            prev_sales = prev_purch = prev_gp = None
             for m_name, m_num in zip(months, month_nums):
-                m_sales = sum(safe_num(v.get("total_amount")) for v in sv
-                              if len(v.get("voucher_date", "")) >= 10
-                              and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num)
-                m_purchases = sum(safe_num(v.get("total_amount")) for v in pv
-                                  if len(v.get("voucher_date", "")) >= 10
-                                  and int(v.get("voucher_date", "0000-00-00")[5:7] or 0) == m_num)
-                monthly_data.append({"month": m_name,
-                                     "sales": round(m_sales, 2),
-                                     "purchases": round(m_purchases, 2),
-                                     "gross_profit": round(m_sales - m_purchases, 2)})
+                b = buckets[m_num]
+                m_sales_net = b["net_sales"] + b["direct_income"]
+                m_purchases_net = b["net_purchases"] + b["direct_expense"]
+                m_gp = m_sales_net - m_purchases_net
+
+                def _pct(curr, prev):
+                    if prev is None or abs(prev) < 0.01:
+                        return None
+                    return round(((curr - prev) / abs(prev)) * 100, 1)
+
+                row = {
+                    "month": m_name,
+                    "sales": round(m_sales_net, 2),
+                    "purchases": round(m_purchases_net, 2),
+                    "gross_profit": round(m_gp, 2),
+                    "receipts": round(b["receipts"], 2),
+                    "sales_change_pct": _pct(m_sales_net, prev_sales),
+                    "purchases_change_pct": _pct(m_purchases_net, prev_purch),
+                    "gp_change_pct": _pct(m_gp, prev_gp),
+                }
+                monthly_data.append(row)
+                prev_sales = m_sales_net
+                prev_purch = m_purchases_net
+                prev_gp = m_gp
+
             result["monthly"] = monthly_data
+            result["notices"] = result.get("notices", []) + [
+                "Monthly Gross Profit shown is Trading Profit (Net Sales − Net Purchases, ex-GST). It excludes opening/closing stock movement, so the FY-total Gross Profit above (which includes stock and matches Tally) may differ.",
+            ]
 
         return APIResponse(success=True, data=result)
     except Exception as e:
