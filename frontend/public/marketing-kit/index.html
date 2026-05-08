@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>FLOWRA — Social Media Kit (15 Posters + 4 Carousels)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
+  body{background:#0a0a0f;color:#fff;padding:40px 20px}
+  h1.kit-title{font-family:'Outfit';font-weight:900;font-size:32px;margin-bottom:6px;letter-spacing:-0.02em}
+  .kit-sub{color:#8b8b9c;font-size:14px;margin-bottom:32px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(560px,1fr));gap:32px;max-width:1840px;margin:0 auto}
+  .poster-wrap{background:#13131c;border-radius:14px;padding:18px;border:1px solid #1f1f2e}
+  .poster-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:11px;color:#8b8b9c}
+  .poster-meta b{color:#fff;font-weight:600}
+  .download-hint{color:#0052FF;font-size:11px;font-weight:600}
+  /* The poster itself — fixed 1080×1080 — scaled down with CSS for browsing */
+  .poster{width:1080px;height:1080px;border-radius:0;overflow:hidden;position:relative;transform-origin:top left;transform:scale(0.5);margin-bottom:-540px}
+  .story{width:1080px;height:1920px;transform:scale(0.27);margin-bottom:-1402px}
+
+  /* === Reusable atoms === */
+  .brand-row{display:flex;align-items:center;justify-content:space-between;font-size:18px;font-weight:600;letter-spacing:-0.01em}
+  .wordmark{font-family:'Outfit';font-weight:900;font-size:36px;letter-spacing:-0.04em}
+  .pill{display:inline-block;font-size:13px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;padding:7px 14px;border-radius:999px;border:1.5px solid currentColor}
+  .footer-row{position:absolute;bottom:48px;left:64px;right:64px;display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;font-weight:500;color:rgba(255,255,255,.85)}
+  .footer-row .lhs{display:flex;flex-direction:column;gap:6px}
+  .footer-row .lhs .url{font-weight:700;font-size:22px;letter-spacing:-0.01em;color:#fff}
+  .footer-row .rhs{display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-size:14px}
+  .footer-row .wa{background:#25D366;color:#000;padding:9px 16px;border-radius:8px;font-weight:800;font-size:14px;letter-spacing:0.02em;display:inline-flex;gap:6px;align-items:center}
+  .grain{position:absolute;inset:0;opacity:.06;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");pointer-events:none}
+
+  /* ============== POSTER 1 — Hero ============== */
+  .p1{background:radial-gradient(ellipse at top right,#0a2bff 0%,#000020 60%,#000010 100%);padding:64px;color:#fff;display:flex;flex-direction:column;justify-content:space-between}
+  .p1 h1{font-family:'Outfit';font-weight:900;font-size:108px;line-height:.95;letter-spacing:-0.045em;color:#fff;margin-top:80px}
+  .p1 h1 span{color:#7AB7FF}
+  .p1 .sub{font-size:26px;color:rgba(255,255,255,.72);max-width:780px;margin-top:30px;line-height:1.4;font-weight:400}
+  .p1 .pills{display:flex;gap:10px;margin-top:36px;flex-wrap:wrap}
+  .p1 .pills .pl{font-size:13px;font-weight:700;padding:8px 16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:999px;color:#fff}
+
+  /* ============== POSTER 2 — Beat Plan ============== */
+  .p2{background:#fff;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p2 .pill{color:#0052FF;background:#EFF4FF;border-color:transparent}
+  .p2 h1{font-family:'Outfit';font-weight:800;font-size:104px;line-height:.97;letter-spacing:-0.04em;margin-top:32px}
+  .p2 h1 span{color:#0052FF}
+  .p2 .phone{position:absolute;right:48px;bottom:160px;width:340px;height:680px;background:linear-gradient(135deg,#0a0a14,#1c1f3a);border-radius:42px;border:8px solid #fff;box-shadow:0 60px 120px rgba(0,0,0,.25);overflow:hidden}
+  .p2 .phone-body{padding:36px 22px}
+  .p2 .phone .ph-h{color:#fff;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em}
+  .p2 .phone .ph-t{color:#fff;font-size:22px;font-weight:800;margin-top:8px}
+  .p2 .phone .ph-row{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px;margin-top:12px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:12px}
+  .p2 .phone .ph-row.done{background:#0BBE8C;color:#000;border-color:#0BBE8C}
+  .p2 .phone .ph-row .check{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900}
+  .p2 .phone .ph-row.done .check{background:#000;color:#0BBE8C}
+  .p2 .footer-row{color:#0a0a14}
+  .p2 .footer-row .url{color:#000}
+  .p2 .footer-row .wa{background:#25D366;color:#000}
+
+  /* ============== POSTER 3 — A/B/C/D Pareto ============== */
+  .p3{background:linear-gradient(160deg,#1A002B 0%,#0a0a14 100%);color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:flex-start}
+  .p3 .pill{color:#FFB347;border-color:#FFB347}
+  .p3 h1{font-family:'Outfit';font-weight:900;font-size:120px;line-height:1;letter-spacing:-0.05em;margin-top:36px}
+  .p3 .num{font-family:'Outfit';font-weight:900;font-size:240px;line-height:.85;letter-spacing:-0.06em;background:linear-gradient(135deg,#FFB347,#FF6B6B);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:20px}
+  .p3 .sub{font-size:32px;color:rgba(255,255,255,.78);font-weight:500;margin-top:14px}
+  .p3 .pills{display:flex;gap:14px;margin-top:48px;flex-wrap:wrap}
+  .p3 .pills .pl{font-family:'Outfit';font-weight:900;font-size:42px;width:80px;height:80px;border-radius:18px;display:flex;align-items:center;justify-content:center}
+  .p3 .pills .pl.A{background:#10B981;color:#000}
+  .p3 .pills .pl.B{background:#3B82F6;color:#fff}
+  .p3 .pills .pl.C{background:#F59E0B;color:#000}
+  .p3 .pills .pl.D{background:#6B7280;color:#fff}
+
+  /* ============== POSTER 4 — CA Corner Parity ============== */
+  .p4{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p4 .pill{color:#10B981;border-color:#10B981}
+  .p4 h1{font-family:'Outfit';font-weight:900;font-size:96px;line-height:1;letter-spacing:-0.04em;margin-top:32px}
+  .p4 h1 span{color:#10B981}
+  .p4 .row{display:flex;gap:14px;align-items:center;font-size:36px;color:#fff;font-weight:600;margin-top:32px;padding:18px 24px;background:rgba(16,185,129,.08);border:1px solid #10B98140;border-radius:14px}
+  .p4 .row .v{font-family:'Outfit';font-weight:800;color:#10B981;font-size:38px}
+  .p4 .row .check{width:36px;height:36px;border-radius:50%;background:#10B981;color:#000;display:flex;align-items:center;justify-content:center;font-weight:900}
+
+  /* ============== POSTER 5 — Backups & DPDP ============== */
+  .p5{background:linear-gradient(135deg,#001A6E 0%,#0052FF 100%);color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+  .p5::before{content:"";position:absolute;top:-200px;right:-200px;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.15) 0%,transparent 70%)}
+  .p5 .pill{color:#fff;border-color:rgba(255,255,255,.5)}
+  .p5 h1{font-family:'Outfit';font-weight:900;font-size:104px;line-height:.97;letter-spacing:-0.04em;margin-top:32px}
+  .p5 .sub{font-size:32px;color:rgba(255,255,255,.85);max-width:880px;font-weight:500;margin-top:24px;line-height:1.35}
+  .p5 .badge{display:inline-flex;align-items:center;gap:14px;padding:18px 28px;border-radius:18px;background:rgba(255,255,255,.16);backdrop-filter:blur(20px);border:1.5px solid rgba(255,255,255,.32);margin-top:36px;font-size:22px;font-weight:700}
+  .p5 .badge .ic{font-size:36px}
+
+  /* ============== POSTER 6 — Salesman Dashboard ============== */
+  .p6{background:#fff;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p6 .pill{color:#0052FF;background:#EFF4FF;border-color:transparent}
+  .p6 h1{font-family:'Outfit';font-weight:800;font-size:104px;line-height:.97;letter-spacing:-0.04em;margin-top:24px}
+  .p6 h1 span{color:#0052FF}
+  .p6 .kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:48px}
+  .p6 .kpi{padding:24px;border:2px solid #0a0a14;border-radius:14px;background:#fff}
+  .p6 .kpi .lbl{font-size:14px;font-weight:700;color:#5b5b6c;letter-spacing:0.08em;text-transform:uppercase}
+  .p6 .kpi .val{font-family:'Outfit';font-weight:900;font-size:60px;letter-spacing:-0.03em;margin-top:6px}
+  .p6 .kpi .val.green{color:#10B981}
+  .p6 .footer-row{color:#0a0a14}
+  .p6 .footer-row .url{color:#000}
+
+  /* ============== POSTER 7 — Dispatch Kanban ============== */
+  .p7{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p7 .pill{color:#FCD34D;border-color:#FCD34D}
+  .p7 h1{font-family:'Outfit';font-weight:900;font-size:96px;line-height:1;letter-spacing:-0.04em;margin-top:24px}
+  .p7 .lanes{display:flex;gap:14px;margin-top:36px}
+  .p7 .lane{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;text-align:center}
+  .p7 .lane .lh{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.16em;margin-bottom:14px;color:rgba(255,255,255,.7)}
+  .p7 .lane .card{height:60px;border-radius:8px;margin-bottom:8px}
+  .p7 .lane.l1 .lh{color:#94A3B8} .p7 .lane.l1 .card{background:linear-gradient(135deg,#475569,#334155)}
+  .p7 .lane.l2 .lh{color:#FCD34D} .p7 .lane.l2 .card{background:linear-gradient(135deg,#FCD34D,#F59E0B)}
+  .p7 .lane.l3 .lh{color:#3B82F6} .p7 .lane.l3 .card{background:linear-gradient(135deg,#3B82F6,#1E40AF)}
+  .p7 .lane.l4 .lh{color:#A78BFA} .p7 .lane.l4 .card{background:linear-gradient(135deg,#A78BFA,#7C3AED)}
+  .p7 .lane.l5 .lh{color:#10B981} .p7 .lane.l5 .card{background:linear-gradient(135deg,#10B981,#059669)}
+
+  /* ============== POSTER 8 — AI Reports ============== */
+  .p8{background:linear-gradient(135deg,#1E1B4B 0%,#0a0a14 100%);color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p8 .pill{color:#A78BFA;border-color:#A78BFA}
+  .p8 h1{font-family:'Outfit';font-weight:900;font-size:96px;line-height:1;letter-spacing:-0.04em;margin-top:32px}
+  .p8 h1 .glow{color:#A78BFA;text-shadow:0 0 80px rgba(167,139,250,.5)}
+  .p8 .chat{display:flex;flex-direction:column;gap:14px;margin-top:38px}
+  .p8 .bubble{padding:22px 28px;border-radius:18px;font-size:24px;font-weight:500;max-width:78%;line-height:1.35}
+  .p8 .bubble.user{align-self:flex-end;background:#0052FF;color:#fff;border-bottom-right-radius:4px}
+  .p8 .bubble.ai{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-bottom-left-radius:4px}
+  .p8 .bubble.ai b{color:#A78BFA}
+
+  /* ============== POSTER 9 — Outstanding ============== */
+  .p9{background:#FFF8E1;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p9 .pill{color:#B45309;background:#FED7AA;border-color:transparent}
+  .p9 h1{font-family:'Outfit';font-weight:800;font-size:108px;line-height:.97;letter-spacing:-0.045em;margin-top:24px}
+  .p9 h1 span{color:#B45309;text-decoration:line-through;text-decoration-color:#DC2626;text-decoration-thickness:8px}
+  .p9 h2{font-family:'Outfit';font-weight:800;font-size:72px;letter-spacing:-0.04em;color:#0a0a14;margin-top:20px}
+  .p9 h2 b{color:#10B981}
+  .p9 .footer-row{color:#0a0a14}
+  .p9 .footer-row .url{color:#000}
+
+  /* ============== POSTER 10 — Tally Sync Security ============== */
+  .p10{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p10 .pill{color:#10B981;border-color:#10B981}
+  .p10 h1{font-family:'Outfit';font-weight:900;font-size:104px;line-height:.95;letter-spacing:-0.045em;margin-top:32px}
+  .p10 h1 .strike{text-decoration:line-through;color:#5b5b6c;text-decoration-color:#DC2626}
+  .p10 .features{display:flex;flex-direction:column;gap:14px;margin-top:36px}
+  .p10 .feat{display:flex;gap:18px;align-items:center;font-size:26px;font-weight:600}
+  .p10 .feat .ic{width:44px;height:44px;border-radius:10px;background:#10B981;color:#000;display:flex;align-items:center;justify-content:center;font-weight:900;flex-shrink:0}
+
+  /* ============== POSTER 11 — Made in India ============== */
+  .p11{background:linear-gradient(135deg,#FF6B35 0%,#FF9A3C 100%);color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+  .p11::before{content:"🇮🇳";position:absolute;font-size:600px;right:-100px;top:60px;opacity:.18;line-height:1}
+  .p11 .pill{color:#0a0a14;border-color:rgba(0,0,0,.4)}
+  .p11 h1{font-family:'Outfit';font-weight:900;font-size:128px;line-height:.92;letter-spacing:-0.05em;margin-top:32px;color:#0a0a14;position:relative;z-index:1}
+  .p11 .sub{font-size:28px;font-weight:600;color:rgba(0,0,0,.78);max-width:780px;margin-top:30px;line-height:1.35;position:relative;z-index:1}
+  .p11 .footer-row{color:#0a0a14}
+  .p11 .footer-row .url{color:#000}
+
+  /* ============== POSTER 12 — Pricing ROI ============== */
+  .p12{background:#fff;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p12 .pill{color:#0052FF;background:#EFF4FF;border-color:transparent}
+  .p12 .price{font-family:'Outfit';font-weight:900;font-size:340px;line-height:.85;letter-spacing:-0.06em;color:#0052FF;margin-top:24px}
+  .p12 .price .small{font-size:60px;color:#0a0a14;font-weight:700;letter-spacing:-0.02em}
+  .p12 h1{font-family:'Outfit';font-weight:800;font-size:56px;line-height:1.05;letter-spacing:-0.03em;margin-top:8px}
+  .p12 h1 .strike{text-decoration:line-through;color:#9ca3af;text-decoration-color:#DC2626}
+  .p12 .footer-row{color:#0a0a14}
+  .p12 .footer-row .url{color:#000}
+
+  /* ============== POSTER 13 — Testimonial ============== */
+  .p13{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p13 .pill{color:#FCD34D;border-color:#FCD34D}
+  .p13 .quote{font-family:'Outfit';font-weight:600;font-size:64px;line-height:1.15;letter-spacing:-0.025em;margin-top:36px;color:#fff}
+  .p13 .quote::before{content:"“";font-size:160px;line-height:.6;color:#FCD34D;font-family:'Outfit';font-weight:800;display:block;margin-bottom:0}
+  .p13 .by{font-size:22px;color:rgba(255,255,255,.66);margin-top:48px}
+  .p13 .by b{color:#fff;font-size:26px;font-weight:700;display:block}
+
+  /* ============== POSTER 14 — Try Free CTA ============== */
+  .p14{background:linear-gradient(135deg,#10B981 0%,#0BBE8C 100%);color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .p14 .pill{color:#0a0a14;border-color:rgba(0,0,0,.5)}
+  .p14 h1{font-family:'Outfit';font-weight:900;font-size:138px;line-height:.92;letter-spacing:-0.05em;margin-top:32px}
+  .p14 .sub{font-size:32px;font-weight:600;color:rgba(0,0,0,.78);max-width:880px;margin-top:30px;line-height:1.3}
+  .p14 .cta{display:inline-block;background:#0a0a14;color:#fff;padding:24px 48px;font-size:32px;font-weight:800;border-radius:14px;margin-top:30px;letter-spacing:-0.01em}
+  .p14 .footer-row{color:#0a0a14}
+  .p14 .footer-row .url{color:#000}
+
+  /* ============== POSTER 15 — WhatsApp direct ============== */
+  .p15{background:#075E54;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+  .p15::before{content:"";position:absolute;top:-200px;right:-200px;width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(37,211,102,.4) 0%,transparent 70%)}
+  .p15 .pill{color:#25D366;border-color:#25D366}
+  .p15 h1{font-family:'Outfit';font-weight:900;font-size:108px;line-height:.95;letter-spacing:-0.045em;margin-top:32px}
+  .p15 h1 span{color:#25D366}
+  .p15 .number-card{display:inline-block;background:#25D366;color:#000;padding:32px 44px;border-radius:18px;font-family:'Outfit';font-weight:900;font-size:60px;letter-spacing:-0.02em;margin-top:36px;box-shadow:0 30px 80px rgba(37,211,102,.3)}
+  .p15 .number-card .lbl{font-size:14px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;display:block;margin-bottom:6px}
+
+  /* ============== CAROUSEL SHARED ============== */
+  .car-row{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px}
+  .car-slide{flex-shrink:0;width:560px;height:560px;border-radius:8px;overflow:hidden;position:relative}
+  .car-slide .inner{width:1080px;height:1080px;transform:scale(0.518);transform-origin:top left}
+  .car-meta{font-size:11px;color:#8b8b9c;font-weight:600;display:flex;gap:8px;align-items:center;margin-top:6px}
+  .car-meta .num{background:#0052FF;color:#fff;font-weight:800;padding:2px 8px;border-radius:6px;font-size:10px}
+
+  /* ============== CAROUSEL 1 — 5 ways pays back ============== */
+  .c1s{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .c1s .num{font-family:'Outfit';font-weight:900;font-size:340px;line-height:.85;letter-spacing:-0.05em;background:linear-gradient(135deg,#0052FF,#7AB7FF);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:20px}
+  .c1s h2{font-family:'Outfit';font-weight:800;font-size:72px;line-height:1.05;letter-spacing:-0.035em;margin-top:0px}
+  .c1s p{font-size:30px;line-height:1.35;color:rgba(255,255,255,.7);max-width:880px;margin-top:24px;font-weight:500}
+  .c1s.intro{background:linear-gradient(135deg,#001A6E,#0052FF)}
+  .c1s.intro h2{font-size:128px;line-height:.92;margin-top:60px}
+  .c1s.intro h2 span{color:#FCD34D}
+  .c1s.outro{background:linear-gradient(135deg,#10B981,#0BBE8C);color:#0a0a14}
+  .c1s.outro h2{font-size:108px;line-height:.95;color:#0a0a14;margin-top:60px}
+  .c1s.outro p{color:rgba(0,0,0,.78)}
+  .c1s.outro .footer-row{color:#0a0a14}
+  .c1s.outro .footer-row .url{color:#000}
+
+  /* ============== CAROUSEL 2 — Beat Run 60 sec ============== */
+  .c2s{background:#fff;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .c2s .step{font-family:'Outfit';font-weight:900;font-size:200px;line-height:.85;color:#0052FF;margin-top:20px;letter-spacing:-0.05em}
+  .c2s h2{font-family:'Outfit';font-weight:800;font-size:78px;line-height:1.04;letter-spacing:-0.035em}
+  .c2s p{font-size:28px;line-height:1.4;color:#5b5b6c;max-width:880px;margin-top:18px;font-weight:500}
+  .c2s.cover{background:linear-gradient(160deg,#0052FF,#001A6E);color:#fff}
+  .c2s.cover h2{font-size:128px;line-height:.92;margin-top:60px}
+  .c2s .footer-row{color:#0a0a14}
+  .c2s .footer-row .url{color:#000}
+  .c2s.cover .footer-row{color:#fff}
+  .c2s.cover .footer-row .url{color:#fff}
+
+  /* ============== CAROUSEL 3 — Tally se data, FLOWRA se decisions (bilingual) ============== */
+  .c3s{background:#FFF8E1;color:#0a0a14;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .c3s h2{font-family:'Outfit';font-weight:800;font-size:88px;line-height:1.04;letter-spacing:-0.035em;margin-top:24px}
+  .c3s .em{color:#B45309;font-weight:900}
+  .c3s p{font-size:30px;line-height:1.4;color:#5b5b6c;max-width:880px;margin-top:24px;font-weight:500}
+  .c3s.cover{background:linear-gradient(135deg,#FF6B35,#FF9A3C);color:#0a0a14}
+  .c3s.cover h2{font-size:120px;line-height:.94}
+  .c3s.cover .em{color:#0a0a14}
+  .c3s .footer-row{color:#0a0a14}
+  .c3s .footer-row .url{color:#000}
+
+  /* ============== CAROUSEL 4 — A/B/C/D explained ============== */
+  .c4s{background:#0a0a14;color:#fff;padding:64px;display:flex;flex-direction:column;justify-content:space-between}
+  .c4s .big{font-family:'Outfit';font-weight:900;font-size:280px;line-height:.85;letter-spacing:-0.05em;margin-top:24px}
+  .c4s .big.A{color:#10B981} .c4s .big.B{color:#3B82F6} .c4s .big.C{color:#F59E0B} .c4s .big.D{color:#9CA3AF}
+  .c4s h2{font-family:'Outfit';font-weight:800;font-size:64px;line-height:1.04;letter-spacing:-0.03em;margin-top:8px}
+  .c4s p{font-size:26px;line-height:1.4;color:rgba(255,255,255,.7);max-width:880px;margin-top:18px;font-weight:500}
+  .c4s.cover{background:linear-gradient(160deg,#1A002B,#0a0a14)}
+  .c4s.cover h2{font-size:108px;line-height:.95;margin-top:48px}
+  .c4s.cover .big{display:flex;gap:16px;font-size:160px}
+
+  .nav{position:sticky;top:0;background:#0a0a0f;padding:16px 0;margin-bottom:24px;z-index:10;border-bottom:1px solid #1f1f2e}
+  .nav-tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .nav-tabs a{font-size:12px;color:#8b8b9c;text-decoration:none;padding:6px 12px;border-radius:6px;border:1px solid #1f1f2e}
+  .nav-tabs a:hover{background:#1f1f2e;color:#fff}
+
+  .download-btn{position:absolute;top:8px;right:8px;background:#0052FF;color:#fff;border:none;font-size:11px;font-weight:700;padding:6px 12px;border-radius:6px;cursor:pointer;z-index:10}
+
+  @media print{body{background:#fff}.kit-title,.kit-sub,.poster-meta,.nav{display:none}.poster{transform:none;margin:0;page-break-after:always}.grid{display:block}.poster-wrap{padding:0;background:none;border:0}}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <h1 class="kit-title">FLOWRA — Social Media Kit</h1>
+  <p class="kit-sub">15 posters + 4 carousels · 1080×1080 · Drag any poster to desktop, or run <code>python3 /app/scripts/export_posters.py</code> to bulk-export PNGs.</p>
+  <div class="nav-tabs">
+    <a href="#posters">Posters (15)</a>
+    <a href="#carousels">Carousels (4)</a>
+    <a href="#captions">Captions →</a>
+  </div>
+</div>
+
+<h2 class="kit-title" id="posters">Posters</h2>
+<p class="kit-sub">Each is exported at 1080×1080. View page is scaled 50% for browsing.</p>
+<div class="grid">
+
+  <!-- POSTER 1 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P1 · Hero / Brand intro</b><span>1080×1080</span></div>
+    <div class="poster p1" id="p1">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">v3.1 · MAY 2026</span></div>
+      <div>
+        <h1>Tally + Busy<br/>ka data.<br/><span>Aapke business ki<br/>bhasha mein.</span></h1>
+        <p class="sub">Real-time analytics · Beat plans · CA Corner with Tally-rupee parity · DPDP-grade backups · AI insights powered by GPT-5.2.</p>
+        <div class="pills">
+          <span class="pl">★ Tally Prime</span>
+          <span class="pl">★ Busy 21/22</span>
+          <span class="pl">★ Made in India</span>
+        </div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Built for Indian SMEs</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span>support@flowralive.in</span><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 2 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P2 · Beat Run Today</b><span>1080×1080</span></div>
+    <div class="poster p2" id="p2">
+      <div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">NEW · BEAT RUN</span></div>
+      <h1>Tap.<br/>Confirm.<br/><span>Track.</span></h1>
+      <div class="phone">
+        <div class="phone-body">
+          <div class="ph-h">Beat Run · Wed</div>
+          <div class="ph-t">14 of 18 visited</div>
+          <div class="ph-row done"><span>Ankit Automobiles</span><span class="check">✓</span></div>
+          <div class="ph-row done"><span>Ravi Motors</span><span class="check">✓</span></div>
+          <div class="ph-row done"><span>Shree Krishna Ent.</span><span class="check">✓</span></div>
+          <div class="ph-row"><span>Sharma Hardware</span><span class="check">○</span></div>
+          <div class="ph-row"><span>+ Add unplanned visit</span><span class="check">+</span></div>
+        </div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Daily salesman beat-sheet — auto-built from your plan</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 3 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P3 · A/B/C/D Pareto</b><span>1080×1080</span></div>
+    <div class="poster p3" id="p3">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">INVENTORY · NEW</span></div>
+      <div class="num">80/20</div>
+      <h1>revenue.<br/>20% items.</h1>
+      <p class="sub">Find them in seconds with Auto-ABC.</p>
+      <div class="pills">
+        <span class="pl A">A</span>
+        <span class="pl B">B</span>
+        <span class="pl C">C</span>
+        <span class="pl D">D</span>
+      </div>
+      <div class="footer-row" style="position:absolute;bottom:48px;left:64px;right:64px"><div class="lhs"><span>Pareto categorisation across your full catalogue</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 4 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P4 · CA Corner Tally Parity</b><span>1080×1080</span></div>
+    <div class="poster p4" id="p4">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">CA CORNER</span></div>
+      <h1>Balance Sheet<br/>matches Tally<br/><span>to the rupee.</span></h1>
+      <div class="row"><span class="check">✓</span><span>Tally BS  ₹4,82,71,400</span></div>
+      <div class="row"><span class="check">✓</span><span>FLOWRA BS  <span class="v">₹4,82,71,400</span></span></div>
+      <div class="row"><span class="check">✓</span><span>P&amp;L · Income · Expenses · all reconciled</span></div>
+      <div class="footer-row"><div class="lhs"><span>Sundry Creditors · Stock-in-Hand · auto-reconciled</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 5 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P5 · Backups & DPDP</b><span>1080×1080</span></div>
+    <div class="poster p5" id="p5">
+      <div class="grain"></div>
+      <div class="brand-row" style="position:relative;z-index:1"><span class="wordmark">FLOWRA</span><span class="pill">DPDP COMPLIANT</span></div>
+      <div style="position:relative;z-index:1">
+        <h1>Your data.<br/>Your rights.<br/>One-click<br/>export.</h1>
+        <p class="sub">DPDP Act 2023 · Daily encrypted MongoDB dumps · Self-service ZIP download for tenant admins.</p>
+        <div class="badge"><span class="ic">🛡️</span><span>AES-256 · Bank-grade · Made in India</span></div>
+      </div>
+      <div class="footer-row" style="position:absolute;z-index:2"><div class="lhs"><span>Daily backups · 30-day retention · Audit trail</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 6 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P6 · Salesman Dashboard</b><span>1080×1080</span></div>
+    <div class="poster p6" id="p6">
+      <div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">SALESMAN APP</span></div>
+      <h1>Achievement %.<br/>YTD. Target.<br/><span>Ek screen mein.</span></h1>
+      <div class="kpis">
+        <div class="kpi"><div class="lbl">Achieved</div><div class="val">₹52.3L</div></div>
+        <div class="kpi"><div class="lbl">Expected YTD</div><div class="val">₹48.0L</div></div>
+        <div class="kpi"><div class="lbl">Monthly Target</div><div class="val">₹8.5L</div></div>
+        <div class="kpi"><div class="lbl">Achievement</div><div class="val green">109%</div></div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>FY-aware target tracking · Customer-wise drill-down</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 7 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P7 · Dispatch Terminal</b><span>1080×1080</span></div>
+    <div class="poster p7" id="p7">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">DISPATCH</span></div>
+      <h1>Pending → Packed →<br/>Loaded → Out →<br/>Delivered.</h1>
+      <div class="lanes">
+        <div class="lane l1"><div class="lh">Pending</div><div class="card"></div><div class="card"></div></div>
+        <div class="lane l2"><div class="lh">Packed</div><div class="card"></div><div class="card"></div><div class="card"></div></div>
+        <div class="lane l3"><div class="lh">Loaded</div><div class="card"></div><div class="card"></div></div>
+        <div class="lane l4"><div class="lh">Out</div><div class="card"></div></div>
+        <div class="lane l5"><div class="lh">Delivered</div><div class="card"></div><div class="card"></div></div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Kanban board · LR tracking · Close-of-Day PDF</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 8 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P8 · AI Reports</b><span>1080×1080</span></div>
+    <div class="poster p8" id="p8">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">AI · GPT-5.2</span></div>
+      <h1>Ask in English.<br/>Get answers <span class="glow">in seconds.</span></h1>
+      <div class="chat">
+        <div class="bubble user">Last 3 months mein top 5 customers kon hain?</div>
+        <div class="bubble ai"><b>FLOWRA →</b> 1. Ankit Automobiles ₹12.5L · 2. Shree Krishna ₹9.8L · 3. National Auto ₹6.2L · 4. Ravi Motors ₹5.4L · 5. Sharma Hardware ₹4.1L. <b>Want me to email this report?</b></div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Natural-language queries on your full Tally + Busy data</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 9 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P9 · Outstanding CRM</b><span>1080×1080</span></div>
+    <div class="poster p9" id="p9">
+      <div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">CRM · Outstanding</span></div>
+      <div>
+        <h1><span>Stop chasing</span><br/>payments.</h1>
+        <h2>Let FLOWRA <b>flag them.</b></h2>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Payment Behaviour Score · Aging buckets · Auto-flagged overdues</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 10 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P10 · Security / 5-min setup</b><span>1080×1080</span></div>
+    <div class="poster p10" id="p10">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">SETUP · 5 MIN</span></div>
+      <h1>Tally <span class="strike">on internet?</span><br/>Never.</h1>
+      <div class="features">
+        <div class="feat"><span class="ic">✓</span><span>Encrypted local desktop agent</span></div>
+        <div class="feat"><span class="ic">✓</span><span>Tally / Busy never exposed online</span></div>
+        <div class="feat"><span class="ic">✓</span><span>AES-256 · bcrypt · JWT auth</span></div>
+        <div class="feat"><span class="ic">✓</span><span>5-minute setup · zero Tally changes</span></div>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>One-click install · works on Tally Prime · ERP 9 · Busy 21/22</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 11 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P11 · Made in India</b><span>1080×1080</span></div>
+    <div class="poster p11" id="p11">
+      <div class="brand-row" style="position:relative;z-index:1"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">JODIDAR INDIA</span></div>
+      <div style="position:relative;z-index:1">
+        <h1>Made in India.<br/>For Indian SMEs.<br/>Only.</h1>
+        <p class="sub">FY-aware reports · GST-compliant · DPDP Act 2023 ready · Hindi-English support · Indian rupee throughout.</p>
+      </div>
+      <div class="footer-row" style="position:relative;z-index:1"><div class="lhs"><span>Built in Raipur · For 1.4 crore SMEs across Bharat</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 12 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P12 · Pricing ROI</b><span>1080×1080</span></div>
+    <div class="poster p12" id="p12">
+      <div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">FROM · ₹999</span></div>
+      <div>
+        <div class="price">₹33<span class="small">/day</span></div>
+        <h1><span class="strike">Hire an analyst.</span><br/>Subscribe to FLOWRA.</h1>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>Less than your CA's morning chai bill · ₹999/mo Starter</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 13 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P13 · Testimonial</b><span>1080×1080</span></div>
+    <div class="poster p13" id="p13">
+      <div class="grain"></div>
+      <div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">★★★★★ TESTIMONIAL</span></div>
+      <div class="quote">AI reports save us 3 hours daily. Tally / Busy sync is seamless — our data is always up to date.</div>
+      <div class="by"><b>Vikram Patel</b>National Engineering Works · Raipur, CG</div>
+      <div class="footer-row"><div class="lhs"><span>Trusted by Indian distributors, retailers, manufacturers</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 14 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P14 · Try Free CTA</b><span>1080×1080</span></div>
+    <div class="poster p14" id="p14">
+      <div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">14-DAY FREE TRIAL</span></div>
+      <div>
+        <h1>Try it on<br/>your own data.</h1>
+        <p class="sub">No credit card. No commitments. Connect Tally or Busy in 5 minutes and see your first dashboard light up.</p>
+        <span class="cta">flowralive.in → Start Free →</span>
+      </div>
+      <div class="footer-row"><div class="lhs"><span>14 days · all features · cancel anytime</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div>
+    </div>
+  </div>
+
+  <!-- POSTER 15 -->
+  <div class="poster-wrap">
+    <div class="poster-meta"><b>P15 · WhatsApp Direct</b><span>1080×1080</span></div>
+    <div class="poster p15" id="p15">
+      <div class="grain"></div>
+      <div class="brand-row" style="position:relative;z-index:1"><span class="wordmark">FLOWRA</span><span class="pill">3-MIN WHATSAPP DEMO</span></div>
+      <div style="position:relative;z-index:1">
+        <h1>Got 3 minutes?<br/><span>WhatsApp us.</span></h1>
+        <div class="number-card"><span class="lbl">DM Us On WhatsApp</span>+91 81204 70018</div>
+      </div>
+      <div class="footer-row" style="position:relative;z-index:1"><div class="lhs"><span>Send "Hi" → live demo on a screen-share in 3 mins</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span>support@flowralive.in</span></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============== CAROUSELS ============== -->
+
+<h2 class="kit-title" id="carousels" style="margin-top:60px">Carousels</h2>
+<p class="kit-sub">4 × multi-slide carousels (each 1080×1080). Post as IG carousel or FB album.</p>
+
+<div style="max-width:1840px;margin:0 auto;display:flex;flex-direction:column;gap:36px">
+
+  <!-- CAROUSEL 1: 5 ways pays back -->
+  <div>
+    <div class="car-meta"><span class="num">C1</span><b style="color:#fff">5 ways FLOWRA pays for itself in week 1</b><span>· 7 slides</span></div>
+    <div class="car-row" id="c1">
+      <!-- Cover -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s intro"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">CAROUSEL</span></div><h2>5 ways FLOWRA pays for itself in <span>week 1.</span></h2><div class="footer-row"><div class="lhs"><span class="url">Swipe →</span></div></div></div></div></div>
+      <!-- Slide 1 -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">1 / 5</span></div><div class="num">1</div><h2>Catch dead stock in 5 minutes.</h2><p>A/B/C/D Pareto auto-classifies your inventory. D-grade items eating capital? Find them with one click.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <!-- Slide 2 -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">2 / 5</span></div><div class="num">2</div><h2>Recover stuck overdues.</h2><p>Auto-flagged overdue customers, payment behaviour scores, aging buckets. Stop chasing — start collecting.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <!-- Slide 3 -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">3 / 5</span></div><div class="num">3</div><h2>Cut staff Excel time by 80%.</h2><p>Reports your CA, your salesmen, your warehouse all need — pre-built. Excel/PDF export in one click.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <!-- Slide 4 -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">4 / 5</span></div><div class="num">4</div><h2>Stop salesmen "ghost visits."</h2><p>Beat Run Today auto-derives the day's plan. Tap to confirm. Coverage % visible to you in real time.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <!-- Slide 5 -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">5 / 5</span></div><div class="num">5</div><h2>Replace your CA's monthly Excel.</h2><p>CA Corner matches Tally / Busy to the rupee. Balance Sheet · P&amp;L · Cash Flow · always live.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <!-- Outro -->
+      <div class="car-slide"><div class="inner"><div class="poster c1s outro"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">14-DAY FREE TRIAL</span></div><h2>From ₹999/mo. Less than your morning chai.</h2><p>Connect your Tally or Busy. See your first dashboard in 5 minutes. No credit card.</p><div class="footer-row"><div class="lhs"><span>flowralive.in → Start Free</span><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div></div></div></div>
+    </div>
+  </div>
+
+  <!-- CAROUSEL 2: Beat Run 60 sec -->
+  <div>
+    <div class="car-meta"><span class="num">C2</span><b style="color:#fff">Beat Run Today — 60-second walkthrough</b><span>· 5 slides</span></div>
+    <div class="car-row" id="c2">
+      <div class="car-slide"><div class="inner"><div class="poster c2s cover"><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">CAROUSEL</span></div><h2>Beat Run Today<br/>in 60 seconds.</h2><div class="footer-row"><div class="lhs"><span class="url">Swipe →</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c2s"><div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">STEP 1</span></div><div class="step">01</div><h2>Auto-built every morning.</h2><p>Day-of-week filter on your beat plan. Salesman opens app, today's customers are pre-loaded.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c2s"><div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">STEP 2</span></div><div class="step">02</div><h2>Tap to mark visited.</h2><p>IST-stamped check-in. Add unplanned visits in the NEW box. Coverage % updates in real time.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c2s"><div class="brand-row"><span class="wordmark" style="color:#0052FF">FLOWRA</span><span class="pill">STEP 3</span></div><div class="step">03</div><h2>Day-end auto-locks past dates.</h2><p>Beat History stays clean. No backdated edits. Audit-ready trail for every salesman, every day.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c2s cover"><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">TRY IT</span></div><h2>Free trial.<br/>5-minute setup.</h2><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div></div></div></div>
+    </div>
+  </div>
+
+  <!-- CAROUSEL 3: Tally se data, FLOWRA se decisions -->
+  <div>
+    <div class="car-meta"><span class="num">C3</span><b style="color:#fff">Tally se data. FLOWRA se decisions. (Bilingual)</b><span>· 5 slides</span></div>
+    <div class="car-row" id="c3">
+      <div class="car-slide"><div class="inner"><div class="poster c3s cover"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">CAROUSEL</span></div><h2>Tally se data.<br/><span class="em">FLOWRA se decisions.</span></h2><div class="footer-row"><div class="lhs"><span class="url">Swipe →</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c3s"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">PROBLEM</span></div><h2>Tally <span class="em">data</span> hai.<br/>Excel mein roz <span class="em">2 ghante.</span></h2><p>Sales · Receivables · Stock · Salesman performance — sab manual. End-of-day pe error nikalta hai.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c3s"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">SOLUTION</span></div><h2>FLOWRA <span class="em">connect</span> karo.<br/><span class="em">Decisions</span> seekho.</h2><p>5-min setup. Local agent Tally/Busy se directly read karta hai. Cloud par live dashboard. Phone se kahin se bhi.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c3s"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">RESULT</span></div><h2>Pehle <span class="em">2 ghante.</span><br/>Ab <span class="em">2 minute.</span></h2><p>Roz subah dashboard kholo. Aaj ka beat. Aaj ki collection. Aaj ki priority. Sab ek screen mein.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c3s cover"><div class="brand-row"><span class="wordmark" style="color:#0a0a14">FLOWRA</span><span class="pill">14-DAY FREE</span></div><h2><span class="em">Try karo.</span><br/>Free 14 din.</h2><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div></div></div></div>
+    </div>
+  </div>
+
+  <!-- CAROUSEL 4: A/B/C/D explained -->
+  <div>
+    <div class="car-meta"><span class="num">C4</span><b style="color:#fff">What is A/B/C/D inventory and why it matters</b><span>· 6 slides</span></div>
+    <div class="car-row" id="c4">
+      <div class="car-slide"><div class="inner"><div class="poster c4s cover"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">CAROUSEL</span></div><div class="big" style="display:flex;gap:16px"><span class="A">A</span><span class="B">B</span><span class="C">C</span><span class="D">D</span></div><h2>What is Pareto<br/>inventory and why<br/>does it matter?</h2><div class="footer-row"><div class="lhs"><span class="url">Swipe →</span></div></div></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c4s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">A · TIER</span></div><div class="big A">A</div><h2>80% of revenue.<br/>Top ~20% items.</h2><p>Hero SKUs. Stock-out kabhi nahi hona chahiye. Re-order priority MAX.</p></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c4s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">B · TIER</span></div><div class="big B">B</div><h2>15% of revenue.<br/>Next ~30% items.</h2><p>Steady performers. Watch stock-out rate weekly. Margin opportunity.</p></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c4s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">C · TIER</span></div><div class="big C">C</div><h2>4% of revenue.<br/>Long tail.</h2><p>Order on demand. Avoid carrying excess. Renegotiate supplier terms.</p></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c4s"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">D · TIER</span></div><div class="big D">D</div><h2>1% of revenue.<br/>Capital-eaters.</h2><p>Liquidate, discount, return to supplier. Free up working capital.</p></div></div></div>
+      <div class="car-slide"><div class="inner"><div class="poster c4s cover"><div class="grain"></div><div class="brand-row"><span class="wordmark">FLOWRA</span><span class="pill">AUTO-ABC</span></div><h2>One-click classification.<br/>FY revenue.<br/>Updated live.</h2><p>FLOWRA's Auto-ABC button does this for your full catalog in seconds.</p><div class="footer-row"><div class="lhs"><span class="url">www.flowralive.in</span></div><div class="rhs"><span class="wa">WhatsApp +91 81204 70018</span></div></div></div></div></div>
+    </div>
+  </div>
+
+</div>
+
+<p class="kit-sub" style="margin-top:60px;text-align:center;color:#5b5b6c">Made by FLOWRA · JODIDAR INDIA · v3.1 — May 2026</p>
+
+</body>
+</html>
