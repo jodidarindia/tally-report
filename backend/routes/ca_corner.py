@@ -309,7 +309,35 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
                            {"category": l.get("category", "other"),
                             "parent_group": (l.get("parent_group") or "").lower().strip()}
                            for l in all_ledgers}
-            for vouch in jv_v + rcpt_v + contra_v + sales_v + purchase_v + cn_v + dn_v:
+
+            # Sales / Purchase totals: derive from items[].amount (pre-GST line totals)
+            # because sales_vouchers and purchase_vouchers don't always store full
+            # ledger_entries breakdowns. Net sales = sales items − credit-note items;
+            # net purchases = purchase items − debit-note items.
+            def _items_total(v):
+                return sum(safe_num(it.get("amount", 0)) for it in (v.get("items") or []))
+
+            for sv in sales_v:
+                sales_accounts += _items_total(sv)
+            for cn in cn_v:
+                items_amt = _items_total(cn)
+                if items_amt == 0:
+                    items_amt = safe_num(cn.get("total_amount"))
+                sales_accounts -= items_amt
+            for pv in purchase_v:
+                purchase_accounts += _items_total(pv)
+            for dn in dn_v:
+                items_amt = _items_total(dn)
+                if items_amt == 0:
+                    items_amt = safe_num(dn.get("total_amount"))
+                purchase_accounts -= items_amt
+
+            # Direct/Indirect Income/Expense + Sales/Purchase A/c adjustments come
+            # from journal_vouchers / receipt_vouchers / contra_vouchers
+            # ledger_entries (those DO have full breakdowns). Credit/debit notes
+            # are deliberately EXCLUDED here — their net impact is already deducted
+            # via items[] above; including them again would double-count.
+            for vouch in jv_v + rcpt_v + contra_v:
                 for entry in vouch.get("ledger_entries", []) or []:
                     lname = (entry.get("ledger_name") or "").strip()
                     if not lname:
@@ -351,10 +379,30 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
                     ledger_activity[lname]["amount"] += delta
             method_used = "ledger_entries_fy_scoped"
 
-        # Stock from inventory_items (after the model fix — values come through)
+        # Stock from inventory_items (master snapshot — reflects CURRENT FY only).
+        # For previous FYs: closing-stock-of-prev-FY ≈ opening-stock-of-current-FY.
+        # We don't have prev-FY's opening, so we drop stock from GP for prev FYs
+        # to avoid arithmetic that's silently wrong.
         inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
-        opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
-        closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+        master_opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
+        master_closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+
+        if is_current_fy:
+            opening_stock = master_opening_stock
+            closing_stock = master_closing_stock
+            stock_synced = closing_stock > 0 or opening_stock > 0
+            stock_note_for_prev_fy = None
+        else:
+            # closing-stock for the requested prev FY = current FY's opening stock
+            opening_stock = 0.0
+            closing_stock = master_opening_stock
+            stock_synced = False  # opening side is missing
+            stock_note_for_prev_fy = (
+                "Opening Stock for previous FYs is not synced (Tally master only "
+                "stores current-FY stock). Closing Stock here is approximated as "
+                "the current FY's Opening Stock; Gross Profit therefore excludes "
+                "previous-FY stock movement and may differ from Tally's exact figure."
+            )
 
         # Tally Trading Account formula:
         #   Sales A/c + Direct Income + Closing Stock
@@ -393,13 +441,15 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             "total_expense": round(total_expense, 2),
             "income": income_breakdown,
             "expense": expense_breakdown,
-            "stock_synced": closing_stock > 0 or opening_stock > 0,
+            "stock_synced": stock_synced,
         }
 
         # Notices
         notices = []
-        if not result["stock_synced"]:
+        if is_current_fy and not stock_synced:
             notices.append("Stock-in-Hand not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture closing stock values for accurate Gross Profit.")
+        if stock_note_for_prev_fy:
+            notices.append(stock_note_for_prev_fy)
         if not is_current_fy:
             notices.append(f"Showing previous FY ({fy}). For 100% Tally parity, re-anchor by running the agent during that FY — current view is reconstructed from FY-scoped vouchers.")
         result["notices"] = notices
@@ -517,13 +567,52 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
 
             months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
             month_nums = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
+
+            # ── Stock-aware GP allocation (Tally Trading Account, monthly) ──
+            # Use FY-LEVEL totals (the same numbers shown in the P&L summary cards)
+            # so Σ Monthly_GP equals the FY Gross_Profit shown above.
+            #
+            # FY GP = (FY Sales + FY Direct Income + Closing Stock)
+            #       − (Opening Stock + FY Purchases + FY Direct Expense)
+            #
+            # Monthly COGS allocated proportionally to each month's NET SALES.
+            # Total monthly sales is also normalised so Σ Monthly_Sales = FY Sales.
+            fy_sales_total = sales_accounts + direct_income
+            fy_purch_total = purchase_accounts + direct_expense
+            fy_cogs = opening_stock + fy_purch_total - closing_stock
+            stock_movement_total = closing_stock - opening_stock
+
+            # Monthly numerators (from items[] + JV adjustments — distribution shape)
+            monthly_sales_raw = [buckets[m]["net_sales"] + buckets[m]["direct_income"] for m in month_nums]
+            monthly_purch_raw = [buckets[m]["net_purchases"] + buckets[m]["direct_expense"] for m in month_nums]
+            sum_monthly_sales = sum(monthly_sales_raw)
+            sum_monthly_purch = sum(monthly_purch_raw)
+
             monthly_data = []
             prev_sales = prev_purch = prev_gp = None
-            for m_name, m_num in zip(months, month_nums):
-                b = buckets[m_num]
-                m_sales_net = b["net_sales"] + b["direct_income"]
-                m_purchases_net = b["net_purchases"] + b["direct_expense"]
-                m_gp = m_sales_net - m_purchases_net
+            stock_aware = is_current_fy and stock_synced and abs(fy_sales_total) > 0.01 and abs(sum_monthly_sales) > 0.01
+
+            # Scaling factors so Σ monthly = FY total exactly
+            sales_scale = (fy_sales_total / sum_monthly_sales) if sum_monthly_sales else 1.0
+            purch_scale = (fy_purch_total / sum_monthly_purch) if sum_monthly_purch else 1.0
+
+            for idx, (m_name, m_num) in enumerate(zip(months, month_nums)):
+                m_sales_raw = monthly_sales_raw[idx]
+                m_purch_raw = monthly_purch_raw[idx]
+                # Scale to FY totals (preserves shape, fixes magnitude)
+                m_sales_net = round(m_sales_raw * sales_scale, 2) if stock_aware else round(m_sales_raw, 2)
+                m_purchases_net = round(m_purch_raw * purch_scale, 2) if stock_aware else round(m_purch_raw, 2)
+
+                if stock_aware:
+                    weight = m_sales_net / fy_sales_total if fy_sales_total else 0
+                    m_cogs = round(fy_cogs * weight, 2)
+                    m_open_stock = round(opening_stock * weight, 2)
+                    m_close_stock = round(closing_stock * weight, 2)
+                    m_gp = round(m_sales_net - m_cogs, 2)
+                else:
+                    m_cogs = m_purchases_net
+                    m_open_stock = m_close_stock = 0.0
+                    m_gp = round(m_sales_net - m_purchases_net, 2)
 
                 def _pct(curr, prev):
                     if prev is None or abs(prev) < 0.01:
@@ -532,10 +621,13 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
 
                 row = {
                     "month": m_name,
-                    "sales": round(m_sales_net, 2),
-                    "purchases": round(m_purchases_net, 2),
-                    "gross_profit": round(m_gp, 2),
-                    "receipts": round(b["receipts"], 2),
+                    "sales": m_sales_net,
+                    "purchases": m_purchases_net,
+                    "cogs": m_cogs,
+                    "opening_stock": m_open_stock,
+                    "closing_stock": m_close_stock,
+                    "gross_profit": m_gp,
+                    "receipts": round(buckets[m_num]["receipts"], 2),
                     "sales_change_pct": _pct(m_sales_net, prev_sales),
                     "purchases_change_pct": _pct(m_purchases_net, prev_purch),
                     "gp_change_pct": _pct(m_gp, prev_gp),
@@ -546,9 +638,19 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
                 prev_gp = m_gp
 
             result["monthly"] = monthly_data
-            result["notices"] = result.get("notices", []) + [
-                "Monthly Gross Profit shown is Trading Profit (Net Sales − Net Purchases, ex-GST). It excludes opening/closing stock movement, so the FY-total Gross Profit above (which includes stock and matches Tally) may differ.",
-            ]
+            result["monthly_meta"] = {
+                "stock_aware": stock_aware,
+                "fy_cogs": round(fy_cogs, 2) if stock_aware else None,
+                "stock_movement": round(stock_movement_total, 2) if stock_aware else None,
+            }
+            if stock_aware:
+                result["notices"] = result.get("notices", []) + [
+                    f"Monthly Gross Profit uses Tally Trading-Account formula: Sales − COGS, where FY COGS (₹{fy_cogs:,.0f}) and stock movement (₹{stock_movement_total:+,.0f}) are allocated to each month proportionally to its net sales. Sum of monthly GP equals FY-total Gross Profit (₹{result['gross_profit']:,.0f}).",
+                ]
+            else:
+                result["notices"] = result.get("notices", []) + [
+                    "Monthly Gross Profit shown is Trading Profit (Net Sales − Net Purchases, ex-GST) — stock movement could not be allocated because the FY's stock data isn't fully synced. FY-total Gross Profit above (which uses stock) may differ.",
+                ]
 
         return APIResponse(success=True, data=result)
     except Exception as e:

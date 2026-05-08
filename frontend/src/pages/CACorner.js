@@ -424,8 +424,15 @@ const PLView = ({ data, view, setView, sortField, sortDir, toggleSort }) => {
                 {data.monthly.map((m, i) => <td key={i} className="numeric"><MoMCell pct={m.purchases_change_pct} positiveGood={false} /></td>)}
                 <td></td>
               </tr>
+              {data.monthly_meta?.stock_aware && (
+                <tr className="bg-amber-50/40 text-[11px]" data-testid="pl-monthly-cogs">
+                  <td className="text-amber-700 italic pl-4">Cost of Goods Sold</td>
+                  {data.monthly.map((m, i) => <td key={i} className="numeric text-amber-700">{fmtRs(m.cogs)}</td>)}
+                  <td className="numeric font-medium text-amber-800">{fmtRs(data.monthly.reduce((s, m) => s + (m.cogs || 0), 0))}</td>
+                </tr>
+              )}
               <tr className="border-t-2 border-slate-300">
-                <td className="font-bold text-slate-900">Gross Profit</td>
+                <td className="font-bold text-slate-900">Gross Profit{data.monthly_meta?.stock_aware ? '' : ' (Trading)'}</td>
                 {data.monthly.map((m, i) => <td key={i} className={`numeric font-semibold ${m.gross_profit >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmtRs(m.gross_profit)}</td>)}
                 <td className="numeric font-bold text-blue-700">{fmtRs(data.monthly.reduce((s, m) => s + m.gross_profit, 0))}</td>
               </tr>

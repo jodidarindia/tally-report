@@ -78,22 +78,74 @@ def test_mom_pct_math_is_correct(admin_h):
             )
 
 
-def test_gross_profit_equals_sales_minus_purchases(admin_h):
-    """Per-row internal consistency: gross_profit == round(sales − purchases, 2)."""
-    m = _fetch(admin_h)["monthly"]
+def test_gross_profit_consistency_per_row(admin_h):
+    """Per-row consistency:
+    - When stock_aware: GP == sales − COGS (Tally Trading Account formula)
+    - When not (Trading Profit fallback): GP == sales − purchases.
+    """
+    d = _fetch(admin_h)
+    m = d["monthly"]
+    stock_aware = (d.get("monthly_meta") or {}).get("stock_aware", False)
     for row in m:
-        expected = round(row["sales"] - row["purchases"], 2)
-        assert row["gross_profit"] == expected, (
-            f"{row['month']}: GP {row['gross_profit']} != sales-purch {expected}"
-        )
+        if stock_aware:
+            expected = round(row["sales"] - row["cogs"], 2)
+            assert abs(row["gross_profit"] - expected) < 0.5, (
+                f"{row['month']}: GP {row['gross_profit']} != sales-cogs {expected}"
+            )
+        else:
+            expected = round(row["sales"] - row["purchases"], 2)
+            assert row["gross_profit"] == expected, (
+                f"{row['month']}: GP {row['gross_profit']} != sales-purch {expected}"
+            )
+
+
+def test_monthly_gp_sums_to_fy_gp_when_stock_aware(admin_h):
+    """When stock_aware, Σ monthly_gp must equal FY-level gross_profit (within ₹1 rounding)."""
+    d = _fetch(admin_h)
+    if not (d.get("monthly_meta") or {}).get("stock_aware"):
+        pytest.skip("not stock-aware for this FY")
+    fy_gp = d["gross_profit"]
+    monthly_sum = sum(r["gross_profit"] for r in d["monthly"])
+    assert abs(monthly_sum - fy_gp) < 1.0, (
+        f"Σ monthly GP ({monthly_sum:,.2f}) ≠ FY GP ({fy_gp:,.2f})"
+    )
+
+
+def test_monthly_sales_sums_to_fy_sales_when_stock_aware(admin_h):
+    """When stock_aware we scale monthly to match FY exactly (so the totals are consistent)."""
+    d = _fetch(admin_h)
+    if not (d.get("monthly_meta") or {}).get("stock_aware"):
+        pytest.skip("not stock-aware for this FY")
+    fy_sales = d["total_sales"] + d["direct_income"]
+    monthly_sum = sum(r["sales"] for r in d["monthly"])
+    assert abs(monthly_sum - fy_sales) < 1.0
+
+
+def test_prev_fy_sales_not_negative(admin_h):
+    """REGRESSION: FY 2025-26 was returning negative sales (the bug shipped to user)."""
+    r = requests.get(f"{API_URL}/api/ca-corner/profit-loss?view=annual&fy=2025-26", headers=admin_h)
+    d = r.json()["data"]
+    assert d["total_sales"] >= 0, f"FY 2025-26 total_sales is negative: {d['total_sales']}"
+    # Sanity: sales should be in the same order of magnitude as purchases
+    if d["total_purchases"] > 0:
+        ratio = d["total_sales"] / d["total_purchases"]
+        assert 0.5 < ratio < 2.5, f"sales/purchases ratio drifted: {ratio:.2f}"
+
+
+def test_prev_fy_stock_handling(admin_h):
+    """For previous FYs we don't have opening stock, so we set it to 0 and notice."""
+    r = requests.get(f"{API_URL}/api/ca-corner/profit-loss?view=annual&fy=2025-26", headers=admin_h)
+    d = r.json()["data"]
+    assert d["opening_stock"] == 0
+    notice_blob = " | ".join(d.get("notices", []))
+    assert "previous FY" in notice_blob.lower() or "previous fys" in notice_blob.lower()
 
 
 def test_monthly_notice_mentions_trading_profit(admin_h):
     d = _fetch(admin_h)
-    notices = d.get("notices", [])
-    # Concatenate so we can assert sub-strings cleanly
-    notice_blob = " | ".join(notices).lower()
-    assert "trading profit" in notice_blob or "stock movement" in notice_blob
+    notice_blob = " | ".join(d.get("notices", [])).lower()
+    # Either stock-aware uses "trading-account" or fallback uses "trading profit"
+    assert "trading" in notice_blob
 
 
 def test_monthly_sales_excludes_gst_roughly(admin_h):

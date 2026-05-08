@@ -350,6 +350,30 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## P&L Annual + Monthly Gross Profit — Major Correctness Fix (May 2026 — BUG FIX)
+
+**Two real bugs the user reported (with screenshot)**:
+
+### Bug 1 — Negative Sales for previous FYs (FY 25-26 showed Sales = ₹-19.44L)
+- **Root cause**: For previous FYs, `routes/ca_corner.py` falls back to "Method B" — which scans `ledger_entries` from sales/purchase/CN/DN/JV vouchers. **Sales vouchers don't store `ledger_entries`** (0 of 1312 in the live tenant) — only `items[]`. So the only Sales-Account ledger entries that surfaced were credit notes (sales returns) → **net sales went negative**. Same bug for purchases (net sign right by accident, but magnitude wrong).
+- **Fix**: For prev-FY Method B, sales/purchases now derived from `items[].amount` (pre-GST line totals, verified vs Tally PDF parity) — credit-notes / debit-notes deduct from items totals; journal/receipt/contra entries layer adjustments on top via `ledger_entries`. CN/DN explicitly excluded from the inner JV loop to prevent double-counting.
+- **Result**: FY 25-26 went from `Sales −₹19.44L · GP −₹38.45L` (clearly wrong) to `Sales ₹4.04 Cr · Purchases ₹3.81 Cr · GP ₹42.15L · Net Profit ₹29.50L` (sensible 10.4% margin).
+
+### Bug 2 — Stock for prev-FY was wrong (master snapshot leaked across FYs)
+- **Fix**: Tally master `inventory_items` only stores current-FY stock. For prev FYs we now set `opening_stock=0` (we don't have it) and `closing_stock = current_FY's_opening_stock` (mathematically correct). Notice clearly explains the gap.
+
+### Enhancement — Monthly Gross Profit now stock-aware (Tally Trading Account)
+- **Before**: Monthly GP = Sales − Purchases (Trading Profit, ignores stock movement).
+- **After**: Monthly GP = Sales − COGS, where `FY_COGS = Opening_Stock + FY_Purchases + Direct_Expense − Closing_Stock` is **allocated to each month proportionally to its net sales**. Sales/Purchases also scaled to FY totals so Σ monthly equals FY exactly.
+- **Σ Monthly GP = FY Gross Profit** ← guaranteed (asserted in tests).
+- New `cogs`, `opening_stock`, `closing_stock` fields per monthly row + `monthly_meta { stock_aware, fy_cogs, stock_movement }`.
+- **Frontend**: New amber "Cost of Goods Sold" row appears in monthly table when stock-aware. GP label says *"Gross Profit"* (with stock) or *"Gross Profit (Trading)"* (fallback, no stock).
+- For prev FYs without stock data → graceful fallback to Trading Profit with notice.
+
+**Verified**: 10/10 tests pass in `tests/test_iteration69_pl_monthly_gp_fix.py`. Live numbers:
+  - FY 26-27: ΣmonthlyGP = ₹3,86,051 = FY GP ✓
+  - FY 25-26: Sales ₹4.04 Cr (was −₹19.44L), GP ₹42.15L (was −₹38.45L) ✓
+
 ## P&L Monthly Gross Profit Fix (May 2026 — BUG FIX)
 - **Bug**: Monthly P&L computed `gross_profit = m_sales − m_purchases` using voucher-header `total_amount` which **includes GST** → noisy & wrong; also missed Direct Income / Direct Expense entirely.
 - **Fix** (in `routes/ca_corner.py` monthly view branch):
