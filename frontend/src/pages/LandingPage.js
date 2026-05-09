@@ -6,7 +6,7 @@ import {
   ArrowRight, Check, ChevronRight, Lock, Database, Eye,
   Star, Clock, Globe, Phone, Mail, Lightbulb, MessageCircle, Landmark,
   FileText, ClipboardList, Download, ChevronDown, ShoppingCart,
-  Menu, X, ChevronDown as _ChevDown, Sparkles, Rocket, Warehouse
+  Menu, X, ChevronDown as _ChevDown, Warehouse
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -124,14 +124,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-deployment">
                     <Warehouse size={16} className="text-[#0052FF]" /> Deployment Guide
                   </a>
-                  <a href="/FLOWRA_Whats_New.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-whats-new">
-                    <Sparkles size={16} className="text-[#0052FF]" /> What's New (Latest Features)
-                  </a>
-                  <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-coming-soon">
-                    <Rocket size={16} className="text-[#0052FF]" /> Coming Soon
-                  </a>
                 </div>
               )}
             </div>
@@ -184,14 +176,6 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                   <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer"
                      className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
                     <Warehouse size={14} className="text-[#0052FF]" /> Deployment Guide
-                  </a>
-                  <a href="/FLOWRA_Whats_New.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
-                    <Sparkles size={14} className="text-[#0052FF]" /> What's New
-                  </a>
-                  <a href="/FLOWRA_Coming_Soon.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
-                    <Rocket size={14} className="text-[#0052FF]" /> Coming Soon
                   </a>
                 </div>
               )}

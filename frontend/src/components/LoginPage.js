@@ -49,8 +49,8 @@ const LoginPage = ({ onLogin, loading, onNavigate }) => {
           <button onClick={() => onNavigate('landing')} className="text-sm text-[#2563EB] hover:underline" data-testid="back-to-home">Back to Home</button>
           <button onClick={() => onNavigate('signup')} className="text-sm text-[#2563EB] hover:underline" data-testid="go-to-signup">New Customer? Sign Up</button>
         </div>
-        <p className="text-center text-xs text-slate-400 mt-6">FLOWRA by Jodidar India</p>
-        <p className="text-center text-[9px] text-slate-400 mt-2 max-w-lg mx-auto leading-relaxed">Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
+        <p className="text-center text-xs text-slate-400 mt-6">&copy; {new Date().getFullYear()} JODIDAR INDIA. FLOWRA is a brand owned by JODIDAR INDIA.</p>
+        <p className="text-center text-[9px] text-slate-400 mt-2 max-w-lg mx-auto leading-relaxed" data-testid="tally-disclaimer">Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same are used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademarks' distinct character or harm the holders' reputation.</p>
       </div>
     </div>
   );

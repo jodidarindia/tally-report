@@ -221,8 +221,8 @@ function App() {
       </main>
 
       <footer className="text-center py-4 text-xs text-slate-400">
-        <p>&copy; {new Date().getFullYear()} Jodidar India. All rights reserved.</p>
-        <p className="text-[9px] text-slate-400 mt-1 max-w-xl mx-auto leading-relaxed">Tally* is the trademark of its respective owner and is not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites.</p>
+        <p>&copy; {new Date().getFullYear()} JODIDAR INDIA. All rights reserved. FLOWRA is a brand owned by JODIDAR INDIA.</p>
+        <p className="text-[9px] text-slate-400 mt-1 max-w-3xl mx-auto leading-relaxed" data-testid="tally-disclaimer">Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same are used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademarks' distinct character or harm the holders' reputation.</p>
       </footer>
 
       {showProfile && <ProfileModal user={user} token={token} onClose={() => setShowProfile(false)} />}
