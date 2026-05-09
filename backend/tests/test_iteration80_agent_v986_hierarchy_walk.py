@@ -59,13 +59,13 @@ def _build_client(agent_module):
 
 def test_agent_version_v986():
     contents = AGENT_PATH.read_text(encoding="utf-8")
-    assert "v9.8.6-hierarchy-walk" in contents
-    assert "9.8.6-hierarchy-walk" in contents
+    assert ("v9.8.6-hierarchy-walk" in contents or "v9.8.7-aliases-perf" in contents)
+    assert ("9.8.6-hierarchy-walk" in contents or "9.8.7-aliases-perf" in contents)
 
 
 def test_public_agent_v986_present():
     contents = PUBLIC.read_text(encoding="utf-8")
-    assert "9.8.6-hierarchy-walk" in contents
+    assert ("9.8.6-hierarchy-walk" in contents or "9.8.7-aliases-perf" in contents)
 
 
 def test_fetch_stock_group_parent_map_method_exists(agent_module):

@@ -28,6 +28,10 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
   const [selectedForRemoval, setSelectedForRemoval] = useState([]);
   const [removedCustomers, setRemovedCustomers] = useState([]);
   const [showBulkPercentage, setShowBulkPercentage] = useState(false);
+  // Mobile-friendly render-cap: 1,800+ customer rows blow up mobile DOM.
+  // Render 200 first; "Load more" extends in 200-row increments.
+  const [outstandingLimit, setOutstandingLimit] = useState(200);
+  const [searchQuery, setSearchQuery] = useState('');
   const [bulkPct, setBulkPct] = useState(115);
   const [selectedForReactivate, setSelectedForReactivate] = useState([]);
   const [newFollowup, setNewFollowup] = useState({
@@ -356,6 +360,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
         <>
           {/* Outstanding Payments - Proper Aging */}
           {activeTab === 'outstanding' && (() => {
+            const q = (searchQuery || '').trim().toLowerCase();
             const sorted = outstanding
               .filter(c => {
                 if (selectedGroup === 'all') return true;
@@ -363,14 +368,27 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 if (selectedGroup.startsWith('state:')) return c.state === selectedGroup.slice(6);
                 return c.ledger_group === selectedGroup;
               })
+              .filter(c => !q
+                || (c.customer_name || '').toLowerCase().includes(q)
+                || (c.phone || '').toLowerCase().includes(q)
+                || (c.ledger_group || '').toLowerCase().includes(q))
               .sort((a, b) => {
                 const dir = sortDir === 'asc' ? 1 : -1;
                 if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
                 return dir * ((a[sortField] || 0) - (b[sortField] || 0));
               });
+            const visible = sorted.slice(0, outstandingLimit);
             return (
             <div>
-              <div className="flex justify-end mb-3">
+              <div className="flex justify-end mb-3 gap-2 flex-wrap">
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={e => { setSearchQuery(e.target.value); setOutstandingLimit(200); }}
+                  placeholder="Search name / phone / group..."
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg flex-1 min-w-[200px] max-w-[320px]"
+                  data-testid="customer-search"
+                />
                 <button onClick={() => exportOutstandingExcel(sorted)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-outstanding-excel">
                   <Download size={14} /> Export Excel
                 </button>
@@ -396,7 +414,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {sorted.map((customer, idx) => {
+                    {visible.map((customer, idx) => {
                         const statusColors = {
                           normal: 'bg-green-100 text-green-700',
                           at_risk: 'bg-amber-100 text-amber-700',
@@ -470,6 +488,23 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                     })}
                   </tbody>
                 </table>
+            </div>
+            <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
+              <div className="text-xs text-slate-500" data-testid="outstanding-count">
+                Showing <span className="font-medium text-slate-700">{visible.length}</span> of <span className="font-medium text-slate-700">{sorted.length}</span> filtered
+                {sorted.length !== outstanding.length && (
+                  <span className="text-slate-400"> ({outstanding.length} total)</span>
+                )}
+              </div>
+              {visible.length < sorted.length && (
+                <button
+                  onClick={() => setOutstandingLimit(l => l + 200)}
+                  className="px-4 py-1.5 text-sm font-medium border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700"
+                  data-testid="load-more-customers"
+                >
+                  Load 200 more <span className="text-slate-400">({sorted.length - visible.length} remaining)</span>
+                </button>
+              )}
             </div>
             </div>
             );

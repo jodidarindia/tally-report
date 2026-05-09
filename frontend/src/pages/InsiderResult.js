@@ -351,8 +351,25 @@ const InsiderResult = ({ selectedFY, companyId }) => {
     const s = forecast.summary || {};
 
     const chartData = [
-      ...timeline.map(t => ({ month: t.month, revenue: t.revenue, type: 'actual' })),
-      ...forecasts.map(f => ({ month: f.month, forecast: f.forecast_revenue, type: 'forecast' })),
+      ...timeline.map(t => ({ month: t.month, revenue: t.revenue, forecast: null, type: 'actual' })),
+      // Bridge actual → forecast: include the last actual month's revenue as
+      // the FIRST point of the forecast line so the line connects visually
+      // (Recharts wouldn't otherwise — undefined → defined creates a gap).
+      ...(forecasts.length && timeline.length ? [{
+        month: timeline[timeline.length - 1].month,
+        revenue: null,
+        forecast: timeline[timeline.length - 1].revenue,
+        type: 'bridge',
+      }] : []),
+      ...forecasts.map(f => ({
+        month: f.month,
+        revenue: null,
+        forecast: f.forecast_revenue,
+        type: 'forecast',
+        confidence: f.confidence,
+        based_on: f.based_on_prev_fy_month,
+        growth_trend_pct: f.growth_trend_pct,
+      })),
     ];
 
     // Pivot month_comparison into a chart-friendly shape:
@@ -400,7 +417,19 @@ const InsiderResult = ({ selectedFY, companyId }) => {
 
         {/* Revenue Timeline Chart */}
         <div className="bg-white rounded-xl border border-slate-200 p-4" data-testid="forecast-chart">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Revenue Trend & Forecast</h3>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="text-sm font-semibold text-slate-700">Revenue Trend & Forecast</h3>
+            {forecasts[0]?.based_on_prev_fy_month && (
+              <span className="text-[11px] text-slate-500" data-testid="forecast-method-note">
+                Forecast = same-month previous FY × growth trend
+                {forecasts[0].growth_trend_pct !== null && (
+                  <span className={`ml-1 font-medium ${forecasts[0].growth_trend_pct >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                    ({forecasts[0].growth_trend_pct >= 0 ? '▲' : '▼'} {Math.abs(forecasts[0].growth_trend_pct)}%)
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -409,18 +438,27 @@ const InsiderResult = ({ selectedFY, companyId }) => {
               <Tooltip content={<CustomTooltip />} />
               <Legend />
               <Bar dataKey="revenue" fill="#2563EB" name="Actual Revenue" radius={[3, 3, 0, 0]} />
-              <Line type="monotone" dataKey="forecast" stroke="#8B5CF6" strokeWidth={2} strokeDasharray="6 3" dot={{ fill: '#8B5CF6', r: 4 }} name="Forecast" />
+              <Line
+                type="monotone"
+                dataKey="forecast"
+                stroke="#8B5CF6"
+                strokeWidth={2.5}
+                strokeDasharray="6 3"
+                dot={{ fill: '#8B5CF6', r: 4 }}
+                connectNulls
+                name="Forecast"
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
 
         {/* YoY Comparison */}
         <div className="bg-white rounded-xl border border-slate-200 p-4" data-testid="yoy-chart">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Year-over-Year Comparison</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Financial Year Comparison</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={yoy}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="year" tick={{ fontSize: 11 }} tickFormatter={v => `FY ${v}`} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
               <Tooltip content={<CustomTooltip />} />
               <Bar dataKey="revenue" fill="#0EA5E9" name="Revenue" radius={[4, 4, 0, 0]} />

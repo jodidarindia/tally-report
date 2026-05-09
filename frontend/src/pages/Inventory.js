@@ -28,6 +28,11 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   const [autoAbcLoading, setAutoAbcLoading] = useState(false);
   const [editingAbc, setEditingAbc] = useState(null);
   const [abcFilter, setAbcFilter] = useState('all');
+  // Mobile-friendly: render incrementally rather than slamming 7,500 rows
+  // into the DOM on first paint. KSC-scale tenants hung the mobile browser
+  // for 8-12 seconds. Default page size keeps initial render under 100ms.
+  const [renderLimit, setRenderLimit] = useState(200);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     fetchInventory();
@@ -152,7 +157,13 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
   const filteredItems = items.filter(item => {
     const term = searchTerm.toLowerCase();
-    const matchesSearch = (item.item_name || '').toLowerCase().includes(term) || (item.part_number || '').toLowerCase().includes(term);
+    // v9.8.7 — alias search: aliases is an array of strings from Tally LANGUAGENAME.
+    // Match any alias substring so users can find items by part-number variants
+    // and customer-specific SKUs.
+    const matchesSearch =
+      (item.item_name || '').toLowerCase().includes(term) ||
+      (item.part_number || '').toLowerCase().includes(term) ||
+      (Array.isArray(item.aliases) && item.aliases.some(a => (a || '').toLowerCase().includes(term)));
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
     const matchesAbc = abcFilter === 'all' || (item.abc_category || '') === abcFilter;
@@ -172,6 +183,15 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
     if (sortField === 'abc_category') return dir * ((a.abc_category || 'Z').localeCompare(b.abc_category || 'Z'));
     return 0;
   });
+
+  // Render-cap: only paint `renderLimit` rows at a time. "Load more" button
+  // adds another 200. Keeps mobile DOM under 200-400 rows even for 7,500-item
+  // tenants. Reset cap when search/filter changes.
+  const visibleItems = filteredItems.slice(0, renderLimit);
+
+  // Reset render-cap when filter / search / sort changes — otherwise a small
+  // result set might be invisible (page 36 of 36). Keeps initial paint cheap.
+  useEffect(() => { setRenderLimit(200); }, [searchTerm, selectedCategory, selectedGroups, selectedRootGroup, abcFilter, sortField, sortDir]);
 
   const handleSort = (field) => {
     if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -357,13 +377,22 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
             </thead>
             <tbody>
               {filteredItems.length > 0 ? (
-                filteredItems.map((item) => {
+                visibleItems.map((item) => {
                   const isLowStock = item.quantity < (item.reorder_level || 0);
                   const itemValue = item.quantity * (item.price || 0);
                   
                   return (
                     <tr key={item.item_id} data-testid={`inventory-row-${item.item_id}`}>
-                      <td className="font-medium text-slate-900">{item.item_name}</td>
+                      <td className="font-medium text-slate-900">
+                        <div className="flex flex-col">
+                          <span>{item.item_name}</span>
+                          {Array.isArray(item.aliases) && item.aliases.length > 0 && (
+                            <span className="text-[10px] text-slate-400 mt-0.5" data-testid="alias-chips">
+                              alias: {item.aliases.slice(0, 3).join(', ')}{item.aliases.length > 3 ? ` +${item.aliases.length - 3}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="text-slate-500 text-xs">{item.part_number || '-'}</td>
                       <td className="text-slate-600">{item.stock_group || '-'}</td>
                       <td>
@@ -468,8 +497,23 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
           </table>
       </div>
 
-      <div className="mt-4 text-sm text-slate-500">
-        Showing {filteredItems.length} of {items.length} items
+      <div className="mt-4 flex items-center justify-between flex-wrap gap-2">
+        <div className="text-sm text-slate-500" data-testid="inventory-count">
+          Showing <span className="font-medium text-slate-700">{Math.min(visibleItems.length, filteredItems.length)}</span>
+          {' '}of <span className="font-medium text-slate-700">{filteredItems.length}</span> filtered
+          {filteredItems.length !== items.length && (
+            <span className="text-slate-400"> ({items.length} total)</span>
+          )}
+        </div>
+        {visibleItems.length < filteredItems.length && (
+          <button
+            onClick={() => setRenderLimit(r => r + 200)}
+            className="px-4 py-1.5 text-sm font-medium border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700"
+            data-testid="load-more-inventory"
+          >
+            Load 200 more <span className="text-slate-400">({filteredItems.length - visibleItems.length} remaining)</span>
+          </button>
+        )}
       </div>
 
       {/* Purchase Order Modal */}

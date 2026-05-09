@@ -81,10 +81,15 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
         q = _q(ctx, company_id)
         inv_q = {**q}
         if search:
-            s = search.strip()
+            import re as _re
+            s = _re.escape(search.strip())
+            # v9.8.7 — alias matching: salesmen often know items by their
+            # Tally LANGUAGENAME alias (customer's SKU, brand short-name, etc.)
+            # Mongo's regex against an array field matches if ANY element matches.
             inv_q["$or"] = [
                 {"item_name": {"$regex": s, "$options": "i"}},
                 {"part_number": {"$regex": s, "$options": "i"}},
+                {"aliases": {"$regex": s, "$options": "i"}},
             ]
         items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(2000)
 
@@ -119,6 +124,7 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
                 "item_name": it.get("item_name", ""),
                 "item_id": it.get("item_id", ""),
                 "part_number": it.get("part_number", "") or "",
+                "aliases": it.get("aliases") or [],
                 "stock_qty": safe_num(it.get("quantity", 0)),
                 # `price` is the effective price the salesman quotes:
                 # Tally master STANDARDPRICE if set, else last sale rate, else 0.

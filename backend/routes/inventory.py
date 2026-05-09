@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 from typing import Optional
 import math
+import re
 from datetime import datetime
 import logging
 
@@ -343,7 +344,18 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
 
 
 @router.get("/inventory/items")
-async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, root_stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None, fy: Optional[str] = None):
+async def get_inventory_items(
+    request: Request,
+    category: Optional[str] = None,
+    stock_group: Optional[str] = None,
+    root_stock_group: Optional[str] = None,
+    min_quantity: Optional[float] = None,
+    company_id: Optional[str] = None,
+    fy: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 0,  # 0 = no pagination (legacy callers); set to enable
+):
     try:
         ctx = await get_tenant_context(request)
         extra = {}
@@ -358,9 +370,28 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
             extra["root_stock_group"] = root_stock_group.lower().strip()
         if min_quantity is not None:
             extra["quantity"] = {"$gte": min_quantity}
+        if search and search.strip():
+            # Case-insensitive search on item_name, part_number, OR aliases.
+            # v9.8.7 — alias array is matched element-wise via $regex on the
+            # array (Mongo evaluates regex against each string in the array).
+            esc = re.escape(search.strip())
+            extra["$or"] = [
+                {"item_name": {"$regex": esc, "$options": "i"}},
+                {"part_number": {"$regex": esc, "$options": "i"}},
+                {"aliases": {"$regex": esc, "$options": "i"}},
+            ]
 
         query = _build_query(ctx, company_id, extra)
-        items = await db.inventory_items.find(query, {"_id": 0}).to_list(5000)
+        # Server-side pagination — when page_size > 0, return a page of
+        # results + a `total` count. Mobile inventory page hits this with
+        # page_size=50; desktop loads everything (page_size=0) for full sort.
+        if page_size and page_size > 0:
+            total = await db.inventory_items.count_documents(query)
+            skip = max(0, (page - 1) * page_size)
+            items = await db.inventory_items.find(query, {"_id": 0}).skip(skip).limit(page_size).to_list(page_size)
+        else:
+            total = None
+            items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
 
         # If FY is specified, compute closing stock for that FY from vouchers
         if fy:
@@ -447,7 +478,15 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
 
         return APIResponse(
             success=True,
-            data={"items": items, "count": len(items), "stock_groups": stock_groups, "root_stock_groups": root_stock_groups}
+            data={
+                "items": items,
+                "count": len(items),
+                "total": total if total is not None else len(items),
+                "page": page if page_size else 1,
+                "page_size": page_size if page_size else len(items),
+                "stock_groups": stock_groups,
+                "root_stock_groups": root_stock_groups,
+            }
         )
     except Exception as e:
         logger.error(f"Error fetching inventory: {e}")

@@ -651,6 +651,8 @@ class TallyCollectionClient:
 <FETCH>STDPRICELIST</FETCH>
 <FETCH>STANDARDPRICEDETAILS</FETCH>
 <FETCH>BASICSELLINGPRICE</FETCH>
+<FETCH>LANGUAGENAME</FETCH>
+<FETCH>ALIAS</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
 <COMPUTE>CLVAL : $$NumValue:$ClosingValue</COMPUTE>
@@ -889,8 +891,54 @@ class TallyCollectionClient:
             # show "—" or "Set in Tally master".
             std_price_source = 'tally_master' if std_price > 0 else 'unset'
 
+            # ── Aliases — Tally stores alternate names under <LANGUAGENAME.LIST> ──
+            # Each LANGUAGENAME has NAME.LIST → NAME (the alias) and a
+            # LANGUAGEID. Most users add aliases as alternative search keys
+            # ("OYO" for "Oxy LCV", part numbers, customer's own SKU, etc.).
+            # We collect ALL non-primary aliases — first one is usually the
+            # canonical NAME we already have.
+            aliases: list = []
+            try:
+                lang_list = si.get('LANGUAGENAME.LIST') or si.get('LANGUAGENAME', None)
+                if lang_list is not None:
+                    if isinstance(lang_list, dict):
+                        lang_list = [lang_list]
+                    for lang in (lang_list or []):
+                        if not isinstance(lang, dict):
+                            continue
+                        names_field = lang.get('NAME.LIST') or lang.get('NAME')
+                        if isinstance(names_field, dict):
+                            n = names_field.get('NAME')
+                            if isinstance(n, list):
+                                aliases.extend([str(x).strip() for x in n if x])
+                            elif n:
+                                aliases.append(str(n).strip())
+                        elif isinstance(names_field, list):
+                            aliases.extend([str(x).strip() for x in names_field if x])
+                        elif isinstance(names_field, str):
+                            aliases.append(names_field.strip())
+                # Also try direct ALIAS / ALIAS.LIST (some Tally builds export this)
+                for ak in ('ALIAS', 'ALIAS.LIST'):
+                    raw = si.get(ak)
+                    if isinstance(raw, str) and raw.strip():
+                        aliases.append(raw.strip())
+                    elif isinstance(raw, list):
+                        aliases.extend([str(x).strip() for x in raw if x])
+            except Exception:
+                pass
+            # Drop duplicates and the primary name itself; keep order
+            seen = set()
+            clean_aliases = []
+            for a in aliases:
+                a_lc = a.lower()
+                if not a or a_lc == name.lower() or a_lc in seen:
+                    continue
+                seen.add(a_lc)
+                clean_aliases.append(a)
+
             items.append({
                 'item_id': name, 'item_name': name,
+                'aliases': clean_aliases,
                 'part_number': part_no,
                 'quantity': qty, 'unit': unit, 'price': rate,
                 'standard_price': std_price,
@@ -2769,7 +2817,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.6-hierarchy-walk")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.7-aliases-perf")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -3132,7 +3180,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.6-hierarchy-walk',
+                'agent_version': '9.8.7-aliases-perf',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3189,7 +3237,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.6-hierarchy-walk',
+                'agent_version': '9.8.7-aliases-perf',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3898,7 +3946,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.6-hierarchy-walk")
+        print("FLOWRA Tally Sync Agent v9.8.7-aliases-perf")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

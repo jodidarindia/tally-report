@@ -350,9 +350,36 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## Insider Result — Batch A Bug Fixes (Feb 2026)
+## Iteration 82 — Batch B + 3 user-reported follow-ups (Feb 2026)
 
-**4 user-reported issues** in `/insider-result` page, all fixed without re-sync:
+**6 user issues addressed in this batch**:
+
+**1. SPIP zero-stock false positive** (Steelgrip 6.5mtr BLK had 899 stock but showed 0):
+Root cause — `inventory_items.find().to_list(5000)` capped at 5,000 items; KSC has 7,510. Items past index 5,000 silently dropped from `inv_map`. Fix: `to_list(None)` (unbounded). Also bumped sales fetch 20K → 50K. Live KSC verification: out_of_stock count dropped 1942 → 1083; Steelgrip 6.5mtr now correctly shows stock=899 + gap=understocked.
+
+**2. Sales Forecast — multi-FY YoY + prev-FY-based projection**:
+- YoY now keys on Indian-FY label (2024-25, 2025-26, 2026-27) — was splitting by calendar year (2025/2026), giving nonsense buckets when filtered to a single FY.
+- Forecast horizon = remaining months in selected FY (was: next 3 calendar months from `today`, often outside the selected FY → invisible on chart).
+- Forecast = same-month-previous-FY × growth_trend (clamped 0.5–2.0). MA-blend fallback (60% MA-3 + 40% MA-6) when prev-FY data missing. Each forecast row carries `based_on_prev_fy_month` + `growth_trend_pct` + `confidence` for UI provenance.
+- Frontend bridges actual → forecast line with a synthetic boundary point so Recharts renders a continuous dashed line. Method caption shown ("Forecast = same-month previous FY × growth trend ▼ 33%"). YoY chart label "FY 2025-26".
+
+**3. Tally Sync Agent v9.8.7-aliases-perf**:
+Fetches Tally `LANGUAGENAME.LIST` per stock item and stores as `aliases` array. Customer SKUs / brand short-names / part-number variants are now searchable. Falls back to `ALIAS` / `ALIAS.LIST` for older Tally builds. TDL FETCH list extended.
+
+**4. Mobile responsiveness — server-side pagination + render-cap**:
+- `/api/inventory/items` accepts `page`, `page_size`, `search`. Returns paged results + total count when `page_size > 0`; legacy full-list otherwise.
+- `/api/customers/outstanding` accepts same params. Tenant-wide totals (`total_outstanding`, `total_paid`) stay full-tenant accurate; the `customers` array is paged.
+- Backend search now matches `aliases` (regex array element-wise on Mongo).
+- `Inventory.js`: render-cap of 200 rows + "Load 200 more" button. Reset cap on filter / search / sort change. Aliases shown as small chip below item_name.
+- `CustomerCRM.js` Outstanding tab: same 200-row render-cap with debounced search input (name / phone / group). Same "Load more" pattern.
+
+**Known limitation**: render-cap is client-side. For 7,500-item KSC tenant the full JSON still ships from server (~5 MB). Future P2: switch the table render to true server-side paging (page/page_size hits backend, debounced search). Render-cap alone is enough to fix mobile freezes today.
+
+**Tests** — `tests/test_iteration82_batch_b.py` (16 tests covering all 4 fix areas). Combined regression iter72-iter82: **87 passed, 2 skipped**.
+
+
+
+## Insider Result — Batch A Bug Fixes (Feb 2026)
 
 **Bug #1 — SPIP "out of stock" rows showed zero stock when stock existed**
 Sales-voucher item names had stray whitespace / case differences from inventory_items names (e.g. "TVS Item " vs "tvs item"). The cross-lookup in `routes/insights.py` `spip-analysis` endpoint used exact-match keys, so items showed `qty_sold > 0` AND `stock_qty = 0` → mis-classified as out_of_stock.

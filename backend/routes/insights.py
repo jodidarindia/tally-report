@@ -139,19 +139,58 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
 
 @router.get("/insights/sales-forecast")
 async def get_sales_forecast(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
-    """Sales trend with moving average forecast for next 3 months."""
+    """Sales trend with seasonality-aware forecast.
+
+    Forecast philosophy (v2 — addresses user feedback "forecast has to
+    project based on previous FY"):
+      - For the selected FY, build a 12-month timeline (Apr…Mar).
+      - For each FUTURE month within the selected FY (months after
+        end-of-data), forecast = same-month-last-FY × growth_trend.
+      - growth_trend = (current-FY-to-date revenue) / (same-period-last-FY
+        revenue) — captures whether the user is up/down vs last year.
+      - When same-month-last-FY data isn't available, fall back to
+        weighted moving average (60% MA-3 + 40% MA-6) of recent months.
+      - Forecast confidence: high if >= 12 months of data AND last-FY
+        same-month exists; medium if MA-fallback; low if MA-3 only.
+    """
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
-        vouchers = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(20000)
+        # Pull ALL vouchers (no FY filter) — we need cross-FY data for
+        # seasonality + multi-FY YoY summary.
+        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(80000)
         bp = await _get_branch_exclusion(request, ctx)
-        vouchers = _exclude_branch_vouchers(vouchers, bp)
-        if fy:
-            vouchers = filter_vouchers_by_fy(vouchers, fy)
+        all_vouchers = _exclude_branch_vouchers(all_vouchers, bp)
 
+        # Helper: month_key "YYYY-MM" → FY label "YYYY-YY"
+        def _fy_for_month(month_key: str) -> str:
+            yyyy = int(month_key[:4])
+            mm = int(month_key[5:7])
+            fy_year = yyyy if mm >= 4 else yyyy - 1
+            return f"{fy_year}-{str(fy_year + 1)[-2:]}"
+
+        # ── 1. Build the all-time monthly aggregate (for seasonality lookup) ──
+        all_monthly = defaultdict(lambda: {"revenue": 0, "count": 0, "customers": set()})
+        for v in all_vouchers:
+            d = v.get("voucher_date", "")
+            if not d:
+                continue
+            month = d[:7]
+            amt = v.get("total_amount") or v.get("amount") or 0
+            all_monthly[month]["revenue"] += abs(float(amt)) if amt else 0
+            all_monthly[month]["count"] += 1
+            party = v.get("party_name", "")
+            if party:
+                all_monthly[month]["customers"].add(party)
+
+        # ── 2. Filter to the selected FY for the timeline + forecast horizon ──
+        if fy:
+            sel_vouchers = filter_vouchers_by_fy(all_vouchers, fy)
+        else:
+            sel_vouchers = all_vouchers
         monthly_sales = defaultdict(lambda: {"revenue": 0, "count": 0, "customers": set()})
-        for v in vouchers:
+        for v in sel_vouchers:
             d = v.get("voucher_date", "")
             if not d:
                 continue
@@ -163,7 +202,6 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
             if party:
                 monthly_sales[month]["customers"].add(party)
 
-        # Build sorted timeline
         months_sorted = sorted(monthly_sales.keys())
         timeline = []
         for m in months_sorted:
@@ -175,66 +213,97 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
                 "unique_customers": len(d["customers"]),
             })
 
-        # Calculate 3-month moving average for forecast
+        # ── 3. Seasonality-aware forecast for remaining months in selected FY ──
         revenues = [t["revenue"] for t in timeline]
         forecasts = []
-        if len(revenues) >= 3:
+        if revenues and fy:
+            # Determine which months remain in the selected FY
+            fy_year = int(fy.split("-")[0]) if "-" in fy else None
+            if fy_year:
+                fy_months = [f"{fy_year}-{m:02d}" for m in range(4, 13)] + \
+                            [f"{fy_year + 1}-{m:02d}" for m in range(1, 4)]
+                last_data_month = months_sorted[-1] if months_sorted else None
+                future_months = [m for m in fy_months if m > (last_data_month or "0000-00")]
+
+                # YoY growth trend across the FY-to-date
+                ytd_curr = sum(all_monthly[m]["revenue"] for m in fy_months
+                                if m in all_monthly and m <= (last_data_month or ""))
+                prev_fy_year = fy_year - 1
+                prev_fy_months = [f"{prev_fy_year}-{m:02d}" for m in range(4, 13)] + \
+                                  [f"{prev_fy_year + 1}-{m:02d}" for m in range(1, 4)]
+                # Same-period-last-FY = April through whatever the last data month's calendar month is
+                if last_data_month:
+                    n_months_so_far = len([m for m in fy_months if m <= last_data_month and m in all_monthly])
+                    ytd_prev = sum(all_monthly[m]["revenue"] for m in prev_fy_months[:n_months_so_far]
+                                    if m in all_monthly)
+                else:
+                    n_months_so_far = 0
+                    ytd_prev = 0
+                growth_trend = (ytd_curr / ytd_prev) if ytd_prev > 0 else 1.0
+                # Cap trend in [0.5, 2.0] to avoid wild outlier amplification
+                growth_trend = max(0.5, min(2.0, growth_trend))
+
+                # MA fallback for months without prev-FY same-month data
+                ma3 = sum(revenues[-3:]) / min(len(revenues), 3) if revenues else 0
+                ma6 = sum(revenues[-6:]) / min(len(revenues), 6) if revenues else 0
+                ma_blend = 0.6 * ma3 + 0.4 * ma6 if ma6 > 0 else ma3
+
+                for fm in future_months:
+                    # Same calendar month, previous FY: e.g. for "2026-04",
+                    # look up "2025-04" (one year back).
+                    prev_year_month = f"{int(fm[:4]) - 1}-{fm[5:]}"
+                    prev_data = all_monthly.get(prev_year_month, {}).get("revenue", 0)
+                    if prev_data > 0:
+                        forecast_val = prev_data * growth_trend
+                        confidence = "high" if len(revenues) >= 6 else "medium"
+                    else:
+                        forecast_val = ma_blend
+                        confidence = "medium" if len(revenues) >= 6 else "low"
+                    forecasts.append({
+                        "month": fm,
+                        "forecast_revenue": round(forecast_val, 2),
+                        "confidence": confidence,
+                        "based_on_prev_fy_month": prev_year_month if prev_data > 0 else None,
+                        "growth_trend_pct": round((growth_trend - 1) * 100, 1) if prev_data > 0 else None,
+                    })
+        elif len(revenues) >= 3:
+            # No FY selected — fall back to next-3-months forward MA forecast
             ma3 = sum(revenues[-3:]) / 3
             ma6 = sum(revenues[-6:]) / 6 if len(revenues) >= 6 else ma3
-            # Simple weighted forecast: 60% recent MA + 40% longer MA
-            base_forecast = 0.6 * ma3 + 0.4 * ma6
-
+            base = 0.6 * ma3 + 0.4 * ma6
             today = date_type.today()
             for i in range(1, 4):
                 fd = today.replace(day=1) + timedelta(days=32 * i)
-                forecast_month = fd.strftime("%Y-%m")
-                # Add slight trend adjustment
-                trend_factor = 1.0
-                if len(revenues) >= 6:
-                    recent_avg = sum(revenues[-3:]) / 3
-                    older_avg = sum(revenues[-6:-3]) / 3
-                    if older_avg > 0:
-                        trend_factor = min(1.3, max(0.7, recent_avg / older_avg))
-
                 forecasts.append({
-                    "month": forecast_month,
-                    "forecast_revenue": round(base_forecast * (trend_factor ** i), 2),
-                    "confidence": "high" if len(revenues) >= 12 else ("medium" if len(revenues) >= 6 else "low"),
+                    "month": fd.strftime("%Y-%m"),
+                    "forecast_revenue": round(base, 2),
+                    "confidence": "medium" if len(revenues) >= 6 else "low",
+                    "based_on_prev_fy_month": None,
+                    "growth_trend_pct": None,
                 })
 
-        # Year-over-year comparison
-        yoy = {}
-        for t in timeline:
-            y = t["month"][:4]
-            yoy.setdefault(y, {"revenue": 0, "count": 0})
-            yoy[y]["revenue"] += t["revenue"]
-            yoy[y]["count"] += t["count"]
+        # ── 4. Year-over-year — across ALL FYs (not just selected) ──
+        # The previous code split by calendar year (2025 vs 2026), which
+        # gave nonsensical "year" buckets when filtered to a single FY.
+        # Now we group by Indian-FY label (2024-25, 2025-26, 2026-27).
+        yoy_by_fy = defaultdict(lambda: {"revenue": 0, "count": 0})
+        for m, d in all_monthly.items():
+            fy_label = _fy_for_month(m)
+            yoy_by_fy[fy_label]["revenue"] += d["revenue"]
+            yoy_by_fy[fy_label]["count"] += d["count"]
+        yoy_list = [{"year": k, "revenue": round(v["revenue"], 2), "count": v["count"]}
+                     for k, v in sorted(yoy_by_fy.items())]
 
         # Month-vs-month cross-FY comparison (e.g. Apr 2025 vs Apr 2024 vs Apr 2023)
-        # Also fetch ALL vouchers (not FY filtered) for historical comparison
-        all_vouchers_for_compare = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "amount": 1, "total_amount": 1, "party_name": 1}).to_list(50000)
-        all_vouchers_for_compare = _exclude_branch_vouchers(all_vouchers_for_compare, bp)
-
-        all_monthly = defaultdict(lambda: {"revenue": 0, "count": 0})
-        for v in all_vouchers_for_compare:
-            d = v.get("voucher_date", "")
-            if not d:
-                continue
-            month_key = d[:7]  # "2025-04"
-            amt = v.get("total_amount") or v.get("amount") or 0
-            all_monthly[month_key]["revenue"] += abs(float(amt)) if amt else 0
-            all_monthly[month_key]["count"] += 1
+        # — uses the same `all_monthly` aggregate built above (no second DB
+        # round-trip; the previous code re-fetched & re-aggregated needlessly).
 
         # Build comparison: group by month number (04=Apr, 05=May, etc.)
         month_comparison = defaultdict(list)  # {"04": [{"fy": "2024-25", "month": "2025-04", "revenue": ...}, ...]}
         for month_key, data in sorted(all_monthly.items()):
-            mm = month_key[5:7]  # "04", "05", etc.
-            yyyy = int(month_key[:4])
-            m_int = int(mm)
-            fy_year = yyyy if m_int >= 4 else yyyy - 1
-            fy_label = f"{fy_year}-{str(fy_year + 1)[-2:]}"
+            mm = month_key[5:7]
             month_comparison[mm].append({
-                "fy": fy_label,
+                "fy": _fy_for_month(month_key),
                 "month": month_key,
                 "revenue": round(data["revenue"], 2),
                 "count": data["count"],
@@ -257,7 +326,7 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
         return APIResponse(success=True, data={
             "timeline": timeline,
             "forecasts": forecasts,
-            "yoy": [{"year": k, **v} for k, v in sorted(yoy.items())],
+            "yoy": yoy_list,
             "month_comparison": comparison_data,
             "summary": {
                 "total_months": len(timeline),
@@ -281,14 +350,16 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
         q = _build_query(ctx, company_id)
 
         # Get sales vouchers with items
-        sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
+        sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
         bp = await _get_branch_exclusion(request, ctx)
         sales = _exclude_branch_vouchers(sales, bp)
         if fy:
             sales = filter_vouchers_by_fy(sales, fy)
 
-        # Get inventory items
-        inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(5000)
+        # Get inventory items (no cap — KSC-size tenants have 7,500+ items;
+        # the previous 5,000 cap silently dropped 2,500 items so they showed
+        # as out_of_stock even when they had stock)
+        inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(None)
 
         # Build item-level analysis from sales (case/whitespace-normalised
         # so sales-voucher item names with stray spaces match inventory).

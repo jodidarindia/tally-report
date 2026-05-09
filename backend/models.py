@@ -37,6 +37,7 @@ class InventoryItem(BaseModel):
     category: Optional[str] = None
     stock_group: Optional[str] = None
     root_stock_group: Optional[str] = None  # v9.8.6 — Tally Primary stock-group (after hierarchy walk)
+    aliases: Optional[List[str]] = None  # v9.8.7 — Tally LANGUAGENAME / ALIAS list, searchable
     reorder_level: Optional[float] = None
     # Stock value fields (for Balance Sheet & P&L)
     opening_quantity: Optional[float] = None

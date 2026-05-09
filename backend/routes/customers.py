@@ -44,7 +44,15 @@ def _build_query(ctx, company_id=None, extra=None):
 
 
 @router.get("/customers/outstanding")
-async def get_customer_outstanding(request: Request, customer: Optional[str] = None, fy: Optional[str] = None, company_id: Optional[str] = None):
+async def get_customer_outstanding(
+    request: Request,
+    customer: Optional[str] = None,
+    fy: Optional[str] = None,
+    company_id: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 0,  # 0 = no pagination (legacy callers); set for mobile
+):
     """Get outstanding payments by customer with proper aging, opening balance, credit notes, and journals."""
     try:
         from datetime import date as date_type
@@ -285,12 +293,32 @@ async def get_customer_outstanding(request: Request, customer: Optional[str] = N
         all_groups = list(set(c.get("ledger_group", "") for c in customers if c.get("ledger_group")))
         all_states = list(set(c.get("state", "") for c in customers if c.get("state")))
 
+        # Search + pagination — applied AFTER full computation so totals
+        # (total_outstanding, total_paid) reflect the entire dataset, not just
+        # the page. Mobile/CRM page hits this with page_size=50; web dashboard
+        # totals need the un-paged sums.
+        full_total_os = round(sum(c["outstanding_amount"] for c in customers), 2)
+        full_total_paid = round(sum(c.get("paid_amount", 0) for c in customers), 2)
+        if search and search.strip():
+            s_lc = search.strip().lower()
+            customers = [c for c in customers
+                          if s_lc in (c.get("customer_name") or "").lower()
+                          or s_lc in (c.get("phone") or "").lower()
+                          or s_lc in (c.get("ledger_group") or "").lower()]
+        total_after_search = len(customers)
+        if page_size and page_size > 0:
+            skip = max(0, (page - 1) * page_size)
+            customers = customers[skip:skip + page_size]
+
         return APIResponse(
             success=True,
             data={
                 "customers": customers,
-                "total_outstanding": round(sum(c["outstanding_amount"] for c in customers), 2),
-                "total_paid": round(sum(c.get("paid_amount", 0) for c in customers), 2),
+                "total": total_after_search,
+                "page": page if page_size else 1,
+                "page_size": page_size if page_size else total_after_search,
+                "total_outstanding": full_total_os,
+                "total_paid": full_total_paid,
                 "groups": sorted(all_groups),
                 "states": sorted(all_states)
             }
