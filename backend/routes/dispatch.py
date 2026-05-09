@@ -9,7 +9,7 @@ import os
 
 from db import db
 from models import APIResponse
-from utils import safe_num
+from utils import safe_num, build_fuzzy_regex
 from services.auth_service import get_current_user
 from services.tenant_context import get_tenant_context
 
@@ -47,12 +47,14 @@ async def get_dispatch_cards(request: Request, status: Optional[str] = None, sea
         if status:
             q["status"] = {"$nin": ["info_shared"]} if status == "active" else status
         if search:
-            q["$or"] = [
-                {"invoice_number": {"$regex": search, "$options": "i"}},
-                {"party_name": {"$regex": search, "$options": "i"}},
-                {"card_id": {"$regex": search, "$options": "i"}},
-                {"lr_number": {"$regex": search, "$options": "i"}},
-            ]
+            fuzzy = build_fuzzy_regex(search)
+            if fuzzy:
+                q["$or"] = [
+                    {"invoice_number": {"$regex": fuzzy, "$options": "i"}},
+                    {"party_name": {"$regex": fuzzy, "$options": "i"}},
+                    {"card_id": {"$regex": fuzzy, "$options": "i"}},
+                    {"lr_number": {"$regex": fuzzy, "$options": "i"}},
+                ]
         if fy:
             from utils import fy_to_date_range
             fy_start, fy_end = fy_to_date_range(fy)
@@ -531,11 +533,13 @@ async def get_dispatch_history(request: Request, search: Optional[str] = None, p
         q = _q(ctx, company_id)
         q["status"] = {"$in": ["dispatched", "info_shared"]}
         if search:
-            q["$or"] = [{"invoice_number": {"$regex": search, "$options": "i"}},
-                        {"party_name": {"$regex": search, "$options": "i"}},
-                        {"card_id": {"$regex": search, "$options": "i"}},
-                        {"lr_number": {"$regex": search, "$options": "i"}},
-                        {"transport_name": {"$regex": search, "$options": "i"}}]
+            fuzzy = build_fuzzy_regex(search)
+            if fuzzy:
+                q["$or"] = [{"invoice_number": {"$regex": fuzzy, "$options": "i"}},
+                            {"party_name": {"$regex": fuzzy, "$options": "i"}},
+                            {"card_id": {"$regex": fuzzy, "$options": "i"}},
+                            {"lr_number": {"$regex": fuzzy, "$options": "i"}},
+                            {"transport_name": {"$regex": fuzzy, "$options": "i"}}]
         total = await db.dispatch_cards.count_documents(q)
         skip = (page - 1) * limit
         cards = await db.dispatch_cards.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)

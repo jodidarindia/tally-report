@@ -11,6 +11,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   ComposedChart, ReferenceLine
 } from 'recharts';
+import { fuzzyMatch, fuzzyMatchAny } from '../utils/fuzzySearch';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -231,7 +232,7 @@ const InsiderResult = ({ selectedFY, companyId }) => {
     ];
 
     let filtered = lifecycleFilter === 'all' ? allCustomers : allCustomers.filter(c => c._status === lifecycleFilter);
-    if (search) filtered = filtered.filter(c => c.customer_name.toLowerCase().includes(search.toLowerCase()));
+    if (search) filtered = filtered.filter(c => fuzzyMatchAny(search, [c.customer_name, c.phone, c.ledger_group, c.state]));
     filtered = sortData(filtered, sortField, sortDir);
 
     return (
@@ -580,16 +581,12 @@ const InsiderResult = ({ selectedFY, companyId }) => {
 
     let filtered = spipFilter === 'all' ? items : items.filter(i => i.gap_type === spipFilter);
     if (search) {
-      // Global search — name + part_number + aliases (case-insensitive
-      // substring). Mirrors the Inventory page behavior so users find an
-      // item by ANY known reference (Tally LANGUAGENAME alias, customer's
-      // SKU, brand part-no etc.).
-      const s = search.toLowerCase().trim();
-      filtered = filtered.filter(i =>
-        (i.item_name || '').toLowerCase().includes(s)
-        || (i.part_number || '').toLowerCase().includes(s)
-        || (Array.isArray(i.aliases) && i.aliases.some(a => (a || '').toLowerCase().includes(s)))
-      );
+      // Fuzzy global search — name + part_number + aliases. Ignores spaces &
+      // separators (- / ( ) ! : . , & _ ' ") so users find an item by ANY known
+      // reference (Tally LANGUAGENAME alias, customer's SKU, brand part-no etc.).
+      filtered = filtered.filter(i => fuzzyMatchAny(search, [
+        i.item_name, i.part_number, i.aliases,
+      ]));
     }
     filtered = sortData(filtered, sortField, sortDir);
 

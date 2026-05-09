@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { TrendingUp, TrendingDown, AlertTriangle, BarChart3, Download, Filter as FilterIcon, Users, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { fuzzyMatch, fuzzyMatchAny } from '../utils/fuzzySearch';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -97,8 +98,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
 
   const filteredCustomerNames = useMemo(() => {
     if (!customerSearch.trim()) return customerNames;
-    const q = customerSearch.toLowerCase();
-    return customerNames.filter(n => n.toLowerCase().includes(q));
+    return customerNames.filter(n => fuzzyMatch(n, customerSearch));
   }, [customerNames, customerSearch]);
 
   const handleExportCustomerItems = async () => {
@@ -795,8 +795,7 @@ function CategorySalesTab({ fy, formatNum }) {
   };
 
   const filtered = !data ? [] : (search
-    ? data.items.filter(it => (it.item_name || '').toLowerCase().includes(search.toLowerCase())
-        || (it.part_number || '').toLowerCase().includes(search.toLowerCase()))
+    ? data.items.filter(it => fuzzyMatchAny(search, [it.item_name, it.part_number, it.aliases]))
     : data.items);
 
   return (

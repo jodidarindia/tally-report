@@ -4,6 +4,7 @@ import { Users, Calendar, TrendingUp, AlertTriangle, CheckCircle, Target, Downlo
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 import SearchableSelect from '../components/SearchableSelect';
+import { fuzzyMatchAny, fuzzyMatch } from '../utils/fuzzySearch';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -360,7 +361,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
         <>
           {/* Outstanding Payments - Proper Aging */}
           {activeTab === 'outstanding' && (() => {
-            const q = (searchQuery || '').trim().toLowerCase();
+            const q = (searchQuery || '').trim();
             const sorted = outstanding
               .filter(c => {
                 if (selectedGroup === 'all') return true;
@@ -368,10 +369,9 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 if (selectedGroup.startsWith('state:')) return c.state === selectedGroup.slice(6);
                 return c.ledger_group === selectedGroup;
               })
-              .filter(c => !q
-                || (c.customer_name || '').toLowerCase().includes(q)
-                || (c.phone || '').toLowerCase().includes(q)
-                || (c.ledger_group || '').toLowerCase().includes(q))
+              .filter(c => !q || fuzzyMatchAny(q, [
+                c.customer_name, c.phone, c.ledger_group, c.contact_person, c.state,
+              ]))
               .sort((a, b) => {
                 const dir = sortDir === 'asc' ? 1 : -1;
                 if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
@@ -883,7 +883,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
 
   const filtered = paymentBehavior
     .filter(c => filterPattern === 'all' || c.payment_pattern === filterPattern)
-    .filter(c => !searchTerm || (c.customer_name || '').toLowerCase().includes(searchTerm.toLowerCase()))
+    .filter(c => !searchTerm || fuzzyMatchAny(searchTerm, [c.customer_name, c.phone, c.ledger_group, c.state]))
     .sort((a, b) => {
       const av = a[sortBy] ?? 0, bv = b[sortBy] ?? 0;
       return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);

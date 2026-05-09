@@ -6,6 +6,7 @@ import {
   Camera, FileText, UploadCloud, X, User, MapPin, Boxes, Hash,
   MessageSquare, Pause, Play, History, ArrowRight, ChevronDown
 } from 'lucide-react';
+import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const STATUS_CFG = {
@@ -84,7 +85,7 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
     try { const r = await axios.post(`${API}/api/dispatch/transporters`, {name, phone}, {headers:hdr()}); if(r.data.success) { toast.success('Transporter added'); load(); return r.data.data.name; } else toast.error(r.data.error); } catch{ toast.error('Failed'); } return null;
   };
 
-  const filtered = search ? cards.filter(c => [c.party_name,c.invoice_number,c.card_id].some(f=>(f||'').toLowerCase().includes(search.toLowerCase()))) : cards;
+  const filtered = search ? cards.filter(c => fuzzyMatchAny(search, [c.party_name, c.invoice_number, c.card_id, c.lr_number, c.transport_name])) : cards;
 
   // ── HISTORY VIEW ──
   if (view === 'history') return (

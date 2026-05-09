@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Download, Search, Filter, Sparkles, ChevronDown, RefreshCw, Edit2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -156,14 +157,12 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   const ABC_COLORS = { A:'#10b981', B:'#3b82f6', C:'#f59e0b', D:'#94a3b8' };
 
   const filteredItems = items.filter(item => {
-    const term = searchTerm.toLowerCase();
-    // v9.8.7 — alias search: aliases is an array of strings from Tally LANGUAGENAME.
-    // Match any alias substring so users can find items by part-number variants
-    // and customer-specific SKUs.
-    const matchesSearch =
-      (item.item_name || '').toLowerCase().includes(term) ||
-      (item.part_number || '').toLowerCase().includes(term) ||
-      (Array.isArray(item.aliases) && item.aliases.some(a => (a || '').toLowerCase().includes(term)));
+    // Fuzzy match — ignores spaces & separator chars (-/()!:.,&_'") so
+    // "tvs 10" matches "TVS-10", "TVS(10)", "TVS/10". Searches across
+    // item_name, part_number AND aliases (Tally LANGUAGENAME).
+    const matchesSearch = !searchTerm || fuzzyMatchAny(searchTerm, [
+      item.item_name, item.part_number, item.aliases,
+    ]);
     const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
     const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(item.stock_group);
     const matchesAbc = abcFilter === 'all' || (item.abc_category || '') === abcFilter;

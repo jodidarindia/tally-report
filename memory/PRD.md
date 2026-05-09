@@ -752,3 +752,32 @@ User reported (with screenshot from ASA Autotech, where sync started in FY 25-26
 - Eliminated the ~150-line duplicate Opening-Balance replay between `get_customer_outstanding`
   and `get_payment_behavior`; behaviour preserved (regression tests pass).
 - Test files: `/app/backend/tests/test_iteration67_customer_metrics_refactor.py` (17 unit tests).
+
+## Fuzzy / Normalized Search Across All Search Boxes (Feb 2026 — NEW)
+**P0 feature** — User reported that Tally records have inconsistent formatting (spaces, dashes, slashes, parens, dots, etc.) which made search unreliable. Now ALL search boxes ignore separator characters in BOTH the search input AND the stored value, so `tvs 10` matches `TVS-10`, `TVS(10)`, `TVS/10`, `TVS.10`, etc.
+
+**Ignored characters** (per user choice "1b, 2b"):
+`<space> \t - / ( ) ! : . , & _ ' "`
+
+**Backend** — `/app/backend/utils.py` (new helpers):
+- `fuzzy_normalize(s)` → strips ignorable chars, lowercases.
+- `build_fuzzy_regex(term)` → produces a Mongo-compatible `$regex` that matches the term while permitting any separator chars between letters in stored values.
+- `fuzzy_match(haystack, needle)` → Python-side substring check on already-loaded lists.
+
+**Endpoints upgraded**:
+- `GET /api/inventory/items` — search across `item_name`, `part_number`, `aliases`.
+- `GET /api/customers/outstanding` — search across `customer_name`, `phone`, `ledger_group`, `contact_person`, `state`. The `customer` filter param also fuzzy.
+- `GET /api/customers/payment-behavior` — same fields.
+- `GET /api/salesman-orders/catalog` — fuzzy on items + part_number + aliases.
+- `GET /api/salesman-orders/orders` — fuzzy on order_id, customer_name, invoice_number.
+- `GET /api/dispatch/cards` & `GET /api/dispatch/history` — fuzzy on invoice/party/card-id/lr/transport.
+
+**Frontend** — `/app/frontend/src/utils/fuzzySearch.js` (new):
+- `fuzzyNormalize`, `fuzzyMatch`, `fuzzyMatchAny` — mirror the backend helpers for client-side filtering.
+
+**Pages upgraded** (client-side filtering replaced):
+- `Inventory.js`, `CustomerCRM.js` (Outstanding + Payment Behaviour), `InsiderResult.js` (Lifecycle + SPIP), `InventoryAnalytics.js` (ABC table + customer dropdown), `DispatchTerminal.js`, `SalesmanOrderApp.js` (catalog), `SearchableSelect.js` (used by all customer/item dropdowns).
+
+**End-to-end verified** with admin `axle 85w140` ↔ `axle85w140` ↔ `V12-GO/851` ↔ `compressor.oil` and customer `krishna sales` ↔ `krishnasales` — all returned identical result sets.
+
+**Tests**: `/app/backend/tests/test_iteration84_fuzzy_search.py` — 11/11 passing.

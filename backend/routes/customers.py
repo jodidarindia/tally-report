@@ -8,7 +8,7 @@ from db import db
 from models import (
     CustomerFollowup, CustomerFollowupCreate, APIResponse
 )
-from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, get_previous_fy, get_jv_party_amount
+from utils import safe_num, safe_str, filter_vouchers_by_fy, fy_to_date_range, get_previous_fy, get_jv_party_amount, fuzzy_match
 from services.auth_service import get_current_user
 from services.export_service import ExportService
 from services.tenant_context import get_tenant_context
@@ -224,7 +224,7 @@ async def get_customer_outstanding(
         # No additional group filter needed — sync already handled it.
 
         if customer:
-            customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
+            customers = [c for c in customers if fuzzy_match(safe_str(c.get("customer_name")), customer)]
 
         # Build master-OB lookup for Tally-Verified badge logic (FY-1 comparison)
         synced_master_ob = {
@@ -300,11 +300,14 @@ async def get_customer_outstanding(
         full_total_os = round(sum(c["outstanding_amount"] for c in customers), 2)
         full_total_paid = round(sum(c.get("paid_amount", 0) for c in customers), 2)
         if search and search.strip():
-            s_lc = search.strip().lower()
+            # Fuzzy match — ignores spaces & separator chars in BOTH the search
+            # term and the customer fields (so "abc co" finds "ABC & Co.", etc.)
             customers = [c for c in customers
-                          if s_lc in (c.get("customer_name") or "").lower()
-                          or s_lc in (c.get("phone") or "").lower()
-                          or s_lc in (c.get("ledger_group") or "").lower()]
+                          if fuzzy_match(c.get("customer_name") or "", search)
+                          or fuzzy_match(c.get("phone") or "", search)
+                          or fuzzy_match(c.get("ledger_group") or "", search)
+                          or fuzzy_match(c.get("contact_person") or "", search)
+                          or fuzzy_match(c.get("state") or "", search)]
         total_after_search = len(customers)
         if page_size and page_size > 0:
             skip = max(0, (page - 1) * page_size)
@@ -1218,7 +1221,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         ]
 
         if customer:
-            customers = [c for c in customers if customer.lower() in safe_str(c.get("customer_name")).lower()]
+            customers = [c for c in customers if fuzzy_match(safe_str(c.get("customer_name")), customer)]
 
         customers.sort(key=lambda c: c.get("customer_name", "").lower())
 

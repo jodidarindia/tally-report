@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, ChevronDown, X, Check } from 'lucide-react';
+import { fuzzyMatch } from '../utils/fuzzySearch';
 
 /**
  * Searchable dropdown select component.
@@ -33,7 +34,7 @@ const SearchableSelect = ({
 
   const sorted = [...options].sort((a, b) => (a || '').localeCompare(b || '', 'en', { sensitivity: 'base' }));
   const filtered = search
-    ? sorted.filter(o => (o || '').toLowerCase().includes(search.toLowerCase()))
+    ? sorted.filter(o => fuzzyMatch(o, search))
     : sorted;
 
   useEffect(() => {

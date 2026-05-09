@@ -3,8 +3,53 @@ from typing import List
 from fastapi import WebSocket
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+
+# ── Fuzzy / normalized search helpers ──────────────────────────────────────
+# Tally records (and user input) inconsistently use spaces, dashes, slashes,
+# parens, dots, ampersands, underscores, quotes. Searches must match
+# regardless of these separators so e.g. "tvs 10" matches "TVS-10",
+# "TVS(10)", "TVS/10", "TVS.10", etc.
+FUZZY_IGNORE_CHARS = r" \t\-\/\(\)!:\.\,\&\_\'\""
+_FUZZY_STRIP_RE = re.compile(f"[{FUZZY_IGNORE_CHARS}]+")
+
+
+def fuzzy_normalize(s: str) -> str:
+    """Strip ignorable separator characters and lowercase the string."""
+    if not s:
+        return ""
+    return _FUZZY_STRIP_RE.sub("", str(s)).lower()
+
+
+def build_fuzzy_regex(term: str) -> str:
+    """Build a Mongo-compatible $regex pattern that matches `term` while
+    ignoring spaces and separator characters in BOTH the search input
+    and the stored value.
+
+    Example: 'tvs 10' → 'tvs[ \\-\\/\\(\\)!:\\.\\,\\&\\_\\\'\\"]*1[ \\-…]*0'
+    Match is anchored as substring (no ^/$) and is case-insensitive when
+    used with Mongo's `$options: "i"`.
+    """
+    if not term or not str(term).strip():
+        return ""
+    clean = _FUZZY_STRIP_RE.sub("", str(term))
+    if not clean:
+        return ""
+    sep = f"[{FUZZY_IGNORE_CHARS}]*"
+    # Escape each char (regex metachars in the input become literals) and
+    # join with the optional separator pattern.
+    return sep.join(re.escape(ch) for ch in clean)
+
+
+def fuzzy_match(haystack: str, needle: str) -> bool:
+    """Python-side fuzzy substring match (used when filtering already-loaded
+    Python lists). Both sides are normalized before substring check."""
+    if not needle:
+        return True
+    return fuzzy_normalize(needle) in fuzzy_normalize(haystack)
 
 
 def safe_num(val, default=0):

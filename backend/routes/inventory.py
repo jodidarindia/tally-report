@@ -10,7 +10,7 @@ from models import (
     InventoryItem, SalesVoucher, APIResponse,
     PurchaseOrder, PurchaseOrderItem
 )
-from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
+from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range, build_fuzzy_regex
 from services.purchase_order_ai import PurchaseOrderAI
 from services.tenant_context import get_tenant_context
 from services.auth_service import get_current_user
@@ -371,15 +371,17 @@ async def get_inventory_items(
         if min_quantity is not None:
             extra["quantity"] = {"$gte": min_quantity}
         if search and search.strip():
-            # Case-insensitive search on item_name, part_number, OR aliases.
+            # Fuzzy search — ignores spaces & separator chars (- / ( ) ! : . , & _ ' ")
+            # so "tvs 10" matches "TVS-10", "TVS(10)", "TVS/10", etc.
             # v9.8.7 — alias array is matched element-wise via $regex on the
             # array (Mongo evaluates regex against each string in the array).
-            esc = re.escape(search.strip())
-            extra["$or"] = [
-                {"item_name": {"$regex": esc, "$options": "i"}},
-                {"part_number": {"$regex": esc, "$options": "i"}},
-                {"aliases": {"$regex": esc, "$options": "i"}},
-            ]
+            fuzzy = build_fuzzy_regex(search)
+            if fuzzy:
+                extra["$or"] = [
+                    {"item_name": {"$regex": fuzzy, "$options": "i"}},
+                    {"part_number": {"$regex": fuzzy, "$options": "i"}},
+                    {"aliases": {"$regex": fuzzy, "$options": "i"}},
+                ]
 
         query = _build_query(ctx, company_id, extra)
         # Server-side pagination — when page_size > 0, return a page of

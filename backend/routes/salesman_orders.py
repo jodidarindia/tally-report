@@ -7,7 +7,7 @@ import uuid
 
 from db import db
 from models import APIResponse
-from utils import safe_num, fy_to_date_range, get_current_fy
+from utils import safe_num, fy_to_date_range, get_current_fy, build_fuzzy_regex
 from services.auth_service import get_current_user
 from services.tenant_context import get_tenant_context
 
@@ -81,16 +81,18 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
         q = _q(ctx, company_id)
         inv_q = {**q}
         if search:
-            import re as _re
-            s = _re.escape(search.strip())
-            # v9.8.7 — alias matching: salesmen often know items by their
-            # Tally LANGUAGENAME alias (customer's SKU, brand short-name, etc.)
-            # Mongo's regex against an array field matches if ANY element matches.
-            inv_q["$or"] = [
-                {"item_name": {"$regex": s, "$options": "i"}},
-                {"part_number": {"$regex": s, "$options": "i"}},
-                {"aliases": {"$regex": s, "$options": "i"}},
-            ]
+            # Fuzzy match — ignores spaces & separators so "tvs 10" matches
+            # "TVS-10", "TVS(10)", "TVS/10", etc.
+            fuzzy = build_fuzzy_regex(search)
+            if fuzzy:
+                # v9.8.7 — alias matching: salesmen often know items by their
+                # Tally LANGUAGENAME alias (customer's SKU, brand short-name, etc.)
+                # Mongo's regex against an array field matches if ANY element matches.
+                inv_q["$or"] = [
+                    {"item_name": {"$regex": fuzzy, "$options": "i"}},
+                    {"part_number": {"$regex": fuzzy, "$options": "i"}},
+                    {"aliases": {"$regex": fuzzy, "$options": "i"}},
+                ]
         items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(2000)
 
         # Last-sale-price fallback: when Tally master STANDARDPRICE is unset,
@@ -330,11 +332,13 @@ async def get_orders(request: Request, status: Optional[str] = None, search: Opt
         if salesman:
             q["salesman"] = {"$regex": salesman, "$options": "i"}
         if search:
-            q["$or"] = [
-                {"order_id": {"$regex": search, "$options": "i"}},
-                {"customer_name": {"$regex": search, "$options": "i"}},
-                {"invoice_number": {"$regex": search, "$options": "i"}},
-            ]
+            fuzzy = build_fuzzy_regex(search)
+            if fuzzy:
+                q["$or"] = [
+                    {"order_id": {"$regex": fuzzy, "$options": "i"}},
+                    {"customer_name": {"$regex": fuzzy, "$options": "i"}},
+                    {"invoice_number": {"$regex": fuzzy, "$options": "i"}},
+                ]
         if date_from:
             q.setdefault("created_at", {})["$gte"] = f"{date_from}T00:00:00"
         if date_to:

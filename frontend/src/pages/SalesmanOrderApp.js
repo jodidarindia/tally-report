@@ -6,6 +6,7 @@ import {
   User, FileText, ArrowRight, Pause, AlertTriangle, Hash, MessageSquare,
   Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft,
 } from 'lucide-react';
+import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}); } catch { return iso; } };
@@ -253,12 +254,11 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   const removeFromCart = (idx) => { setCart(cart.filter((_,i)=>i!==idx)); };
 
   const total = cart.reduce((s,c)=>s+(c.quantity*c.price), 0);
-  // Global search across name + part_number
-  const filtered = catSearch ? catalog.filter(c => {
-    const s = catSearch.toLowerCase();
-    return (c.item_name||'').toLowerCase().includes(s)
-        || (c.part_number||'').toLowerCase().includes(s);
-  }) : catalog;
+  // Fuzzy global search across name + part_number + aliases — ignores
+  // spaces & separator chars so "tvs 10" matches "TVS-10" / "TVS(10)" etc.
+  const filtered = catSearch ? catalog.filter(c =>
+    fuzzyMatchAny(catSearch, [c.item_name, c.part_number, c.aliases])
+  ) : catalog;
 
   const submit = async () => {
     if(cart.length===0) return toast.error('Add items to cart');
