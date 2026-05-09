@@ -143,7 +143,7 @@ def test_public_agent_is_v983():
         pytest.skip("public agent not present")
     with open(path, 'r', encoding='utf-8') as f:
         contents = f.read()
-    assert "9.8.3-empty-vchtype-quiet" in contents or "9.8.4-tenant-guard" in contents
+    assert "9.8.3-empty-vchtype-quiet" in contents or "9.8.4-tenant-guard" in contents or "9.8.5-stdprice-list" in contents
     # Old stamps are gone
     assert "9.8.2-saleprice-fix" not in contents
     # Dedup logic is present

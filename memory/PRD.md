@@ -350,9 +350,30 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## Inventory Sale Price — Last-Sale Fallback (Feb 2026 — UX FIX)
+## Tally Sync Agent v9.8.5-stdprice-list (Feb 2026 — DATA EXTRACTION FIX)
 
-**User-reported (after v9.8.2 cleanup)**: "When will sales price in inventory menu be visible. Now 'set in tally' is showing." User has 7,712 items where every row showed `Set in Tally` because they don't maintain STANDARDPRICE in Tally master.
+**User-reported**: "Standard sales price exists in tally for every stock. Then why are you showing last sale price. Tally master has to be shown first."
+
+**Root cause** — verified live (0 / 7,712 items had `standard_price > 0` even though user has set Standard Selling Rate on every stock item):
+
+The agent's `<STANDARDPRICELIST.LIST>` walker was reading the WRONG key. xmltodict surfaces repeated `<STANDARDPRICELIST.LIST>` elements **directly** at `si['STANDARDPRICELIST.LIST']` under each stock item — NOT nested inside a `<STANDARDPRICELIST>` parent. The previous code did `si.get('STANDARDPRICELIST', ...)` and never entered the loop. Result: every item fell through to the v9.8.2 "no fallback to cost" path → `standard_price=0` for everyone.
+
+**Fix shipped in v9.8.5**:
+- Reads `STANDARDPRICELIST.LIST` and `STANDARDPRICEDETAILS.LIST` (Tally Prime 3+) directly at the stock-item level
+- Generic scan for any `*PRICELIST.LIST` / `*PRICEDETAILS.LIST` key (catches Tally builds with renamed sub-collections)
+- Picks the most-recent applicable entry: filters `APPLICABLEFROM <= today` (skips future-dated rates), sorts by date desc
+- Reads `RATE`, `STDPRICE`, `STANDARDPRICE`, `SELLINGRATE`, `SALERATE`, `PRICE` in priority order from each entry
+- TDL FETCH list adds `STANDARDPRICEDETAILS`
+- One-shot diagnostic log on first item shows price-related keys; end-of-loop summary logs `STDPRICE extracted: N/M items (X%)` so users can see the agent worked
+- v9.8.2 "never quote cost" invariant preserved — when no master is set, `standard_price=0` (UI then falls back to last-sale via iter77)
+
+**Distribution**: stamped `9.8.5-stdprice-list` at `/app/desktop-agent/tally_sync_agent_v9.py` + `/app/frontend/public/flowra-desktop-agent.py`. **User must re-download and re-sync** to populate STANDARDPRICE for all stock items.
+
+**Tests** — `tests/test_iteration78_agent_v985_stdprice_list.py` (8/8 PASS): direct-key list read, single-entry dict, future-dated skip, most-recent applicable, Tally Prime 3+ details key, no-master returns 0 (cost not leaked), COMPUTE wins over .LIST walker, public-agent stamp v9.8.5. Combined regression iter72/73/75/76/77/78 — 44 passed, 1 skipped.
+
+
+
+## Inventory Sale Price — Last-Sale Fallback (Feb 2026 — UX FIX)
 
 **Fix — derive sale price from last sales voucher**:
 - New helper `_last_sale_price_map()` in `routes/inventory.py` aggregates `sales_vouchers.items[].rate` (or `amount/quantity` if rate missing) per item, picking the most recent voucher per item.

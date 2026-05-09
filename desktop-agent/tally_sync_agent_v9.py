@@ -649,6 +649,7 @@ class TallyCollectionClient:
 <FETCH>STDPRICE</FETCH>
 <FETCH>STANDARDPRICELIST</FETCH>
 <FETCH>STDPRICELIST</FETCH>
+<FETCH>STANDARDPRICEDETAILS</FETCH>
 <FETCH>BASICSELLINGPRICE</FETCH>
 <COMPUTE>CLBAL : $$NumValue:$ClosingBalance</COMPUTE>
 <COMPUTE>CLRATE : $$NumValue:$ClosingRate</COMPUTE>
@@ -693,7 +694,7 @@ class TallyCollectionClient:
             logger.warning("  No stock items found from any method")
             return []
 
-        for si in stock_list:
+        for idx, si in enumerate(stock_list):
             if not isinstance(si, dict):
                 continue
             name = si.get('NAME', si.get('@NAME', ''))
@@ -702,6 +703,15 @@ class TallyCollectionClient:
             name = str(name or '').strip()
             if not name:
                 continue
+
+            # One-shot diagnostic — log the first item's keys to help users
+            # debug missing-field issues. Filter to PRICE-related keys only
+            # to keep logs readable.
+            if idx == 0:
+                price_keys = sorted([k for k in si.keys()
+                                     if isinstance(k, str)
+                                     and ('PRICE' in k.upper() or 'RATE' in k.upper() or 'STD' in k.upper())])
+                logger.info(f"  [diag] First stock item '{name}' price-related keys: {price_keys}")
             parent = si.get('PARENT', 'General')
             if isinstance(parent, dict):
                 parent = parent.get('#text', 'General')
@@ -800,33 +810,78 @@ class TallyCollectionClient:
                 std_price = self._num(si.get('STANDARDPRICE', si.get('STDPRICE', 0)))
             if std_price == 0:
                 std_price = self._num(si.get('BASICSELLINGPRICE', 0))
-            # Walk the STANDARDPRICELIST collection — Tally Prime stores a list of
-            # date-ranged std prices under <STANDARDPRICELIST><STANDARDPRICELIST.LIST>...
-            # Pick the most recent APPLICABLEFROM entry that's <= today (or just last).
+
+            # Walk the STANDARDPRICELIST collection. Tally exports the
+            # "Set/Modify Standard Rates → Standard Selling Rate" entries as
+            # repeated <STANDARDPRICELIST.LIST> blocks DIRECTLY under the
+            # stock item — xmltodict surfaces them at `si['STANDARDPRICELIST.LIST']`,
+            # NOT nested inside a `STANDARDPRICELIST` parent.
+            #
+            # Tally Prime 3+ also writes <STANDARDPRICEDETAILS.LIST>. We try
+            # both, then a generic fallback that scans every key matching
+            # *PRICELIST.LIST or *PRICEDETAILS.LIST so user-defined Tally
+            # exports don't slip through.
+            #
+            # Each entry is { APPLICABLEFROM: 'YYYYMMDD', RATE: '...',
+            # RATEPERUNIT: 'NOS' } — pick the most-recent entry whose
+            # APPLICABLEFROM <= today (or just the last when no date).
             if std_price == 0:
-                spl = si.get('STANDARDPRICELIST', si.get('STDPRICELIST', None))
-                if spl:
-                    # Normalize to list of entries
-                    entries = []
-                    if isinstance(spl, dict):
-                        sub = spl.get('STANDARDPRICELIST.LIST', spl.get('STDPRICELIST.LIST', spl))
-                        if isinstance(sub, list):
-                            entries = sub
-                        elif isinstance(sub, dict):
-                            entries = [sub]
-                    elif isinstance(spl, list):
-                        entries = spl
-                    # Try each entry's STDPRICE / RATE / SELLINGRATE
-                    for ent in entries:
-                        if not isinstance(ent, dict):
-                            continue
-                        for key in ('STDPRICE', 'RATE', 'SELLINGRATE', 'SALERATE', 'STANDARDPRICE'):
-                            val = self._num(ent.get(key, 0))
-                            if val > 0:
-                                std_price = val
-                                break
-                        if std_price > 0:
+                # 1. Direct keys at stock-item level (correct path for xmltodict)
+                direct_keys = [
+                    'STANDARDPRICELIST.LIST',
+                    'STANDARDPRICEDETAILS.LIST',
+                    'STDPRICELIST.LIST',
+                ]
+                # 2. Generic scan for anything matching *PRICELIST.LIST / *PRICEDETAILS.LIST
+                #    (covers Tally builds with renamed sub-collections)
+                for k in si.keys():
+                    if not isinstance(k, str):
+                        continue
+                    ku = k.upper()
+                    if ku.endswith('PRICELIST.LIST') or ku.endswith('PRICEDETAILS.LIST'):
+                        if k not in direct_keys:
+                            direct_keys.append(k)
+
+                spl_entries: list = []
+                for dk in direct_keys:
+                    raw = si.get(dk)
+                    if raw is None:
+                        # Also try the legacy nested-parent path
+                        parent_key = dk.replace('.LIST', '')
+                        parent_val = si.get(parent_key)
+                        if isinstance(parent_val, dict):
+                            raw = parent_val.get(dk, parent_val)
+                    if isinstance(raw, list):
+                        spl_entries.extend([e for e in raw if isinstance(e, dict)])
+                    elif isinstance(raw, dict):
+                        spl_entries.append(raw)
+
+                # Pick the most recent applicable entry
+                today_yyyymmdd = datetime.now().strftime('%Y%m%d')
+
+                def _entry_date(e):
+                    d = str(e.get('APPLICABLEFROM') or e.get('DATE') or '0').strip()
+                    return d if d.isdigit() else '0'
+
+                # Filter to entries whose APPLICABLEFROM <= today (skip future-dated)
+                applicable = [e for e in spl_entries if _entry_date(e) <= today_yyyymmdd]
+                # Sort by date desc — most recent first
+                applicable.sort(key=_entry_date, reverse=True)
+                # Fallback: any entry if none had a usable date
+                candidates = applicable or spl_entries
+
+                for ent in candidates:
+                    if not isinstance(ent, dict):
+                        continue
+                    for key in ('RATE', 'STDPRICE', 'STANDARDPRICE',
+                                'SELLINGRATE', 'SALERATE', 'PRICE'):
+                        val = self._num(ent.get(key, 0))
+                        if val > 0:
+                            std_price = val
                             break
+                    if std_price > 0:
+                        break
+
             # v9.8.2 — Do NOT fall back to closing rate when standard_price is
             # missing. Closing rate is COST (closing_value / closing_qty), not
             # the sale price. Falling back here silently shows cost in the UI's
@@ -849,6 +904,19 @@ class TallyCollectionClient:
             })
 
         logger.info(f"  Got {len(items)} stock items")
+        # Diagnostic: how many items have standard_price extracted vs unset.
+        # Helps identify when Tally master fields are missing OR our parser
+        # missed a Tally-Prime field-name variant.
+        with_std = sum(1 for it in items if it.get('standard_price', 0) > 0)
+        if items:
+            pct = round(100 * with_std / len(items), 1)
+            logger.info(f"  STDPRICE extracted: {with_std}/{len(items)} items ({pct}%)")
+            if with_std == 0:
+                logger.warning(
+                    "  No items have STANDARDPRICE — if you set 'Standard Selling Rate' "
+                    "in Tally Stock Item masters, please share agent.log so we can map "
+                    "the exact XML path. Diagnostic above shows price-related keys."
+                )
         return items
 
     # ---- LEDGERS / CUSTOMERS (Collection request — lightweight) ----
@@ -2603,7 +2671,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.4-tenant-guard")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.5-stdprice-list")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2966,7 +3034,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.4-tenant-guard',
+                'agent_version': '9.8.5-stdprice-list',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3023,7 +3091,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.4-tenant-guard',
+                'agent_version': '9.8.5-stdprice-list',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3732,7 +3800,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.4-tenant-guard")
+        print("FLOWRA Tally Sync Agent v9.8.5-stdprice-list")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag
