@@ -350,9 +350,33 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## Tally Sync Agent v9.8.6-hierarchy-walk (Phase 2 of BS/PL parity, Feb 2026)
+## Insider Result — Batch A Bug Fixes (Feb 2026)
 
-**User-reported**: "for inventory the root group or the group in primary is not found in inventory menu. Example tvs sundaram fasteners is missing. Similarly many parent groups are missing in company krishna sales corporation"
+**4 user-reported issues** in `/insider-result` page, all fixed without re-sync:
+
+**Bug #1 — SPIP "out of stock" rows showed zero stock when stock existed**
+Sales-voucher item names had stray whitespace / case differences from inventory_items names (e.g. "TVS Item " vs "tvs item"). The cross-lookup in `routes/insights.py` `spip-analysis` endpoint used exact-match keys, so items showed `qty_sold > 0` AND `stock_qty = 0` → mis-classified as out_of_stock.
+**Fix**: keys built on `name.strip().lower()` for both item_sales and inv_map. Display uses original casing via `display_name` field.
+
+**Bug #2 — SPIP categories empty after dropdown selection**
+Backend returned only `analysis[:200]` (top-200 by priority — out_of_stock + understocked first). Overstocked / Balanced / Dead Stock categories live in tail-end of the list and got truncated. KSC has 6,370 items; only 200 reached frontend.
+**Fix**: removed slice — backend returns all items. Frontend pages 50/page.
+
+**Bug #3 — Sales Forecast missing prev-FY comparison (April 25 vs April 26)**
+Backend `month_comparison` was already populated for years (Apr-25 ₹65.5L vs Apr-26 ₹89.9L for KSC) but the Forecast tab never rendered it.
+**Fix**: New "Month-over-Month FY Comparison" section in `InsiderResult.js` Forecast tab. Includes:
+- Bar chart: one bar per FY per calendar month (auto-detects FY keys)
+- Compact table: revenue per FY × month with %-delta vs previous FY (▲37.4% / ▼12.1% style)
+
+**Bug #4 — Customer Lifecycle table capped at 100 rows**
+Frontend hard-coded `filtered.slice(0, 100)` — KSC has 1,844 customers, only 100 reachable.
+**Fix**: New `Pager` component (50/page, First / Prev / Next / Last + "Page X of Y" + "Showing N–M of T"). Reset-to-page-1 effect on filter / search / tab changes. Same pager wired to SPIP table.
+
+**Tests** — `tests/test_iteration81_insider_batch_a.py` (7/7 PASS): SPIP returns all items, source no longer slices, case-insensitive matching present, lifecycle/SPIP pagination wired, page resets on filter change, month-comparison chart + table rendered, backend month_comparison shape stable. Combined regression iter72-iter81: 70 passed, 1 skipped.
+
+
+
+## Tally Sync Agent v9.8.6-hierarchy-walk (Phase 2 of BS/PL parity, Feb 2026)
 
 **Root cause**: Tally has multi-level stock-group nesting (Primary → Sub → Sub-sub → leaf items). The agent only stored each item's IMMEDIATE parent as `stock_group`. So an item like "TVS 10x1.25x110 A(50)" was stored with `stock_group="10mm & 12mm 1.25 Thread"` — completely losing the user's Primary-level grouping ("TVS Sundaram Fasteners"). Same problem hit the BS/P&L on the ledger side.
 

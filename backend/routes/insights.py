@@ -290,8 +290,11 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
         # Get inventory items
         inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(5000)
 
-        # Build item-level analysis from sales
-        item_sales = defaultdict(lambda: {"qty_sold": 0, "revenue": 0, "months_active": set()})
+        # Build item-level analysis from sales (case/whitespace-normalised
+        # so sales-voucher item names with stray spaces match inventory).
+        item_sales = defaultdict(lambda: {"qty_sold": 0, "revenue": 0,
+                                            "months_active": set(),
+                                            "display_name": ""})
         for v in sales:
             items_list = v.get("items") or v.get("inventory_entries") or []
             date_str = v.get("voucher_date", "")
@@ -300,20 +303,26 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                 name = item.get("item_name") or item.get("stock_item_name") or item.get("item") or ""
                 if not name:
                     continue
+                key = name.strip().lower()
                 qty = abs(float(item.get("quantity") or item.get("billed_qty") or 0))
                 rate = float(item.get("rate", 0) or 0)
                 amt = abs(float(item.get("amount") or 0)) or abs(rate * qty)
-                item_sales[name]["qty_sold"] += qty
-                item_sales[name]["revenue"] += amt
+                item_sales[key]["qty_sold"] += qty
+                item_sales[key]["revenue"] += amt
                 if month:
-                    item_sales[name]["months_active"].add(month)
+                    item_sales[key]["months_active"].add(month)
+                if not item_sales[key]["display_name"]:
+                    item_sales[key]["display_name"] = name.strip()
 
-        # Build inventory map
+        # Build inventory map keyed on the normalised name so cross-lookup
+        # against sales works even when whitespace / case differs.
         inv_map = {}
         for inv in inventory:
             name = inv.get("item_name", "")
             if name:
-                inv_map[name] = {
+                key = name.strip().lower()
+                inv_map[key] = {
+                    "display_name": name.strip(),
                     "stock_qty": inv.get("quantity") or inv.get("closing_balance") or 0,
                     "stock_group": inv.get("stock_group", ""),
                     "purchase_price": inv.get("purchase_price") or inv.get("price") or 0,
@@ -321,10 +330,11 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
 
         # Cross-reference: items in stock but not selling, items selling but low stock
         analysis = []
-        all_items = set(list(item_sales.keys()) + list(inv_map.keys()))
-        for item_name in all_items:
-            s = item_sales.get(item_name, {"qty_sold": 0, "revenue": 0, "months_active": set()})
-            inv = inv_map.get(item_name, {"stock_qty": 0, "stock_group": "", "purchase_price": 0})
+        all_keys = set(list(item_sales.keys()) + list(inv_map.keys()))
+        for k in all_keys:
+            s = item_sales.get(k, {"qty_sold": 0, "revenue": 0, "months_active": set(), "display_name": ""})
+            inv = inv_map.get(k, {"stock_qty": 0, "stock_group": "", "purchase_price": 0, "display_name": ""})
+            display_name = inv.get("display_name") or s.get("display_name") or k
 
             stock_qty = float(inv["stock_qty"])
             qty_sold = s["qty_sold"]
@@ -345,7 +355,7 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                 gap_type = "balanced"
 
             analysis.append({
-                "item_name": item_name,
+                "item_name": display_name,
                 "stock_group": inv.get("stock_group", ""),
                 "stock_qty": round(stock_qty, 2),
                 "qty_sold": round(qty_sold, 2),
@@ -365,7 +375,10 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
             gap_summary[a["gap_type"]] += 1
 
         return APIResponse(success=True, data={
-            "items": analysis[:200],
+            # Return ALL items (was [:200] which truncated overstocked/balanced
+            # categories — the user couldn't see them when the dropdown filter
+            # was selected. Frontend handles its own slicing per category now.)
+            "items": analysis,
             "summary": dict(gap_summary),
             "total_items": len(analysis),
         })

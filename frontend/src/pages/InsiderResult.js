@@ -95,6 +95,11 @@ const InsiderResult = ({ selectedFY, companyId }) => {
   const [spipFilter, setSpipFilter] = useState('all');
   const [sortField, setSortField] = useState('');
   const [sortDir, setSortDir] = useState('desc');
+  // Pagination — single source of truth for both Lifecycle and SPIP tables.
+  // Reset to 1 whenever the active tab, filter or search changes (below).
+  const [lifecyclePage, setLifecyclePage] = useState(1);
+  const [spipPage, setSpipPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -123,6 +128,12 @@ const InsiderResult = ({ selectedFY, companyId }) => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Reset pagination on filter/search/tab change so the user always lands on
+  // page 1 (otherwise switching from a 1800-row "all" view to a 30-row
+  // "active" view leaves you on a non-existent page 36).
+  useEffect(() => { setLifecyclePage(1); }, [lifecycleFilter, search, activeTab, selectedFY]);
+  useEffect(() => { setSpipPage(1); }, [spipFilter, search, activeTab, selectedFY]);
+
   const handleSort = (field) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortField(field); setSortDir('desc'); }
@@ -150,6 +161,39 @@ const InsiderResult = ({ selectedFY, companyId }) => {
       </span>
     </th>
   );
+
+  // Compact pager — used by Lifecycle and SPIP tables. Hides itself when there
+  // are fewer rows than one page. Includes First / Prev / Next / Last and a
+  // "page X of Y" indicator. Keeps row counts honest for users who previously
+  // saw "Showing 100 of 1844" with no way to reach the rest.
+  const Pager = ({ page, total, pageSize, onPage, testIdPrefix }) => {
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (total <= pageSize) {
+      return (
+        <div className="p-3 text-center text-xs text-slate-400" data-testid={`${testIdPrefix}-empty`}>
+          {total === 0 ? 'No rows' : `Showing ${total} of ${total}`}
+        </div>
+      );
+    }
+    const start = (page - 1) * pageSize + 1;
+    const end = Math.min(page * pageSize, total);
+    const go = (p) => onPage(Math.max(1, Math.min(totalPages, p)));
+    const btn = "px-2.5 py-1 text-xs border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed";
+    return (
+      <div className="flex items-center justify-between gap-2 p-3 border-t border-slate-100" data-testid={testIdPrefix}>
+        <div className="text-xs text-slate-500">
+          Showing <span className="font-medium text-slate-700">{start}–{end}</span> of <span className="font-medium text-slate-700">{total}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => go(1)} disabled={page === 1} className={btn} data-testid={`${testIdPrefix}-first`}>« First</button>
+          <button onClick={() => go(page - 1)} disabled={page === 1} className={btn} data-testid={`${testIdPrefix}-prev`}>‹ Prev</button>
+          <span className="px-2 text-xs text-slate-600 font-medium" data-testid={`${testIdPrefix}-current`}>Page {page} / {totalPages}</span>
+          <button onClick={() => go(page + 1)} disabled={page === totalPages} className={btn} data-testid={`${testIdPrefix}-next`}>Next ›</button>
+          <button onClick={() => go(totalPages)} disabled={page === totalPages} className={btn} data-testid={`${testIdPrefix}-last`}>Last »</button>
+        </div>
+      </div>
+    );
+  };
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
@@ -264,7 +308,9 @@ const InsiderResult = ({ selectedFY, companyId }) => {
                 </tr>
               </thead>
               <tbody>
-                {filtered.slice(0, 100).map((c, i) => (
+                {filtered
+                  .slice((lifecyclePage - 1) * PAGE_SIZE, lifecyclePage * PAGE_SIZE)
+                  .map((c, i) => (
                   <tr key={i} className="border-b border-slate-50 hover:bg-slate-25" data-testid={`lifecycle-row-${i}`}>
                     <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[200px] truncate">{c.customer_name}</td>
                     <td className="px-3 py-2.5">
@@ -283,9 +329,13 @@ const InsiderResult = ({ selectedFY, companyId }) => {
               </tbody>
             </table>
           </div>
-          {filtered.length > 100 && (
-            <div className="p-3 text-center text-xs text-slate-400">Showing 100 of {filtered.length} customers</div>
-          )}
+          <Pager
+            page={lifecyclePage}
+            total={filtered.length}
+            pageSize={PAGE_SIZE}
+            onPage={setLifecyclePage}
+            testIdPrefix="lifecycle-pager"
+          />
         </div>
       </div>
     );
@@ -297,12 +347,42 @@ const InsiderResult = ({ selectedFY, companyId }) => {
     const timeline = forecast.timeline || [];
     const forecasts = forecast.forecasts || [];
     const yoy = forecast.yoy || [];
+    const monthComparison = forecast.month_comparison || [];
     const s = forecast.summary || {};
 
     const chartData = [
       ...timeline.map(t => ({ month: t.month, revenue: t.revenue, type: 'actual' })),
       ...forecasts.map(f => ({ month: f.month, forecast: f.forecast_revenue, type: 'forecast' })),
     ];
+
+    // Pivot month_comparison into a chart-friendly shape:
+    // Backend returns [{ month_num: '04', month_name: 'Apr', data: [{fy: '2025-26', revenue: ...}, ...]}]
+    // We need [{ month: 'Apr', '2024-25': 12L, '2025-26': 18L, ... }] for the chart.
+    const allFYKeys = new Set();
+    monthComparison.forEach(row => (row.data || []).forEach(d => allFYKeys.add(d.fy)));
+    const fyKeys = [...allFYKeys].sort();
+    const fyColors = ['#94a3b8', '#0EA5E9', '#2563EB', '#8B5CF6', '#10B981'];
+
+    const compChartRows = monthComparison.map(row => {
+      const out = { month: row.month_name };
+      (row.data || []).forEach(d => {
+        out[d.fy] = d.revenue || 0;
+      });
+      return out;
+    });
+
+    // Compute YoY % delta vs the previous FY for each month (for the table).
+    const compTableRows = compChartRows.map(row => {
+      const out = { month: row.month };
+      fyKeys.forEach((fy, idx) => {
+        out[fy] = row[fy] || 0;
+        if (idx > 0) {
+          const prev = row[fyKeys[idx - 1]] || 0;
+          out[`${fy}_delta`] = prev > 0 ? ((out[fy] - prev) / prev) * 100 : null;
+        }
+      });
+      return out;
+    });
 
     return (
       <div className="space-y-6">
@@ -347,6 +427,71 @@ const InsiderResult = ({ selectedFY, companyId }) => {
             </BarChart>
           </ResponsiveContainer>
         </div>
+
+        {/* Cross-FY Month-over-Month — answers "How did Apr-26 do vs Apr-25?" */}
+        {compChartRows.length > 0 && fyKeys.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4" data-testid="month-comparison-chart">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 className="text-sm font-semibold text-slate-700">Month-over-Month FY Comparison</h3>
+              <span className="text-[11px] text-slate-500">{fyKeys.length} FYs · {compChartRows.length} months</span>
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={compChartRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {fyKeys.map((fy, idx) => (
+                  <Bar
+                    key={fy}
+                    dataKey={fy}
+                    fill={fyColors[idx % fyColors.length]}
+                    name={`FY ${fy}`}
+                    radius={[3, 3, 0, 0]}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+
+            {/* Compact table with %-deltas vs previous FY */}
+            <div className="overflow-x-auto mt-4" data-testid="month-comparison-table">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 border-b border-slate-100">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-600">Month</th>
+                    {fyKeys.map((fy, idx) => (
+                      <th key={fy} className="px-3 py-2 text-right font-semibold text-slate-600">
+                        FY {fy}{idx > 0 ? <span className="block text-[9px] font-normal text-slate-400">vs prev FY</span> : null}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {compTableRows.map((row, i) => (
+                    <tr key={i} className="border-b border-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-700">{row.month}</td>
+                      {fyKeys.map((fy, idx) => {
+                        const v = row[fy] || 0;
+                        const delta = row[`${fy}_delta`];
+                        return (
+                          <td key={fy} className="px-3 py-2 text-right">
+                            <div className="font-medium text-slate-800">{v ? fmt(v) : <span className="text-slate-300">—</span>}</div>
+                            {idx > 0 && delta !== null && delta !== undefined && (
+                              <div className={`text-[10px] ${delta >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Monthly Details Table */}
         <div className="bg-white rounded-xl border border-slate-200" data-testid="forecast-table">
@@ -476,7 +621,9 @@ const InsiderResult = ({ selectedFY, companyId }) => {
                 </tr>
               </thead>
               <tbody>
-                {filtered.slice(0, 100).map((item, i) => (
+                {filtered
+                  .slice((spipPage - 1) * PAGE_SIZE, spipPage * PAGE_SIZE)
+                  .map((item, i) => (
                   <tr key={i} className="border-b border-slate-50 hover:bg-slate-25" data-testid={`spip-row-${i}`}>
                     <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[200px] truncate">{item.item_name}</td>
                     <td className="px-3 py-2.5">
@@ -497,9 +644,13 @@ const InsiderResult = ({ selectedFY, companyId }) => {
               </tbody>
             </table>
           </div>
-          {filtered.length > 100 && (
-            <div className="p-3 text-center text-xs text-slate-400">Showing 100 of {filtered.length} items</div>
-          )}
+          <Pager
+            page={spipPage}
+            total={filtered.length}
+            pageSize={PAGE_SIZE}
+            onPage={setSpipPage}
+            testIdPrefix="spip-pager"
+          />
         </div>
       </div>
     );
