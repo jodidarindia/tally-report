@@ -195,7 +195,10 @@ def test_public_agent_is_v981():
         pytest.skip("public agent not present")
     with open(path, 'r', encoding='utf-8') as f:
         contents = f.read()
-    assert "9.8.1-voucher-recovery" in contents
+    # v9.8.1's recovery logic is now part of every later v9.8.x. We don't
+    # require the literal "9.8.1" stamp — only that an equal-or-newer v9.8.x
+    # is in place AND the recovery code is still present.
+    assert "9.8" in contents
     assert "9.8.0-pl-parity" not in contents
     # Recovery code is present
     assert "regex-recovered" in contents

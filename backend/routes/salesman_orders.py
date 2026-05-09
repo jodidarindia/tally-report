@@ -92,10 +92,12 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
             "item_id": it.get("item_id", ""),
             "part_number": it.get("part_number", "") or "",
             "stock_qty": safe_num(it.get("quantity", 0)),
-            # Standard sale price from Tally (STDPRICE). Falls back to last-sale
-            # `price` so older synced data still works until next agent sync.
-            "price": safe_num(it.get("standard_price") or it.get("price", 0)),
-            "standard_price": safe_num(it.get("standard_price") or it.get("price", 0)),
+            # Standard sale price from Tally (STDPRICE master). NEVER fall back
+            # to closing rate (`price` field) because that's the COST per unit
+            # — quoting at cost would torch margins. UI shows "Set in Tally"
+            # if standard_price is 0.
+            "price": safe_num(it.get("standard_price", 0)),
+            "standard_price": safe_num(it.get("standard_price", 0)),
             "unit": it.get("unit", ""),
             "stock_group": it.get("stock_group", ""),
         } for it in items]

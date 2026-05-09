@@ -156,7 +156,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
     if (sortField === 'item_name') return dir * (a.item_name || '').localeCompare(b.item_name || '');
     if (sortField === 'quantity') return dir * ((a.quantity || 0) - (b.quantity || 0));
     if (sortField === 'price') return dir * ((a.price || 0) - (b.price || 0));
-    if (sortField === 'standard_price') return dir * ((a.standard_price || a.price || 0) - (b.standard_price || b.price || 0));
+    if (sortField === 'standard_price') return dir * ((a.standard_price || 0) - (b.standard_price || 0));
     if (sortField === 'value') return dir * (((a.quantity || 0) * (a.price || 0)) - ((b.quantity || 0) * (b.price || 0)));
     if (sortField === 'stock_group') return dir * (a.stock_group || '').localeCompare(b.stock_group || '');
     if (sortField === 'abc_category') return dir * ((a.abc_category || 'Z').localeCompare(b.abc_category || 'Z'));
@@ -364,7 +364,11 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                       </td>
                       <td className="numeric font-semibold">{item.quantity}</td>
                       <td>{item.unit}</td>
-                      <td className="numeric font-semibold text-emerald-700">₹{(item.standard_price || item.price || 0).toLocaleString('en-IN')}</td>
+                      <td className="numeric font-semibold text-emerald-700" title={item.standard_price ? '' : 'Standard Price not set in Tally master. Set it in Tally → Stock Item → Standard Selling Rate.'}>
+                        {item.standard_price > 0
+                          ? `₹${item.standard_price.toLocaleString('en-IN')}`
+                          : <span className="text-amber-500 text-xs font-medium">Set in Tally</span>}
+                      </td>
                       <td className="numeric">₹{(item.price || 0).toLocaleString('en-IN')}</td>
                       <td className="numeric font-semibold">₹{itemValue.toLocaleString('en-IN')}</td>
                       <td className="numeric">

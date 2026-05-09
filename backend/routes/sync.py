@@ -121,6 +121,16 @@ async def receive_agent_sync(request: dict):
             if data:
                 docs = []
                 for item in data:
+                    # Sanity guard (v9.8.2): if standard_price equals the cost
+                    # rate (`price`), it's the v9.7.x→v9.8.1 buggy fallback —
+                    # reset to 0 so the UI shows "Set in Tally" instead of
+                    # mis-displaying cost as sale price. v9.8.2 agents do not
+                    # set this fallback, but old/cached agents might.
+                    sp = item.get('standard_price') or 0
+                    pr = item.get('price') or 0
+                    if sp > 0 and pr > 0 and abs(sp - pr) < 0.01:
+                        item['standard_price'] = 0
+                        item['standard_price_source'] = 'unset_cleaned_v982'
                     inventory_obj = InventoryItem(**item)
                     doc = inventory_obj.model_dump()
                     doc['last_updated'] = doc['last_updated'].isoformat()

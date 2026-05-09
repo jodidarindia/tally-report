@@ -350,6 +350,36 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Tally Sync Agent v9.8.2-saleprice-fix (May 2026 — BUG FIX)
+
+**User reported (with ASA Autotech screenshot)**: "Inventory page still showing cost price in sale price column. Even after new sync."
+
+**Diagnosis** (verified against live data — 2308/2308 ASA items showed `standard_price == price`):
+- Agent's stock-item parser had a buggy fallback at line 830:
+  ```python
+  if std_price == 0 and rate > 0:
+      std_price = rate  # ← rate IS THE COST RATE, not a sale price
+  ```
+- `rate` is `closing_value / closing_quantity` = average cost per unit (Tally's `$ClosingRate`). When Tally master had no STANDARDPRICE set, the agent silently substituted COST. Backend (`/inventory/movement-analysis`, `/salesman-orders/catalog`) and frontend (`Inventory.js`, `InventoryAnalytics.js`) had matching fallbacks `standard_price || price` — so cost showed up everywhere a "sale price" was expected.
+- For salesman quoting screens this was particularly dangerous (would have quoted at cost = torched margins).
+
+**Three coordinated fixes**:
+
+1. **Agent v9.8.2** (`/app/desktop-agent/tally_sync_agent_v9.py`):
+   - Cost-rate fallback removed entirely.
+   - New diagnostic field `standard_price_source`: `'tally_master'` | `'unset'`.
+   - Stamped `9.8.2-saleprice-fix`.
+2. **Backend** (`/app/backend/routes/sync.py`, `inventory.py`, `salesman_orders.py`):
+   - `/sync/upload` now detects `std_price == price` on incoming inventory docs and resets to 0 (catches stale agents).
+   - `/inventory/movement-analysis` and `/salesman-orders/catalog` no longer fall back to `price`.
+   - `InventoryItem` model has new `standard_price_source` field.
+3. **Frontend** (`/app/frontend/src/pages/Inventory.js`, `InventoryAnalytics.js`):
+   - Sale-price cell shows amber **"Set in Tally"** badge with tooltip explaining how to set STANDARDPRICE in Tally master, instead of misleading cost number.
+
+**One-shot DB cleanup ran during deploy**: 2308 polluted items reset to `standard_price=0` so users see the corrected UI immediately (no need to wait for re-sync).
+
+**Verified**: 11 new tests in `tests/test_iteration73_agent_v982_saleprice_fix.py`. All 71 tests across 7 iteration suites pass. UI screenshot confirms all rows now show "Set in Tally" with cost data still correctly displayed in the Cost column.
+
 ## Tally Sync Agent v9.8.1-voucher-recovery (May 2026 — BUG FIX)
 
 **User reported**: Even with v9.8 deployed, agent emitted `"sales: no vouchers found in response"` while the saved raw XML clearly contained vouchers. Uploaded 5 raw XML samples confirmed the issue.

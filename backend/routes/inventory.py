@@ -225,7 +225,7 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
                 "part_number": it.get("part_number", ""),
                 "stock_group": it.get("stock_group", ""),
                 "current_stock": safe_num(it.get("quantity")),
-                "standard_price": safe_num(it.get("standard_price") or it.get("price")),
+                "standard_price": safe_num(it.get("standard_price")),
                 "total_qty": 0.0,
                 "total_revenue": 0.0,
                 "order_count": 0,

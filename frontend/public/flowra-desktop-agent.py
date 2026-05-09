@@ -827,14 +827,19 @@ class TallyCollectionClient:
                                 break
                         if std_price > 0:
                             break
-            if std_price == 0 and rate > 0:
-                std_price = rate  # last-resort fallback to closing rate
+            # v9.8.2 — Do NOT fall back to closing rate when standard_price is
+            # missing. Closing rate is COST (closing_value / closing_qty), not
+            # the sale price. Falling back here silently shows cost in the UI's
+            # "Sale Price" column. Better to leave it as 0 so the UI can
+            # show "—" or "Set in Tally master".
+            std_price_source = 'tally_master' if std_price > 0 else 'unset'
 
             items.append({
                 'item_id': name, 'item_name': name,
                 'part_number': part_no,
                 'quantity': qty, 'unit': unit, 'price': rate,
                 'standard_price': std_price,
+                'standard_price_source': std_price_source,
                 'category': parent, 'stock_group': parent,
                 'reorder_level': 10.0,
                 'opening_quantity': opening_qty,
@@ -2567,7 +2572,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.1-voucher-recovery")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.2-saleprice-fix")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2893,7 +2898,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.1-voucher-recovery',
+                'agent_version': '9.8.2-saleprice-fix',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2950,7 +2955,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.1-voucher-recovery',
+                'agent_version': '9.8.2-saleprice-fix',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3659,7 +3664,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.1-voucher-recovery")
+        print("FLOWRA Tally Sync Agent v9.8.2-saleprice-fix")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

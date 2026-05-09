@@ -849,7 +849,7 @@ function CategorySalesTab({ fy, formatNum }) {
                         {it.part_number && <span className="font-mono">P/N: {it.part_number}</span>}
                         {it.stock_group && <span>{it.stock_group}</span>}
                         <span>Stock: {formatNum(it.current_stock)}</span>
-                        <span>Sale: ₹{formatNum(it.standard_price)}</span>
+                        <span>Sale: {it.standard_price > 0 ? `₹${formatNum(it.standard_price)}` : <span className="text-amber-500">— set in Tally</span>}</span>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">

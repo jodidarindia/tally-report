@@ -32,6 +32,7 @@ class InventoryItem(BaseModel):
     price: Optional[float] = None
     purchase_price: Optional[float] = None
     standard_price: Optional[float] = None  # Tally STDPRICE — standard sale price master
+    standard_price_source: Optional[str] = None  # 'tally_master' | 'unset' | 'unset_cleaned_v982'
     abc_category: Optional[str] = None       # User-assigned A/B/C/D classification (Inventory page)
     category: Optional[str] = None
     stock_group: Optional[str] = None
