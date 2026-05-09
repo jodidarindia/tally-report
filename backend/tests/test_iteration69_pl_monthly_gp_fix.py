@@ -133,12 +133,14 @@ def test_prev_fy_sales_not_negative(admin_h):
 
 
 def test_prev_fy_stock_handling(admin_h):
-    """For previous FYs we don't have opening stock, so we set it to 0 and notice."""
+    """For previous FYs that ARE synced, opening_stock is now reconstructed
+    (≥0). For FYs entirely before the earliest synced voucher, both stocks
+    are 0. Either way, a notice must explain what happened."""
     r = requests.get(f"{API_URL}/api/ca-corner/profit-loss?view=annual&fy=2025-26", headers=admin_h)
     d = r.json()["data"]
-    assert d["opening_stock"] == 0
+    assert d["opening_stock"] >= 0
     notice_blob = " | ".join(d.get("notices", []))
-    assert "previous FY" in notice_blob.lower() or "previous fys" in notice_blob.lower()
+    assert "previous FY" in notice_blob.lower() or "previous fys" in notice_blob.lower() or "reconstructed" in notice_blob.lower()
 
 
 def test_monthly_notice_mentions_trading_profit(admin_h):

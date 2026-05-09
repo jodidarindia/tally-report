@@ -16,7 +16,7 @@ from db import db
 from models import APIResponse
 from services.auth_service import get_current_user
 from services.tenant_context import get_tenant_context
-from utils import safe_num, filter_vouchers_by_fy
+from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -380,12 +380,16 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             method_used = "ledger_entries_fy_scoped"
 
         # Stock from inventory_items (master snapshot — reflects CURRENT FY only).
-        # For previous FYs: closing-stock-of-prev-FY ≈ opening-stock-of-current-FY.
-        # We don't have prev-FY's opening, so we drop stock from GP for prev FYs
-        # to avoid arithmetic that's silently wrong.
+        # For previous FYs we reconstruct opening_value by replaying voucher activity
+        # backwards through the item-level quantities. This is per the user request:
+        # if a prev FY has its own voucher data synced, its opening stock IS knowable.
         inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
         master_opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
         master_closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+
+        # Earliest voucher date (across sales/purchases) tells us how far back data exists
+        earliest_doc = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", 1).limit(1).to_list(1)
+        earliest_voucher_date = earliest_doc[0].get("voucher_date") if earliest_doc else None
 
         if is_current_fy:
             opening_stock = master_opening_stock
@@ -393,16 +397,78 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             stock_synced = closing_stock > 0 or opening_stock > 0
             stock_note_for_prev_fy = None
         else:
-            # closing-stock for the requested prev FY = current FY's opening stock
-            opening_stock = 0.0
+            # closing_stock for the requested prev FY = current FY's opening stock
             closing_stock = master_opening_stock
-            stock_synced = False  # opening side is missing
-            stock_note_for_prev_fy = (
-                "Opening Stock for previous FYs is not synced (Tally master only "
-                "stores current-FY stock). Closing Stock here is approximated as "
-                "the current FY's Opening Stock; Gross Profit therefore excludes "
-                "previous-FY stock movement and may differ from Tally's exact figure."
-            )
+            # Check whether THIS prev FY actually has any synced data
+            fy_start_str, fy_end_str = fy_to_date_range(fy) if fy else (None, None)
+            fy_has_data = bool(earliest_voucher_date and fy_end_str and earliest_voucher_date <= fy_end_str)
+
+            if fy_has_data and master_opening_stock > 0:
+                # Reconstruct opening_qty per item and value it at the master opening rate.
+                # opening_qty_prev_fy = master_opening_qty + sales_qty_prev_fy - purchase_qty_prev_fy
+                sales_in_fy = await db.sales_vouchers.find({**q, "voucher_date": {"$gte": fy_start_str, "$lte": fy_end_str}}, {"_id": 0, "items": 1}).to_list(50000)
+                purch_in_fy = await db.purchase_vouchers.find({**q, "voucher_date": {"$gte": fy_start_str, "$lte": fy_end_str}}, {"_id": 0, "items": 1}).to_list(50000)
+                cn_in_fy = await db.credit_notes.find({**q, "voucher_date": {"$gte": fy_start_str, "$lte": fy_end_str}}, {"_id": 0, "items": 1}).to_list(20000)
+                dn_in_fy = await db.debit_notes.find({**q, "voucher_date": {"$gte": fy_start_str, "$lte": fy_end_str}}, {"_id": 0, "items": 1}).to_list(5000)
+
+                def _qty_by_item(vouchers):
+                    out = {}
+                    for v in vouchers:
+                        for it in (v.get("items") or []):
+                            name = (it.get("item") or "").strip().lower()
+                            if name:
+                                out[name] = out.get(name, 0) + safe_num(it.get("quantity"))
+                    return out
+
+                sales_qty = _qty_by_item(sales_in_fy)
+                purch_qty = _qty_by_item(purch_in_fy)
+                cn_qty = _qty_by_item(cn_in_fy)   # CN = sales return ⇒ qty comes back into stock
+                dn_qty = _qty_by_item(dn_in_fy)   # DN = purchase return ⇒ qty leaves stock
+
+                opening_stock = 0.0
+                for inv in inventory:
+                    name = (inv.get("item_name") or "").strip().lower()
+                    if not name:
+                        continue
+                    master_open_qty = safe_num(inv.get("opening_quantity"))
+                    master_open_val = safe_num(inv.get("opening_value"))
+                    # Cost rate at master opening = master_open_value / master_open_qty (best proxy)
+                    if master_open_qty > 0 and master_open_val > 0:
+                        cost_rate = master_open_val / master_open_qty
+                    else:
+                        cost_rate = safe_num(inv.get("opening_rate")) or safe_num(inv.get("price"))
+                    # Replay backwards: opening_prev = closing_prev + sales − purchases (FY-scoped)
+                    # CN reverses sales (qty back in), DN reverses purchases (qty out)
+                    prev_open_qty = (master_open_qty
+                                     + sales_qty.get(name, 0) - cn_qty.get(name, 0)
+                                     - purch_qty.get(name, 0) + dn_qty.get(name, 0))
+                    if prev_open_qty > 0:
+                        opening_stock += prev_open_qty * cost_rate
+                stock_synced = True
+                stock_note_for_prev_fy = (
+                    f"Opening Stock for {fy} reconstructed by back-rolling per-item "
+                    "quantities through this FY's vouchers and valuing at the FY-end "
+                    "rate (Tally's master only stores current-FY snapshots)."
+                )
+            else:
+                # FY end is before earliest synced voucher → FY wasn't synced at all.
+                opening_stock = 0.0
+                if not fy_has_data:
+                    closing_stock = 0.0  # don't leak today's master into a never-synced FY
+                stock_synced = False
+                if not fy_has_data:
+                    stock_note_for_prev_fy = (
+                        f"FY {fy} was not synced from Tally (earliest synced voucher: "
+                        f"{earliest_voucher_date or 'none'}). Stock and P&L figures for "
+                        "this FY are empty."
+                    )
+                else:
+                    stock_note_for_prev_fy = (
+                        "Opening Stock for previous FYs is not synced (Tally master only "
+                        "stores current-FY stock). Closing Stock here is approximated as "
+                        "the current FY's Opening Stock; Gross Profit therefore excludes "
+                        "previous-FY stock movement and may differ from Tally's exact figure."
+                    )
 
         # Tally Trading Account formula:
         #   Sales A/c + Direct Income + Closing Stock

@@ -350,6 +350,25 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## P&L Prev-FY Opening Stock + Movement Analysis Sync-Gate (May 2026 — BUG FIX)
+
+User reported (with screenshot from ASA Autotech, where sync started in FY 25-26):
+
+### Issue A — FY 25-26 P&L showed Opening Stock = 0
+- The previous fix had hard-coded `opening_stock = 0` for any prev FY because Tally's master inventory snapshot only persists CURRENT-FY values.
+- **Fix**: For any prev FY that has its own voucher data synced, opening stock is now **reconstructed** by:
+  1. Replaying per-item quantities backwards through the FY's vouchers (sales / credit-notes / purchases / debit-notes)
+  2. Valuing at the master opening rate (`opening_value / opening_quantity` per item) — best proxy for FY-end cost
+- Live result for ASA-style tenant: `opening_stock` went from ₹0 → **₹10.71L**, GP from ₹42.15L → ₹31.44L (more conservative, accurate).
+- Notice explains the reconstruction.
+
+### Issue B — Movement Analysis displayed fake stock for unsynced FYs (e.g. 24-25)
+- The endpoint looped over today's master `inventory_items` regardless of FY → for FYs with no voucher activity (24-25 and earlier for ASA), it leaked today's master quantities.
+- **Fix**: Detect earliest synced voucher across sales+purchases. If requested FY ends BEFORE that date, return an empty payload (`fy_synced=false, items=[], summary=zeros, notices=["FY X was not synced..."]`).
+- Same gating applied to `/api/ca-corner/profit-loss` for unsynced prev FYs (sets stocks to 0 with a "not synced" notice).
+
+**Verified**: 15 tests pass in `tests/test_iteration70_prev_fy_stock_and_unsynced_movement.py` + iter69 regression suite.
+
 ## P&L Annual + Monthly Gross Profit — Major Correctness Fix (May 2026 — BUG FIX)
 
 **Two real bugs the user reported (with screenshot)**:

@@ -571,6 +571,48 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
+
+        # Guard: if the requested FY is entirely BEFORE the earliest synced voucher,
+        # there's no data to display. Returning today's master quantities would
+        # incorrectly suggest stock levels for an un-synced period.
+        if fy:
+            try:
+                fy_start_str, fy_end_str = fy_to_date_range(fy)
+            except Exception:
+                fy_start_str = fy_end_str = None
+            if fy_start_str and fy_end_str:
+                earliest = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", 1).limit(1).to_list(1)
+                earliest_purch = await db.purchase_vouchers.find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", 1).limit(1).to_list(1)
+                earliest_voucher = None
+                for d in (earliest, earliest_purch):
+                    if d and d[0].get("voucher_date"):
+                        ev = d[0]["voucher_date"]
+                        if earliest_voucher is None or ev < earliest_voucher:
+                            earliest_voucher = ev
+                if earliest_voucher and earliest_voucher > fy_end_str:
+                    # Requested FY ends BEFORE the earliest synced voucher → no data
+                    return {
+                        "items": [],
+                        "summary": {
+                            "total_items": 0,
+                            "total_opening_stock": 0,
+                            "total_inward": 0,
+                            "total_sales_qty": 0,
+                            "total_closing_stock": 0,
+                            "total_revenue": 0,
+                            "fast_moving_count": 0,
+                            "slow_moving_count": 0,
+                            "dead_stock_count": 0,
+                            "fy_days": 0,
+                        },
+                        "notices": [
+                            f"FY {fy} was not synced from Tally (earliest synced voucher: "
+                            f"{earliest_voucher}). Movement Analysis is empty for this FY."
+                        ],
+                        "fy_synced": False,
+                        "earliest_voucher_date": earliest_voucher,
+                    }
+
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         raw_sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
