@@ -350,6 +350,27 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Tally Sync Agent v9.8.4-tenant-guard (May 2026 — DATA-LEAK FIX)
+
+**Two user-reported bugs**:
+
+(1) **Cross-tenant company drift**: User logged into agent as ASA Autotech admin, then opened Krishna Sales Corp in Tally on the same machine. Agent's `_pick_company` blindly picked the new company (because `len(companies)==1` after Tally's switch) and synced KSC under admin's tenant → data leak.
+
+(2) **Stale "is_syncing" lock**: After agent was killed/logged-out and re-logged in as a different user, the previous tenant's frontend kept polling `/sync/status` and saw `is_syncing=True` forever (the dead agent never sent `sync_complete`).
+
+**4 coordinated fixes**:
+
+- **A. Agent `_pick_company`** — persists previously-synced company name to `last_company.txt`. Each cycle, if Tally's active company differs, **interrupts with a confirmation prompt**. Default = NO.
+- **B. Agent `--logout`** — sends `sync_aborted` POST to `/agent/sync-progress` BEFORE clearing creds, so frontend `is_syncing` clears immediately. Also deletes `last_company.txt` so next login starts fresh.
+- **C. Backend `/sync/status`** — auto-clears stale `is_syncing=True` rows where `sync_started_at > 10 min ago` AND no `sync_progress` event in last 5 min. Safety net for OS reboot / Ctrl+C / network drop.
+- **D. Backend `/agent/sync-progress`** — new event `sync_aborted` immediately clears `is_syncing` for the tenant.
+
+**Distribution**: stamped `9.8.4-tenant-guard` at `/app/desktop-agent/tally_sync_agent_v9.py` + `/app/frontend/public/flowra-desktop-agent.py`. **Users on prior versions must re-download to get the data-leak guard.**
+
+**Tests** — `tests/test_iteration76_agent_v984_tenant_guard.py` (6/6 PASS): stale-sync auto-clear, fresh-sync NOT cleared, sync_aborted clears is_syncing, public-agent stamp v9.8.4, no silent company switch, no-data status response unchanged. iter72/73/75/76 regression — 30 passed, 1 skipped.
+
+
+
 ## Tally Sync Agent v9.8.3-empty-vchtype-quiet (May 2026 — UX FIX)
 
 **User reported (after re-running v9.8.2)**: "Voucher sync numbers are showing (6275 receipts cached), but for each month warning 'no vouchers found' is showing. Similar for all vouchers." Uploaded 4 raw XMLs.

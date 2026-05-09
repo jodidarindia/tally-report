@@ -65,7 +65,7 @@ def test_stale_sync_auto_cleared_on_status_read(admin_data):
     """If is_syncing=True with sync_started_at > 10 min ago AND no recent
     progress, /sync/status must auto-flip is_syncing to False."""
     user_data, h = admin_data
-    tenant_id = user_data["user"].get("tenant_id") or user_data["user"].get("id")
+    tenant_id = user_data.get("tenant_id") or user_data.get("id") or user_data.get("username")
 
     # Plant a stale row directly in DB
     from db import db
@@ -103,7 +103,7 @@ def test_stale_sync_auto_cleared_on_status_read(admin_data):
 def test_fresh_sync_NOT_auto_cleared(admin_data):
     """A genuinely-in-progress sync (started < 10 min ago) must NOT be cleared."""
     user_data, h = admin_data
-    tenant_id = user_data["user"].get("tenant_id") or user_data["user"].get("id")
+    tenant_id = user_data.get("tenant_id") or user_data.get("id") or user_data.get("username")
 
     from db import db
 
@@ -137,7 +137,7 @@ def test_fresh_sync_NOT_auto_cleared(admin_data):
 
 def test_sync_aborted_event_clears_is_syncing(admin_data):
     user_data, h = admin_data
-    tenant_id = user_data["user"].get("tenant_id") or user_data["user"].get("id")
+    tenant_id = user_data.get("tenant_id") or user_data.get("id") or user_data.get("username")
 
     from db import db
 
