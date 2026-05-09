@@ -743,11 +743,17 @@ async def receive_sync_progress(request: dict):
                 {'$set': {'is_syncing': True, 'sync_started_at': datetime.now(timezone.utc).isoformat()}},
                 upsert=True
             )
-        elif event_type in ('sync_complete', 'sync_error'):
-            await db.sync_status.update_one(
-                {'type': 'agent_sync', 'tenant_id': req_tenant_id, 'company_id': req_company_id},
+        elif event_type in ('sync_complete', 'sync_error', 'sync_aborted'):
+            # v9.8.4 — `sync_aborted` lets agent explicitly clear is_syncing
+            # on logout / company-switch / Ctrl+C so the tenant's frontend
+            # stops showing "in progress" without waiting 10 min for the
+            # stale-sync auto-clear to fire.
+            update_q = {'type': 'agent_sync', 'tenant_id': req_tenant_id}
+            if req_company_id:
+                update_q['company_id'] = req_company_id
+            await db.sync_status.update_many(
+                update_q,
                 {'$set': {'is_syncing': False, 'last_sync': datetime.now(timezone.utc).isoformat()}},
-                upsert=True
             )
 
         await db.sync_status.update_one(
@@ -849,6 +855,51 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
                     'message': 'No sync data available'
                 }
             )
+
+        # v9.8.4 — Stale-sync timeout: if `is_syncing=True` but the last
+        # `sync_started_at` is older than 10 minutes AND no progress event
+        # has fired since, treat the sync as orphaned (agent died, user
+        # logged out of agent, switched companies, etc.) and clear the flag.
+        if sync_status.get('is_syncing'):
+            try:
+                from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                started_at = sync_status.get('sync_started_at')
+                if started_at:
+                    started_dt = _dt.fromisoformat(started_at.replace('Z', '+00:00'))
+                    if started_dt.tzinfo is None:
+                        started_dt = started_dt.replace(tzinfo=_tz.utc)
+                    age = _dt.now(_tz.utc) - started_dt
+
+                    # Also check if a recent progress event has come in
+                    progress_q = {'type': 'sync_progress'}
+                    if ctx and ctx.get("tenant_id"):
+                        progress_q['tenant_id'] = ctx['tenant_id']
+                    if q.get('company_id'):
+                        progress_q['company_id'] = q['company_id']
+                    progress = await db.sync_status.find_one(progress_q, {'_id': 0})
+                    last_progress_age = _td(days=999)
+                    if progress and progress.get('updated_at'):
+                        try:
+                            p_dt = _dt.fromisoformat(progress['updated_at'].replace('Z', '+00:00'))
+                            if p_dt.tzinfo is None:
+                                p_dt = p_dt.replace(tzinfo=_tz.utc)
+                            last_progress_age = _dt.now(_tz.utc) - p_dt
+                        except (ValueError, AttributeError):
+                            pass
+
+                    # Both must be stale: started >10 min ago AND no progress in last 5 min
+                    if age > _td(minutes=10) and last_progress_age > _td(minutes=5):
+                        await db.sync_status.update_one(
+                            {'type': 'agent_sync', **{k: v for k, v in q.items() if k != 'type'}},
+                            {'$set': {'is_syncing': False, 'stale_at': _dt.now(_tz.utc).isoformat()}},
+                        )
+                        sync_status['is_syncing'] = False
+                        sync_status['stale_reason'] = (
+                            f'Auto-cleared after {int(age.total_seconds() / 60)} min idle'
+                        )
+                        logger.info(f"Auto-cleared stale sync for tenant={q.get('tenant_id')} company={q.get('company_id')} (age {age})")
+            except Exception as e:
+                logger.warning(f"stale-sync auto-clear failed: {e}")
 
         return APIResponse(success=True, data=sync_status)
     except Exception as e:

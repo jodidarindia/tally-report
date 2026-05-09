@@ -2603,7 +2603,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.3-empty-vchtype-quiet")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.4-tenant-guard")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2764,8 +2764,45 @@ class FlowraSyncAgent:
             return
 
         if len(companies) == 1:
-            self._companies_to_sync = companies
-            logger.info(f"Single company detected: {companies[0]}")
+            # v9.8.4 — Confirm switch when Tally's active company has changed
+            # since the previous run. Prevents "user opens a NEW company in
+            # Tally → agent silently syncs it under the currently-logged-in
+            # tenant" (cross-tenant data leak). The previously-synced company
+            # name is persisted to `last_company.txt` next to the cache dir.
+            new_company = companies[0]
+            try:
+                last_path = os.path.join(self.tally.debug_dir or '.', 'last_company.txt') if self.tally.debug_dir else None
+                last_company = ''
+                if last_path and os.path.exists(last_path):
+                    with open(last_path, 'r', encoding='utf-8') as f:
+                        last_company = f.read().strip()
+                if last_company and last_company.lower() != new_company.lower():
+                    print("\n" + "=" * 60)
+                    print("  ⚠ TALLY ACTIVE COMPANY CHANGED")
+                    print(f"  Previously synced: {last_company}")
+                    print(f"  Now active:        {new_company}")
+                    print("=" * 60)
+                    print("  Syncing this new company will upload its data to your")
+                    print(f"  CURRENTLY LOGGED-IN account ({USER_EMAIL or 'unknown'}).")
+                    print("  If that's not the right tenant, log out of the agent")
+                    print("  first and re-login with the correct user.")
+                    print("=" * 60)
+                    while True:
+                        choice = input("  Continue syncing ? [y/N]: ").strip().lower()
+                        if choice in ('y', 'yes'):
+                            break
+                        if choice in ('', 'n', 'no'):
+                            logger.info("  Sync cancelled by user — Tally active company changed.")
+                            self._companies_to_sync = []
+                            return
+                if last_path:
+                    with open(last_path, 'w', encoding='utf-8') as f:
+                        f.write(new_company)
+            except Exception as e:
+                logger.warning(f"  company-switch guard failed: {e}")
+
+            self._companies_to_sync = [new_company]
+            logger.info(f"Single company detected: {new_company}")
             return
 
         if SYNC_ALL_COMPANIES:
@@ -2929,7 +2966,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.3-empty-vchtype-quiet',
+                'agent_version': '9.8.4-tenant-guard',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2986,7 +3023,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.3-empty-vchtype-quiet',
+                'agent_version': '9.8.4-tenant-guard',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3695,11 +3732,45 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.3-empty-vchtype-quiet")
+        print("FLOWRA Tally Sync Agent v9.8.4-tenant-guard")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag
     if '--logout' in sys.argv:
+        # v9.8.4 — Send sync_aborted to backend BEFORE clearing creds so the
+        # currently-logged-in tenant's frontend stops showing "in progress".
+        try:
+            from datetime import datetime as _dt
+            cfg = load_auth_config() or {}
+            token = cfg.get('token')
+            backend_url = cfg.get('backend_url') or BACKEND_URL
+            if token and backend_url:
+                last_company = ''
+                cache_dir = cfg.get('cache_dir') or ''
+                if cache_dir:
+                    last_path = os.path.join(cache_dir, 'last_company.txt')
+                    if os.path.exists(last_path):
+                        with open(last_path, 'r', encoding='utf-8') as f:
+                            last_company = f.read().strip()
+                requests.post(
+                    f"{backend_url}/api/agent/sync-progress",
+                    json={
+                        'type': 'sync_aborted',
+                        'tenant_id': cfg.get('tenant_id', ''),
+                        'company_id': last_company,
+                        'reason': 'agent --logout',
+                        'timestamp': _dt.utcnow().isoformat(),
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=5,
+                )
+                # Clear last_company so next login doesn't false-trip the switch guard
+                if cache_dir:
+                    last_path = os.path.join(cache_dir, 'last_company.txt')
+                    if os.path.exists(last_path):
+                        os.remove(last_path)
+        except Exception:
+            pass  # never block logout on network glitches
         clear_auth_config()
         print("Saved credentials cleared. Run again to log in.")
         sys.exit(0)
