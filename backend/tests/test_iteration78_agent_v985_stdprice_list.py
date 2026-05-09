@@ -224,7 +224,7 @@ def test_public_agent_stamped_v985():
     if not public.exists():
         pytest.skip("public agent not present")
     contents = public.read_text(encoding="utf-8")
-    assert "9.8.5-stdprice-list" in contents
+    assert "9.8.5-stdprice-list" in contents or "9.8.6-hierarchy-walk" in contents
     # Direct-key reads must be present
     assert "STANDARDPRICELIST.LIST" in contents
     assert "STANDARDPRICEDETAILS.LIST" in contents

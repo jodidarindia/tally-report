@@ -15,6 +15,8 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
   const [showGroupDropdown, setShowGroupDropdown] = useState(false);
   const [categories, setCategories] = useState([]);
   const [stockGroups, setStockGroups] = useState([]);
+  const [rootStockGroups, setRootStockGroups] = useState([]);
+  const [selectedRootGroup, setSelectedRootGroup] = useState('all');
   const [showPOModal, setShowPOModal] = useState(false);
   const [purchaseOrder, setPurchaseOrder] = useState(null);
   const [generatingPO, setGeneratingPO] = useState(false);
@@ -29,13 +31,14 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
   useEffect(() => {
     fetchInventory();
-  }, [selectedGroups, excludeBranches, selectedFY]);
+  }, [selectedGroups, selectedRootGroup, excludeBranches, selectedFY]);
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
       const params = {};
       if (selectedGroups.length > 0) params.stock_group = selectedGroups[0];
+      if (selectedRootGroup && selectedRootGroup !== 'all') params.root_stock_group = selectedRootGroup;
       if (selectedFY) params.fy = selectedFY;
       const response = await axios.get(`${API}/inventory/items`, { params });
       const itemsData = response.data?.data?.items || [];
@@ -46,6 +49,9 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
       const groups = response.data?.data?.stock_groups || [];
       if (groups.length > 0) setStockGroups(groups);
+      const rootGroups = response.data?.data?.root_stock_groups || [];
+      // Only update if we got a non-empty list (preserves dropdown when filtering by sub-group)
+      if (rootGroups.length > 0) setRootStockGroups(rootGroups);
     } catch (error) {
       console.error('Error fetching inventory:', error);
     } finally {
@@ -250,6 +256,21 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
             />
+          </div>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
+            <select
+              data-testid="root-stock-group-filter"
+              value={selectedRootGroup}
+              onChange={(e) => setSelectedRootGroup(e.target.value)}
+              className="pl-10 pr-8 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent appearance-none bg-white text-sm min-w-[180px] capitalize"
+              title="Tally Primary (root) stock-group filter"
+            >
+              <option value="all">All Primary Groups</option>
+              {[...rootStockGroups].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })).map(g => (
+                <option key={g} value={g} className="capitalize">{g}</option>
+              ))}
+            </select>
           </div>
           <div className="relative">
             <button

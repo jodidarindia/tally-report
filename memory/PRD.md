@@ -350,9 +350,42 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## KSC BS/PL Parity — Phase 1 + Speed-ups (Feb 2026)
+## Tally Sync Agent v9.8.6-hierarchy-walk (Phase 2 of BS/PL parity, Feb 2026)
 
-**User-shared evidence**: 4 Tally PDFs (BS 25-26, BS 26-27, P&L 25-26, P&L 26-27) + voucher count PDF for KSC tenant (Krishna Sales Corporation).
+**User-reported**: "for inventory the root group or the group in primary is not found in inventory menu. Example tvs sundaram fasteners is missing. Similarly many parent groups are missing in company krishna sales corporation"
+
+**Root cause**: Tally has multi-level stock-group nesting (Primary → Sub → Sub-sub → leaf items). The agent only stored each item's IMMEDIATE parent as `stock_group`. So an item like "TVS 10x1.25x110 A(50)" was stored with `stock_group="10mm & 12mm 1.25 Thread"` — completely losing the user's Primary-level grouping ("TVS Sundaram Fasteners"). Same problem hit the BS/P&L on the ledger side.
+
+**Fix shipped (v9.8.6)**:
+- New `fetch_stock_group_parent_map()` method on `TallyCollectionClient` — fetches `<STOCKGROUP>` collection from Tally and builds {sg_name → parent_sg_name} hierarchy.
+- `fetch_stock_items()` now walks the hierarchy via `_resolve_root_group()` and stamps **`root_stock_group`** on every inventory item (the user-visible Primary group).
+- `_resolve_root_group()` upgraded to short-circuit at Tally's reserved "Primary" anchor — returns the LAST level before "primary" (the user-visible root), not "primary" itself.
+- `fetch_all_ledgers_via_groups()` and `_fetch_ledgers_fallback()` now STORE the walked `root_group` on every ledger result (was being computed but discarded).
+- Backend `InventoryItem` model accepts `root_stock_group`.
+- `/api/inventory/items` accepts `root_stock_group` query filter and returns `root_stock_groups` list (powers the new "All Primary Groups" dropdown).
+- CA Corner BS endpoint: when `_classify_parent` doesn't recognise an immediate `parent_group`, falls back to the agent-walked `root_group` field (exact Tally-mapping replaces substring heuristics from Phase 1).
+- New "Primary Group" filter dropdown on the Inventory page (`Inventory.js`).
+
+**Distribution**: stamped `9.8.6-hierarchy-walk` at `/app/desktop-agent/tally_sync_agent_v9.py` + `/app/frontend/public/flowra-desktop-agent.py`. **User must re-download and re-sync** to populate `root_stock_group` and `root_group` for all inventory items + ledgers.
+
+**Tests** — `tests/test_iteration80_agent_v986_hierarchy_walk.py` (12/12 PASS):
+- Agent version stamp v9.8.6
+- `fetch_stock_group_parent_map()` exists
+- Walker chases multi-level chain (TVS Thread → Fastener → Sundaram Fasteners)
+- Walker terminates on self-loop
+- Walker stops at "primary" anchor (returns last user-visible level)
+- `InventoryItem` model accepts `root_stock_group`
+- `/inventory/items` accepts root filter + returns dropdown list
+- CA Corner BS uses `root_group` fallback
+- Ledger payload carries `root_group`
+- Inventory payload carries `root_stock_group`
+- End-to-end: stub agent run → items get correct root_stock_group
+
+Combined regression iter72-iter80: 63 passed, 1 skipped.
+
+
+
+## KSC BS/PL Parity — Phase 1 + Speed-ups (Feb 2026)
 
 **Voucher parity** (verified before any fix): all 9 voucher types exact match — Sales 4,952, Purchase 2,051, Receipt+Payment+ChqRet 6,851, CN 411, DN 183, JV 605, SJ 90, Contra 17 — all line up with Tally PDF.
 

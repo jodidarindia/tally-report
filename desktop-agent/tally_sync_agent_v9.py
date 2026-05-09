@@ -904,6 +904,31 @@ class TallyCollectionClient:
             })
 
         logger.info(f"  Got {len(items)} stock items")
+
+        # ── Phase 2: stamp root_stock_group on every item via hierarchy walk ──
+        # Tally allows multi-level stock-group nesting (Primary → Sub → Sub-sub
+        # → leaf items). Without root_stock_group the UI can only filter by the
+        # IMMEDIATE parent, missing the user's Primary-level grouping (e.g.
+        # "TVS Sundaram Fasteners" was hidden because individual items were
+        # tagged only as "10mm & 12mm 1.25 Thread").
+        try:
+            sg_map = self.fetch_stock_group_parent_map()
+            if sg_map:
+                rooted = 0
+                for it in items:
+                    sg = (it.get('stock_group') or '').strip()
+                    root = self._resolve_root_group(sg, sg_map) if sg else ''
+                    if root:
+                        it['root_stock_group'] = root
+                        rooted += 1
+                    else:
+                        it['root_stock_group'] = sg.lower() if sg else ''
+                logger.info(f"  root_stock_group resolved for {rooted}/{len(items)} items")
+        except Exception as e:
+            logger.warning(f"  root_stock_group walk failed (non-fatal): {e}")
+            for it in items:
+                it.setdefault('root_stock_group', (it.get('stock_group') or '').lower())
+
         # Diagnostic: how many items have standard_price extracted vs unset.
         # Helps identify when Tally master fields are missing OR our parser
         # missed a Tally-Prime field-name variant.
@@ -1903,6 +1928,57 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     # ---- BANK & CASH LEDGER BALANCES ----
 
+    def fetch_stock_group_parent_map(self) -> Dict[str, str]:
+        """Fetch all STOCK groups and their parent → returns {sg_name: parent_sg_name}.
+        Tally treats stock groups as a separate object type from ledger groups
+        (`<STOCKGROUP>` vs `<GROUP>`). Used to compute root_stock_group per
+        inventory item so the UI can filter by Primary group (e.g. user has
+        sub-groups "10mm & 12mm 1.25 Thread" → "TVS Sundaram Fasteners" Primary).
+        """
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraStockGroupsHier</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraStockGroupsHier" ISINITIALIZE="Yes">
+<TYPE>StockGroup</TYPE>
+<FETCH>NAME, PARENT</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        result = {}
+        try:
+            data = self._post(xml, debug_name='stock_groups_hier')
+            if not data:
+                return result
+            groups = self._get_collection_items(data, 'STOCKGROUP')
+            if not groups:
+                found = self._find_deep(data, 'STOCKGROUP')
+                if isinstance(found, list):
+                    groups = found
+                elif isinstance(found, dict):
+                    groups = [found]
+                else:
+                    return result
+            for g in groups:
+                if not isinstance(g, dict):
+                    continue
+                name = g.get('@NAME', '') or g.get('NAME', '')
+                if isinstance(name, dict):
+                    name = name.get('#text', '')
+                parent = g.get('PARENT', '')
+                if isinstance(parent, dict):
+                    parent = parent.get('#text', '')
+                name = str(name or '').strip()
+                parent = str(parent or '').strip()
+                if name:
+                    result[name.lower()] = parent.lower()
+            logger.info(f"  Fetched {len(result)} stock-group hierarchies")
+        except Exception as e:
+            logger.warning(f"  Stock-group hierarchy fetch failed: {e}")
+        return result
+
     def fetch_group_parent_map(self) -> Dict[str, str]:
         """Fetch all groups and their parent → returns {group_name: parent_group_name}.
         Used to walk sub-group chain when classifying ledgers (e.g., "Salaries" →
@@ -1953,12 +2029,27 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         return result
 
     def _resolve_root_group(self, group_name: str, parent_map: Dict[str, str], depth: int = 0) -> str:
-        """Walk up the parent chain to find the root group. Returns root name in lowercase."""
+        """Walk up the parent chain to find the root group. Returns root name in lowercase.
+
+        Special handling for Tally's reserved "Primary" pseudo-root: when
+        we reach a group whose parent is "primary" (or empty), we return
+        THAT group, not "primary" itself. Reason: in Tally, every top-level
+        user-visible group (Sundry Debtors / Capital Account / TVS Sundaram
+        Fasteners / etc.) has parent="Primary" — but "Primary" is just an
+        internal anchor, never displayed to users. Returning "primary"
+        would lose the actual root the user organises by.
+        """
         if depth > 12 or not group_name:
             return group_name.lower() if group_name else ''
         gn = group_name.lower().strip()
+        # If this group's name IS "primary", we've over-walked; caller already
+        # had the correct root — but they passed an empty string in. Return it.
+        if gn == 'primary':
+            return gn
         parent = parent_map.get(gn, '')
-        if not parent or parent == gn:
+        # Stop conditions: no parent, parent == self, or parent is the reserved
+        # "Primary" anchor — in any of those cases, `gn` IS the user-visible root.
+        if not parent or parent == gn or parent.lower().strip() == 'primary':
             return gn
         return self._resolve_root_group(parent, parent_map, depth + 1)
 
@@ -2246,6 +2337,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 results.append({
                     'ledger_name': name,
                     'parent_group': parent,
+                    'root_group': root_group,
                     'category': category,
                     'opening_balance': round(opening, 2),
                     'closing_balance': round(closing, 2),
@@ -2326,6 +2418,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                             break
                 results.append({
                     'ledger_name': name, 'parent_group': parent,
+                    'root_group': root_group,
                     'category': category,
                     'opening_balance': round(opening, 2), 'closing_balance': round(closing, 2),
                     'phone': str(led.get('LEDGERPHONE', led.get('LEDGERMOBILE', '')) or '').strip(),
@@ -2676,7 +2769,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.5-stdprice-list")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.6-hierarchy-walk")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -3039,7 +3132,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.5-stdprice-list',
+                'agent_version': '9.8.6-hierarchy-walk',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3096,7 +3189,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.5-stdprice-list',
+                'agent_version': '9.8.6-hierarchy-walk',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3805,7 +3898,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.5-stdprice-list")
+        print("FLOWRA Tally Sync Agent v9.8.6-hierarchy-walk")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

@@ -343,7 +343,7 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
 
 
 @router.get("/inventory/items")
-async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None, fy: Optional[str] = None):
+async def get_inventory_items(request: Request, category: Optional[str] = None, stock_group: Optional[str] = None, root_stock_group: Optional[str] = None, min_quantity: Optional[float] = None, company_id: Optional[str] = None, fy: Optional[str] = None):
     try:
         ctx = await get_tenant_context(request)
         extra = {}
@@ -351,6 +351,11 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
             extra["category"] = category
         if stock_group and stock_group != 'all':
             extra["stock_group"] = stock_group
+        if root_stock_group and root_stock_group != 'all':
+            # v9.8.6 — Primary (root) Tally stock-group filter. Falls back to
+            # exact-match on stock_group if no items have root_stock_group
+            # populated yet (older agent versions). Lower-cased on storage.
+            extra["root_stock_group"] = root_stock_group.lower().strip()
         if min_quantity is not None:
             extra["quantity"] = {"$gte": min_quantity}
 
@@ -400,8 +405,13 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
                 item["closing_value"] = round(fy_closing * price, 2)
 
         base_q = _build_query(ctx, company_id)
-        all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1}).to_list(5000)
+        all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1, "root_stock_group": 1}).to_list(50000)
         stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))
+        root_stock_groups = sorted(list(set(
+            (item.get("root_stock_group") or "").strip()
+            for item in all_items
+            if (item.get("root_stock_group") or "").strip()
+        )))
 
         # Last-Sale-Price fallback: when Tally master STANDARDPRICE is unset
         # (standard_price <= 0), surface the most recent sale rate from
@@ -437,7 +447,7 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
 
         return APIResponse(
             success=True,
-            data={"items": items, "count": len(items), "stock_groups": stock_groups}
+            data={"items": items, "count": len(items), "stock_groups": stock_groups, "root_stock_groups": root_stock_groups}
         )
     except Exception as e:
         logger.error(f"Error fetching inventory: {e}")

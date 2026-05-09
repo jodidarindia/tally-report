@@ -1069,6 +1069,14 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
                 continue  # customers collection is authoritative
             parent = l.get('parent_group', '') or ''
             side, key, label = _classify_parent(parent)
+            # v9.8.6 — if classifier didn't recognise the immediate parent (a
+            # user-defined sub-group), try the agent-walked root_group field
+            # which holds the canonical Tally Primary group ('fixed assets',
+            # 'sundry creditors' etc.). This is exact instead of substring.
+            if side == 'unknown':
+                root = (l.get('root_group') or '').strip()
+                if root:
+                    side, key, label = _classify_parent(root)
             if side in ('pl', 'unknown'):
                 continue
             stored = safe_num(l.get(bal_field))

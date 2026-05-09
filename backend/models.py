@@ -36,6 +36,7 @@ class InventoryItem(BaseModel):
     abc_category: Optional[str] = None       # User-assigned A/B/C/D classification (Inventory page)
     category: Optional[str] = None
     stock_group: Optional[str] = None
+    root_stock_group: Optional[str] = None  # v9.8.6 — Tally Primary stock-group (after hierarchy walk)
     reorder_level: Optional[float] = None
     # Stock value fields (for Balance Sheet & P&L)
     opening_quantity: Optional[float] = None

@@ -196,7 +196,7 @@ def test_public_agent_v984_has_company_switch_guard():
         contents = f.read()
 
     # v9.8.4 introduced the tenant guard; later versions inherit it.
-    assert "9.8.4-tenant-guard" in contents or "9.8.5-stdprice-list" in contents
+    assert "9.8.4-tenant-guard" in contents or "9.8.5-stdprice-list" in contents or "9.8.6-hierarchy-walk" in contents
     # Switch-guard prompt is wired
     assert "TALLY ACTIVE COMPANY CHANGED" in contents
     assert "last_company.txt" in contents
