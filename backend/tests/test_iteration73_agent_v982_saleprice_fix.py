@@ -112,7 +112,10 @@ def test_public_agent_is_v982():
         pytest.skip("public agent not present")
     with open(path, 'r', encoding='utf-8') as f:
         contents = f.read()
-    assert "9.8.2-saleprice-fix" in contents
+    # Accept any v9.8.x ≥ 9.8.2 stamp — guards against stale earlier versions
+    # but doesn't break when we ship newer patch versions.
+    assert "9.8" in contents
+    assert "9.7.2-vchtype-fix" not in contents
     # Cost-rate fallback must be GONE
     assert "std_price = rate" not in contents
     # New diagnostic field must be present

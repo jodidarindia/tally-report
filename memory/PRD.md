@@ -350,6 +350,26 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Tally Sync Agent v9.8.3-empty-vchtype-quiet (May 2026 — UX FIX)
+
+**User reported (after re-running v9.8.2)**: "Voucher sync numbers are showing (6275 receipts cached), but for each month warning 'no vouchers found' is showing. Similar for all vouchers." Uploaded 4 raw XMLs.
+
+**Diagnosis** (verified against the user's raw XML files):
+- Tally returned a **valid metadata-only response** (`<REQUESTDATA><TALLYMESSAGE><COMPANY><REMOTECMPINFO.LIST/></COMPANY></TALLYMESSAGE></REQUESTDATA>`) with **zero `<VOUCHER>` elements** when queried for the **literal** "Receipt" / "Payment" voucher type names.
+- Krishna Sales Corp's Tally has 4 child voucher types per parent (e.g. "Bank Receipt", "Cash Receipt", "App Cash Receipts" + the literal "Receipt") and posts no real transactions under the literal canonical name.
+- The agent was correctly detecting "0 vouchers" but logging it as a `WARNING`, alarming the user.
+
+**Two coordinated fixes**:
+
+1. **`fetch_voucher_type_map()` smart dedup**: When a parent has CUSTOM child voucher types alongside the literal canonical name (e.g. `[App Cash Receipts, Bank Receipt, Cash Receipt, Receipt]`), drop the literal — it represents zero real transactions. Preserves the canonical name only when it's the only entry (stock Tally setups).
+2. **`_parse_vouchers()` smart logging**: Distinguish metadata-only responses (`<COMPANY>` + `<REQUESTDATA>` + no `<VOUCHER>`) from genuine parse failures. Metadata-only logs as `INFO` (`"0 vouchers (Tally returned metadata-only response — VCHTYPE has no entries this period)"`), genuine failures still log `WARNING`.
+
+**Net effect for users with custom Tally voucher types**: ~6 fewer redundant requests per month (1 per parent × 6 parents) AND no more alarming "no vouchers found" warning chain.
+
+**Verified**: 9 new tests in `tests/test_iteration75_agent_v983_empty_vchtype_quiet.py` covering dedup logic + smart-logging classification + edge cases (case-insensitive match, single-name parents, stock Tally setups). All 86 tests pass across 9 iteration suites.
+
+**Distribution**: stamped `9.8.3-empty-vchtype-quiet` at `/app/desktop-agent/tally_sync_agent_v9.py` + `/app/frontend/public/flowra-desktop-agent.py`. **User must re-download to get the cleaner logs**.
+
 ## Tally Sync Agent v9.8.2-saleprice-fix (May 2026 — BUG FIX)
 
 **User reported (with ASA Autotech screenshot)**: "Inventory page still showing cost price in sale price column. Even after new sync."

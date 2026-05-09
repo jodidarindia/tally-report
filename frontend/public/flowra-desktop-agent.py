@@ -1051,6 +1051,21 @@ class TallyCollectionClient:
             if canonical not in result[parent]:
                 result[parent].append(canonical)
 
+        # v9.8.3 — When a parent has CUSTOM child voucher types in addition to
+        # the literal canonical name, the canonical name itself is just a Tally
+        # category label that no real transactions use (e.g. tenants who have
+        # "Bank Receipt", "Cash Receipt", "App Cash Receipts" never actually
+        # post anything as plain "Receipt"). Querying for the canonical literal
+        # in that case wastes a request and produces a misleading
+        # "no vouchers found" warning. Drop it when there are siblings.
+        for parent, names in list(result.items()):
+            # Match against the parent's own canonical name (case/space-insensitive)
+            canonical_lc = parent.strip().lower()
+            customs = [n for n in names if n.strip().lower() != canonical_lc]
+            if len(customs) >= 1 and len(names) > len(customs):
+                # We have at least 1 custom child; keep only customs.
+                result[parent] = customs
+
         self._voucher_type_map = result
         self._voucher_type_map_company = self.company
         total = sum(len(v) for v in result.values())
@@ -1514,7 +1529,23 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     pass
 
         if not vouchers_raw:
-            logger.warning(f"  [DEBUG] {vtype}: no vouchers found in response")
+            # v9.8.3 — Distinguish between two empty-response cases:
+            #   (a) Tally responded with valid metadata-only XML (REQUESTDATA →
+            #       COMPANY/REMOTECMPINFO) — happens when the queried VCHTYPE
+            #       has zero transactions in the period. Not an error.
+            #   (b) Genuine parse failure or unexpected structure — keep the
+            #       warning level so it surfaces.
+            raw_xml = (data.get('__raw_xml__') if isinstance(data, dict) else '') or ''
+            looks_like_metadata_only = (
+                '<COMPANY' in raw_xml
+                and '<REQUESTDATA>' in raw_xml
+                and '</ENVELOPE>' in raw_xml
+                and '<VOUCHER' not in raw_xml
+            )
+            if looks_like_metadata_only:
+                logger.info(f"  [DEBUG] {vtype}: 0 vouchers (Tally returned metadata-only response — VCHTYPE has no entries this period)")
+            else:
+                logger.warning(f"  [DEBUG] {vtype}: no vouchers found in response")
             return []
 
         results = []
@@ -2572,7 +2603,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.2-saleprice-fix")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.3-empty-vchtype-quiet")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2898,7 +2929,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.2-saleprice-fix',
+                'agent_version': '9.8.3-empty-vchtype-quiet',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2955,7 +2986,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.2-saleprice-fix',
+                'agent_version': '9.8.3-empty-vchtype-quiet',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3664,7 +3695,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.2-saleprice-fix")
+        print("FLOWRA Tally Sync Agent v9.8.3-empty-vchtype-quiet")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag
