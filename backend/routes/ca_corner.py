@@ -380,12 +380,24 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
             method_used = "ledger_entries_fy_scoped"
 
         # Stock from inventory_items (master snapshot — reflects CURRENT FY only).
-        # For previous FYs we reconstruct opening_value by replaying voucher activity
-        # backwards through the item-level quantities. This is per the user request:
-        # if a prev FY has its own voucher data synced, its opening stock IS knowable.
+        # PRIORITY: if a STOCK IN HAND ledger exists in all_ledgers, use its
+        # closing_balance as the BS-authoritative stock value (matches Tally
+        # exactly because that's what Tally's BSheet reports). Otherwise sum
+        # per-item closing_value from inventory_items (best-effort fallback).
+        # Note: Tally stores stock CR-natural — closing_balance is negative —
+        # so we take abs() to surface as positive opening/closing stock.
+        stock_ledger_close = stock_ledger_open = 0.0
+        for l in all_ledgers:
+            if (l.get("parent_group") or "").strip().lower() in ("stock-in-hand", "stock in hand"):
+                stock_ledger_close += abs(safe_num(l.get("closing_balance")))
+                stock_ledger_open += abs(safe_num(l.get("opening_balance")))
         inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
-        master_opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
-        master_closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
+        if stock_ledger_close > 0:
+            master_closing_stock = stock_ledger_close
+            master_opening_stock = stock_ledger_open or sum(safe_num(i.get("opening_value", 0)) for i in inventory)
+        else:
+            master_opening_stock = sum(safe_num(i.get("opening_value", 0)) for i in inventory)
+            master_closing_stock = sum(safe_num(i.get("closing_value", 0)) for i in inventory)
 
         # Earliest voucher date (across sales/purchases) tells us how far back data exists
         earliest_doc = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", 1).limit(1).to_list(1)
@@ -850,6 +862,22 @@ _PL_PARENTS = (
 _DEBTOR_PARENT_HINTS = ('distributor', 'sundry debtors', 'debtors', 'dealer', 'customer')
 _CREDITOR_PARENT_HINTS = ('sundry creditor', 'creditor', 'supplier', 'vendor')
 
+# Hints for user-defined Fixed Assets sub-groups (Tally lets users name them
+# anything: "Construction Choubey A/c", "Vehicles", "Furniture & Fixture", etc.)
+# Token list — case-insensitive substring match.
+_FIXED_ASSET_HINTS = (
+    'vehicle', 'furniture', 'fixture', 'building', 'construction', 'land',
+    'machinery', 'equipment', 'computer', 'cctv', 'biometric', 'aircondition',
+    'mobile phone', 'printer', 'fan purchase', 'refrigerator', 'water filter',
+    'electric installation', 'jewellary', 'gold', 'silver', 'shop ', 'shop\b',
+    'epson', 'insect killer', 'weigment',
+)
+# Hints for Investments sub-groups
+_INVESTMENT_HINTS = ('lic ', 'mutual fund', 'fdr', 'fixed deposit', 'ppf ', 'paytm gold')
+# Hints for Loans (Liability) sub-groups beyond the standard parents
+_LOAN_LIAB_HINTS = ('bank od', 'bank o/d', 'bank cc', 'bank occ', 'occ a/c', 'cc a/c',
+                    'secured loan', 'unsecured loan', 'term loan')
+
 
 def _classify_parent(parent: str):
     """Return (side, group_key, label) for a Tally parent_group name.
@@ -866,11 +894,23 @@ def _classify_parent(parent: str):
     for key, meta in _ASSET_GROUPS.items():
         if p in meta['parents']:
             return ('asset', key, meta['label'])
-    # Heuristic fallbacks for user-defined sub-groups
+    # Heuristic fallbacks for user-defined sub-groups (Tally allows users to
+    # name groups anything — these matches walk substring-wise to assign each
+    # to its standard root for the BS layout to match Tally's report).
+    # NOTE: creditor / debtor user-defined groups stay under their parent
+    # category (current_liabilities / current_assets) — don't re-bucket them
+    # into sundry_creditors / sundry_debtors as that would double the totals
+    # against the canonical "Sundry Creditors" parent ledgers in Tally.
     if any(h in p for h in _CREDITOR_PARENT_HINTS):
         return ('liability', 'current_liabilities', 'Current Liabilities')
     if any(h in p for h in _DEBTOR_PARENT_HINTS):
         return ('asset', 'current_assets', 'Current Assets')
+    if any(h in p for h in _FIXED_ASSET_HINTS):
+        return ('asset', 'fixed_assets', 'Fixed Assets')
+    if any(h in p for h in _INVESTMENT_HINTS):
+        return ('asset', 'investments', 'Investments')
+    if any(h in p for h in _LOAN_LIAB_HINTS):
+        return ('liability', 'loans_liability', 'Loans (Liability)')
     return ('unknown', None, None)
 
 
@@ -1035,22 +1075,38 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
             display = stored if side == 'liability' else -stored  # flip sign for assets
             _add(side, key, label, name, parent, display)
 
-        # 1b) Closing Stock (from inventory_items, if values are synced)
-        inv_items = await db.inventory_items.find(q, {"_id": 0, "item_name": 1, "stock_group": 1, "opening_value": 1, "closing_value": 1}).to_list(50000)
-        stock_field = 'opening_value' if use_opening else 'closing_value'
-        stock_total = 0.0
-        stock_synced = False
-        for it in inv_items:
-            v = safe_num(it.get(stock_field))
-            if abs(v) > 0.01:
-                stock_synced = True
-                _add('asset', 'stock_in_hand', 'Stock-in-Hand',
-                     it.get('item_name', ''), it.get('stock_group', 'Stock-in-Hand'), v)
-                stock_total += v
-        # Roll up stock items into a single line if too many (>10) — keep top 10 + total row
-        if 'stock_in_hand' in groups and len(groups['stock_in_hand']['ledgers']) > 50:
-            top = sorted(groups['stock_in_hand']['ledgers'], key=lambda x: -abs(x['amount']))[:50]
-            groups['stock_in_hand']['ledgers'] = top
+        # 1b) Closing Stock — only synthesize from inventory_items if NO
+        # STOCK IN HAND ledger exists in all_ledgers. In Tally, the
+        # "Stock in Hand" group typically has a single ledger holding the
+        # accountant-adjusted stock value (₹60.31L for KSC), which differs
+        # from the sum of per-item closing values (₹99.30L) because Tally
+        # users adjust stock via stock journals / closing entries. The
+        # ledger value is the BS-authoritative number — adding the per-item
+        # sum on top would double-count.
+        already_has_stock_ledger = any(
+            (l.get('parent_group') or '').strip().lower() in ('stock-in-hand', 'stock in hand')
+            and (l.get('ledger_name') or '').strip().lower() not in customer_names
+            and abs(safe_num(l.get(bal_field))) > 0.01
+            for l in ledgers
+        )
+        if not already_has_stock_ledger:
+            inv_items = await db.inventory_items.find(q, {"_id": 0, "item_name": 1, "stock_group": 1, "opening_value": 1, "closing_value": 1}).to_list(50000)
+            stock_field = 'opening_value' if use_opening else 'closing_value'
+            stock_total = 0.0
+            stock_synced = False
+            for it in inv_items:
+                v = safe_num(it.get(stock_field))
+                if abs(v) > 0.01:
+                    stock_synced = True
+                    _add('asset', 'stock_in_hand', 'Stock-in-Hand',
+                         it.get('item_name', ''), it.get('stock_group', 'Stock-in-Hand'), v)
+                    stock_total += v
+            # Roll up stock items into a single line if too many (>10) — keep top 10 + total row
+            if 'stock_in_hand' in groups and len(groups['stock_in_hand']['ledgers']) > 50:
+                top = sorted(groups['stock_in_hand']['ledgers'], key=lambda x: -abs(x['amount']))[:50]
+                groups['stock_in_hand']['ledgers'] = top
+        else:
+            stock_synced = True  # ledger value is the source of truth
 
         # 2) Sundry Debtors — from customers collection (authoritative)
         for d in debtors:
@@ -1061,13 +1117,25 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
                  d.get('customer_name', ''),
                  d.get('ledger_group', 'Sundry Debtors'), stored)
 
-        # 3) Sundry Creditors — from creditors collection if present
-        for c in creditors:
-            stored = safe_num(c.get(bal_field if use_opening else 'outstanding_amount'))
-            display = abs(stored) if stored != 0 else 0  # creditors are CR-natural; show as +ve liability
-            _add('liability', 'sundry_creditors', 'Sundry Creditors',
-                 c.get('creditor_name', ''),
-                 c.get('ledger_group', 'Sundry Creditors'), display)
+        # 3) Sundry Creditors — only use the creditors collection when
+        # all_ledgers doesn't already have creditor data classified above.
+        # Otherwise we'd double-count: a ledger with parent_group "Sundry
+        # Creditors" gets added once via _classify_parent → current_liabilities
+        # AND a second time here. Check if any creditor-bucket ledger was
+        # already classified.
+        ledger_has_creditors = any(
+            (l.get("parent_group") or "") in creditor_groups
+            and (l.get("name") or l.get("ledger_name") or "").strip().lower() not in customer_names
+            and abs(safe_num(l.get(bal_field))) > 0.01
+            for l in ledgers
+        )
+        if not ledger_has_creditors:
+            for c in creditors:
+                stored = safe_num(c.get(bal_field if use_opening else 'outstanding_amount'))
+                display = abs(stored) if stored != 0 else 0  # creditors are CR-natural; show as +ve liability
+                _add('liability', 'sundry_creditors', 'Sundry Creditors',
+                     c.get('creditor_name', ''),
+                     c.get('ledger_group', 'Sundry Creditors'), display)
 
         # 4) Synthesize Profit & Loss A/c.
         # Tally stores the current-FY net profit in the `profit_loss` collection
@@ -1141,7 +1209,7 @@ async def get_balance_sheet(request: Request, fy: str = "", company_id: Optional
         notices = []
         if notice:
             notices.append(notice)
-        if not stock_synced:
+        if not stock_synced and not already_has_stock_ledger:
             notices.append("Stock-in-Hand not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture closing stock values.")
         if not creditors and not any(g.get('group') == 'Sundry Creditors' for g in liabilities):
             notices.append("Sundry Creditors not yet synced. Re-run the Tally Desktop Agent (v9.5+) to capture supplier balances.")

@@ -179,6 +179,45 @@ async def security_middleware(request: Request, call_next):
 async def startup_event():
     await seed_admin(db)
     logger.info("Admin user seeded")
+    await ensure_indexes(db)
+    logger.info("MongoDB indexes ensured")
+
+
+async def ensure_indexes(db):
+    """Idempotent — safe to call on every startup. MongoDB will skip if already
+    present. These speed up the most common BS / P&L / CRM / Inventory queries
+    by 5-20× once the DB grows past 100K vouchers per tenant."""
+    try:
+        # Tenant + company scoped reads (covers every multi-tenant route)
+        for coll in ('sales_vouchers', 'purchase_vouchers', 'receipt_vouchers',
+                     'credit_notes', 'debit_notes', 'journal_vouchers',
+                     'stock_journals', 'contra_vouchers'):
+            await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('voucher_date', 1)],
+                                          name='tcid_vdate', background=True)
+            await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('voucher_number', 1)],
+                                          name='tcid_vnum', background=True)
+        await db.inventory_items.create_index([('tenant_id', 1), ('company_id', 1), ('item_name', 1)],
+                                                name='tcid_iname', background=True, unique=True)
+        await db.inventory_items.create_index([('tenant_id', 1), ('company_id', 1), ('stock_group', 1)],
+                                                name='tcid_sgrp', background=True)
+        await db.customers.create_index([('tenant_id', 1), ('company_id', 1), ('customer_name', 1)],
+                                          name='tcid_cname', background=True)
+        await db.all_ledgers.create_index([('tenant_id', 1), ('company_id', 1), ('parent_group', 1)],
+                                            name='tcid_pgrp', background=True)
+        await db.all_ledgers.create_index([('tenant_id', 1), ('company_id', 1), ('ledger_name', 1)],
+                                            name='tcid_lname', background=True)
+        await db.sundry_creditors.create_index([('tenant_id', 1), ('company_id', 1)],
+                                                 name='tcid', background=True)
+        await db.beat_runs.create_index([('tenant_id', 1), ('company_id', 1), ('run_date', 1), ('salesman', 1)],
+                                          name='tcid_rdate_sm', background=True)
+        await db.salesman_orders.create_index([('tenant_id', 1), ('company_id', 1), ('status', 1), ('created_at', 1)],
+                                                name='tcid_status', background=True)
+        await db.audit_logs.create_index([('tenant_id', 1), ('timestamp', -1)],
+                                           name='tid_ts_desc', background=True)
+        await db.dispatch_cards.create_index([('tenant_id', 1), ('company_id', 1), ('dispatch_date', 1)],
+                                                name='tcid_ddate', background=True)
+    except Exception as e:
+        logger.warning(f"ensure_indexes: {e}")
 
 
 @app.on_event("shutdown")

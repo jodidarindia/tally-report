@@ -148,9 +148,10 @@ def test_public_agent_is_v983():
     assert "9.8.2-saleprice-fix" not in contents
     # Dedup logic is present
     assert "canonical_lc = parent.strip().lower()" in contents
-    # Smart logging is present
+    # Smart logging is present (note: in v9.8.6 the message was reworded)
     assert "looks_like_metadata_only" in contents
-    assert "metadata-only response" in contents
+    assert ("metadata-only response" in contents
+            or "empty VCHTYPE this period" in contents)
 
 
 def test_v983_does_not_lose_required_voucher_types():

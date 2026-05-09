@@ -94,7 +94,7 @@ EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
-SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '2'))
+SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '0.5'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
 SYNC_STATE_FILE = 'sync_state_v9.json'
