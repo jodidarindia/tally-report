@@ -350,9 +350,42 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## Iteration 82 — Batch B + 3 user-reported follow-ups (Feb 2026)
+## Iteration 83 — SPIP rolling-window + no_movement bucket + global search (Feb 2026)
 
-**6 user issues addressed in this batch**:
+**3 user-reported issues** in `/insider-result` SPIP tab:
+
+**1. Use rolling 12-month window or previous available FY**:
+Current FY 26-27 has only 2 months of data; user wants the analysis to fall back to a 12-month window anchored at the last synced voucher date when the selected FY is too short. Otherwise monthly-average / months-of-stock math is meaningless.
+**Fix**: New `window_months=12` query param. Logic:
+- If `fy` selected AND has ≥ 6 months of data → use selected FY
+- Else (FY too short, or no FY) → rolling 12-month window from last voucher date
+- Response carries `window` metadata: `{window_type, window_label, window_start, window_end}` so frontend can banner which window was used.
+
+**2. New `no_movement` gap_type**:
+User: "in balanced section many stock items are given with no transaction, on what basis are they balanced". Items with `stock_qty == 0 AND qty_sold == 0` were silently dumped into 'balanced'. KSC: 4,342 of 7,710 items had no transactions at all in the rolling 12m window, diluting Balanced from a useful 1,200-row list to a 5,500-row noise list.
+**Fix**: New gap_type `no_movement` for items with zero stock + zero sales in window. Sorted last by priority. Frontend filter dropdown adds "No Movement (12m)" option. Verified live: Balanced now 1,231 (real items with 1-6 mo of stock); No Movement is 4,342.
+
+**3. Global search across name + part_number + aliases**:
+User: "search of stock items in spip is not using global parameters, no part no, alias. So make it global search".
+**Fix**: Backend SPIP response now includes `part_number` and `aliases[]` per item. Frontend search input matches all three fields case-insensitively (mirrors Inventory page). Placeholder updated to "Search name / part-no / alias".
+
+**Tests** — `tests/test_iteration83_spip_window_no_movement.py` (10/10 PASS):
+- Window metadata returned
+- no_movement gap_type defined + sort priority correct
+- Response carries part_number + aliases per item
+- Balanced section has only items with qty_sold > 0
+- Short FY falls back to rolling window
+- Full FY does NOT fall back
+- Frontend search hits name + part_no + aliases
+- Frontend filter dropdown has no_movement option
+- Window banner rendered
+- Search placeholder updated
+
+Combined regression iter72-iter83: **97 passed, 2 skipped**.
+
+
+
+## Iteration 82 — Batch B + 3 user-reported follow-ups (Feb 2026)
 
 **1. SPIP zero-stock false positive** (Steelgrip 6.5mtr BLK had 899 stock but showed 0):
 Root cause — `inventory_items.find().to_list(5000)` capped at 5,000 items; KSC has 7,510. Items past index 5,000 silently dropped from `inv_map`. Fix: `to_list(None)` (unbounded). Also bumped sales fetch 20K → 50K. Live KSC verification: out_of_stock count dropped 1942 → 1083; Steelgrip 6.5mtr now correctly shows stock=899 + gap=understocked.

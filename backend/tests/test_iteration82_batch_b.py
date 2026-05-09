@@ -70,7 +70,7 @@ def _login():
     return r.json()["data"]["token"]
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def token():
     return _login()
 

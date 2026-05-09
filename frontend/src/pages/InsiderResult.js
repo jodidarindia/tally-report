@@ -33,6 +33,7 @@ const GAP_COLORS = {
   dead_stock: '#8B5CF6',
   overstocked: '#F59E0B',
   balanced: '#10B981',
+  no_movement: '#94A3B8',
 };
 
 const GAP_LABELS = {
@@ -41,6 +42,7 @@ const GAP_LABELS = {
   dead_stock: 'Dead Stock',
   overstocked: 'Overstocked',
   balanced: 'Balanced',
+  no_movement: 'No Movement (12m)',
 };
 
 const RISK_COLORS = {
@@ -577,7 +579,18 @@ const InsiderResult = ({ selectedFY, companyId }) => {
     }));
 
     let filtered = spipFilter === 'all' ? items : items.filter(i => i.gap_type === spipFilter);
-    if (search) filtered = filtered.filter(i => i.item_name.toLowerCase().includes(search.toLowerCase()));
+    if (search) {
+      // Global search — name + part_number + aliases (case-insensitive
+      // substring). Mirrors the Inventory page behavior so users find an
+      // item by ANY known reference (Tally LANGUAGENAME alias, customer's
+      // SKU, brand part-no etc.).
+      const s = search.toLowerCase().trim();
+      filtered = filtered.filter(i =>
+        (i.item_name || '').toLowerCase().includes(s)
+        || (i.part_number || '').toLowerCase().includes(s)
+        || (Array.isArray(i.aliases) && i.aliases.some(a => (a || '').toLowerCase().includes(s)))
+      );
+    }
     filtered = sortData(filtered, sortField, sortDir);
 
     return (
@@ -612,12 +625,27 @@ const InsiderResult = ({ selectedFY, companyId }) => {
           </ResponsiveContainer>
         </div>
 
-        {/* Info banner */}
+        {/* Info banner — surfaces the analysis window so the user knows
+            whether SPIP used the selected FY or fell back to a 12-month
+            rolling window. Backend may auto-fall-back when the FY is
+            partial (e.g. FY 26-27 mid-year has < 6 mo of data). */}
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-2" data-testid="spip-info">
           <Info size={16} className="text-blue-500 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-blue-700">
-            <strong>SPIP Analysis</strong> compares Sales velocity vs Purchase/Stock levels to identify inventory gaps.
-            Items are classified by months of remaining stock relative to average monthly sales rate.
+          <div className="text-xs text-blue-700 leading-relaxed">
+            <strong>SPIP Analysis</strong> compares Sales velocity vs Stock levels to identify inventory gaps.
+            {spip.window?.window_type === 'rolling' && (
+              <span className="block mt-1" data-testid="spip-window-note">
+                Window: <strong>{spip.window.window_label}</strong>
+                {spip.window.window_start && spip.window.window_end &&
+                  <span className="text-blue-500"> ({spip.window.window_start} → {spip.window.window_end})</span>
+                }
+              </span>
+            )}
+            {spip.window?.window_type === 'fy' && (
+              <span className="block mt-1">
+                Window: <strong>FY {spip.window.window_label}</strong>
+              </span>
+            )}
           </div>
         </div>
 
@@ -630,8 +658,8 @@ const InsiderResult = ({ selectedFY, companyId }) => {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search item..."
-                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg w-48 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Search name / part-no / alias"
+                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   data-testid="spip-search"
                 />
               </div>
@@ -642,6 +670,7 @@ const InsiderResult = ({ selectedFY, companyId }) => {
                 <option value="dead_stock">Dead Stock</option>
                 <option value="overstocked">Overstocked</option>
                 <option value="balanced">Balanced</option>
+                <option value="no_movement">No Movement (12m)</option>
               </select>
             </div>
           </div>

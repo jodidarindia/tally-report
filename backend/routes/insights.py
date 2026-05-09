@@ -343,18 +343,82 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
 # ===================== 3. SPIP GAP ANALYSIS =====================
 
 @router.get("/insights/spip-analysis")
-async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
-    """Sales vs Purchase vs Inventory gap analysis."""
+async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None, window_months: int = 12):
+    """SPIP (Stock-Performance / Inventory-Profile) analysis.
+
+    Window selection (v3, addresses user feedback "perfect analysis"):
+      - If `fy` is given AND has >= 6 months of data, use that FY.
+      - Otherwise (FY too short or not given), use a rolling
+        `window_months` window (default 12) anchored to the last synced
+        voucher date — guarantees enough activity for monthly-average /
+        months-of-stock math to be meaningful.
+
+    Gap types:
+      out_of_stock — sold > 0 in window AND stock_qty <= 0
+      understocked — months_of_stock < 1 AND sold > 0
+      dead_stock   — stock_qty > 0 AND sold == 0 in window (sitting)
+      overstocked  — months_of_stock > 6
+      balanced     — sold > 0, 1 <= months_of_stock <= 6
+      no_movement  — stock_qty == 0 AND sold == 0 in window (item synced
+                      but no transaction at all in the analysis window —
+                      previously dumped into 'balanced' which confused
+                      users)
+    """
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
-        # Get sales vouchers with items
-        sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
+        # Pull all sales (no FY filter yet) so we can detect the last
+        # voucher date and pick the analysis window.
+        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(80000)
         bp = await _get_branch_exclusion(request, ctx)
-        sales = _exclude_branch_vouchers(sales, bp)
+        all_sales = _exclude_branch_vouchers(all_sales, bp)
+
+        last_voucher_date = ""
+        for v in all_sales:
+            d = v.get("voucher_date", "")
+            if d and d > last_voucher_date:
+                last_voucher_date = d
+
+        # Window selection
+        window_meta = {"window_type": "fy", "window_label": fy or "all",
+                        "window_start": "", "window_end": last_voucher_date}
+        sales = all_sales
         if fy:
-            sales = filter_vouchers_by_fy(sales, fy)
+            sales = filter_vouchers_by_fy(all_sales, fy)
+            distinct_months = {v.get("voucher_date", "")[:7] for v in sales if v.get("voucher_date")}
+            if len(distinct_months) < 6 and last_voucher_date:
+                from datetime import datetime as _dt
+                end = _dt.strptime(last_voucher_date[:10], "%Y-%m-%d")
+                wm = max(1, int(window_months))
+                sy = end.year - (wm // 12); sm = end.month - (wm % 12)
+                if sm <= 0:
+                    sm += 12; sy -= 1
+                start_date = end.replace(year=sy, month=sm, day=1)
+                start_str = start_date.strftime("%Y-%m-%d")
+                end_str = last_voucher_date[:10]
+                sales = [v for v in all_sales if start_str <= (v.get("voucher_date") or "")[:10] <= end_str]
+                window_meta = {
+                    "window_type": "rolling",
+                    "window_label": f"Last {wm} months (FY had only {len(distinct_months)} mo of data)",
+                    "window_start": start_str, "window_end": end_str,
+                }
+        elif last_voucher_date:
+            from datetime import datetime as _dt
+            end = _dt.strptime(last_voucher_date[:10], "%Y-%m-%d")
+            wm = max(1, int(window_months))
+            sy = end.year - (wm // 12); sm = end.month - (wm % 12)
+            if sm <= 0:
+                sm += 12; sy -= 1
+            start_date = end.replace(year=sy, month=sm, day=1)
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = last_voucher_date[:10]
+            sales = [v for v in all_sales if start_str <= (v.get("voucher_date") or "")[:10] <= end_str]
+            window_meta = {
+                "window_type": "rolling",
+                "window_label": f"Last {wm} months",
+                "window_start": start_str, "window_end": end_str,
+            }
 
         # Get inventory items (no cap — KSC-size tenants have 7,500+ items;
         # the previous 5,000 cap silently dropped 2,500 items so they showed
@@ -386,7 +450,8 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                     item_sales[key]["display_name"] = name.strip()
 
         # Build inventory map keyed on the normalised name so cross-lookup
-        # against sales works even when whitespace / case differs.
+        # against sales works even when whitespace / case differs. Carry
+        # part_number + aliases through so frontend can search globally.
         inv_map = {}
         for inv in inventory:
             name = inv.get("item_name", "")
@@ -394,6 +459,8 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                 key = name.strip().lower()
                 inv_map[key] = {
                     "display_name": name.strip(),
+                    "part_number": inv.get("part_number", "") or "",
+                    "aliases": inv.get("aliases") or [],
                     "stock_qty": inv.get("quantity") or inv.get("closing_balance") or 0,
                     "stock_group": inv.get("stock_group", ""),
                     "purchase_price": inv.get("purchase_price") or inv.get("price") or 0,
@@ -404,7 +471,7 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
         all_keys = set(list(item_sales.keys()) + list(inv_map.keys()))
         for k in all_keys:
             s = item_sales.get(k, {"qty_sold": 0, "revenue": 0, "months_active": set(), "display_name": ""})
-            inv = inv_map.get(k, {"stock_qty": 0, "stock_group": "", "purchase_price": 0, "display_name": ""})
+            inv = inv_map.get(k, {"stock_qty": 0, "stock_group": "", "purchase_price": 0, "display_name": "", "part_number": "", "aliases": []})
             display_name = inv.get("display_name") or s.get("display_name") or k
 
             stock_qty = float(inv["stock_qty"])
@@ -413,8 +480,14 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
             monthly_avg = qty_sold / months if months > 0 else 0
             months_of_stock = stock_qty / monthly_avg if monthly_avg > 0 else (999 if stock_qty > 0 else 0)
 
-            # Classify
-            if stock_qty > 0 and qty_sold == 0:
+            # Classify — order matters
+            if stock_qty <= 0 and qty_sold == 0:
+                # Item synced but ZERO transactions in the window AND no
+                # current stock. Was previously bucketed into 'balanced'
+                # which made the Balanced section misleading (1000s of
+                # never-touched items diluted the actually-balanced ones).
+                gap_type = "no_movement"
+            elif stock_qty > 0 and qty_sold == 0:
                 gap_type = "dead_stock"
             elif months_of_stock > 6:
                 gap_type = "overstocked"
@@ -427,6 +500,8 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
 
             analysis.append({
                 "item_name": display_name,
+                "part_number": inv.get("part_number", ""),
+                "aliases": inv.get("aliases") or [],
                 "stock_group": inv.get("stock_group", ""),
                 "stock_qty": round(stock_qty, 2),
                 "qty_sold": round(qty_sold, 2),
@@ -437,21 +512,19 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                 "gap_type": gap_type,
             })
 
-        # Sort: problematic items first
-        priority = {"out_of_stock": 0, "understocked": 1, "dead_stock": 2, "overstocked": 3, "balanced": 4}
-        analysis.sort(key=lambda x: (priority.get(x["gap_type"], 5), -x["revenue"]))
+        # Sort: problematic items first; no_movement at the bottom
+        priority = {"out_of_stock": 0, "understocked": 1, "dead_stock": 2, "overstocked": 3, "balanced": 4, "no_movement": 5}
+        analysis.sort(key=lambda x: (priority.get(x["gap_type"], 6), -x["revenue"]))
 
         gap_summary = defaultdict(int)
         for a in analysis:
             gap_summary[a["gap_type"]] += 1
 
         return APIResponse(success=True, data={
-            # Return ALL items (was [:200] which truncated overstocked/balanced
-            # categories — the user couldn't see them when the dropdown filter
-            # was selected. Frontend handles its own slicing per category now.)
             "items": analysis,
             "summary": dict(gap_summary),
             "total_items": len(analysis),
+            "window": window_meta,
         })
     except Exception as e:
         logger.error(f"SPIP analysis error: {e}")
