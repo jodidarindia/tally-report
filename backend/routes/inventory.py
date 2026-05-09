@@ -79,6 +79,45 @@ def _filter_branch_vouchers(vouchers, branch_set):
     return [v for v in vouchers if v.get("party_name") not in branch_set]
 
 
+async def _last_sale_price_map(query: dict) -> dict:
+    """Build a {item_name_lower: {price, date, voucher_no}} map from the
+    most recent sales voucher line per item.
+
+    Used as a fallback when Tally master STANDARDPRICE is unset — surfaces
+    the actual last selling rate to the salesman / inventory UI without
+    requiring the user to fill STDPRICE for thousands of items.
+
+    Rate per line is derived as `rate` if present, else `amount/quantity`.
+    Credit notes / returns are NOT used (they're recorded in
+    credit_note_vouchers, not sales_vouchers).
+    """
+    cursor = db.sales_vouchers.find(
+        query,
+        {"_id": 0, "voucher_date": 1, "voucher_number": 1, "items": 1},
+    ).sort("voucher_date", -1)
+    seen: dict[str, dict] = {}
+    async for v in cursor:
+        vdate = v.get("voucher_date") or ""
+        vno = v.get("voucher_number") or ""
+        for vi in v.get("items") or []:
+            name = (vi.get("item") or vi.get("item_name") or "").strip().lower()
+            if not name or name in seen:
+                continue
+            qty = abs(safe_num(vi.get("quantity")))
+            rate = safe_num(vi.get("rate"))
+            if rate <= 0:
+                amt = abs(safe_num(vi.get("amount") or vi.get("value") or 0))
+                if qty > 0 and amt > 0:
+                    rate = round(amt / qty, 2)
+            if rate > 0:
+                seen[name] = {
+                    "price": rate,
+                    "date": vdate,
+                    "voucher_no": vno,
+                }
+    return seen
+
+
 @router.patch("/inventory/items/{item_id}/abc")
 async def set_abc_category(request: Request, item_id: str):
     """Set A/B/C/D classification for a single inventory item.
@@ -206,6 +245,12 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
             bp = await get_branch_parties(tid, cid)
             branch_set = {p.lower().strip() for p in bp}
 
+        # Last-sale-price fallback (when Tally master STDPRICE is unset)
+        try:
+            lsp = await _last_sale_price_map(q)
+        except Exception:
+            lsp = {}
+
         items = await db.inventory_items.find({**q, "abc_category": cat},
                                                {"_id": 0, "item_id": 1, "item_name": 1,
                                                 "part_number": 1, "stock_group": 1,
@@ -220,12 +265,16 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
         # Aggregate per-item: total qty/revenue + per-customer breakdown + frequency
         per_item = {}
         for it in items:
-            per_item[(it.get("item_name") or "").lower().strip()] = {
+            iname_lc = (it.get("item_name") or "").lower().strip()
+            entry = lsp.get(iname_lc) or {}
+            per_item[iname_lc] = {
                 "item_name": it.get("item_name", ""),
                 "part_number": it.get("part_number", ""),
                 "stock_group": it.get("stock_group", ""),
                 "current_stock": safe_num(it.get("quantity")),
                 "standard_price": safe_num(it.get("standard_price")),
+                "last_sale_price": safe_num(entry.get("price", 0)),
+                "last_sale_date": entry.get("date", ""),
                 "total_qty": 0.0,
                 "total_revenue": 0.0,
                 "order_count": 0,
@@ -272,6 +321,8 @@ async def category_sales_drill(request: Request, abc: str, fy: Optional[str] = N
                 "stock_group": row["stock_group"],
                 "current_stock": row["current_stock"],
                 "standard_price": row["standard_price"],
+                "last_sale_price": row["last_sale_price"],
+                "last_sale_date": row["last_sale_date"],
                 "total_qty": round(row["total_qty"], 2),
                 "total_revenue": round(row["total_revenue"], 2),
                 "order_count": row["order_count"],
@@ -351,6 +402,38 @@ async def get_inventory_items(request: Request, category: Optional[str] = None, 
         base_q = _build_query(ctx, company_id)
         all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1}).to_list(5000)
         stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))
+
+        # Last-Sale-Price fallback: when Tally master STANDARDPRICE is unset
+        # (standard_price <= 0), surface the most recent sale rate from
+        # sales_vouchers so the UI / salesman catalog still has a usable price.
+        # Tally master always wins when present.
+        try:
+            lsp = await _last_sale_price_map(base_q)
+        except Exception as e:
+            logger.warning(f"last-sale-price computation failed (non-fatal): {e}")
+            lsp = {}
+        for item in items:
+            name = (item.get("item_name") or "").strip().lower()
+            entry = lsp.get(name)
+            if entry:
+                item["last_sale_price"] = entry["price"]
+                item["last_sale_date"] = entry["date"]
+                item["last_sale_invoice"] = entry["voucher_no"]
+            else:
+                item["last_sale_price"] = 0
+                item["last_sale_date"] = ""
+                item["last_sale_invoice"] = ""
+            # Effective sale price = Tally master if set, else last sale
+            sp = safe_num(item.get("standard_price"))
+            if sp > 0:
+                item["effective_sale_price"] = sp
+                item["sale_price_source"] = "tally_master"
+            elif item["last_sale_price"] > 0:
+                item["effective_sale_price"] = item["last_sale_price"]
+                item["sale_price_source"] = "last_sale"
+            else:
+                item["effective_sale_price"] = 0
+                item["sale_price_source"] = "unset"
 
         return APIResponse(
             success=True,

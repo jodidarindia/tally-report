@@ -849,7 +849,15 @@ function CategorySalesTab({ fy, formatNum }) {
                         {it.part_number && <span className="font-mono">P/N: {it.part_number}</span>}
                         {it.stock_group && <span>{it.stock_group}</span>}
                         <span>Stock: {formatNum(it.current_stock)}</span>
-                        <span>Sale: {it.standard_price > 0 ? `₹${formatNum(it.standard_price)}` : <span className="text-amber-500">— set in Tally</span>}</span>
+                        <span>Sale: {it.standard_price > 0 ? (
+                          <span className="text-emerald-700">₹{formatNum(it.standard_price)}</span>
+                        ) : it.last_sale_price > 0 ? (
+                          <span className="text-slate-700" title={`Last sale: ${it.last_sale_date || ''} (Tally STDPRICE not set)`}>
+                            ₹{formatNum(it.last_sale_price)} <span className="text-[9px] text-slate-400">last</span>
+                          </span>
+                        ) : (
+                          <span className="text-amber-500">— set in Tally</span>
+                        )}</span>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">

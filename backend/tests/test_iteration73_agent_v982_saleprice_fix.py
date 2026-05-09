@@ -178,12 +178,22 @@ def test_salesman_catalog_no_longer_quotes_cost(admin_h):
     # If catalog is empty, skip cleanly (test tenants without inventory)
     if not items:
         pytest.skip("catalog empty for this tenant")
-    # No item should have price > 0 unless standard_price > 0
+    # No item should have price > 0 unless standard_price > 0 OR last_sale_price > 0.
+    # iter77 introduced last-sale-price fallback (real sale rate from sales_vouchers).
+    # The original guard ("never quote COST") still holds — cost = closing rate
+    # which is the `price` field on inventory_items, never reflected here.
     for it in items:
         if it["price"] > 0:
-            assert it["standard_price"] > 0, (
+            std = it.get("standard_price", 0) or 0
+            last = it.get("last_sale_price", 0) or 0
+            assert std > 0 or last > 0, (
                 f"item {it['item_name']!r}: price={it['price']} but "
-                f"standard_price=0 — cost-rate fallback regression"
+                f"standard_price=0 AND last_sale_price=0 — cost-rate fallback regression"
+            )
+            # Quoted price must equal one of the documented sources
+            assert it["price"] == std or it["price"] == last, (
+                f"item {it['item_name']!r}: price={it['price']} doesn't match "
+                f"standard_price={std} or last_sale_price={last}"
             )
 
 

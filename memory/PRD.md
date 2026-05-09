@@ -350,9 +350,27 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
-## Tally Sync Agent v9.8.4-tenant-guard (May 2026 — DATA-LEAK FIX)
+## Inventory Sale Price — Last-Sale Fallback (Feb 2026 — UX FIX)
 
-**Two user-reported bugs**:
+**User-reported (after v9.8.2 cleanup)**: "When will sales price in inventory menu be visible. Now 'set in tally' is showing." User has 7,712 items where every row showed `Set in Tally` because they don't maintain STANDARDPRICE in Tally master.
+
+**Fix — derive sale price from last sales voucher**:
+- New helper `_last_sale_price_map()` in `routes/inventory.py` aggregates `sales_vouchers.items[].rate` (or `amount/quantity` if rate missing) per item, picking the most recent voucher per item.
+- `/api/inventory/items` now returns `last_sale_price`, `last_sale_date`, `last_sale_invoice`, `effective_sale_price`, `sale_price_source` ∈ {`tally_master`, `last_sale`, `unset`} per row.
+- `/api/salesman-orders/catalog`: `price` (the quoted price) = Tally master STANDARDPRICE if >0, else last sale rate, else 0. **Cost is NEVER quoted** (closing rate = average cost, would torch margins).
+- `/api/inventory/category-sales`: also surfaces `last_sale_price` + `last_sale_date` per item drill-down.
+- **Frontend `Inventory.js`**: Sale Price cell shows emerald `₹X` for tally_master, slate `₹X / Last sold YYYY-MM-DD` for last_sale, amber "Set in Tally" only when both are 0. Sort uses effective price.
+- **Frontend `InventoryAnalytics.js`**: drill-down rows show `₹X last` chip when only last-sale is available.
+
+**Live impact (ASA Autotech)**: Inventory rows with a usable price went from **0/202 (0%)** → **172/202 (85%)**. Only 30 items remain unset (truly never sold + no Tally master).
+
+**Priority preserved**: Tally master STANDARDPRICE always wins when set — last-sale only fills gaps. Auto-updates as new bills sync.
+
+**Tests** — `tests/test_iteration77_last_sale_price_fallback.py` (6/6 PASS): inventory schema, effective-price priority, salesman quotes-last-sale, never-quote-cost regression guard, helper picks-most-recent, helper amount/qty fallback. iter73 contract updated to recognise the new last-sale source. iter73/76/77 regression — 19 passed, 1 skipped.
+
+
+
+## Tally Sync Agent v9.8.4-tenant-guard (May 2026 — DATA-LEAK FIX)
 
 (1) **Cross-tenant company drift**: User logged into agent as ASA Autotech admin, then opened Krishna Sales Corp in Tally on the same machine. Agent's `_pick_company` blindly picked the new company (because `len(companies)==1` after Tally's switch) and synced KSC under admin's tenant → data leak.
 

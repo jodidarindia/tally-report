@@ -87,20 +87,50 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
                 {"part_number": {"$regex": s, "$options": "i"}},
             ]
         items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(2000)
-        catalog = [{
-            "item_name": it.get("item_name", ""),
-            "item_id": it.get("item_id", ""),
-            "part_number": it.get("part_number", "") or "",
-            "stock_qty": safe_num(it.get("quantity", 0)),
-            # Standard sale price from Tally (STDPRICE master). NEVER fall back
-            # to closing rate (`price` field) because that's the COST per unit
-            # — quoting at cost would torch margins. UI shows "Set in Tally"
-            # if standard_price is 0.
-            "price": safe_num(it.get("standard_price", 0)),
-            "standard_price": safe_num(it.get("standard_price", 0)),
-            "unit": it.get("unit", ""),
-            "stock_group": it.get("stock_group", ""),
-        } for it in items]
+
+        # Last-sale-price fallback: when Tally master STANDARDPRICE is unset,
+        # surface the most recent sale rate so salesmen can quote without
+        # cleaning up STDPRICE for thousands of items in Tally master.
+        # Tally master always wins when present.
+        from routes.inventory import _last_sale_price_map
+        try:
+            lsp = await _last_sale_price_map(q)
+        except Exception as e:
+            logger.warning(f"catalog last-sale-price computation failed (non-fatal): {e}")
+            lsp = {}
+
+        catalog = []
+        for it in items:
+            std = safe_num(it.get("standard_price", 0))
+            name = (it.get("item_name") or "").strip().lower()
+            entry = lsp.get(name) or {}
+            last_price = safe_num(entry.get("price", 0))
+            last_date = entry.get("date", "")
+            if std > 0:
+                effective_price = std
+                source = "tally_master"
+            elif last_price > 0:
+                effective_price = last_price
+                source = "last_sale"
+            else:
+                effective_price = 0
+                source = "unset"
+            catalog.append({
+                "item_name": it.get("item_name", ""),
+                "item_id": it.get("item_id", ""),
+                "part_number": it.get("part_number", "") or "",
+                "stock_qty": safe_num(it.get("quantity", 0)),
+                # `price` is the effective price the salesman quotes:
+                # Tally master STANDARDPRICE if set, else last sale rate, else 0.
+                # Cost (`it.price`) is NEVER used — that would torch margins.
+                "price": effective_price,
+                "standard_price": std,
+                "last_sale_price": last_price,
+                "last_sale_date": last_date,
+                "sale_price_source": source,
+                "unit": it.get("unit", ""),
+                "stock_group": it.get("stock_group", ""),
+            })
         return APIResponse(success=True, data={"items": catalog, "total": len(catalog)})
     except Exception as e:
         logger.error(f"Catalog error: {e}")
