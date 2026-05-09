@@ -319,11 +319,14 @@ class TallyCollectionClient:
             resp = self.session.post(self.url, data=xml_payload, timeout=self.timeout)
             if resp.status_code == 200:
                 raw = resp.text
-                # Save raw response BEFORE sanitization for debugging
+                # Save raw response BEFORE sanitization for debugging.
+                # v9.8.1: cap raised from 100KB → 5MB (a single EXPLODEFLAG=Yes
+                # voucher in Tally can be >100KB; old cap truncated the saved
+                # copy mid-tag and made offline debugging impossible).
                 if debug_name and self.debug_dir:
                     debug_path = os.path.join(self.debug_dir, f"{debug_name}_raw.xml")
                     with open(debug_path, 'w', encoding='utf-8') as f:
-                        f.write(raw[:100000])
+                        f.write(raw[:5_000_000])
                     logger.info(f"  [DEBUG] Saved raw XML -> {debug_path}")
 
                 # Check for Tally error responses first
@@ -335,17 +338,26 @@ class TallyCollectionClient:
 
                 # Try parsing with standard sanitization
                 clean = self._sanitize(raw)
+                parsed = None
                 try:
-                    return xmltodict.parse(clean)
+                    parsed = xmltodict.parse(clean)
                 except Exception as parse_err:
                     logger.warning(f"  XML parse error (attempt 1): {parse_err}")
                     # Fallback: aggressive sanitization
                     aggressive = self._aggressive_sanitize(raw)
                     try:
-                        return xmltodict.parse(aggressive)
+                        parsed = xmltodict.parse(aggressive)
                     except Exception as e2:
-                        logger.error(f"  XML parse failed after aggressive cleanup: {e2}")
-                        return None
+                        logger.warning(f"  XML parse failed after aggressive cleanup: {e2}")
+                        # Don't bail — return a placeholder dict carrying the
+                        # raw text so per-voucher regex recovery can take over.
+                        return {'__raw_xml__': clean}
+                # Always carry the cleaned raw text alongside the parsed dict
+                # so downstream parsers (e.g., voucher regex recovery) can
+                # use it when the dict structure is incomplete.
+                if isinstance(parsed, dict):
+                    parsed['__raw_xml__'] = clean
+                return parsed
             else:
                 logger.error(f"Tally HTTP {resp.status_code}")
                 return None
@@ -508,7 +520,9 @@ class TallyCollectionClient:
         if isinstance(d, dict):
             if key in d:
                 return d[key]
-            for v in d.values():
+            for k, v in d.items():
+                if k == '__raw_xml__':
+                    continue  # v9.8.1 — internal raw-XML placeholder
                 r = self._find_deep(v, key)
                 if r is not None:
                     return r
@@ -1469,6 +1483,30 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     vouchers_raw = direct
                 elif isinstance(direct, dict):
                     vouchers_raw = [direct]
+
+        if not vouchers_raw:
+            # v9.8.1 — Last-resort regex fallback. EXPLODEFLAG=Yes can produce
+            # multi-MB responses that xmltodict either fails on (truncated bytes)
+            # or parses into an unexpected nested structure. Slice each
+            # <VOUCHER ...>...</VOUCHER> chunk by hand and run xmltodict on
+            # each individually so we recover whatever vouchers Tally did
+            # finish writing.
+            raw_text = data.get('__raw_xml__') if isinstance(data, dict) else None
+            if raw_text:
+                try:
+                    import re as _re_v
+                    chunks = _re_v.findall(r'<VOUCHER\b.*?</VOUCHER>', raw_text, _re_v.DOTALL)
+                    for chunk in chunks:
+                        try:
+                            v_dict = xmltodict.parse(chunk).get('VOUCHER')
+                            if isinstance(v_dict, dict):
+                                vouchers_raw.append(v_dict)
+                        except Exception:
+                            continue
+                    if vouchers_raw:
+                        logger.info(f"  [DEBUG] {vtype}: regex-recovered {len(vouchers_raw)} vouchers from raw XML")
+                except Exception:
+                    pass
 
         if not vouchers_raw:
             logger.warning(f"  [DEBUG] {vtype}: no vouchers found in response")
@@ -2529,7 +2567,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.0-pl-parity")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.1-voucher-recovery")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2855,7 +2893,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.0-pl-parity',
+                'agent_version': '9.8.1-voucher-recovery',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2912,7 +2950,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.0-pl-parity',
+                'agent_version': '9.8.1-voucher-recovery',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3621,7 +3659,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.0-pl-parity")
+        print("FLOWRA Tally Sync Agent v9.8.1-voucher-recovery")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

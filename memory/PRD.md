@@ -350,6 +350,27 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Tally Sync Agent v9.8.1-voucher-recovery (May 2026 — BUG FIX)
+
+**User reported**: Even with v9.8 deployed, agent emitted `"sales: no vouchers found in response"` while the saved raw XML clearly contained vouchers. Uploaded 5 raw XML samples confirmed the issue.
+
+**Root cause**:
+- Tally `EXPLODEFLAG=Yes` + `Voucher Register` produces ~100 KB XML **per voucher** (every empty `<RATEDETAILS.LIST>`, `<BATCHALLOCATIONS.LIST>`, `<BANKALLOCATIONS.LIST>` etc. is included).
+- For tenants with hundreds of vouchers/month, response easily exceeds Tally's HTTP buffer or the agent's read window → response truncated mid-tag → `xmltodict.parse()` fails outright.
+- Old `_post()` returned `None` on parse failure → `_parse_vouchers` never saw the partially-valid VOUCHER chunks that DID make it through.
+- Old debug write capped at 100 KB so the saved file was useless for debugging.
+
+**Fixes shipped in v9.8.1**:
+1. `_post()` now ALWAYS returns the cleaned raw XML on a `__raw_xml__` key — even on parse failure. Downstream parsers can salvage what's there.
+2. `_parse_vouchers()` falls back to `<VOUCHER ...>...</VOUCHER>` regex extraction when tree-walking returns 0 vouchers; each chunk parsed individually so one bad voucher doesn't kill the rest.
+3. Debug XML write cap raised 100 KB → 5 MB.
+4. `_find_deep()` ignores the new `__raw_xml__` placeholder key.
+5. Logger now reports `"regex-recovered N vouchers from raw XML"` so users can see recovery in action.
+
+**Verified**: 7 new tests in `tests/test_iteration72_agent_v981_voucher_recovery.py` simulate the user's exact failure pattern (3 complete vouchers + 1 truncated mid-tag → exactly 3 recovered, truncated one cleanly skipped). All 40 tests pass across iter69/70/71/72.
+
+**Distribution**: agent stamped `9.8.1-voucher-recovery` at `/app/desktop-agent/` and `/app/frontend/public/flowra-desktop-agent.py`. **Users who saw the original bug must re-download the agent and re-run.**
+
 ## Tally Sync Agent v9.8.0-pl-parity (May 2026 — NEW)
 
 **Goal**: Close the gap user found between our prev-FY P&L and Tally PDF (FY 25-26 was missing ~₹26L indirect expenses + ~₹10L sales-discount adjustments → GP under by ₹7.74L, NP over by ₹16.86L).

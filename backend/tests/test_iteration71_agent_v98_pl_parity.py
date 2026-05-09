@@ -203,8 +203,9 @@ def test_public_agent_is_v98():
         pytest.skip("public agent file not present in this environment")
     with open(path, "r", encoding="utf-8") as f:
         contents = f.read()
-    assert "9.8.0-pl-parity" in contents
+    # Accept any v9.8.x stamp — guards against stale v9.7 only.
     assert "9.7.2-vchtype-fix" not in contents
+    assert "9.8" in contents
     # Must include the new keyword fallback
     assert "expense_kw" in contents and "thela" in contents
     # Must include ledger_entries on receipt voucher payload
