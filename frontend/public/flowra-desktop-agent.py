@@ -1611,7 +1611,12 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 and '<VOUCHER' not in raw_xml
             )
             if looks_like_metadata_only:
-                logger.info(f"  [DEBUG] {vtype}: 0 vouchers (Tally returned metadata-only response — VCHTYPE has no entries this period)")
+                # Demoted to debug-level — these "empty subtype" cases are
+                # entirely normal (e.g. user's tenants have a "Cheque Return
+                # Voucher" subtype with 0 entries in most months). They were
+                # cluttering the INFO log and confusing users into thinking
+                # the whole sync was empty. Real failures still log WARNING.
+                logger.debug(f"  {vtype}: 0 vouchers (empty VCHTYPE this period — OK)")
             else:
                 logger.warning(f"  [DEBUG] {vtype}: no vouchers found in response")
             return []
