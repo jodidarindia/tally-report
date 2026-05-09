@@ -226,6 +226,11 @@ async def receive_agent_sync(request: dict):
                                 "party_name": receipt.get('party_name', ''),
                                 "amount": receipt.get('amount', 0),
                                 "bill_allocations": receipt.get('bill_allocations', []),
+                                # v9.8: capture full ledger breakdown so prev-FY P&L
+                                # can pick up indirect-expense postings (salary, rent,
+                                # marketing, freight) that flow through receipt /
+                                # payment vouchers, not just journals.
+                                "ledger_entries": receipt.get('ledger_entries', []),
                                 "narration": receipt.get('narration', ''),
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,

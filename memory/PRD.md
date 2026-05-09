@@ -350,6 +350,36 @@ See `/app/memory/DATABASE_STRATEGY.md` for the full plan (current state, Atlas m
 - BS/P&L will reach 100% Tally parity only AFTER user re-syncs with v9.5 agent (captures stock + creditors + salary accounts). Until then the BS auto-balances via P&L A/c residual and notices flag what's missing.
 
 
+## Tally Sync Agent v9.8.0-pl-parity (May 2026 — NEW)
+
+**Goal**: Close the gap user found between our prev-FY P&L and Tally PDF (FY 25-26 was missing ~₹26L indirect expenses + ~₹10L sales-discount adjustments → GP under by ₹7.74L, NP over by ₹16.86L).
+
+**3 ships in this version**:
+
+### 1. Receipt/Payment vouchers now ship `ledger_entries`
+- **Bug**: Agent's receipt-voucher payload (`results.append({...})` in `_fetch_receipts_and_payments`) didn't include `ledger_entries`. Backend `/api/sync/upload` for `receipts` also stripped them. Result: 0/1354 receipt_vouchers had ledger entries in production.
+- **Fix**: Agent now ships `'ledger_entries': ledger_entries`; backend now `$set`s them on upsert.
+- **Impact**: Salary, rent, marketing, freight, interest expense — all booked through payment/receipt vouchers — now flow into the prev-FY P&L's `indirect_expense` aggregation.
+
+### 2. Sales vouchers no longer drop `ledger_entries` & `voucher_type`
+- **Bug**: `models.SalesVoucher` had `extra="ignore"` and didn't declare `ledger_entries` / `voucher_type` / `dispatch_through` fields. Pydantic silently dropped them on validation. Result: 0/1312 sales_vouchers had ledger entries in production.
+- **Fix**: Added the missing fields to the model. Agent already shipped them — model was the bottleneck.
+- **Impact**: Sales-side discount sub-ledgers ("Cash Discount with GST", "Scheme Discount", etc.) and GST-sales sub-groups now reach prev-FY reconstruction.
+
+### 3. Ledger classifier — keyword fallback for user-defined parent groups
+- **Bug**: User-defined Indirect Expense sub-groups ("Salary Accounts MP", "Local Thela Bhada", "Petrol Expenses") fell through as `category='other'` because they're not in the `GROUP_CATEGORY` dict and Tally's parent-walk doesn't always reach a standard root.
+- **Fix**: After the standard classifier, walk a curated keyword list (salary, thela, bhada, petrol, rent, marketing, freight outward, bank charges, interest paid, etc.) with **word-boundary regex** to avoid false positives like "rent" matching "current liabilities".
+- **Test coverage**: 13 parametrised classifier tests including positive + negative cases.
+
+**Distribution**:
+- Updated `/app/desktop-agent/tally_sync_agent_v9.py` (≈3601 lines)
+- Mirrored to `/app/frontend/public/flowra-desktop-agent.py` (download URL for users)
+- Version stamped `9.8.0-pl-parity` in 4 places (logger, agent_version field × 2, CLI banner)
+
+**Verified**: 16/17 tests in `tests/test_iteration71_agent_v98_pl_parity.py` pass (1 skipped for sync-upload integration that requires company_id header). All earlier 57 regression tests still pass.
+
+**User action required**: Users on existing tenants must **re-run the Tally Desktop Agent** with v9.8 to backfill ledger_entries on historical data. Once re-synced, FY 25-26 P&L should match Tally PDF within ₹1,000.
+
 ## P&L Prev-FY Opening Stock + Movement Analysis Sync-Gate (May 2026 — BUG FIX)
 
 User reported (with screenshot from ASA Autotech, where sync started in FY 25-26):

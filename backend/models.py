@@ -53,6 +53,10 @@ class SalesVoucher(BaseModel):
     items: Optional[List[Dict[str, Any]]] = []
     reference_number: Optional[str] = None
     salesman: Optional[str] = None
+    voucher_type: Optional[str] = None
+    ledger_entries: Optional[List[Dict[str, Any]]] = []
+    dispatch_through: Optional[str] = None
+    destination: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CustomerOutstanding(BaseModel):

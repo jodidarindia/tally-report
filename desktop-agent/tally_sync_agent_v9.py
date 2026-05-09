@@ -1554,7 +1554,11 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                     'party_name': party,
                     'amount': amount,
                     'bill_allocations': bill_refs,
-                    'narration': str(v.get('NARRATION', '') or '')
+                    'narration': str(v.get('NARRATION', '') or ''),
+                    # v9.8: ship the full ledger breakdown for receipt/payment vouchers
+                    # so the backend can compute prev-FY indirect-expense totals
+                    # (salary, rent, marketing, freight, etc.) accurately.
+                    'ledger_entries': ledger_entries
                 })
             elif vtype == 'journal':
                 # Journals: compute debit and credit per ledger entry using captured direction
@@ -2058,6 +2062,39 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                         if group_key in (root_group + ' ' + parent.lower()):
                             category = cat_val
                             break
+                # v9.8: keyword fallback for user-defined P&L sub-groups Tally
+                # users name however they want (e.g., "Local Thela Bhada",
+                # "Petrol Expenses", "Salary Accounts MP"). Without this, real
+                # Indirect Expense ledgers fall through as 'other' and are
+                # missing from prev-FY P&L reconstruction.
+                if category == 'other':
+                    import re as _re_kw
+                    haystack = f"{root_group} {parent.lower()} {name.lower()}"
+                    expense_kw = (
+                        'salary', 'salaries', 'wages', 'staff', 'thela', 'gaadi',
+                        'bhada', 'fuel', 'petrol', 'rent', 'travel', 'travelling',
+                        'commission', 'advertisement', 'marketing', 'office expense',
+                        'printing', 'stationery', 'software', 'subscription', 'audit',
+                        'legal fee', 'consultation fee', 'insurance', 'electricity',
+                        'telephone', 'mobile', 'internet', 'maintenance',
+                        'freight outward', 'transport', 'courier', 'bank charges',
+                        'interest paid', 'depreciation', 'donation',
+                    )
+                    income_kw = (
+                        'discount received', 'interest received', 'rebate received',
+                        'commission received', 'cheque bounce', 'rent received',
+                        'misc income', 'miscellaneous income',
+                    )
+                    # Word-boundary match — avoids "rent" matching "current liabilities"
+                    def _has_kw(text, kws):
+                        for kw in kws:
+                            if _re_kw.search(rf'\b{_re_kw.escape(kw)}\b', text):
+                                return True
+                        return False
+                    if _has_kw(haystack, income_kw):
+                        category = 'indirect_income'
+                    elif _has_kw(haystack, expense_kw):
+                        category = 'indirect_expense'
 
                 results.append({
                     'ledger_name': name,
@@ -2492,7 +2529,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.7.2-vchtype-fix")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.0-pl-parity")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -2818,7 +2855,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.7.2-vchtype-fix',
+                'agent_version': '9.8.0-pl-parity',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -2875,7 +2912,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.7.2-vchtype-fix',
+                'agent_version': '9.8.0-pl-parity',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3584,7 +3621,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.7.2-vchtype-fix")
+        print("FLOWRA Tally Sync Agent v9.8.0-pl-parity")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag
