@@ -85,8 +85,37 @@ def _base_template(content: str) -> str:
 </html>"""
 
 
-async def send_subscription_started(to_email: str, name: str, plan: str, months: int, expires_date: str):
-    """Email when a new subscription starts."""
+async def send_subscription_started(to_email: str, name: str, plan: str, months: int, expires_date: str, password: str = ""):
+    """Email when a new subscription starts. When `password` is provided,
+    includes a login-credentials block so the new admin can sign in
+    immediately. The email plainly tells the user to change the password
+    after first login."""
+    creds_block = ""
+    if password:
+        creds_block = f"""
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+        <tr><td>
+          <div style="font-size:12px;color:#854d0e;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">🔐 Your Login Credentials</div>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">Login URL</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;"><a href="https://insights.flowralive.in" style="color:#2563EB;text-decoration:none;">insights.flowralive.in</a></td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">User ID</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{to_email}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">Password</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{password}</td>
+            </tr>
+          </table>
+          <p style="font-size:11px;color:#854d0e;margin:10px 0 0;line-height:1.5;">
+            ⚠️ For your security, please change this password right after your first login from <strong>Profile → Change Password</strong>. Do not share these credentials.
+          </p>
+        </td></tr>
+      </table>
+    """
     content = f"""
       <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">Welcome to FLOWRA! 🎉</h2>
       <p style="color:#64748b;font-size:14px;margin:0 0 24px;">Your subscription is now active.</p>
@@ -113,6 +142,7 @@ async def send_subscription_started(to_email: str, name: str, plan: str, months:
           </table>
         </td></tr>
       </table>
+      {creds_block}
 
       <h3 style="font-size:15px;color:#1e293b;margin:0 0 12px;">Get Started in 3 Steps:</h3>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">

@@ -157,12 +157,14 @@ async def create_admin(request: Request):
 
         await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Plan: {plan_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
 
-        # Send subscription started email
+        # Send subscription started email — includes login credentials
+        # so the new admin can sign in immediately without needing the
+        # super-admin to relay them separately.
         try:
             expires = subscription_expires_at(now, subscription_months)
             from datetime import datetime as dt
             exp_date = dt.fromisoformat(expires.replace("Z", "+00:00")).strftime("%d %b %Y")
-            await send_subscription_started(username, name or username, plan_id, subscription_months, exp_date)
+            await send_subscription_started(username, name or username, plan_id, subscription_months, exp_date, password=password)
         except Exception as email_err:
             logger.error(f"Failed to send welcome email: {email_err}")
 
