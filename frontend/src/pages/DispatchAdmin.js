@@ -339,17 +339,14 @@ function OnlineOrdersTab({ companyId, hdr }) {
       .then(r => {
         if(r.data.success) {
           const filtered = (r.data.data.orders||[]).filter(o=>['approved','billed','hold'].includes(o.status));
-          // Sort: billed orders first by invoice_number DESC (numeric), then unbilled by created_at DESC
-          const invNum = o => {
-            const n = parseInt(String(o.invoice_number || '').replace(/\D/g, ''), 10);
-            return Number.isFinite(n) ? n : null;
-          };
+          // Multi-sort:
+          //   1. Status priority — Pending (approved/hold) first, Billed last
+          //   2. Within each group → created_at DESC (newest first)
+          const statusRank = s => (s === 'billed' ? 1 : 0);
           filtered.sort((a, b) => {
-            const ia = invNum(a), ib = invNum(b);
-            if (ia !== null && ib !== null) return ib - ia;            // both billed → highest invoice first
-            if (ia !== null) return -1;                                  // billed before unbilled
-            if (ib !== null) return 1;
-            return String(b.created_at||'').localeCompare(String(a.created_at||'')); // both unbilled → newest first
+            const sr = statusRank(a.status) - statusRank(b.status);
+            if (sr !== 0) return sr;
+            return String(b.created_at||'').localeCompare(String(a.created_at||''));
           });
           setOrders(filtered);
         }

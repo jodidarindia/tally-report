@@ -698,6 +698,10 @@ async def _auto_create_cards_helper(tenant_id: str, company_id: str, from_date: 
     created = 0
     for i, sale in enumerate(new_sales):
         inv_num = sale.get("reference_number") or sale.get("voucher_id", "")
+        # Round-robin assignment is still set so dispatch employees can SEE
+        # which card is theirs, but the card ALWAYS starts in `new` lane —
+        # the dispatch admin / employee must manually move it to `queued`.
+        # This gives a review step for every freshly-synced invoice.
         assigned = usernames[(last_idx + i + 1) % len(usernames)] if usernames else None
         card = {
             "card_id": f"DSP-{uuid.uuid4().hex[:8].upper()}", "card_type": "invoice",
@@ -705,12 +709,11 @@ async def _auto_create_cards_helper(tenant_id: str, company_id: str, from_date: 
             "party_name": sale.get("party_name", ""), "items": sale.get("items", []),
             "total_amount": safe_num(sale.get("total_amount")), "voucher_date": sale.get("voucher_date", ""),
             "salesman": sale.get("salesman", ""), "destination_city": "",
-            "status": "queued" if assigned else "new", "assigned_to": assigned,
+            "status": "new", "assigned_to": assigned,
             "total_boxes": 0, "transport_name": "", "transport_charges": 0,
             "porter_name": "", "porter_charges": 0, "lr_number": "",
             "physical_check": False, "notes": "", "documents": {},
-            "status_history": [{"status": "new", "at": now, "by": "system"},
-                               *([{"status": "queued", "at": now, "by": "system"}] if assigned else [])],
+            "status_history": [{"status": "new", "at": now, "by": "system"}],
             "created_at": now, "created_by": "system", **q}
         await db.dispatch_cards.insert_one(card)
         created += 1
