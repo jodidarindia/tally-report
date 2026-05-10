@@ -58,7 +58,7 @@ const SuperAdminLayout = ({ user, token, onLogout }) => {
       </nav>
 
       <main className="p-4 sm:p-6">
-        <SuperAdminDashboard token={token} />
+        <SuperAdminDashboard token={token} user={user} />
       </main>
 
       <footer className="text-center py-4 text-xs text-slate-400">
