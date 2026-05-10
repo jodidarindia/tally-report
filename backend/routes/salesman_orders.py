@@ -146,6 +146,294 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
 
 
 # ═══════════════════════════════════════════════════════
+# CUSTOMER ORDER SUGGESTIONS — repeat-order + cross-sell
+# ═══════════════════════════════════════════════════════
+
+def _last_n_months_cutoff(months: int) -> "datetime":
+    """ISO date string for `months` months ago (UTC)."""
+    from datetime import datetime, timezone, timedelta
+    return datetime.now(timezone.utc) - timedelta(days=int(months) * 30)
+
+
+def _voucher_party_norm(v) -> str:
+    return (v.get("party_name") or "").strip().lower()
+
+
+async def _build_inventory_lookup(q: dict) -> dict:
+    """item_name (lowercased) → {price, stock_qty, unit, part_number, item_id, ...}.
+    Joined once and reused by both suggestion endpoints."""
+    from routes.inventory import _last_sale_price_map
+    items = await db.inventory_items.find(q, {"_id": 0}).to_list(20000)
+    try:
+        lsp = await _last_sale_price_map(q)
+    except Exception:
+        lsp = {}
+    out = {}
+    for it in items:
+        name = (it.get("item_name") or "").strip()
+        if not name:
+            continue
+        std = safe_num(it.get("standard_price", 0))
+        entry = lsp.get(name.lower()) or {}
+        last_price = safe_num(entry.get("price", 0))
+        effective = std if std > 0 else (last_price if last_price > 0 else 0)
+        out[name.lower()] = {
+            "item_name": name,
+            "item_id": it.get("item_id", ""),
+            "part_number": it.get("part_number", "") or "",
+            "aliases": it.get("aliases") or [],
+            "stock_qty": safe_num(it.get("quantity", 0)),
+            "price": effective,
+            "standard_price": std,
+            "last_sale_price": last_price,
+            "unit": it.get("unit", ""),
+            "stock_group": it.get("stock_group", ""),
+        }
+    return out
+
+
+@router.get("/salesman-orders/customer-history/{customer_name}")
+async def customer_purchase_history(
+    customer_name: str,
+    request: Request,
+    months: int = 10,
+    company_id: Optional[str] = None,
+):
+    """Items this customer bought in the last `months` months.
+
+    Aggregated per item: total qty, total revenue, # of distinct orders, last
+    purchase date, average qty per order. Joined with current inventory so the
+    salesman sees stock + standard price next to each suggestion. Sorted by
+    most-recent purchase first (most relevant for repeat-order context).
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        q = _q(ctx, company_id)
+        months = max(1, min(36, int(months or 10)))
+        cutoff = _last_n_months_cutoff(months)
+        cust_norm = (customer_name or "").strip().lower()
+        if not cust_norm:
+            return APIResponse(success=False, error="customer_name required")
+
+        # Pull the customer's vouchers within the window (case-insensitive on party).
+        # Mongo regex is anchored exact-match (after escape) — `^name$`.
+        import re as _re
+        vouchers = await db.sales_vouchers.find({
+            **q,
+            "party_name": {"$regex": f"^{_re.escape(customer_name.strip())}$",
+                           "$options": "i"},
+        }, {"_id": 0}).to_list(20000)
+
+        # Filter by date — voucher_date is stored as ISO string OR datetime
+        from datetime import datetime as _dt
+        def _parse(v):
+            d = v.get("voucher_date") or v.get("date")
+            if isinstance(d, _dt):
+                return d
+            if isinstance(d, str):
+                try:
+                    return _dt.fromisoformat(d.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        per_item: dict = {}
+        for v in vouchers:
+            vdate = _parse(v)
+            if vdate is None:
+                continue
+            v_aware = vdate if vdate.tzinfo else vdate.replace(tzinfo=cutoff.tzinfo)
+            if v_aware < cutoff:
+                continue
+            for it in (v.get("items") or []):
+                # Tally syncs sometimes use 'item', sometimes 'item_name' —
+                # accept both so suggestions work across both schema variants.
+                iname = (it.get("item_name") or it.get("item") or "").strip()
+                if not iname:
+                    continue
+                key = iname.lower()
+                row = per_item.setdefault(key, {
+                    "item_name": iname, "total_qty": 0.0,
+                    "total_revenue": 0.0, "order_count": 0,
+                    "last_date": None, "last_qty": 0, "last_price": 0,
+                })
+                qty = safe_num(it.get("quantity"))
+                amt = safe_num(it.get("amount"))
+                row["total_qty"] += qty
+                row["total_revenue"] += amt
+                row["order_count"] += 1
+                if (row["last_date"] is None) or (vdate > row["last_date"]):
+                    row["last_date"] = vdate
+                    row["last_qty"] = qty
+                    rate = safe_num(it.get("rate"))
+                    row["last_price"] = rate if rate > 0 else (amt / qty if qty else 0)
+
+        inv = await _build_inventory_lookup(q)
+        out = []
+        for key, row in per_item.items():
+            inv_meta = inv.get(key, {})
+            out.append({
+                **row,
+                "last_date": row["last_date"].isoformat() if row["last_date"] else None,
+                "avg_qty_per_order": round(row["total_qty"] / row["order_count"], 2)
+                                     if row["order_count"] else 0,
+                "stock_qty": inv_meta.get("stock_qty", 0),
+                "price": inv_meta.get("price", 0) or row.get("last_price", 0),
+                "standard_price": inv_meta.get("standard_price", 0),
+                "unit": inv_meta.get("unit", ""),
+                "stock_group": inv_meta.get("stock_group", ""),
+                "part_number": inv_meta.get("part_number", ""),
+                "item_id": inv_meta.get("item_id", ""),
+            })
+        # Sort by recency (last purchased), break ties by total qty
+        out.sort(key=lambda r: (r["last_date"] or "", r["total_qty"]), reverse=True)
+        return APIResponse(success=True, data={
+            "customer_name": customer_name,
+            "months_window": months,
+            "items": out,
+            "total_items": len(out),
+        })
+    except Exception as e:
+        logger.error(f"customer-history error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/salesman-orders/related-items/{customer_name}")
+async def related_items_for_customer(
+    customer_name: str,
+    request: Request,
+    months: int = 12,
+    limit: int = 12,
+    company_id: Optional[str] = None,
+):
+    """Cross-sell suggestions blending two signals (excluding items the
+    customer has already bought):
+
+      1. AFFINITY — items frequently co-purchased with the customer's past
+         basket (basic market-basket co-occurrence across all vouchers).
+      2. VELOCITY — fast-moving items by total quantity over the same window.
+
+    Final score = 0.5 * affinity_norm + 0.5 * velocity_norm. Each suggestion
+    carries a `signal` tag: 'affinity', 'fast_moving', or 'both' so the UI
+    can label why it is being shown.
+    """
+    try:
+        ctx = await get_tenant_context(request)
+        q = _q(ctx, company_id)
+        months = max(1, min(36, int(months or 12)))
+        limit = max(1, min(50, int(limit or 12)))
+        cutoff = _last_n_months_cutoff(months)
+        if not customer_name or not customer_name.strip():
+            return APIResponse(success=False, error="customer_name required")
+
+        # Single sweep over all vouchers in window — used for both signals.
+        from datetime import datetime as _dt
+        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(80000)
+
+        def _parse(v):
+            d = v.get("voucher_date") or v.get("date")
+            if isinstance(d, _dt):
+                return d
+            if isinstance(d, str):
+                try:
+                    return _dt.fromisoformat(d.replace("Z", "+00:00"))
+                except Exception:
+                    return None
+            return None
+
+        cust_norm = customer_name.strip().lower()
+        # Items this customer has already bought (window-bound)
+        bought: set = set()
+        # Velocity counter: total qty per item across all vouchers
+        velocity: dict = {}
+        # Voucher-level item baskets — used for affinity scoring
+        baskets: list = []
+
+        for v in vouchers:
+            vdate = _parse(v)
+            if vdate is None:
+                continue
+            v_aware = vdate if vdate.tzinfo else vdate.replace(tzinfo=cutoff.tzinfo)
+            if v_aware < cutoff:
+                continue
+            items_lc = []
+            for it in (v.get("items") or []):
+                iname = (it.get("item_name") or it.get("item") or "").strip()
+                if not iname:
+                    continue
+                key = iname.lower()
+                items_lc.append((key, iname, safe_num(it.get("quantity"))))
+                vel = velocity.setdefault(key, {"item_name": iname, "qty": 0.0})
+                vel["qty"] += safe_num(it.get("quantity"))
+            if items_lc:
+                baskets.append([k for k, _, _ in items_lc])
+                if _voucher_party_norm(v) == cust_norm:
+                    for k, _, _ in items_lc:
+                        bought.add(k)
+
+        # ── Affinity: count co-occurrences with `bought` items ───────────
+        affinity: dict = {}
+        for basket in baskets:
+            basket_set = set(basket)
+            overlap = basket_set & bought
+            if not overlap:
+                continue
+            for other in basket_set - bought:
+                affinity[other] = affinity.get(other, 0) + len(overlap)
+
+        # ── Normalise & blend ────────────────────────────────────────────
+        max_aff = max(affinity.values()) if affinity else 1
+        max_vel = max((v["qty"] for v in velocity.values() if v["qty"]), default=1)
+
+        candidates = set(velocity.keys()) - bought
+        scored: list = []
+        for key in candidates:
+            aff = affinity.get(key, 0)
+            vel_qty = velocity.get(key, {}).get("qty", 0)
+            aff_n = aff / max_aff if max_aff else 0
+            vel_n = vel_qty / max_vel if max_vel else 0
+            score = 0.5 * aff_n + 0.5 * vel_n
+            if score <= 0:
+                continue
+            if aff > 0 and vel_qty > 0 and aff_n > 0.15 and vel_n > 0.15:
+                signal = "both"
+            elif aff > 0:
+                signal = "affinity"
+            else:
+                signal = "fast_moving"
+            scored.append((key, score, aff, vel_qty, signal))
+
+        scored.sort(key=lambda x: -x[1])
+        scored = scored[:limit]
+
+        inv = await _build_inventory_lookup(q)
+        out = []
+        for key, score, aff, vel_qty, signal in scored:
+            meta = inv.get(key)
+            if not meta:
+                # Item present in vouchers but not in current inventory master —
+                # skip rather than show an un-orderable suggestion.
+                continue
+            out.append({
+                **meta,
+                "co_occurrence": aff,
+                "velocity_qty": round(vel_qty, 2),
+                "score": round(score, 3),
+                "signal": signal,  # 'affinity' | 'fast_moving' | 'both'
+            })
+        return APIResponse(success=True, data={
+            "customer_name": customer_name,
+            "months_window": months,
+            "items": out,
+            "total_items": len(out),
+            "bought_count": len(bought),
+        })
+    except Exception as e:
+        logger.error(f"related-items error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════
 # SALESMAN DASHBOARD (own targets, achievement, customer breakdown)
 # ═══════════════════════════════════════════════════════
 

@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Package, Clock, CheckCircle2, XCircle, Search, Plus, X,
   User, FileText, ArrowRight, Pause, AlertTriangle, Hash, MessageSquare,
-  Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft,
+  Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft, Sparkles,
 } from 'lucide-react';
 import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
@@ -230,23 +230,61 @@ function AdminOrderView({ companyId, selectedFY }) {
 
 /* ═══════════════════════════════════════════════════════
    ORDER FORM — Salesman places order
+   Redesigned (Feb 2026) with 3 smart sections:
+     • Repeat Order   — what this customer bought in last 8-10 months
+     • Suggestions    — affinity + fast-moving cross-sell
+     • Browse Catalog — full inventory search
+   Sticky cart, mobile-first, large touch targets.
    ═══════════════════════════════════════════════════════ */
 function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
+  const [section, setSection] = useState('repeat');     // 'repeat' | 'suggest' | 'browse'
   const [catalog, setCatalog] = useState([]);
-  const [search, setSearch] = useState('');
+  const [history, setHistory] = useState([]);           // repeat-order items
+  const [suggestions, setSuggestions] = useState([]);   // cross-sell items
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [loadingSugg, setLoadingSugg] = useState(false);
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [catSearch, setCatSearch] = useState('');
+  const [showCart, setShowCart] = useState(false);      // mobile bottom-sheet toggle
 
+  // Fetch catalog (browse) once
   useEffect(() => {
     axios.get(`${API}/api/salesman-orders/catalog?company_id=${companyId||''}`, {headers:hdr()})
       .then(r => { if(r.data.success) setCatalog(r.data.data.items||[]); });
   }, [companyId, hdr]);
 
-  const addToCart = (item) => {
-    if(cart.find(c=>c.item_name===item.item_name)) return toast.error('Already in cart');
-    setCart([...cart, {...item, quantity:1, remark:''}]);
+  // Fetch repeat-order history + cross-sell suggestions in parallel when customer changes
+  useEffect(() => {
+    if (!customer) return;
+    setLoadingHist(true); setLoadingSugg(true);
+    const enc = encodeURIComponent(customer);
+    const cq = companyId ? `&company_id=${companyId}` : '';
+    axios.get(`${API}/api/salesman-orders/customer-history/${enc}?months=10${cq}`, {headers:hdr()})
+      .then(r => { if (r.data.success) setHistory(r.data.data.items || []); })
+      .catch(() => {})
+      .finally(() => setLoadingHist(false));
+    axios.get(`${API}/api/salesman-orders/related-items/${enc}?months=12&limit=12${cq}`, {headers:hdr()})
+      .then(r => { if (r.data.success) setSuggestions(r.data.data.items || []); })
+      .catch(() => {})
+      .finally(() => setLoadingSugg(false));
+  }, [customer, companyId, hdr]);
+
+  const inCart = (name) => cart.some(c => c.item_name === name);
+  const addToCart = (item, qty = 1) => {
+    if (inCart(item.item_name)) { toast.error('Already in cart'); return; }
+    // Build a uniform cart row regardless of source (catalog/history/suggestions)
+    setCart([...cart, {
+      item_name: item.item_name,
+      part_number: item.part_number || '',
+      price: Number(item.price || item.standard_price || item.last_price || 0),
+      stock_qty: Number(item.stock_qty || 0),
+      unit: item.unit || '',
+      quantity: Math.max(1, Math.round(qty || 1)),
+      remark: '',
+    }]);
+    toast.success(`${item.item_name.slice(0, 28)} added`);
   };
   const updateCart = (idx, field, value) => {
     const c = [...cart]; c[idx] = {...c[idx], [field]: value}; setCart(c);
@@ -254,8 +292,6 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   const removeFromCart = (idx) => { setCart(cart.filter((_,i)=>i!==idx)); };
 
   const total = cart.reduce((s,c)=>s+(c.quantity*c.price), 0);
-  // Fuzzy global search across name + part_number + aliases — ignores
-  // spaces & separator chars so "tvs 10" matches "TVS-10" / "TVS(10)" etc.
   const filtered = catSearch ? catalog.filter(c =>
     fuzzyMatchAny(catSearch, [c.item_name, c.part_number, c.aliases])
   ) : catalog;
@@ -272,65 +308,342 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
     setSubmitting(false);
   };
 
-  return (
-    <div data-testid="order-form">
-      <div className="flex items-center gap-2 mb-3">
-        <button onClick={onBack} className="text-xs text-slate-500 hover:text-slate-700">&larr; Back</button>
-        <h2 className="text-sm font-bold text-slate-900">Order for: {customer}</h2>
-      </div>
+  // ── Section pill tabs ───────────────────────────────────────────────
+  const sections = [
+    { id: 'repeat',  label: 'Repeat Order',  count: history.length,
+      icon: <Clock size={13}/>, hint: '10-month buy history' },
+    { id: 'suggest', label: 'Suggestions',   count: suggestions.length,
+      icon: <Sparkles size={13}/>, hint: 'Cross-sell + fast movers' },
+    { id: 'browse',  label: 'Browse',        count: catalog.length,
+      icon: <Package size={13}/>,  hint: 'Full catalog' },
+  ];
 
-      {/* Cart */}
-      {cart.length>0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3" data-testid="cart">
-          <div className="text-[10px] font-semibold text-blue-700 uppercase mb-2">Cart ({cart.length} items) — Rs.{fmt(total)}</div>
-          {cart.map((c,i)=>(
-            <div key={i} className="flex items-start gap-2 py-1.5 border-b border-blue-100 last:border-0">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-slate-800 truncate">{c.item_name}</div>
-                {c.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {c.part_number}</div>}
-                <div className="text-[10px] text-slate-500">Rs.{c.price} x {c.quantity} = Rs.{fmt(c.quantity*c.price)}</div>
-              </div>
-              <div className="flex items-center gap-1">
-                <button onClick={()=>updateCart(i,'quantity',Math.max(1,c.quantity-1))} className="w-5 h-5 flex items-center justify-center bg-white border rounded text-xs"><Minus size={10}/></button>
-                <input type="number" value={c.quantity} onChange={e=>updateCart(i,'quantity',parseInt(e.target.value)||1)} className="w-12 text-center text-xs border rounded py-0.5" data-testid={`qty-${i}`}/>
-                <button onClick={()=>updateCart(i,'quantity',c.quantity+1)} className="w-5 h-5 flex items-center justify-center bg-white border rounded text-xs"><Plus size={10}/></button>
-              </div>
-              <button onClick={()=>removeFromCart(i)} className="p-1 hover:bg-red-50 rounded"><X size={14} className="text-red-400"/></button>
+  return (
+    <div data-testid="order-form" className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-4">
+      {/* ── Main column ─────────────────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <button onClick={onBack} className="text-xs text-slate-500 hover:text-slate-700 flex-shrink-0">
+              <ChevronLeft size={16} className="inline -mt-0.5"/>Back
+            </button>
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-slate-900 truncate">{customer}</h2>
+              <div className="text-[10px] text-slate-400">New order</div>
             </div>
-          ))}
-          {cart.map((c,i)=>(
-            <input key={`r-${i}`} value={c.remark} onChange={e=>updateCart(i,'remark',e.target.value)} placeholder={`Remark for ${c.item_name.slice(0,20)}...`} className="w-full mt-1 px-2 py-1 text-[10px] border border-blue-200 rounded bg-white" data-testid={`remark-${i}`}/>
-          ))}
-          <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Order notes (optional)" rows={2} className="w-full mt-2 px-2 py-1.5 text-xs border border-blue-200 rounded bg-white resize-none" data-testid="order-notes"/>
-          <button onClick={submit} disabled={submitting} className="w-full mt-2 px-4 py-2 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold" data-testid="submit-order">
-            {submitting ? 'Submitting...' : `Submit Order — Rs.${fmt(total)}`}
+          </div>
+          {/* Mobile cart toggle */}
+          <button onClick={()=>setShowCart(s=>!s)}
+            className="lg:hidden relative px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg font-semibold flex items-center gap-1.5"
+            data-testid="cart-toggle">
+            <ShoppingCart size={14}/> {cart.length}
+            {cart.length > 0 && <span className="text-[10px]">· Rs.{fmt(total)}</span>}
           </button>
         </div>
-      )}
 
-      {/* Catalog */}
-      <div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-        <input value={catSearch} onChange={e=>setCatSearch(e.target.value)} placeholder="Search by name or part number..." className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="cat-search"/></div>
-      <div className="space-y-1.5" data-testid="catalog">
-        {filtered.map((item,i)=>(
-          <div key={i} className="bg-white rounded-lg border border-slate-200 p-2.5 flex items-center justify-between" data-testid={`cat-${i}`}>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
-              {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
-              <div className="flex gap-3 text-[10px] text-slate-500 flex-wrap">
-                <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
-                <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>Stock: {item.stock_qty} {item.unit}</span>
-                {item.stock_group && <span className="hidden sm:inline">{item.stock_group}</span>}
+        {/* Section pills */}
+        <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1" data-testid="section-pills">
+          {sections.map(s => {
+            const active = section === s.id;
+            return (
+              <button key={s.id} onClick={()=>setSection(s.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap transition border ${
+                  active
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                }`}
+                data-testid={`section-${s.id}`}>
+                {s.icon}
+                <span>{s.label}</span>
+                {s.count > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                    active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                  }`}>{s.count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── REPEAT ORDER ─────────────────────────────────────────── */}
+        {section === 'repeat' && (
+          <div data-testid="repeat-section">
+            {loadingHist ? (
+              <SectionEmpty icon={<Clock size={22}/>} title="Loading history…" />
+            ) : history.length === 0 ? (
+              <SectionEmpty icon={<Clock size={22}/>}
+                title="No purchase history found"
+                hint="This customer hasn't bought anything in the last 10 months. Try Suggestions or Browse." />
+            ) : (
+              <div className="space-y-1.5">
+                {history.map((it, i) => (
+                  <RepeatRow key={i} item={it}
+                    inCart={inCart(it.item_name)}
+                    onAdd={(q) => addToCart(it, q)}
+                    testid={`hist-${i}`}/>
+                ))}
               </div>
-            </div>
-            <button onClick={()=>addToCart(item)} disabled={cart.find(c=>c.item_name===item.item_name)} className="px-2 py-1 text-[10px] bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-30 flex-shrink-0" data-testid={`add-${i}`}>
-              <Plus size={12}/>
-            </button>
+            )}
           </div>
-        ))}
-        {filtered.length===0 && <p className="text-center text-xs text-slate-400 py-6">No products found</p>}
+        )}
+
+        {/* ── CROSS-SELL SUGGESTIONS ───────────────────────────────── */}
+        {section === 'suggest' && (
+          <div data-testid="suggest-section">
+            {loadingSugg ? (
+              <SectionEmpty icon={<Sparkles size={22}/>} title="Building suggestions…" />
+            ) : suggestions.length === 0 ? (
+              <SectionEmpty icon={<Sparkles size={22}/>}
+                title="No suggestions yet"
+                hint="Suggestions appear once the customer has prior purchases or once you bill more orders." />
+            ) : (
+              <div className="space-y-1.5">
+                {suggestions.map((it, i) => (
+                  <SuggestRow key={i} item={it}
+                    inCart={inCart(it.item_name)}
+                    onAdd={() => addToCart(it, 1)}
+                    testid={`sugg-${i}`}/>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── BROWSE CATALOG ──────────────────────────────────────── */}
+        {section === 'browse' && (
+          <div data-testid="browse-section">
+            <div className="relative mb-3">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={catSearch} onChange={e=>setCatSearch(e.target.value)}
+                placeholder="Search by name or part number…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+                data-testid="cat-search"/>
+            </div>
+            <div className="space-y-1.5" data-testid="catalog">
+              {filtered.slice(0, 200).map((item, i) => (
+                <CatalogRow key={i} item={item}
+                  inCart={inCart(item.item_name)}
+                  onAdd={() => addToCart(item, 1)}
+                  testid={`cat-${i}`}/>
+              ))}
+              {filtered.length === 0 && (
+                <p className="text-center text-xs text-slate-400 py-6">No products found</p>
+              )}
+              {filtered.length > 200 && (
+                <p className="text-center text-[10px] text-slate-400 py-2">
+                  Showing first 200 of {filtered.length} — refine your search.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Cart panel — sticky desktop, bottom-sheet mobile ───────── */}
+      <CartPanel cart={cart} total={total} notes={notes} setNotes={setNotes}
+        updateCart={updateCart} removeFromCart={removeFromCart}
+        submit={submit} submitting={submitting}
+        showMobile={showCart} onCloseMobile={()=>setShowCart(false)}/>
+    </div>
+  );
+}
+
+/* Helper: format an ISO date as "12 Mar 2025" */
+const formatLast = (iso) => {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}); }
+  catch { return iso.slice(0,10); }
+};
+
+/* Empty / loading state shared between sections */
+function SectionEmpty({ icon, title, hint }) {
+  return (
+    <div className="text-center py-12 text-slate-400">
+      <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-slate-100 text-slate-400 mb-3">{icon}</div>
+      <div className="text-sm font-medium text-slate-600">{title}</div>
+      {hint && <div className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto px-4">{hint}</div>}
+    </div>
+  );
+}
+
+/* Repeat-order row — shows "Last bought" + previous qty + 1-tap add */
+function RepeatRow({ item, inCart, onAdd, testid }) {
+  const lastQty = Math.round(item.last_qty || item.avg_qty_per_order || 1);
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-2.5 hover:border-blue-200 transition" data-testid={testid}>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
+          {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
+            <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
+            <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>
+              Stock: {item.stock_qty} {item.unit}
+            </span>
+            <span className="text-slate-400">
+              Last <strong className="text-slate-600">{formatLast(item.last_date)}</strong>
+              {' · '}{Math.round(item.last_qty || 0)} {item.unit}
+            </span>
+            <span className="text-slate-400">{item.order_count} orders · avg {item.avg_qty_per_order}</span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 flex-shrink-0">
+          <button onClick={() => onAdd(lastQty)} disabled={inCart}
+            className="px-2.5 py-1.5 text-[10px] font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-30 flex items-center gap-1 whitespace-nowrap"
+            data-testid={`${testid}-addlast`}>
+            <Plus size={11}/> {lastQty}
+          </button>
+          <button onClick={() => onAdd(1)} disabled={inCart}
+            className="px-2.5 py-1 text-[10px] bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-30">
+            +1
+          </button>
+        </div>
       </div>
     </div>
+  );
+}
+
+/* Cross-sell row — labels affinity vs fast-moving so the salesman can pitch */
+const SIGNAL_META = {
+  affinity:    { label: 'Bought with regulars', color: 'bg-violet-50 text-violet-700' },
+  fast_moving: { label: 'Fast mover',           color: 'bg-amber-50  text-amber-700' },
+  both:        { label: 'Hot pick',             color: 'bg-emerald-50 text-emerald-700' },
+};
+function SuggestRow({ item, inCart, onAdd, testid }) {
+  const meta = SIGNAL_META[item.signal] || SIGNAL_META.fast_moving;
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-2.5 hover:border-blue-200 transition" data-testid={testid}>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+            <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${meta.color}`}>
+              {meta.label}
+            </span>
+          </div>
+          <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
+          {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
+          <div className="flex flex-wrap gap-x-3 text-[10px] text-slate-500 mt-0.5">
+            <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
+            <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>
+              Stock: {item.stock_qty} {item.unit}
+            </span>
+          </div>
+        </div>
+        <button onClick={onAdd} disabled={inCart}
+          className="px-2.5 py-1.5 text-[10px] font-bold bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-30 flex items-center gap-1 flex-shrink-0"
+          data-testid={`${testid}-add`}>
+          <Plus size={11}/> Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* Plain catalog row (Browse tab) */
+function CatalogRow({ item, inCart, onAdd, testid }) {
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-2.5 flex items-center justify-between hover:border-blue-200 transition" data-testid={testid}>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
+        {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
+        <div className="flex gap-3 text-[10px] text-slate-500 flex-wrap">
+          <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
+          <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>Stock: {item.stock_qty} {item.unit}</span>
+          {item.stock_group && <span className="hidden sm:inline">{item.stock_group}</span>}
+        </div>
+      </div>
+      <button onClick={onAdd} disabled={inCart}
+        className="px-2.5 py-1.5 text-[10px] bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-30 flex-shrink-0 flex items-center gap-1">
+        <Plus size={12}/>
+      </button>
+    </div>
+  );
+}
+
+/* Sticky cart panel — desktop right column, mobile bottom-sheet */
+function CartPanel({ cart, total, notes, setNotes, updateCart, removeFromCart,
+                     submit, submitting, showMobile, onCloseMobile }) {
+  const Body = (
+    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 lg:sticky lg:top-3" data-testid="cart">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
+          Cart · {cart.length} items
+        </div>
+        <div className="text-sm font-bold text-blue-800">Rs.{fmt(total)}</div>
+      </div>
+      {cart.length === 0 ? (
+        <div className="text-center py-8 text-blue-400">
+          <ShoppingCart size={28} className="inline mb-2 opacity-50"/>
+          <div className="text-xs">Your cart is empty</div>
+          <div className="text-[10px] text-blue-300 mt-1">Add items from any section above</div>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+            {cart.map((c,i) => (
+              <div key={i} className="bg-white rounded-lg p-2 border border-blue-100">
+                <div className="flex items-start gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-medium text-slate-800 truncate">{c.item_name}</div>
+                    <div className="text-[10px] text-slate-500">Rs.{c.price} × {c.quantity} = <strong>Rs.{fmt(c.quantity*c.price)}</strong></div>
+                  </div>
+                  <button onClick={()=>removeFromCart(i)} className="p-0.5 hover:bg-red-50 rounded" aria-label="Remove">
+                    <X size={12} className="text-red-400"/>
+                  </button>
+                </div>
+                <div className="flex items-center gap-1 mt-1.5">
+                  <button onClick={()=>updateCart(i,'quantity',Math.max(1,c.quantity-1))}
+                    className="w-6 h-6 flex items-center justify-center bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-xs">
+                    <Minus size={11}/>
+                  </button>
+                  <input type="number" value={c.quantity}
+                    onChange={e=>updateCart(i,'quantity',parseInt(e.target.value)||1)}
+                    className="w-14 text-center text-xs border border-slate-200 rounded py-0.5"
+                    data-testid={`qty-${i}`}/>
+                  <button onClick={()=>updateCart(i,'quantity',c.quantity+1)}
+                    className="w-6 h-6 flex items-center justify-center bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-xs">
+                    <Plus size={11}/>
+                  </button>
+                  <input value={c.remark} onChange={e=>updateCart(i,'remark',e.target.value)}
+                    placeholder="Remark"
+                    className="flex-1 ml-1 px-2 py-1 text-[10px] border border-slate-200 rounded"
+                    data-testid={`remark-${i}`}/>
+                </div>
+              </div>
+            ))}
+          </div>
+          <textarea value={notes} onChange={e=>setNotes(e.target.value)}
+            placeholder="Order notes (optional)" rows={2}
+            className="w-full mt-2 px-2 py-1.5 text-[11px] border border-blue-200 rounded bg-white resize-none"
+            data-testid="order-notes"/>
+          <button onClick={submit} disabled={submitting}
+            className="w-full mt-2 px-4 py-2.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold flex items-center justify-center gap-2"
+            data-testid="submit-order">
+            {submitting ? 'Submitting…' : <>Submit Order <ArrowRight size={14}/></>}
+          </button>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop: render in the grid sidebar */}
+      <div className="hidden lg:block">{Body}</div>
+      {/* Mobile: bottom sheet */}
+      {showMobile && (
+        <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={onCloseMobile} data-testid="cart-sheet">
+          <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-3 max-h-[85vh] overflow-y-auto"
+               onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-bold text-slate-900">Cart</div>
+              <button onClick={onCloseMobile} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={16}/></button>
+            </div>
+            {Body}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
