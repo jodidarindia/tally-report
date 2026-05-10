@@ -2690,8 +2690,17 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 # ==================== AUTH & SESSION MANAGEMENT ====================
 
 def login_to_flowra(backend_url: str, email: str = None, password: str = None) -> dict:
-    """Authenticate with FLOWRA backend. Returns auth config dict or raises error."""
+    """Authenticate with FLOWRA backend. Returns auth config dict or raises error.
+
+    v9.8.9 — When invoked from a non-interactive environment (e.g. the Windows
+    GUI launcher), credentials can be supplied via env vars FLOWRA_EMAIL and
+    FLOWRA_PASSWORD instead of stdin prompts.
+    """
     if not email:
+        email = os.getenv('FLOWRA_EMAIL', '').strip() or None
+        password = password or os.getenv('FLOWRA_PASSWORD', '').strip() or None
+    if not email:
+        # Truly interactive path — no env vars, no GUI
         print("\n" + "=" * 50)
         print("  FLOWRA Desktop Agent - Login")
         print("=" * 50)
@@ -2824,11 +2833,14 @@ def get_or_refresh_auth(backend_url: str = None) -> dict:
 
         # Token expired or invalid — try re-login with saved email
         logger.info("Session expired, re-authenticating...")
-        print("\n  Session expired. Please re-enter your password.")
         email = config.get('email', '')
         if email:
-            print(f"  Email: {email}")
-            password = input("  Password: ").strip()
+            # v9.8.9 — accept FLOWRA_PASSWORD from env (GUI launcher path)
+            password = os.getenv('FLOWRA_PASSWORD', '').strip()
+            if not password:
+                print("\n  Session expired. Please re-enter your password.")
+                print(f"  Email: {email}")
+                password = input("  Password: ").strip()
             url = config.get('backend_url', backend_url)
             return login_to_flowra(url, email, password)
 
