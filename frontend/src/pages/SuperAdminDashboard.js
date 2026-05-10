@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -71,8 +71,14 @@ const generateStrongPassword = () => {
   return arr.join('');
 };
 
-const SuperAdminDashboard = ({ token }) => {
-  const [activeTab, setActiveTab] = useState('overview');
+const SuperAdminDashboard = ({ token, user }) => {
+  // FLOWRA staff get the same UI but tabs are filtered to their feature
+  // checklist. Pure super_admin sees everything plus the Staff Mgmt tab.
+  const isSuperAdmin = user?.role === 'super_admin';
+  const staffFeatures = useMemo(() => new Set(user?.staff_features || []), [user?.staff_features]);
+  const allowedTab = (id) => isSuperAdmin || staffFeatures.has(id);
+  const [activeTab, setActiveTab] = useState(() => isSuperAdmin ? 'overview'
+    : ((user?.staff_features || [])[0] || 'overview'));
   const [loading, setLoading] = useState(true);
 
   // Data states
@@ -85,6 +91,24 @@ const SuperAdminDashboard = ({ token }) => {
   const [prospects, setProspects] = useState([]);
   const [prospectStats, setProspectStats] = useState({});
   const [renewals, setRenewals] = useState({ renewal_requests: [], near_expiry: [], expired: [], stats: {} });
+  const [staffList, setStaffList] = useState([]);
+  const [showCreateStaff, setShowCreateStaff] = useState(false);
+  const [staffEditing, setStaffEditing] = useState(null);
+  const [resetStaffPwd, setResetStaffPwd] = useState(null);
+  const STAFF_FEATURES_LIST = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'subscriptions', label: 'Subscriptions' },
+    { id: 'payments', label: 'Payments' },
+    { id: 'invoices', label: 'Invoices' },
+    { id: 'prospects', label: 'Prospects' },
+    { id: 'health', label: 'Customer Health' },
+    { id: 'admins', label: 'Admin Mgmt (view only)' },
+    { id: 'renewals', label: 'Renewals' },
+    { id: 'referrals', label: 'Referrals' },
+    { id: 'questionnaires', label: 'Leads' },
+    { id: 'backups', label: 'Backups' },
+    { id: 'activity', label: 'Activity Log' },
+  ];
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -283,7 +307,10 @@ const SuperAdminDashboard = ({ token }) => {
     { id: 'questionnaires', label: 'Leads', icon: FileText },
     { id: 'backups', label: 'Backups', icon: Database },
     { id: 'activity', label: 'Activity', icon: Activity },
-  ];
+    // Staff Mgmt — only the SuperAdmin sees this tab (control-panel users
+    // cannot create more control-panel users).
+    ...(isSuperAdmin ? [{ id: 'staff', label: 'Staff', icon: Users }] : []),
+  ].filter(t => t.id === 'staff' ? isSuperAdmin : allowedTab(t.id));
 
   return (
     <div className="max-w-[1400px] mx-auto p-4 sm:p-6" data-testid="super-admin-dashboard">

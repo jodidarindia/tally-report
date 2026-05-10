@@ -24,18 +24,218 @@ router = APIRouter()
 
 
 async def _require_super_admin(request: Request):
+    """Allows super_admin OR flowra_staff. Endpoints that mutate tenant
+    admins (POST/PUT/DELETE on /super-admin/admins/*) further restrict to
+    super_admin via inline checks. Read-only endpoints accept both."""
+    user = await get_current_user(request, db)
+    if not user:
+        return None
+    if user.get("role") in ("super_admin", "flowra_staff"):
+        return user
+    return None
+
+
+async def _require_strict_super_admin(request: Request):
+    """Only super_admin — used for tenant-admin mutations and other
+    super-only operations."""
     user = await get_current_user(request, db)
     if not user or user.get("role") != "super_admin":
         return None
     return user
 
 
+# ── FLOWRA Staff feature catalogue ──────────────────────────────────────
+# Each key is one tab/feature in the Command Center. Granted via checkbox
+# when SuperAdmin creates a staff account. `staff_mgmt` is reserved for
+# super_admin only — staff cannot grant themselves staff-management
+# privileges.
+STAFF_FEATURES = [
+    "overview", "subscriptions", "payments", "invoices",
+    "prospects", "health", "admins", "renewals",
+    "referrals", "questionnaires", "backups", "activity",
+]
+
+# Feature names where flowra_staff get VIEW-ONLY access. The route
+# decorator checks the request method too — GET passes, mutating verbs
+# (POST/PUT/PATCH/DELETE) are blocked for staff.
+STAFF_VIEW_ONLY_FEATURES = {"admins"}
+
+
+async def _require_command_center(request: Request, feature: str = "", *, mutating: bool = False):
+    """Gate a Command Center endpoint:
+    - super_admin → always allowed
+    - flowra_staff → must have `feature` in their `staff_features` list
+        AND if the feature is view-only, mutating calls are rejected
+    Returns (user_dict, None) on success, or (None, APIResponse) on failure.
+    """
+    user = await get_current_user(request, db)
+    if not user:
+        return None, APIResponse(success=False, error="Authentication required")
+    role = user.get("role")
+    if role == "super_admin":
+        return user, None
+    if role == "flowra_staff":
+        feats = user.get("staff_features") or []
+        if feature and feature not in feats:
+            return None, APIResponse(
+                success=False,
+                error=f"Forbidden: '{feature}' is not enabled for your account",
+            )
+        if mutating and feature in STAFF_VIEW_ONLY_FEATURES:
+            return None, APIResponse(
+                success=False,
+                error=f"Forbidden: '{feature}' is view-only for staff accounts",
+            )
+        return user, None
+    return None, APIResponse(success=False, error="Forbidden: control-panel role required")
+
+
+# ── Staff CRUD ─────────────────────────────────────────────────────────
+@router.get("/super-admin/staff")
+async def list_staff(request: Request):
+    user, denied = await _require_command_center(request, "")
+    if denied: return denied
+    # Staff can VIEW staff list (so they know who else has access) but
+    # cannot mutate it unless they're super_admin or have `staff_mgmt`.
+    rows = await db.users.find(
+        {"role": "flowra_staff"},
+        {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).to_list(500)
+    return APIResponse(success=True, data={
+        "staff": rows,
+        "available_features": STAFF_FEATURES,
+        "view_only_features": list(STAFF_VIEW_ONLY_FEATURES),
+        "viewer_role": user.get("role"),
+    })
+
+
+@router.post("/super-admin/staff")
+async def create_staff(request: Request):
+    user = await _require_strict_super_admin(request)
+    if not user:
+        return APIResponse(success=False, error="Forbidden: super-admin only")
+    body = await request.json()
+    username = (body.get("username") or "").strip().lower()
+    name = (body.get("name") or "").strip()
+    password = body.get("password") or ""
+    features = body.get("features") or []
+    if not username or "@" not in username:
+        return APIResponse(success=False, error="Email is required and must be valid")
+    if not password or len(password) < 6:
+        return APIResponse(success=False, error="Password must be at least 6 characters")
+    if not name:
+        return APIResponse(success=False, error="Name is required")
+    if not isinstance(features, list):
+        return APIResponse(success=False, error="`features` must be an array")
+    invalid = [f for f in features if f not in STAFF_FEATURES]
+    if invalid:
+        return APIResponse(success=False, error=f"Unknown feature(s): {invalid}")
+
+    if await db.users.find_one({"username": username}):
+        return APIResponse(success=False, error="A user with this email already exists")
+
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": f"staff-{username}",
+        "username": username,
+        "email": username,
+        "name": name,
+        "password_hash": hash_password(password),
+        "role": "flowra_staff",
+        "tenant_id": None,
+        "company_id": None,
+        "staff_features": features,
+        "active": True,
+        "must_change_password": True,
+        "created_at": now,
+        "created_by": user.get("username", ""),
+    }
+    await db.users.insert_one(doc)
+    await log_audit(db, "flowra_staff_created", user, {
+        "staff_username": username, "features": features,
+    }, request)
+    return APIResponse(success=True, data={"username": username}, message="Staff account created")
+
+
+@router.put("/super-admin/staff/{username}/features")
+async def update_staff_features(username: str, request: Request):
+    user = await _require_strict_super_admin(request)
+    if not user:
+        return APIResponse(success=False, error="Forbidden: super-admin only")
+    body = await request.json()
+    features = body.get("features") or []
+    invalid = [f for f in features if f not in STAFF_FEATURES]
+    if invalid:
+        return APIResponse(success=False, error=f"Unknown feature(s): {invalid}")
+    res = await db.users.update_one(
+        {"username": username.lower(), "role": "flowra_staff"},
+        {"$set": {"staff_features": features, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.matched_count == 0:
+        return APIResponse(success=False, error="Staff not found")
+    await log_audit(db, "flowra_staff_features_updated", user,
+                    {"staff_username": username, "features": features}, request)
+    return APIResponse(success=True, message="Features updated")
+
+
+@router.put("/super-admin/staff/{username}/toggle-active")
+async def toggle_staff_active(username: str, request: Request):
+    user = await _require_strict_super_admin(request)
+    if not user:
+        return APIResponse(success=False, error="Forbidden: super-admin only")
+    target = await db.users.find_one({"username": username.lower(), "role": "flowra_staff"}, {"_id": 0, "active": 1})
+    if not target:
+        return APIResponse(success=False, error="Staff not found")
+    new_active = not target.get("active", True)
+    await db.users.update_one(
+        {"username": username.lower(), "role": "flowra_staff"},
+        {"$set": {"active": new_active, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await log_audit(db, "flowra_staff_toggle_active", user,
+                    {"staff_username": username, "active": new_active}, request)
+    return APIResponse(success=True, data={"active": new_active})
+
+
+@router.post("/super-admin/staff/{username}/reset-password")
+async def reset_staff_password(username: str, request: Request):
+    user = await _require_strict_super_admin(request)
+    if not user:
+        return APIResponse(success=False, error="Forbidden: super-admin only")
+    body = await request.json()
+    new_pw = body.get("password") or ""
+    if len(new_pw) < 6:
+        return APIResponse(success=False, error="Password must be at least 6 characters")
+    res = await db.users.update_one(
+        {"username": username.lower(), "role": "flowra_staff"},
+        {"$set": {
+            "password_hash": hash_password(new_pw),
+            "must_change_password": True,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    if res.matched_count == 0:
+        return APIResponse(success=False, error="Staff not found")
+    await log_audit(db, "flowra_staff_password_reset", user, {"staff_username": username}, request)
+    return APIResponse(success=True, message="Password reset")
+
+
+@router.delete("/super-admin/staff/{username}")
+async def delete_staff(username: str, request: Request):
+    user = await _require_strict_super_admin(request)
+    if not user:
+        return APIResponse(success=False, error="Forbidden: super-admin only")
+    res = await db.users.delete_one({"username": username.lower(), "role": "flowra_staff"})
+    if res.deleted_count == 0:
+        return APIResponse(success=False, error="Staff not found")
+    await log_audit(db, "flowra_staff_deleted", user, {"staff_username": username}, request)
+    return APIResponse(success=True, message="Staff deleted")
+
+
 @router.get("/super-admin/admins")
 async def list_admins(request: Request):
     """List all admin tenants."""
-    sa = await _require_super_admin(request)
-    if not sa:
-        return APIResponse(success=False, error="Super admin access required")
+    user, denied = await _require_command_center(request, "admins")
+    if denied: return denied
     try:
         admins = await db.users.find(
             {"role": "admin"},
@@ -90,7 +290,7 @@ async def list_admins(request: Request):
 @router.post("/super-admin/admins")
 async def create_admin(request: Request):
     """Create a new admin tenant."""
-    sa = await _require_super_admin(request)
+    sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
@@ -182,7 +382,7 @@ async def create_admin(request: Request):
 @router.put("/super-admin/admins/{username}/features")
 async def update_admin_features(username: str, request: Request):
     """Toggle features for an admin tenant."""
-    sa = await _require_super_admin(request)
+    sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
@@ -210,7 +410,7 @@ async def update_admin_features(username: str, request: Request):
 @router.put("/super-admin/admins/{username}/toggle-active")
 async def toggle_admin_active(username: str, request: Request):
     """Activate or deactivate an admin tenant."""
-    sa = await _require_super_admin(request)
+    sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
@@ -235,7 +435,7 @@ async def toggle_admin_active(username: str, request: Request):
 @router.delete("/super-admin/admins/{username}")
 async def delete_admin(username: str, request: Request):
     """Delete an admin tenant — archives all data for audit, then removes active records."""
-    sa = await _require_super_admin(request)
+    sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
@@ -361,7 +561,7 @@ async def get_deleted_users(request: Request):
 @router.post("/super-admin/admins/{username}/reset-password")
 async def reset_admin_password(username: str, request: Request):
     """Super admin resets an admin's password."""
-    sa = await _require_super_admin(request)
+    sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:

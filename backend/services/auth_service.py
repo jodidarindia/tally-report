@@ -74,6 +74,11 @@ async def get_current_user(request: Request, db) -> dict:
         user = await db.users.find_one({"username": payload["username"]}, {"_id": 0, "password_hash": 0})
         if not user:
             return None
+        # FLOWRA staff (control-panel employees, no tenant) — must be active.
+        if user.get("role") == "flowra_staff":
+            if not user.get("active", True):
+                return None
+            return user
         # For admin/employee, check if their tenant is active
         if user.get("role") in ("admin", "employee", "dispatch", "salesman") and user.get("tenant_id"):
             if user["role"] in ("employee", "dispatch", "salesman"):

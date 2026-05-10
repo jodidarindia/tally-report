@@ -124,6 +124,9 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "token": token,
                 "tenant_id": tenant_id,
                 "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else (["dispatch"] if user["role"] == "dispatch" else (["salesman"] if user["role"] == "salesman" else []))),
+                # FLOWRA staff control-panel feature list — only set for
+                # role==flowra_staff. Frontend uses this to show/hide tabs.
+                "staff_features": user.get("staff_features", []),
                 "companies": companies,
                 "company_mappings": company_mappings,
                 "plan": user.get("plan", "enterprise"),
