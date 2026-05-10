@@ -2,12 +2,14 @@
 
 Outputs:
   /app/docs/FLOWRA_BUSINESS_PROPOSAL.pdf   (polished investor-grade PDF)
-  /app/docs/FLOWRA_BUSINESS_PROPOSAL.pptx  (16-slide pitch deck)
+  /app/docs/FLOWRA_BUSINESS_PROPOSAL.pptx  (19-slide pitch deck w/ charts)
 
 The PDF flows the entire proposal with custom styling.
-The PPTX is a hand-crafted 16-slide deck — not an auto-conversion — built
+The PPTX is a hand-crafted 19-slide deck — not an auto-conversion — built
 for live presentation in front of an investor or a strategic partner.
+Includes 3 matplotlib-rendered visual chart slides.
 """
+import os
 import re
 from pathlib import Path
 import markdown
@@ -18,10 +20,18 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 
+import matplotlib
+matplotlib.use("Agg")  # headless backend — no display required
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+import numpy as np
+
 DOCS = Path(__file__).resolve().parent
 SRC = DOCS / "FLOWRA_BUSINESS_PROPOSAL.md"
 PDF = DOCS / "FLOWRA_BUSINESS_PROPOSAL.pdf"
 PPTX = DOCS / "FLOWRA_BUSINESS_PROPOSAL.pptx"
+CHARTS_DIR = DOCS / "_charts"
+CHARTS_DIR.mkdir(exist_ok=True)
 
 
 # ─────────────────────── PDF ─────────────────────────────────────────────
@@ -224,8 +234,13 @@ def _add_bullets(slide, x, y, w, h, bullets, *, size=14, color=SLATE):
         r.font.name = "Calibri"
 
 
-def _slide_chrome(prs, slide, title, subtitle=None, *, page_n=None, total=16):
-    """Common header + footer for non-cover slides."""
+def _slide_chrome(prs, slide, title, subtitle=None, *, page_n=None, total=19):
+    """Common header + footer for non-cover slides.
+    If page_n is None, infer from len(prs.slides) — the slide must already
+    be added before this is called (which is the convention here).
+    """
+    if page_n is None:
+        page_n = len(prs.slides)
     # Top accent bar
     _add_rect(slide, 0, 0, prs.slide_width, Inches(0.05), BLUE)
     # Title block
@@ -272,6 +287,206 @@ def _table(slide, x, y, w, h, rows, *, header=True, font_size=11):
     return tbl
 
 
+# ─── matplotlib brand palette + chart helpers ──────────────────────────
+PLT_NAVY   = "#0F172A"
+PLT_BLUE   = "#2563EB"
+PLT_LIGHT  = "#DBEAFE"
+PLT_GREEN  = "#10B981"
+PLT_AMBER  = "#F59E0B"
+PLT_RED    = "#DC2626"
+PLT_SLATE  = "#475569"
+PLT_MUTED  = "#94A3B8"
+
+
+def _set_brand_style(ax, *, grid_y=True):
+    ax.set_facecolor("#FFFFFF")
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_color(PLT_MUTED)
+        ax.spines[spine].set_linewidth(0.8)
+    ax.tick_params(colors=PLT_SLATE, labelsize=10)
+    if grid_y:
+        ax.yaxis.grid(True, color="#E2E8F0", linewidth=0.7, zorder=0)
+        ax.set_axisbelow(True)
+
+
+def chart_funnel():
+    """Conversion funnel: 10k impressions → 22 paying tenants per ₹50k spend."""
+    stages = [
+        ("Meta-ad impressions",    10000, PLT_NAVY),
+        ("Lead-form submissions",    400, PLT_BLUE),
+        ("Qualified",                200, "#3B82F6"),
+        ("Demo calls booked",        120, "#60A5FA"),
+        ("Free trials",               72, PLT_AMBER),
+        ("Paying tenants",            22, PLT_GREEN),
+    ]
+    values = [s[1] for s in stages]
+
+    fig, ax = plt.subplots(figsize=(11, 5.5), dpi=160)
+    fig.patch.set_facecolor("#FFFFFF")
+
+    max_v = max(values)
+    y_positions = np.arange(len(stages))[::-1]
+    bar_height = 0.7
+    for i, (label, val, color) in enumerate(stages):
+        width = val / max_v
+        y = y_positions[i]
+        # Centred bar (looks like a funnel)
+        ax.add_patch(FancyBboxPatch(
+            (0.5 - width / 2, y - bar_height / 2),
+            width, bar_height,
+            boxstyle="round,pad=0,rounding_size=0.04",
+            linewidth=0, facecolor=color, alpha=0.95,
+        ))
+        # Stage label inside the bar (right side)
+        ax.text(0.5, y, f"{label}    {val:,}",
+                ha="center", va="center",
+                fontsize=11, color="white", fontweight="bold")
+        # Drop-off % beside the bar
+        if i > 0:
+            prev = values[i - 1]
+            rate = val / prev * 100
+            ax.text(0.5 + width / 2 + 0.02, y,
+                    f"{rate:.0f}%", va="center",
+                    fontsize=10, color=PLT_SLATE)
+
+    ax.set_xlim(-0.05, 1.05)
+    ax.set_ylim(-0.5, len(stages) - 0.5)
+    ax.axis("off")
+    ax.set_title(
+        "Acquisition funnel — every ₹50k Meta spend yields ~22 paying tenants",
+        fontsize=14, color=PLT_NAVY, fontweight="bold", loc="left", pad=12,
+    )
+    fig.text(0.02, 0.02,
+             "Per cohort. 22 tenants × ₹2,499 = ₹54,978 new MRR.  Payback @78% margin: 3.5 months.",
+             fontsize=10, color=PLT_SLATE)
+    out = CHARTS_DIR / "funnel.png"
+    fig.savefig(out, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def chart_growth():
+    """Tenant + MRR growth curve M1 → M24 with sensitivity bands."""
+    months = np.array([1, 3, 6, 9, 12, 15, 18, 21, 24])
+    base   = np.array([15, 95, 280, 580, 1000, 1370, 1750, 2120, 2500])
+    bear   = (base * 0.6).astype(int)
+    bull   = (base * 1.4).astype(int)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5), dpi=160)
+    fig.patch.set_facecolor("#FFFFFF")
+    _set_brand_style(ax)
+
+    # Sensitivity envelope
+    ax.fill_between(months, bear, bull, color=PLT_BLUE, alpha=0.10,
+                    label="Bear ↔ bull sensitivity (0.6× — 1.4×)")
+    # Bear & bull lines (thin)
+    ax.plot(months, bear, color=PLT_AMBER, linewidth=1.2, linestyle="--",
+            label="Bear: 1,500 tenants @ M24")
+    ax.plot(months, bull, color=PLT_GREEN, linewidth=1.2, linestyle="--",
+            label="Bull: 3,500 tenants @ M24")
+    # Base line (thick)
+    ax.plot(months, base, color=PLT_BLUE, linewidth=3.0, marker="o",
+            markersize=7, label="Base plan: 2,500 tenants @ M24",
+            markerfacecolor="white", markeredgewidth=2)
+
+    # Annotate base milestones
+    annotations = [(12, 1000, "M12: 1,000\n₹3 Cr ARR"),
+                   (24, 2500, "M24: 2,500\n₹7.5 Cr ARR")]
+    for mx, my, txt in annotations:
+        ax.annotate(txt, xy=(mx, my),
+                    xytext=(mx - 2.5, my + 350),
+                    fontsize=10, color=PLT_NAVY, fontweight="bold",
+                    arrowprops=dict(arrowstyle="->", color=PLT_NAVY, lw=1))
+
+    ax.set_xlabel("Month", color=PLT_SLATE, fontsize=11)
+    ax.set_ylabel("Cumulative paying tenants", color=PLT_SLATE, fontsize=11)
+    ax.set_xticks([1, 3, 6, 9, 12, 15, 18, 21, 24])
+    ax.set_xlim(0, 25)
+    ax.set_ylim(0, 4000)
+
+    # Secondary y-axis: MRR
+    ax2 = ax.twinx()
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_color(PLT_MUTED)
+    ax2.set_ylabel("MRR (₹ Lakh / month)", color=PLT_BLUE, fontsize=11)
+    ax2.set_ylim(0, 4000 * 0.025)        # 1 tenant ≈ ₹0.025 L MRR (₹2,499)
+    ax2.tick_params(colors=PLT_BLUE, labelsize=10)
+
+    ax.set_title(
+        "Tenant growth · 24-month plan with bear/bull envelope",
+        fontsize=14, color=PLT_NAVY, fontweight="bold", loc="left", pad=14,
+    )
+    ax.legend(loc="upper left", frameon=False, fontsize=9.5,
+              labelcolor=PLT_NAVY)
+
+    out = CHARTS_DIR / "growth.png"
+    fig.savefig(out, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def chart_unit_econ():
+    """CAC payback + LTV/CAC visual — compares us vs SaaS benchmark."""
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5.0), dpi=160,
+                             gridspec_kw={"width_ratios": [1.05, 1]})
+    fig.patch.set_facecolor("#FFFFFF")
+
+    # Left: CAC payback (months) — us vs benchmark
+    ax = axes[0]
+    _set_brand_style(ax)
+    cats = ["FLOWRA\nInsights", "SaaS\nbenchmark"]
+    vals = [3.5, 12.0]
+    cols = [PLT_BLUE, PLT_MUTED]
+    bars = ax.bar(cats, vals, color=cols, width=0.5, zorder=3)
+    for b, v in zip(bars, vals):
+        ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.4,
+                f"{v} mo", ha="center", color=PLT_NAVY,
+                fontsize=14, fontweight="bold")
+    ax.set_ylim(0, 14)
+    ax.set_ylabel("CAC payback (months)", color=PLT_SLATE, fontsize=11)
+    ax.set_title("Payback in 3.5 months", fontsize=12.5,
+                 color=PLT_NAVY, fontweight="bold", loc="left", pad=8)
+
+    # Right: LTV/CAC ratio comparison
+    ax = axes[1]
+    _set_brand_style(ax, grid_y=False)
+    cats2 = ["FLOWRA", "Healthy SaaS\n(industry)", "Struggling\n(industry)"]
+    ratios = [13, 4, 1.5]
+    cols2 = [PLT_GREEN, PLT_BLUE, PLT_RED]
+    bars = ax.barh(cats2[::-1], ratios[::-1], color=cols2[::-1],
+                   height=0.55, zorder=3)
+    for b, v in zip(bars, ratios[::-1]):
+        ax.text(b.get_width() + 0.3, b.get_y() + b.get_height() / 2,
+                f"{v}×", va="center",
+                color=PLT_NAVY, fontsize=14, fontweight="bold")
+    ax.set_xlim(0, 16)
+    ax.set_xlabel("LTV / CAC ratio", color=PLT_SLATE, fontsize=11)
+    ax.xaxis.grid(True, color="#E2E8F0", linewidth=0.7)
+    ax.set_axisbelow(True)
+    ax.set_title("13× LTV/CAC — exceptional even by SaaS standards",
+                 fontsize=12.5, color=PLT_NAVY, fontweight="bold", loc="left", pad=8)
+
+    fig.suptitle(
+        "Unit economics — why this scales profitably",
+        fontsize=15, color=PLT_NAVY, fontweight="bold", x=0.05, ha="left", y=0.99,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    out = CHARTS_DIR / "unit_econ.png"
+    fig.savefig(out, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out
+
+
+def render_all_charts():
+    return {
+        "funnel":     chart_funnel(),
+        "growth":     chart_growth(),
+        "unit_econ":  chart_unit_econ(),
+    }
+
+
 # ─── Slide builders ─────────────────────────────────────────────────────
 def slide_cover(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
@@ -307,8 +522,7 @@ def slide_cover(prs):
 def slide_problem(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "The Problem",
-                  "5-second questions taking 30 minutes inside Tally.",
-                  page_n=2)
+                  "5-second questions taking 30 minutes inside Tally.")
     rows = [
         ["Owner question", "Today (Tally only)"],
         ["How much is overdue from my top 10 customers?",
@@ -330,8 +544,7 @@ def slide_problem(prs):
 def slide_solution(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "The Product",
-                  "18 modules already in production. Read-only Tally agent.",
-                  page_n=3)
+                  "18 modules already in production. Read-only Tally agent.")
     cols = [
         ("Visibility", ["Owner Dashboard", "Sales Analytics", "Inventory Pareto",
                         "AI Insights (GPT-5.2)"]),
@@ -357,8 +570,7 @@ def slide_solution(prs):
 def slide_market(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Market Size",
-                  "11.5 lakh addressable Indian SMEs · ₹3,450 Cr TAM",
-                  page_n=4)
+                  "11.5 lakh addressable Indian SMEs · ₹3,450 Cr TAM")
     rows = [
         ["Segment", "Tally + Busy seats", "Fit %", "Addressable"],
         ["Manufacturing SMEs (₹5–500 Cr)", "4.5 L", "70%", "3.2 L"],
@@ -389,8 +601,7 @@ def slide_market(prs):
 def slide_competition(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Competitive Landscape",
-                  "Nobody else reads from Tally without asking customer to migrate.",
-                  page_n=5)
+                  "Nobody else reads from Tally without asking customer to migrate.")
     rows = [
         ["Player", "Approach", "Where they win", "Where we win"],
         ["Zoho Books", "Cloud accounting", "All-in-one", "Customer must migrate off Tally"],
@@ -408,8 +619,7 @@ def slide_competition(prs):
 def slide_business_model(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Pricing & Unit Economics",
-                  "Blended ARPU ₹2,499/mo · LTV/CAC 13×",
-                  page_n=6)
+                  "Blended ARPU ₹2,499/mo · LTV/CAC 13×")
     # Pricing table
     rows = [
         ["Plan", "₹/month", "Companies", "Employees", "Modules"],
@@ -444,8 +654,7 @@ def slide_business_model(prs):
 def slide_gtm(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Go-to-Market",
-                  "Beachhead: distribution sector in MH/GJ/KA.",
-                  page_n=7)
+                  "Beachhead: distribution sector in MH/GJ/KA.")
     rows = [
         ["Channel", "% new tenants", "CAC (₹)", "Notes"],
         ["Meta Ads (FB + IG lead forms)", "40%", "4,000", "Geo: MH/GJ/KA"],
@@ -465,8 +674,7 @@ def slide_gtm(prs):
 def slide_traction(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Traction & Roadmap",
-                  "Already shipped. What's next.",
-                  page_n=8)
+                  "Already shipped. What's next.")
     # Two columns
     _add_rect(s, Inches(0.5), Inches(1.7), Inches(6.1), Inches(5), LIGHT, line=MUTED)
     _add_text(s, Inches(0.7), Inches(1.85), Inches(5.8), Inches(0.4),
@@ -494,8 +702,7 @@ def slide_traction(prs):
 def slide_team(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Team & Hiring Plan",
-                  "From 1 founder today → 16 FTE by Year 2.",
-                  page_n=9)
+                  "From 1 founder today → 16 FTE by Year 2.")
     rows = [
         ["Function", "Today", "Month 6", "Month 12", "Month 24"],
         ["Engineering", "1", "3", "5", "10"],
@@ -515,8 +722,7 @@ def slide_team(prs):
 def slide_tech_scale(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Technical Scalability",
-                  "Cost-per-tenant asymptotes near ₹45/mo. Margin improves with scale.",
-                  page_n=10)
+                  "Cost-per-tenant asymptotes near ₹45/mo. Margin improves with scale.")
     rows = [
         ["Tenants", "Architecture", "Cost ₹/tenant/mo"],
         ["100", "Single droplet + Atlas M10", "₹130"],
@@ -538,8 +744,7 @@ def slide_tech_scale(prs):
 def slide_projections(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "24-Month Projections",
-                  "1,000 tenants by M12 → 2,500 by M24 → ₹7.5 Cr ARR.",
-                  page_n=11)
+                  "1,000 tenants by M12 → 2,500 by M24 → ₹7.5 Cr ARR.")
     rows = [
         ["Month", "Cum. paying", "MRR (₹L)", "ARR (₹Cr)"],
         ["3", "95", "2.4", "0.3"],
@@ -574,8 +779,7 @@ def slide_projections(prs):
 def slide_2yr_plan(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Two-Year Roadmap",
-                  "Quarter-by-quarter execution.",
-                  page_n=12)
+                  "Quarter-by-quarter execution.")
     rows = [
         ["Period", "Theme", "Key milestones", "Tenants"],
         ["Y1 Q1 (Mar–May)", "Foundation", "Atlas + DO + CI/CD + Sentry", "50"],
@@ -593,8 +797,7 @@ def slide_2yr_plan(prs):
 def slide_risks(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Risks & Mitigations",
-                  "What could go wrong, and what we're doing about it.",
-                  page_n=13)
+                  "What could go wrong, and what we're doing about it.")
     rows = [
         ["Risk", "Severity", "Likelihood", "Mitigation"],
         ["Tally Solutions launches competing dashboard", "High", "Medium",
@@ -618,8 +821,7 @@ def slide_risks(prs):
 def slide_why_now(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "Why Now",
-                  "Five tailwinds aligning in the same 24-month window.",
-                  page_n=14)
+                  "Five tailwinds aligning in the same 24-month window.")
     items = [
         ("GST + e-invoicing mandate",
          "Forces every ₹5 Cr+ business to keep accurate Tally books — quality of source data is rising fast."),
@@ -645,8 +847,7 @@ def slide_why_now(prs):
 def slide_ask(prs):
     s = prs.slides.add_slide(prs.slide_layouts[6])
     _slide_chrome(prs, s, "The Ask",
-                  "₹4 Cr Seed at ₹16-20 Cr post-money.",
-                  page_n=15)
+                  "₹4 Cr Seed at ₹16-20 Cr post-money.")
     # Big number on left
     _add_rect(s, Inches(0.5), Inches(1.9), Inches(5.5), Inches(4.8), NAVY)
     _add_text(s, Inches(0.5), Inches(2.2), Inches(5.5), Inches(0.6),
@@ -697,27 +898,112 @@ def slide_close(prs):
               size=12, color=MUTED)
 
 
+# ─── Visual chart slides (matplotlib-rendered PNGs) ────────────────────
+def _chart_slide(prs, title, subtitle, png_path, caption=None):
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    _slide_chrome(prs, s, title, subtitle)  # page_n auto-detected
+    # Embed the PNG, centred with margins
+    pic = s.shapes.add_picture(
+        str(png_path),
+        Inches(0.7), Inches(1.6),
+        width=Inches(11.9),
+    )
+    # If picture exceeds vertical space, scale by height instead
+    if pic.height > Inches(5.0):
+        pic.width = int(pic.width * Inches(5.0) / pic.height)
+        pic.height = Inches(5.0)
+        pic.left = int((prs.slide_width - pic.width) / 2)
+    if caption:
+        _add_text(s, Inches(0.5), Inches(6.55), Inches(12.5), Inches(0.4),
+                  caption, size=11, color=SLATE, bold=True,
+                  align=PP_ALIGN.CENTER)
+
+
+def slide_chart_funnel(prs, png):
+    _chart_slide(prs,
+                 "Acquisition Funnel",
+                 "Per ₹50k Meta-ad spend cohort.",
+                 png,
+                 caption="3.5-month CAC payback at 78% gross margin.")
+
+
+def slide_chart_growth(prs, png):
+    _chart_slide(prs,
+                 "Tenant Growth Curve",
+                 "24-month plan with bear / base / bull sensitivity.",
+                 png,
+                 caption="Default-alive at M30. Series A target: M24 at ₹7.5 Cr ARR.")
+
+
+def slide_chart_unit_econ(prs, png):
+    _chart_slide(prs,
+                 "Unit Economics",
+                 "Why this scales profitably.",
+                 png,
+                 caption="LTV ₹85,000 · CAC ₹6,500 · Payback 3.5 mo · 78% gross margin.")
+
+
+# ───────────────────────────────────────────────────────────────────────
+
+
 def render_pptx():
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    builders = [
-        slide_cover, slide_problem, slide_solution, slide_market,
-        slide_competition, slide_business_model, slide_gtm, slide_traction,
-        slide_team, slide_tech_scale, slide_projections, slide_2yr_plan,
-        slide_risks, slide_why_now, slide_ask, slide_close,
+    # Render chart PNGs first (deck embeds them)
+    charts = render_all_charts()
+    # Deck order — 19 slides total. Charts inserted where they tell the
+    # story best:
+    #   • Funnel chart sits right after the GTM table
+    #   • Unit-economics chart sits after the pricing/unit-econ table
+    #   • Growth chart sits before the projections table (visual lead-in)
+    plan = [
+        ("slide_cover",          lambda p: slide_cover(p)),
+        ("slide_problem",        lambda p: slide_problem(p)),
+        ("slide_solution",       lambda p: slide_solution(p)),
+        ("slide_market",         lambda p: slide_market(p)),
+        ("slide_competition",    lambda p: slide_competition(p)),
+        ("slide_business_model", lambda p: slide_business_model(p)),
+        # Visual: unit economics
+        ("chart_unit_econ",      lambda p: slide_chart_unit_econ(p, charts["unit_econ"])),
+        ("slide_gtm",            lambda p: slide_gtm(p)),
+        # Visual: acquisition funnel
+        ("chart_funnel",         lambda p: slide_chart_funnel(p, charts["funnel"])),
+        ("slide_traction",       lambda p: slide_traction(p)),
+        ("slide_team",           lambda p: slide_team(p)),
+        ("slide_tech_scale",     lambda p: slide_tech_scale(p)),
+        # Visual: tenant growth curve
+        ("chart_growth",         lambda p: slide_chart_growth(p, charts["growth"])),
+        ("slide_projections",    lambda p: slide_projections(p)),
+        ("slide_2yr_plan",       lambda p: slide_2yr_plan(p)),
+        ("slide_risks",          lambda p: slide_risks(p)),
+        ("slide_why_now",        lambda p: slide_why_now(p)),
+        ("slide_ask",            lambda p: slide_ask(p)),
+        ("slide_close",          lambda p: slide_close(p)),
     ]
-    for fn in builders:
+    for _name, fn in plan:
         fn(prs)
 
     prs.save(str(PPTX))
-    print(f"Wrote {PPTX}  ({PPTX.stat().st_size // 1024} KB · {len(builders)} slides)")
+    print(f"Wrote {PPTX}  ({PPTX.stat().st_size // 1024} KB · {len(plan)} slides)")
 
 
 def main():
     render_pdf()
     render_pptx()
+    # Mirror to the frontend's public folder so the deployed app can serve
+    # them at https://<host>/docs/<filename>
+    public = Path("/app/frontend/public/docs")
+    public.mkdir(parents=True, exist_ok=True)
+    import shutil
+    for f in (PDF, PPTX):
+        shutil.copy2(f, public / f.name)
+    # Production Playbook PDF (if it exists) — sibling artifact
+    pp = DOCS / "PRODUCTION_PLAYBOOK.pdf"
+    if pp.exists():
+        shutil.copy2(pp, public / pp.name)
+    print(f"Published copies → {public}")
 
 
 if __name__ == "__main__":

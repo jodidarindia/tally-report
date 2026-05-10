@@ -51,14 +51,20 @@ def test_pdf_built_and_valid():
         assert fh.read(5) == b"%PDF-"
 
 
-def test_pptx_built_and_has_16_slides():
-    """PPTX is OOXML (zip). Count slide XML files."""
+def test_pptx_built_and_has_19_slides():
+    """PPTX is OOXML (zip). Count slide XML files. v2 deck has 16 narrative
+    slides + 3 visual chart slides = 19."""
     assert os.path.exists(PPTX), f"PPTX not built: {PPTX}"
-    assert os.path.getsize(PPTX) > 30 * 1024, "PPTX suspiciously small"
+    assert os.path.getsize(PPTX) > 200 * 1024, "PPTX suspiciously small (charts missing?)"
     with zipfile.ZipFile(PPTX) as z:
         slides = [n for n in z.namelist() if n.startswith("ppt/slides/slide")
                   and n.endswith(".xml")]
-        assert len(slides) == 16, f"Expected 16 slides, got {len(slides)}"
+        assert len(slides) == 19, f"Expected 19 slides, got {len(slides)}"
+        # 3 chart PNGs must be embedded as media
+        media = [n for n in z.namelist() if n.startswith("ppt/media/")]
+        assert len(media) >= 3, (
+            f"Expected ≥3 embedded chart images, got {len(media)}: {media}"
+        )
 
 
 def test_renderer_is_reproducible():
@@ -76,7 +82,7 @@ def test_renderer_is_reproducible():
 
 
 def test_pptx_contains_key_phrases():
-    """Sanity: all 16 slide XMLs collectively must reference the headline numbers
+    """Sanity: all 19 slide XMLs collectively must reference the headline numbers
     and themes investors expect to see."""
     with zipfile.ZipFile(PPTX) as z:
         joined = "\n".join(
@@ -91,5 +97,20 @@ def test_pptx_contains_key_phrases():
         "11.5",                     # addressable lakhs
         "78%",                      # gross margin
         "Tally",
+        "Acquisition Funnel",       # chart slide title
+        "Tenant Growth Curve",      # chart slide title
+        "Unit Economics",           # chart slide title
     ]:
         assert must in joined, f"PPTX missing key phrase: {must!r}"
+
+
+def test_published_to_public_docs():
+    """After running the renderer, both files must be mirrored to the
+    frontend's /public/docs/ folder so the deployed app can serve them."""
+    pub_pdf  = "/app/frontend/public/docs/FLOWRA_BUSINESS_PROPOSAL.pdf"
+    pub_pptx = "/app/frontend/public/docs/FLOWRA_BUSINESS_PROPOSAL.pptx"
+    assert os.path.exists(pub_pdf),  f"Public PDF missing: {pub_pdf}"
+    assert os.path.exists(pub_pptx), f"Public PPTX missing: {pub_pptx}"
+    # Sizes match source-of-truth
+    assert os.path.getsize(pub_pdf)  == os.path.getsize(PDF)
+    assert os.path.getsize(pub_pptx) == os.path.getsize(PPTX)
