@@ -176,12 +176,24 @@ async def receive_agent_sync(request: dict):
                         {"_id": 0}
                     )
                     if settings and settings.get("auto_create_enabled") and settings.get("start_date"):
-                        from routes.dispatch import _auto_create_cards_helper
+                        from routes.dispatch import _auto_create_cards_helper, _detect_invoice_changes
                         created_n = await _auto_create_cards_helper(
                             req_tenant_id, req_company_id, settings.get("start_date", "")
                         )
                         if created_n:
                             logger.info(f"Auto-created {created_n} dispatch cards from sync")
+                        # Option B — flag-only invoice change detection. Runs
+                        # after every sales sync. Cards are NOT mutated; only
+                        # `invoice_changed_flag` / `invoice_missing_flag` /
+                        # `post_dispatch_invoice_changed` are set so the UI
+                        # can surface a badge for manual reconciliation.
+                        flags = await _detect_invoice_changes(req_tenant_id, req_company_id)
+                        if flags.get("flagged_changed") or flags.get("flagged_missing") or flags.get("post_dispatch_changed"):
+                            logger.info(
+                                f"Dispatch change-detection: changed={flags['flagged_changed']} "
+                                f"missing={flags['flagged_missing']} post_dispatch={flags['post_dispatch_changed']} "
+                                f"cleared={flags['cleared']}"
+                            )
                 except Exception as auto_err:
                     logger.warning(f"Dispatch auto-create skipped: {auto_err}")
             logger.info(f"Synced {len(data)} sales vouchers")

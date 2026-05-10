@@ -781,3 +781,33 @@ User reported (with screenshot from ASA Autotech, where sync started in FY 25-26
 **End-to-end verified** with admin `axle 85w140` ↔ `axle85w140` ↔ `V12-GO/851` ↔ `compressor.oil` and customer `krishna sales` ↔ `krishnasales` — all returned identical result sets.
 
 **Tests**: `/app/backend/tests/test_iteration84_fuzzy_search.py` — 11/11 passing.
+
+## Dispatch Card Cancellation + Tally Invoice-Change Detection (Feb 2026 — NEW)
+**P0 feature** — User can now cancel a dispatch card if the underlying order is cancelled, and the system flags cards whose Tally invoice was modified after sync.
+
+### Card Cancellation
+- New endpoint: `POST /api/dispatch/cards/{card_id}/cancel` body: `{reason, notes}`.
+- Allowed only when card status ∈ `{new, queued, processing, packed}`. Once `dispatched` or `info_shared` (truck has left), cancellation is blocked. Cancelled is **terminal** — cannot be reopened.
+- Records `cancelled_at`, `cancelled_by`, `cancel_reason`, `cancel_notes`, `cancelled_from_status` + `status_history` entry.
+- Cancel reasons: `customer_request`, `payment_issue`, `stock_unavailable`, `duplicate`, `invoice_modified`, `other`.
+- Open to **all dispatch users** (no special role required).
+- **Strikethrough until end-of-day**: cancelled cards remain visible in their pre-cancel lane with line-through + grey "CANCELLED" badge until midnight IST, then auto-hide from active board (still visible in History).
+
+### History view enhancements
+- `GET /api/dispatch/history?include=` accepts `completed | cancelled | all` (default `completed`).
+- Frontend has 3-tab pill filter: **Completed / Cancelled / All**.
+
+### Option B — Invoice Change Detection (flag-only, no auto-update)
+- New helper `_detect_invoice_changes()` runs after every sales sync (`routes/sync.py`).
+- Compares each non-cancelled card's snapshotted `items / total_amount / party_name` against the live `sales_voucher`:
+  - Active card + diff → `invoice_changed_flag = True` + `detected_changes` array (🟡 amber badge in UI).
+  - Active card + voucher missing → `invoice_missing_flag = True` (🔴 red badge "MISSING").
+  - Already-shipped card + diff → `post_dispatch_invoice_changed = True` (🔴 red banner "modified AFTER dispatch").
+- **Snapshots are NEVER mutated** — operator manually reconciles. Stale flags auto-clear if invoice is restored.
+- Cancelled cards skipped entirely.
+
+### Files
+- Backend: `/app/backend/routes/dispatch.py` (cancel endpoint, status guard, _detect_invoice_changes, history filter), `/app/backend/routes/sync.py` (post-sync hook).
+- Frontend: `/app/frontend/src/pages/DispatchTerminal.js` (CancelModal, banners, strikethrough lane card, History tabs).
+- Tests: `/app/backend/tests/test_iteration85_dispatch_cancel.py` — 3/3 passing (constants + full DB integration of detect helper).
+- E2E curl verified: create → cancel → re-cancel blocked → status move blocked → active view shows today-cancelled → history `?include=cancelled` filters correctly.

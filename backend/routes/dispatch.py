@@ -19,8 +19,10 @@ router = APIRouter()
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "dispatch")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-VALID_STATUSES = ["new", "queued", "processing", "packed", "dispatched", "info_shared", "hold"]
+VALID_STATUSES = ["new", "queued", "processing", "packed", "dispatched", "info_shared", "hold", "cancelled"]
 MANUAL_REASONS = ["sample", "return", "replacement", "internal_transfer", "other"]
+CANCELLABLE_STATUSES = ["new", "queued", "processing", "packed"]
+CANCEL_REASONS = ["customer_request", "payment_issue", "stock_unavailable", "duplicate", "invoice_modified", "other"]
 
 
 def _q(ctx, company_id=None):
@@ -45,16 +47,35 @@ async def get_dispatch_cards(request: Request, status: Optional[str] = None, sea
         ctx = await get_tenant_context(request)
         q = _q(ctx, company_id)
         if status:
-            q["status"] = {"$nin": ["info_shared"]} if status == "active" else status
+            if status == "active":
+                # Active board excludes shipped (info_shared) and old cancelled
+                # cards. Cards cancelled TODAY (IST) remain visible with a
+                # strikethrough; they auto-hide after end-of-day.
+                from datetime import timedelta
+                ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+                today_ist_start_utc = (ist_now.replace(hour=0, minute=0, second=0, microsecond=0)
+                                       - timedelta(hours=5, minutes=30)).isoformat()
+                q["$or"] = [
+                    {"status": {"$nin": ["info_shared", "cancelled"]}},
+                    {"status": "cancelled", "cancelled_at": {"$gte": today_ist_start_utc}},
+                ]
+            else:
+                q["status"] = status
         if search:
             fuzzy = build_fuzzy_regex(search)
             if fuzzy:
-                q["$or"] = [
+                # Combine with any existing $or (active filter); use $and wrapper
+                search_or = [
                     {"invoice_number": {"$regex": fuzzy, "$options": "i"}},
                     {"party_name": {"$regex": fuzzy, "$options": "i"}},
                     {"card_id": {"$regex": fuzzy, "$options": "i"}},
                     {"lr_number": {"$regex": fuzzy, "$options": "i"}},
                 ]
+                if "$or" in q:
+                    existing_or = q.pop("$or")
+                    q["$and"] = [{"$or": existing_or}, {"$or": search_or}]
+                else:
+                    q["$or"] = search_or
         if fy:
             from utils import fy_to_date_range
             fy_start, fy_end = fy_to_date_range(fy)
@@ -124,10 +145,14 @@ async def update_card_status(card_id: str, request: Request):
         new_status = body.get("status", "").lower()
         if new_status not in VALID_STATUSES:
             return APIResponse(success=False, error="Invalid status")
+        if new_status == "cancelled":
+            return APIResponse(success=False, error="Use POST /dispatch/cards/{card_id}/cancel to cancel a card")
         q = _q(ctx)
         card = await db.dispatch_cards.find_one({**q, "card_id": card_id}, {"_id": 0})
         if not card:
             return APIResponse(success=False, error="Card not found")
+        if card.get("status") == "cancelled":
+            return APIResponse(success=False, error="Cancelled cards cannot be reopened")
         if new_status == "packed" and not card.get("physical_check"):
             return APIResponse(success=False, error="Physical verification must be confirmed before marking as packed")
         now = datetime.now(timezone.utc).isoformat()
@@ -139,6 +164,63 @@ async def update_card_status(card_id: str, request: Request):
         return APIResponse(success=True, message=f"Card {card_id} moved to {new_status}")
     except Exception as e:
         logger.error(f"Update card status error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/dispatch/cards/{card_id}/cancel")
+async def cancel_card(card_id: str, request: Request):
+    """Cancel a dispatch card. Allowed only when current status is one of
+    {new, queued, processing, packed} — once the truck has left (dispatched
+    / info_shared) cancellation is blocked. Terminal: a cancelled card
+    cannot be reopened. All authenticated dispatch / admin users may cancel.
+    Body: { "reason": <CANCEL_REASONS>, "notes": "<free text>" }
+    """
+    try:
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        ctx = await get_tenant_context(request)
+        body = await request.json()
+        reason = (body.get("reason") or "other").lower().strip()
+        if reason not in CANCEL_REASONS:
+            return APIResponse(success=False, error=f"Invalid reason. Use one of: {CANCEL_REASONS}")
+        notes = (body.get("notes") or "").strip()
+
+        q = _q(ctx)
+        card = await db.dispatch_cards.find_one({**q, "card_id": card_id}, {"_id": 0})
+        if not card:
+            return APIResponse(success=False, error="Card not found")
+        cur = card.get("status", "")
+        if cur == "cancelled":
+            return APIResponse(success=False, error="Card is already cancelled")
+        if cur not in CANCELLABLE_STATUSES:
+            return APIResponse(
+                success=False,
+                error=f"Cannot cancel a card in '{cur}' status. Cancellation is allowed only up to 'packed' lane.",
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        entry = {
+            "status": "cancelled", "at": now, "by": user.get("username", ""),
+            "reason": reason, "notes": notes, "from_status": cur,
+        }
+        await db.dispatch_cards.update_one(
+            {**q, "card_id": card_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_at": now,
+                    "cancelled_by": user.get("username", ""),
+                    "cancel_reason": reason,
+                    "cancel_notes": notes,
+                    "cancelled_from_status": cur,
+                },
+                "$push": {"status_history": entry},
+            },
+        )
+        return APIResponse(success=True, message=f"Card {card_id} cancelled", data={"card_id": card_id, "reason": reason})
+    except Exception as e:
+        logger.error(f"Cancel card error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
@@ -438,6 +520,151 @@ async def get_dispatch_summary(request: Request, date: Optional[str] = None, com
 # AUTO-CREATE CARDS FROM INVOICES (date-based)
 # ═══════════════════════════════════════════════════════
 
+async def _detect_invoice_changes(tenant_id: str, company_id: str) -> dict:
+    """Option B — flag-only detection of Tally invoice changes for existing
+    dispatch cards. Runs after every sales sync.
+
+    Logic:
+      For every card NOT in {dispatched, info_shared, cancelled}:
+        - Look up the live sales_voucher by voucher_id (or invoice_number).
+        - If the voucher is missing → flag invoice_missing_flag = True.
+        - Else compare items count, total_amount, party_name against the
+          card's snapshot. If any field differs → flag invoice_changed_flag
+          with `detected_changes` describing what moved.
+      For cards in {dispatched, info_shared}:
+        - Same comparison but flagged as `post_dispatch_invoice_changed`
+          (red banner — truck has left, but Tally was modified after).
+      Cards in {cancelled} are ignored (terminal).
+
+    NEVER mutates `items`, `total_amount`, `party_name` or other dispatch
+    fields — operator decides whether to reconcile.
+
+    Returns: { "flagged_changed": int, "flagged_missing": int,
+               "post_dispatch_changed": int, "cleared": int }
+    """
+    if not tenant_id:
+        return {"flagged_changed": 0, "flagged_missing": 0,
+                "post_dispatch_changed": 0, "cleared": 0}
+    q = {"tenant_id": tenant_id, "company_id": company_id}
+
+    cards = await db.dispatch_cards.find(
+        {**q, "card_type": "invoice", "status": {"$ne": "cancelled"}},
+        {
+            "_id": 0, "card_id": 1, "voucher_id": 1, "invoice_number": 1,
+            "items": 1, "total_amount": 1, "party_name": 1, "status": 1,
+            "invoice_changed_flag": 1, "invoice_missing_flag": 1,
+            "post_dispatch_invoice_changed": 1,
+        },
+    ).to_list(50000)
+    if not cards:
+        return {"flagged_changed": 0, "flagged_missing": 0,
+                "post_dispatch_changed": 0, "cleared": 0}
+
+    voucher_ids = [c.get("voucher_id") for c in cards if c.get("voucher_id")]
+    invoice_nums = [c.get("invoice_number") for c in cards
+                    if c.get("invoice_number") and not c.get("voucher_id")]
+
+    voucher_map: dict = {}
+    if voucher_ids:
+        async for v in db.sales_vouchers.find(
+            {**q, "voucher_id": {"$in": voucher_ids}},
+            {"_id": 0, "voucher_id": 1, "items": 1, "total_amount": 1, "party_name": 1, "voucher_date": 1},
+        ):
+            voucher_map[v.get("voucher_id", "")] = v
+    if invoice_nums:
+        async for v in db.sales_vouchers.find(
+            {**q, "reference_number": {"$in": invoice_nums}},
+            {"_id": 0, "reference_number": 1, "items": 1, "total_amount": 1, "party_name": 1, "voucher_date": 1},
+        ):
+            voucher_map[v.get("reference_number", "")] = v
+
+    now = datetime.now(timezone.utc).isoformat()
+    flagged_changed = flagged_missing = post_disp_changed = cleared = 0
+    SHIPPED = {"dispatched", "info_shared"}
+
+    for c in cards:
+        key = c.get("voucher_id") or c.get("invoice_number") or ""
+        if not key:
+            continue
+        live = voucher_map.get(key)
+        card_id = c.get("card_id", "")
+        cur_status = c.get("status", "")
+
+        if not live:
+            # Missing in Tally → flag (only if not already flagged)
+            if not c.get("invoice_missing_flag"):
+                await db.dispatch_cards.update_one(
+                    {**q, "card_id": card_id},
+                    {"$set": {
+                        "invoice_missing_flag": True,
+                        "invoice_change_detected_at": now,
+                    }},
+                )
+                flagged_missing += 1
+            continue
+
+        # Snapshot vs live diff
+        snap_items = c.get("items") or []
+        live_items = live.get("items") or []
+        diffs = []
+        if len(snap_items) != len(live_items):
+            diffs.append({"field": "items_count", "old": len(snap_items), "new": len(live_items)})
+        else:
+            # Compare per-line item names + qty
+            def _key(it):
+                return (
+                    (it.get("item") or it.get("item_name") or "").strip().lower(),
+                    safe_num(it.get("quantity")),
+                )
+            if sorted(_key(i) for i in snap_items) != sorted(_key(i) for i in live_items):
+                diffs.append({"field": "items_changed", "old": len(snap_items), "new": len(live_items)})
+
+        snap_amt = round(safe_num(c.get("total_amount")), 2)
+        live_amt = round(safe_num(live.get("total_amount")), 2)
+        if abs(snap_amt - live_amt) > 0.5:
+            diffs.append({"field": "total_amount", "old": snap_amt, "new": live_amt})
+
+        snap_party = (c.get("party_name") or "").strip()
+        live_party = (live.get("party_name") or "").strip()
+        if snap_party.lower() != live_party.lower():
+            diffs.append({"field": "party_name", "old": snap_party, "new": live_party})
+
+        if diffs:
+            update = {"detected_changes": diffs, "invoice_change_detected_at": now}
+            if cur_status in SHIPPED:
+                update["post_dispatch_invoice_changed"] = True
+                post_disp_changed += 1
+            else:
+                update["invoice_changed_flag"] = True
+                flagged_changed += 1
+            # Always clear missing flag if we found the voucher
+            unset = {}
+            if c.get("invoice_missing_flag"):
+                unset["invoice_missing_flag"] = ""
+            ops = {"$set": update}
+            if unset:
+                ops["$unset"] = unset
+            await db.dispatch_cards.update_one({**q, "card_id": card_id}, ops)
+        else:
+            # No diff — clear any stale flags from a prior detection
+            unset = {}
+            if c.get("invoice_changed_flag"):
+                unset["invoice_changed_flag"] = ""
+                unset["detected_changes"] = ""
+            if c.get("invoice_missing_flag"):
+                unset["invoice_missing_flag"] = ""
+            if c.get("post_dispatch_invoice_changed"):
+                unset["post_dispatch_invoice_changed"] = ""
+            if unset:
+                await db.dispatch_cards.update_one(
+                    {**q, "card_id": card_id}, {"$unset": unset},
+                )
+                cleared += 1
+
+    return {"flagged_changed": flagged_changed, "flagged_missing": flagged_missing,
+            "post_dispatch_changed": post_disp_changed, "cleared": cleared}
+
+
 async def _auto_create_cards_helper(tenant_id: str, company_id: str, from_date: str) -> int:
     """Internal helper — creates dispatch cards from sales vouchers. Used by both
     the manual /dispatch/auto-create endpoint and the sync hook in sync.py."""
@@ -527,11 +754,24 @@ async def auto_create_from_invoices(request: Request):
 
 @router.get("/dispatch/history")
 async def get_dispatch_history(request: Request, search: Optional[str] = None, page: int = 1,
-                                limit: int = 50, company_id: Optional[str] = None):
+                                limit: int = 50, company_id: Optional[str] = None,
+                                include: Optional[str] = None):
+    """Dispatch history.
+    `include`:
+      - "completed" (default) → dispatched + info_shared
+      - "cancelled"           → cancelled cards only
+      - "all"                 → completed + cancelled
+    """
     try:
         ctx = await get_tenant_context(request)
         q = _q(ctx, company_id)
-        q["status"] = {"$in": ["dispatched", "info_shared"]}
+        inc = (include or "completed").lower()
+        if inc == "cancelled":
+            q["status"] = "cancelled"
+        elif inc == "all":
+            q["status"] = {"$in": ["dispatched", "info_shared", "cancelled"]}
+        else:
+            q["status"] = {"$in": ["dispatched", "info_shared"]}
         if search:
             fuzzy = build_fuzzy_regex(search)
             if fuzzy:

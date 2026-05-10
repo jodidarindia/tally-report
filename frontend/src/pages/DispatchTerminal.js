@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import {
   Package, Truck, Clock, CheckCircle2, AlertTriangle, Plus, Search,
   Camera, FileText, UploadCloud, X, User, MapPin, Boxes, Hash,
-  MessageSquare, Pause, Play, History, ArrowRight, ChevronDown
+  MessageSquare, Pause, Play, History, ArrowRight, ChevronDown,
+  Ban, FileWarning,
 } from 'lucide-react';
 import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
@@ -17,8 +18,18 @@ const STATUS_CFG = {
   dispatched:  { label: 'Dispatched', color: '#10b981', bg: '#ecfdf5' },
   info_shared: { label: 'Shared',     color: '#06b6d4', bg: '#ecfeff' },
   hold:        { label: 'Hold',       color: '#ef4444', bg: '#fef2f2' },
+  cancelled:   { label: 'Cancelled',  color: '#94a3b8', bg: '#f8fafc' },
 };
 const LANES = ['new','queued','processing','packed','dispatched'];
+const CANCELLABLE = new Set(['new','queued','processing','packed']);
+const CANCEL_REASON_LABELS = {
+  customer_request:   'Customer requested',
+  payment_issue:      'Payment issue',
+  stock_unavailable:  'Stock unavailable',
+  duplicate:          'Duplicate invoice',
+  invoice_modified:   'Tally invoice modified',
+  other:              'Other',
+};
 const fmt = n => { if(!n) return '0'; if(Math.abs(n)>=100000) return `${(n/100000).toFixed(2)}L`; if(Math.abs(n)>=1000) return `${(n/1000).toFixed(1)}K`; return n.toLocaleString('en-IN'); };
 const elapsed = iso => { if(!iso) return ''; const m=(Date.now()-new Date(iso).getTime())/60000; if(m<60) return `${Math.round(m)}m`; if(m<1440) return `${Math.round(m/60)}h`; return `${Math.round(m/1440)}d`; };
 const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:true}); } catch { return iso; } };
@@ -34,6 +45,7 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
   const [view, setView] = useState('board'); // board | history
   const [hist, setHist] = useState([]); const [histTotal, setHistTotal] = useState(0); const [histPage, setHistPage] = useState(1); const [histQ, setHistQ] = useState('');
   const [histSel, setHistSel] = useState(null); // separate selected card for history view
+  const [histInclude, setHistInclude] = useState('completed'); // completed | cancelled | all
 
   const hdr = useCallback(() => ({ Authorization: `Bearer ${localStorage.getItem('flowra_token')}`, 'X-Company-Id': companyId||'' }), [companyId]);
 
@@ -51,15 +63,15 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
     setLoading(false);
   }, [companyId, hdr]);
 
-  const loadHist = useCallback(async (pg=1, q='') => {
+  const loadHist = useCallback(async (pg=1, q='', include='completed') => {
     try {
-      const r = await axios.get(`${API}/api/dispatch/history?page=${pg}&limit=30&search=${encodeURIComponent(q)}&company_id=${companyId||''}`, {headers:hdr()});
+      const r = await axios.get(`${API}/api/dispatch/history?page=${pg}&limit=30&search=${encodeURIComponent(q)}&include=${include}&company_id=${companyId||''}`, {headers:hdr()});
       if(r.data.success) { setHist(r.data.data.cards||[]); setHistTotal(r.data.data.total||0); setHistPage(pg); }
     } catch{}
   }, [companyId, hdr]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if(view==='history') loadHist(1, histQ); }, [view, loadHist, histQ]);
+  useEffect(() => { if(view==='history') loadHist(1, histQ, histInclude); }, [view, loadHist, histQ, histInclude]);
   useEffect(() => { const iv=setInterval(load, 30000); return ()=>clearInterval(iv); }, [load]);
 
   const moveStatus = async (id, status, extra={}) => {
@@ -67,6 +79,13 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
       const r = await axios.patch(`${API}/api/dispatch/cards/${id}/status`, {status,...extra}, {headers:hdr()});
       if(r.data.success) { toast.success(r.data.message); load(); setSel(null); } else toast.error(r.data.error);
     } catch(e) { toast.error(e.response?.data?.error||'Failed'); }
+  };
+  const cancelCard = async (id, reason, notes) => {
+    try {
+      const r = await axios.post(`${API}/api/dispatch/cards/${id}/cancel`, {reason, notes}, {headers:hdr()});
+      if(r.data.success) { toast.success('Card cancelled'); load(); setSel(null); }
+      else toast.error(r.data.error);
+    } catch(e) { toast.error(e.response?.data?.error||'Cancel failed'); }
   };
   const saveCard = async (id, data) => {
     try { const r = await axios.patch(`${API}/api/dispatch/cards/${id}`, data, {headers:hdr()}); if(r.data.success) { toast.success('Saved'); load(); } else toast.error(r.data.error); } catch{ toast.error('Save failed'); }
@@ -94,32 +113,47 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
         <div><h1 className="text-lg sm:text-xl font-bold text-slate-900">Dispatch History</h1><p className="text-xs text-slate-500">{histTotal} completed</p></div>
         <button onClick={()=>setView('board')} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg" data-testid="back-to-board">Back to Board</button>
       </div>
-      <div className="relative mb-3 max-w-md">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-        <input value={histQ} onChange={e=>{setHistQ(e.target.value);loadHist(1,e.target.value);}} placeholder="Search invoice, party, LR..." className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="history-search"/>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-3">
+        <div className="relative max-w-md flex-1 w-full">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={histQ} onChange={e=>{setHistQ(e.target.value);loadHist(1,e.target.value,histInclude);}} placeholder="Search invoice, party, LR..." className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg" data-testid="history-search"/>
+        </div>
+        <div className="inline-flex bg-slate-100 rounded-lg p-0.5 text-xs" role="tablist" data-testid="history-filter-tabs">
+          {[['completed','Completed'],['cancelled','Cancelled'],['all','All']].map(([k,l]) => (
+            <button key={k} onClick={()=>{setHistInclude(k);loadHist(1,histQ,k);}} className={`px-3 py-1.5 rounded-md font-medium transition ${histInclude===k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} data-testid={`history-filter-${k}`}>{l}</button>
+          ))}
+        </div>
       </div>
       <div className="space-y-2">
-        {hist.map(c=>(
-          <div key={c.card_id} className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 cursor-pointer hover:border-slate-300" onClick={()=>setHistSel(c)} data-testid={`hist-${c.card_id}`}>
+        {hist.map(c=>{
+          const isCancel = c.status === 'cancelled';
+          return (
+          <div key={c.card_id} className={`bg-white border rounded-xl p-3 sm:p-4 cursor-pointer hover:border-slate-300 ${isCancel ? 'border-slate-200 opacity-75' : 'border-slate-200'}`} onClick={()=>setHistSel(c)} data-testid={`hist-${c.card_id}`}>
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-900 truncate">{c.invoice_number}</div>
+                <div className={`text-sm font-semibold text-slate-900 truncate ${isCancel ? 'line-through' : ''}`}>{c.invoice_number}</div>
                 <div className="text-xs text-slate-500 truncate">{c.party_name}</div>
               </div>
               <div className="text-right flex-shrink-0">
-                <div className="text-xs text-slate-500">{c.voucher_date||c.created_at?.split('T')[0]}</div>
+                {isCancel
+                  ? <div className="text-[10px] font-bold text-slate-500 inline-flex items-center gap-1"><Ban size={10}/>CANCELLED</div>
+                  : <div className="text-xs text-slate-500">{c.voucher_date||c.created_at?.split('T')[0]}</div>}
                 <div className="text-[10px] text-slate-400">LR: {c.lr_number||'-'}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[10px] text-slate-500">
-              <span>Boxes: {c.total_boxes}</span><span>Transport: {c.transport_name||'-'}</span><span>Porter: {c.porter_name||'-'}</span>
-              {c.documents && Object.keys(c.documents).length>0 && <span className="text-green-600">{Object.keys(c.documents).length} docs</span>}
+              {isCancel
+                ? <span className="text-slate-600 italic">Reason: {CANCEL_REASON_LABELS[c.cancel_reason]||c.cancel_reason||'Unspecified'}{c.cancelled_by ? ` · by ${c.cancelled_by}` : ''}{c.cancelled_at ? ` · ${toIST(c.cancelled_at)}` : ''}</span>
+                : <>
+                    <span>Boxes: {c.total_boxes}</span><span>Transport: {c.transport_name||'-'}</span><span>Porter: {c.porter_name||'-'}</span>
+                    {c.documents && Object.keys(c.documents).length>0 && <span className="text-green-600">{Object.keys(c.documents).length} docs</span>}
+                  </>}
             </div>
-          </div>
-        ))}
-        {hist.length===0 && <p className="text-center text-sm text-slate-400 py-10">No dispatches found</p>}
+          </div>);
+        })}
+        {hist.length===0 && <p className="text-center text-sm text-slate-400 py-10">No {histInclude==='cancelled'?'cancelled cards':histInclude==='all'?'history':'dispatches'} found</p>}
       </div>
-      {histTotal>30 && <div className="flex justify-center gap-2 mt-4"><button disabled={histPage<=1} onClick={()=>loadHist(histPage-1,histQ)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Prev</button><span className="text-xs text-slate-500 py-1">Page {histPage}</span><button disabled={histPage*30>=histTotal} onClick={()=>loadHist(histPage+1,histQ)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Next</button></div>}
+      {histTotal>30 && <div className="flex justify-center gap-2 mt-4"><button disabled={histPage<=1} onClick={()=>loadHist(histPage-1,histQ,histInclude)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Prev</button><span className="text-xs text-slate-500 py-1">Page {histPage}</span><button disabled={histPage*30>=histTotal} onClick={()=>loadHist(histPage+1,histQ,histInclude)} className="px-3 py-1 text-xs bg-slate-100 rounded disabled:opacity-40">Next</button></div>}
       {/* History card detail (read-only) */}
       {histSel && <HistoryDetailModal card={histSel} onClose={()=>setHistSel(null)}/>}
     </div>
@@ -142,7 +176,13 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
         <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-4 -mx-1 px-1" data-testid="kanban-board">
           {LANES.map(status => {
             const cfg = STATUS_CFG[status];
-            let lane = filtered.filter(c=>c.status===status);
+            // Active cards in this lane + cancelled cards whose pre-cancel
+            // lane was this one (shown with strikethrough until end-of-day —
+            // backend already filters out older cancelled cards).
+            let lane = filtered.filter(c =>
+              c.status === status
+              || (c.status === 'cancelled' && (c.cancelled_from_status || 'new') === status)
+            );
             // For the "new" lane, sort by invoice number DESC so newest invoices surface first.
             if (status === 'new') {
               const invNum = c => { const n = parseInt(String(c.invoice_number||'').replace(/\D/g,''),10); return Number.isFinite(n) ? n : -1; };
@@ -156,21 +196,32 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
                   <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{background: cfg.color+'20', color: cfg.color}}>{lane.length}</span>
                 </div>
                 <div className="flex-1 overflow-y-auto p-1.5 sm:p-2 space-y-1.5 max-h-[60vh] sm:max-h-[68vh]">
-                  {lane.map(card => (
-                    <div key={card.card_id} onClick={()=>setSel(card)} className="bg-white rounded-lg border border-slate-200/80 p-2 sm:p-2.5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all" data-testid={`card-${card.card_id}`}>
+                  {lane.map(card => {
+                    const isCancel = card.status === 'cancelled';
+                    const changed = card.invoice_changed_flag;
+                    const missing = card.invoice_missing_flag;
+                    return (
+                    <div key={card.card_id} onClick={()=>setSel(card)} className={`bg-white rounded-lg border p-2 sm:p-2.5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all ${isCancel ? 'border-slate-200 opacity-60 line-through' : (missing ? 'border-red-300 ring-1 ring-red-100' : changed ? 'border-amber-300 ring-1 ring-amber-100' : 'border-slate-200/80')}`} data-testid={`card-${card.card_id}`}>
                       <div className="flex items-center justify-between mb-0.5">
                         <span className="text-[9px] font-mono text-slate-400 truncate">{card.card_id}</span>
-                        {card.card_type==='manual' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1 rounded font-bold">MAN</span>}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {missing && <span className="text-[8px] bg-red-100 text-red-700 px-1 rounded font-bold flex items-center gap-0.5" title="Tally invoice no longer exists"><FileWarning size={9}/>MISSING</span>}
+                          {changed && !missing && <span className="text-[8px] bg-amber-100 text-amber-700 px-1 rounded font-bold flex items-center gap-0.5" title="Tally invoice was modified after sync"><AlertTriangle size={9}/>CHANGED</span>}
+                          {isCancel && <span className="text-[8px] bg-slate-200 text-slate-600 px-1 rounded font-bold flex items-center gap-0.5"><Ban size={9}/>CANCELLED</span>}
+                          {card.card_type==='manual' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1 rounded font-bold">MAN</span>}
+                        </div>
                       </div>
                       <div className="text-[11px] sm:text-xs font-semibold text-slate-800 truncate">{card.party_name||'Unknown'}</div>
                       <div className="text-[10px] text-slate-500 truncate">Inv: {card.invoice_number}</div>
                       {card.total_amount>0 && <div className="text-[10px] font-medium text-slate-600 mt-0.5">Rs.{fmt(card.total_amount)}</div>}
+                      {isCancel && card.cancel_reason && <div className="text-[9px] text-slate-500 italic mt-0.5 no-underline" style={{textDecoration:'none'}}>{CANCEL_REASON_LABELS[card.cancel_reason]||card.cancel_reason}</div>}
                       <div className="flex items-center justify-between mt-1">
                         <span className="text-[9px] text-slate-400 truncate">{card.assigned_to ? `@${card.assigned_to.split('@')[0]}` : 'Unassigned'}</span>
                         <span className="text-[9px] text-slate-400 flex items-center gap-0.5"><Clock size={9}/>{elapsed(card.status_history?.[card.status_history.length-1]?.at)}</span>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {lane.length===0 && <p className="text-center text-[10px] text-slate-300 py-8">No cards</p>}
                 </div>
               </div>
@@ -189,14 +240,14 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
         </div>
       )}
 
-      {sel && <CardModal card={sel} porters={porters} transporters={transporters} onClose={()=>{setSel(null);load();}} onMove={moveStatus} onSave={saveCard} onUpload={uploadDoc} onAddPorter={addPorter} onAddTransporter={addTransporter}/>}
+      {sel && <CardModal card={sel} porters={porters} transporters={transporters} onClose={()=>{setSel(null);load();}} onMove={moveStatus} onCancel={cancelCard} onSave={saveCard} onUpload={uploadDoc} onAddPorter={addPorter} onAddTransporter={addTransporter}/>}
       {showManual && <ManualModal onClose={()=>setShowManual(false)} onCreate={createManual}/>}
     </div>
   );
 }
 
 /* ═══ Card Detail Modal ═══ */
-function CardModal({ card, porters, transporters, onClose, onMove, onSave, onUpload, onAddPorter, onAddTransporter }) {
+function CardModal({ card, porters, transporters, onClose, onMove, onCancel, onSave, onUpload, onAddPorter, onAddTransporter }) {
   const [boxes, setBoxes] = useState(card.total_boxes||0);
   const [transport, setTransport] = useState(card.transport_name||'');
   const [tCharges, setTCharges] = useState(card.transport_charges||0);
@@ -211,9 +262,12 @@ function CardModal({ card, porters, transporters, onClose, onMove, onSave, onUpl
   const [showNewTransporter, setShowNewTransporter] = useState(false);
   const [npName, setNpName] = useState(''); const [npPhone, setNpPhone] = useState('');
   const [ntName, setNtName] = useState(''); const [ntPhone, setNtPhone] = useState('');
+  const [showCancel, setShowCancel] = useState(false);
 
   const cfg = STATUS_CFG[card.status]||STATUS_CFG.new;
-  const next = {new:'queued',queued:'processing',processing:'packed',packed:'dispatched',dispatched:'info_shared'}[card.status];
+  const isCancelled = card.status === 'cancelled';
+  const canCancel = CANCELLABLE.has(card.status);
+  const next = isCancelled ? null : {new:'queued',queued:'processing',processing:'packed',packed:'dispatched',dispatched:'info_shared'}[card.status];
 
   const save = async () => {
     setSaving(true);
@@ -235,6 +289,47 @@ function CardModal({ card, porters, transporters, onClose, onMove, onSave, onUpl
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={18} className="text-slate-400"/></button>
         </div>
         <div className="p-3 sm:p-4 space-y-3">
+          {/* Invoice change banner — Option B (flag-only, manual reconcile) */}
+          {card.invoice_missing_flag && !isCancelled && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg p-2.5" data-testid="banner-invoice-missing">
+              <FileWarning size={14} className="text-red-600 flex-shrink-0 mt-0.5"/>
+              <div className="text-[11px] text-red-800 leading-tight">
+                <strong>Tally invoice deleted.</strong> The source invoice no longer exists in Tally
+                {card.invoice_change_detected_at ? ` (detected ${toIST(card.invoice_change_detected_at)})` : ''}.
+                Verify with accounts before proceeding — you may want to cancel this card.
+              </div>
+            </div>
+          )}
+          {card.invoice_changed_flag && !card.invoice_missing_flag && !isCancelled && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2.5" data-testid="banner-invoice-changed">
+              <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5"/>
+              <div className="text-[11px] text-amber-800 leading-tight">
+                <strong>Tally invoice modified after sync.</strong>
+                {Array.isArray(card.detected_changes) && card.detected_changes.length > 0 && (
+                  <span> Changes: {card.detected_changes.map(d => d.field).join(', ')}.</span>
+                )}
+                {' '}Items / total above show the original snapshot — refresh in Tally and reconcile manually.
+              </div>
+            </div>
+          )}
+          {card.post_dispatch_invoice_changed && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg p-2.5" data-testid="banner-post-dispatch-changed">
+              <AlertTriangle size={14} className="text-red-600 flex-shrink-0 mt-0.5"/>
+              <div className="text-[11px] text-red-800 leading-tight">
+                <strong>Tally invoice was modified AFTER dispatch.</strong> Goods have already shipped — escalate to accounts immediately.
+              </div>
+            </div>
+          )}
+          {isCancelled && (
+            <div className="flex items-start gap-2 bg-slate-100 border border-slate-300 rounded-lg p-2.5" data-testid="banner-cancelled">
+              <Ban size={14} className="text-slate-600 flex-shrink-0 mt-0.5"/>
+              <div className="text-[11px] text-slate-700 leading-tight">
+                <strong>Card cancelled</strong>{card.cancelled_at ? ` ${toIST(card.cancelled_at)}` : ''}{card.cancelled_by ? ` by ${card.cancelled_by}` : ''}.
+                {' '}Reason: <strong>{CANCEL_REASON_LABELS[card.cancel_reason] || card.cancel_reason || 'Unspecified'}</strong>.
+                {card.cancel_notes && <div className="mt-1 italic">"{card.cancel_notes}"</div>}
+              </div>
+            </div>
+          )}
           {/* Party + Amount */}
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-slate-50 rounded-lg p-2.5"><div className="text-[9px] text-slate-400 uppercase font-semibold">Party</div><div className="text-xs sm:text-sm font-semibold text-slate-900 truncate">{card.party_name||'-'}</div></div>
@@ -302,14 +397,17 @@ function CardModal({ card, porters, transporters, onClose, onMove, onSave, onUpl
         </div>
         {/* Actions */}
         <div className="p-3 sm:p-4 border-t border-slate-100 flex flex-wrap items-center gap-2 sticky bottom-0 bg-white rounded-b-2xl">
-          <button onClick={save} disabled={saving} className="px-3 sm:px-4 py-2 text-xs bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-50" data-testid="btn-save">{saving?'Saving...':'Save'}</button>
-          {card.status!=='hold'&&card.status!=='info_shared' && <button onClick={()=>onMove(card.card_id,'hold',{hold_reason:prompt('Hold reason?')||'Unspecified'})} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center gap-1" data-testid="btn-hold"><Pause size={12}/>Hold</button>}
-          {card.status==='hold' && <button onClick={()=>onMove(card.card_id,'processing')} className="px-3 py-2 text-xs bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 flex items-center gap-1" data-testid="btn-resume"><Play size={12}/>Resume</button>}
-          {next && <button onClick={async()=>{await save();onMove(card.card_id,next);}} className="ml-auto px-3 sm:px-4 py-2 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1" data-testid="btn-next">{STATUS_CFG[next]?.label}<ArrowRight size={13}/></button>}
+          {!isCancelled && <button onClick={save} disabled={saving} className="px-3 sm:px-4 py-2 text-xs bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-50" data-testid="btn-save">{saving?'Saving...':'Save'}</button>}
+          {!isCancelled && card.status!=='hold'&&card.status!=='info_shared' && <button onClick={()=>onMove(card.card_id,'hold',{hold_reason:prompt('Hold reason?')||'Unspecified'})} className="px-3 py-2 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center gap-1" data-testid="btn-hold"><Pause size={12}/>Hold</button>}
+          {!isCancelled && card.status==='hold' && <button onClick={()=>onMove(card.card_id,'processing')} className="px-3 py-2 text-xs bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 flex items-center gap-1" data-testid="btn-resume"><Play size={12}/>Resume</button>}
+          {canCancel && <button onClick={()=>setShowCancel(true)} className="px-3 py-2 text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg flex items-center gap-1" data-testid="btn-cancel"><Ban size={12}/>Cancel Card</button>}
+          {next && !isCancelled && <button onClick={async()=>{await save();onMove(card.card_id,next);}} className="ml-auto px-3 sm:px-4 py-2 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1" data-testid="btn-next">{STATUS_CFG[next]?.label}<ArrowRight size={13}/></button>}
+          {isCancelled && <button onClick={onClose} className="ml-auto px-3 sm:px-4 py-2 text-xs bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200" data-testid="btn-close-cancelled">Close</button>}
         </div>
         {/* Inline add porter */}
         {showNewPorter && <InlineAdd title="Add Porter" n={npName} sn={setNpName} p={npPhone} sp={setNpPhone} onSave={async()=>{const r=await onAddPorter(npName,npPhone);if(r){setPorter(r);setShowNewPorter(false);setNpName('');setNpPhone('');}}} onClose={()=>setShowNewPorter(false)}/>}
         {showNewTransporter && <InlineAdd title="Add Transporter" n={ntName} sn={setNtName} p={ntPhone} sp={setNtPhone} onSave={async()=>{const r=await onAddTransporter(ntName,ntPhone);if(r){setTransport(r);setShowNewTransporter(false);setNtName('');setNtPhone('');}}} onClose={()=>setShowNewTransporter(false)}/>}
+        {showCancel && <CancelModal cardId={card.card_id} invoiceNumber={card.invoice_number} onClose={()=>setShowCancel(false)} onConfirm={async(reason, notes) => { await onCancel(card.card_id, reason, notes); setShowCancel(false); }}/>}
       </div>
     </div>
   );
@@ -333,6 +431,45 @@ function InlineAdd({title,n,sn,p,sp,onSave,onClose}) {
     <div className="flex gap-2"><button onClick={onClose} className="flex-1 px-3 py-1.5 text-xs bg-slate-100 rounded-lg">Cancel</button><button onClick={onSave} className="flex-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg">Save</button></div>
   </div></div>;
 }
+function CancelModal({ cardId, invoiceNumber, onClose, onConfirm }) {
+  const [reason, setReason] = useState('customer_request');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async () => {
+    setSubmitting(true);
+    try { await onConfirm(reason, notes.trim()); }
+    finally { setSubmitting(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose} data-testid="cancel-modal">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md p-4 sm:p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0"><Ban size={16} className="text-red-600"/></div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-900">Cancel Dispatch Card</h3>
+            <p className="text-[11px] text-slate-500 truncate">{invoiceNumber} · {cardId}</p>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-600 bg-amber-50 border border-amber-100 rounded-lg p-2 mb-3 leading-snug">
+          This action is <strong>terminal</strong> — cancelled cards cannot be reopened. They will appear with a strikethrough on the board until end-of-day, then move to History.
+        </p>
+        <label className="text-[10px] font-semibold text-slate-500 uppercase block mb-1">Reason</label>
+        <select value={reason} onChange={e => setReason(e.target.value)} className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg mb-3" data-testid="cancel-reason">
+          {Object.entries(CANCEL_REASON_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <label className="text-[10px] font-semibold text-slate-500 uppercase block mb-1">Notes (optional)</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Add any context — customer ref, payment status, etc." className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg resize-none mb-3" data-testid="cancel-notes"/>
+        <div className="flex gap-2">
+          <button onClick={onClose} disabled={submitting} className="flex-1 px-3 py-2 text-xs bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50" data-testid="cancel-modal-back">Back</button>
+          <button onClick={submit} disabled={submitting} className="flex-1 px-3 py-2 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-1 disabled:opacity-50" data-testid="cancel-modal-confirm">
+            {submitting ? 'Cancelling...' : (<><Ban size={12}/>Confirm Cancel</>)}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ManualModal({onClose,onCreate}) {
   const [reason,setReason]=useState('sample'); const [party,setParty]=useState(''); const [city,setCity]=useState(''); const [notes,setNotes]=useState('');
   return <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose} data-testid="manual-modal"><div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md p-4 sm:p-5" onClick={e=>e.stopPropagation()}>
