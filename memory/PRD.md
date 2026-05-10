@@ -3,6 +3,25 @@
 ## Overview
 FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analytics, inventory, CRM, dispatch, salesman ordering, and CA reporting.
 
+## Latest Release Notes — Feb 2026
+- **Tally Sync Agent v9.8.9-daybook-lvd** (`/app/desktop-agent/tally_sync_agent_v9.py`,
+  also at `/app/frontend/public/flowra-desktop-agent.py`):
+  - `fetch_last_voucher_date()` now falls back to a Day-Book scan over the last
+    730 days when `$$LastVoucherDate` returns empty.
+  - Improved debug logging — separate messages for empty TDL vs failed Day-Book scan
+    so users can see *why* "defaulting to today" fired.
+- **Flowra Staff (`flowra_staff` role)** — SuperAdmin can delegate
+  command-center access through a checkbox-gated employee account:
+  - Tabs that can be granted: overview, subscriptions, payments, invoices,
+    prospects, health, admins (view-only), renewals, referrals, questionnaires,
+    backups, activity.
+  - Endpoints: `GET/POST /api/super-admin/staff`,
+    `PUT /api/super-admin/staff/{u}/features`,
+    `PUT /api/super-admin/staff/{u}/toggle-active`,
+    `POST /api/super-admin/staff/{u}/reset-password`,
+    `DELETE /api/super-admin/staff/{u}`.
+  - Regression: `/app/backend/tests/test_iteration90_staff_and_v989.py` (4/4 passing).
+
 ## CA Corner (Enhanced — April 2026)
 - **Cash Flow**: Tally indirect method (Operating/Investing/Financing activities)
 - **P&L Report**: Annual view with income/expense summaries

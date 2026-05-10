@@ -1929,7 +1929,15 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     def fetch_last_voucher_date(self) -> Optional[date]:
         """Query Tally for the date of the most recent voucher entry in the active company.
-        Returns a date object or None if detection fails."""
+        Returns a date object or None if detection fails.
+
+        v9.8.9 — Two-stage detection:
+          1. TDL `$$LastVoucherDate` (cheap, single value).
+          2. Day-Book scan over the last 730 days (fallback when Tally returns
+             empty for #1, which happens on TDLs where the system function isn't
+             populated for the active company).
+        """
+        # ── Stage 1: TDL $$LastVoucherDate ────────────────────────────────
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
@@ -1950,15 +1958,73 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 text = self._extract_text_deep(data)
                 if text:
                     text = str(text).strip()
-                    # Tally returns dates as YYYYMMDD or DD-Mon-YYYY
                     for fmt in ('%Y%m%d', '%d-%m-%Y', '%d-%b-%Y'):
                         try:
-                            return datetime.strptime(text[:10], fmt).date()
+                            d = datetime.strptime(text[:10], fmt).date()
+                            logger.debug(f"  $$LastVoucherDate returned {d.strftime('%d-%b-%Y')}")
+                            return d
                         except ValueError:
                             continue
+                    logger.debug(f"  $$LastVoucherDate text could not be parsed: {text!r}")
+                else:
+                    logger.debug("  $$LastVoucherDate returned empty body — falling back to Day Book scan")
+            else:
+                logger.debug("  $$LastVoucherDate request returned no data — falling back to Day Book scan")
         except Exception as e:
-            logger.debug(f"  Last voucher date detection failed: {e}")
-        return None
+            logger.debug(f"  $$LastVoucherDate detection failed: {e} — falling back to Day Book scan")
+
+        # ── Stage 2: Day Book sliding-window scan ─────────────────────────
+        try:
+            return self._fetch_last_voucher_date_via_daybook()
+        except Exception as e:
+            logger.debug(f"  Day-Book fallback failed: {e}")
+            return None
+
+    def _fetch_last_voucher_date_via_daybook(self) -> Optional[date]:
+        """Fallback for fetch_last_voucher_date(). Scans the Day Book for the
+        last 730 days and returns the latest voucher date encountered.
+        Lightweight — relies on regex over the response rather than a full
+        parse, since we only need the max DATE field."""
+        today = date.today()
+        from_d = today - timedelta(days=730)
+        fd_disp = from_d.strftime("%d-%b-%Y")
+        td_disp = today.strftime("%d-%b-%Y")
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY><EXPORTDATA><REQUESTDESC>
+<REPORTNAME>Day Book</REPORTNAME>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+<SVFROMDATE>{fd_disp}</SVFROMDATE>
+<SVTODATE>{td_disp}</SVTODATE>
+</STATICVARIABLES>
+</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
+        data = self._post(xml, debug_name='daybook_lvd')
+        if not data:
+            logger.debug("  Day-Book fallback: no data returned")
+            return None
+
+        # Tally Day Book exports vouchers as <VOUCHER ...><DATE>YYYYMMDD</DATE>…
+        # Pull every <DATE>…</DATE> and pick the max parseable one.
+        candidates: List[date] = []
+        for m in re.finditer(r'<DATE[^>]*>([^<]+)</DATE>', data):
+            raw = (m.group(1) or '').strip()
+            if not raw:
+                continue
+            for fmt in ('%Y%m%d', '%d-%m-%Y', '%d-%b-%Y'):
+                try:
+                    candidates.append(datetime.strptime(raw[:10], fmt).date())
+                    break
+                except ValueError:
+                    continue
+        if not candidates:
+            logger.debug(f"  Day-Book fallback: parsed 0 dates from {len(data)} bytes of Day-Book XML")
+            return None
+        latest = max(candidates)
+        logger.debug(f"  Day-Book fallback: scanned {len(candidates)} voucher dates, latest = {latest.strftime('%d-%b-%Y')}")
+        return latest
 
     # ---- CONTRA VOUCHERS (bank-to-bank, cash-to-bank) ----
 
@@ -2828,7 +2894,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.8-rate-parse-fix")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.9-daybook-lvd")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -3576,7 +3642,7 @@ class FlowraSyncAgent:
                 logger.info(f"  Last voucher date in Tally*: {last_voucher_date.strftime('%d-%b-%Y')}")
             else:
                 last_voucher_date = date.today()
-                logger.info(f"  Last voucher date: using today ({last_voucher_date.strftime('%d-%b-%Y')})")
+                logger.info(f"  Last voucher date: not detected via $$LastVoucherDate or Day-Book scan — defaulting to today ({last_voucher_date.strftime('%d-%b-%Y')})")
 
             # Report sync started for this company
             self.report_progress('sync_started', company_name=company_name)
@@ -3957,7 +4023,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.8-rate-parse-fix")
+        print("FLOWRA Tally Sync Agent v9.8.9-daybook-lvd")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

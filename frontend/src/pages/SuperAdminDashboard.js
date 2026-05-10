@@ -292,6 +292,69 @@ const SuperAdminDashboard = ({ token, user }) => {
     } catch { toast.error('Failed to load ledger'); }
   };
 
+  // ── FLOWRA Staff (control-panel employees) CRUD ──────────────────────
+  const fetchStaff = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    try {
+      const res = await axios.get(`${API}/super-admin/staff`, { headers });
+      if (res.data?.success) setStaffList(res.data.data?.staff || []);
+    } catch { /* non-fatal — table just stays empty */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isSuperAdmin]);
+
+  useEffect(() => { fetchStaff(); }, [fetchStaff]);
+
+  const submitStaffForm = async () => {
+    if (!staffEditing) return;
+    const { username, name, password, features, _isNew } = staffEditing;
+    if (!name?.trim()) { toast.error('Name is required'); return; }
+    if (_isNew) {
+      if (!username || !username.includes('@')) { toast.error('Valid email is required'); return; }
+      if (!password || password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    }
+    try {
+      if (_isNew) {
+        const res = await axios.post(`${API}/super-admin/staff`, {
+          username: username.trim().toLowerCase(), name: name.trim(), password, features: features || [],
+        }, { headers });
+        if (res.data?.success) { toast.success('Staff account created'); setStaffEditing(null); fetchStaff(); }
+        else toast.error(res.data?.error || 'Failed');
+      } else {
+        const res = await axios.put(`${API}/super-admin/staff/${username}/features`, {
+          features: features || [],
+        }, { headers });
+        if (res.data?.success) { toast.success('Features updated'); setStaffEditing(null); fetchStaff(); }
+        else toast.error(res.data?.error || 'Failed');
+      }
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
+  };
+
+  const toggleStaffActive = async (username) => {
+    try {
+      const res = await axios.put(`${API}/super-admin/staff/${username}/toggle-active`, {}, { headers });
+      if (res.data?.success) { toast.success('Status updated'); fetchStaff(); }
+    } catch { toast.error('Failed'); }
+  };
+
+  const deleteStaff = async (username) => {
+    if (!window.confirm(`Permanently delete staff account '${username}'?`)) return;
+    try {
+      const res = await axios.delete(`${API}/super-admin/staff/${username}`, { headers });
+      if (res.data?.success) { toast.success('Staff deleted'); fetchStaff(); }
+    } catch { toast.error('Failed'); }
+  };
+
+  const submitResetStaffPwd = async () => {
+    if (!resetStaffPwd) return;
+    const { username, password } = resetStaffPwd;
+    if (!password || password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    try {
+      const res = await axios.post(`${API}/super-admin/staff/${username}/reset-password`, { password }, { headers });
+      if (res.data?.success) { toast.success('Password reset'); setResetStaffPwd(null); }
+      else toast.error(res.data?.error || 'Failed');
+    } catch { toast.error('Failed'); }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64"><div className="loading-spinner" /></div>;
 
   const tabs = [
@@ -943,6 +1006,88 @@ const SuperAdminDashboard = ({ token, user }) => {
       {/* ===== BACKUPS TAB ===== */}
       {activeTab === 'backups' && <SuperAdminBackups />}
 
+      {/* ===== STAFF TAB (super_admin only) ===== */}
+      {activeTab === 'staff' && isSuperAdmin && (
+        <div data-testid="staff-tab">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Flowra Staff (Control-panel employees)</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Delegate command-center access. Tick the tabs each employee needs — they only see what's enabled.</p>
+            </div>
+            <button onClick={() => setStaffEditing({ _isNew: true, username: '', name: '', password: generateStrongPassword(), features: ['overview'] })}
+              className="px-3 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5"
+              data-testid="staff-new-btn">
+              <UserPlus size={14} /> New Staff
+            </button>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="staff-table">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <th className="py-3 px-4 text-left">Name / Email</th>
+                    <th className="py-3 px-4 text-left">Tabs Enabled</th>
+                    <th className="py-3 px-4 text-left">Created</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffList.length === 0 && (
+                    <tr><td colSpan={5} className="py-12 text-center text-sm text-slate-400">No staff accounts yet. Click "New Staff" to delegate access.</td></tr>
+                  )}
+                  {staffList.map(s => (
+                    <tr key={s.username} className="border-t border-slate-100 hover:bg-slate-50/50" data-testid={`staff-row-${s.username}`}>
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-slate-900">{s.name || s.username}</div>
+                        <div className="text-xs text-slate-500">{s.username}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          {(s.staff_features || []).length === 0 && <span className="text-xs text-slate-400">No tabs enabled</span>}
+                          {(s.staff_features || []).map(f => (
+                            <span key={f} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] capitalize">{f.replace(/_/g, ' ')}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-slate-500">{formatDate(s.created_at)}</td>
+                      <td className="py-3 px-4 text-center">
+                        <button onClick={() => toggleStaffActive(s.username)}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${s.active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
+                          data-testid={`staff-toggle-${s.username}`}>
+                          {s.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+                          {s.active ? 'Active' : 'Disabled'}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => setStaffEditing({ _isNew: false, username: s.username, name: s.name, features: [...(s.staff_features || [])] })}
+                            className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Edit features"
+                            data-testid={`staff-edit-${s.username}`}>
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setResetStaffPwd({ username: s.username, password: generateStrongPassword() })}
+                            className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Reset password"
+                            data-testid={`staff-reset-${s.username}`}>
+                            <Key size={14} />
+                          </button>
+                          <button onClick={() => deleteStaff(s.username)}
+                            className="p-1.5 hover:bg-red-50 rounded text-red-500" title="Delete"
+                            data-testid={`staff-delete-${s.username}`}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== MODALS ===== */}
 
       {/* Record Payment Modal */}
@@ -1373,6 +1518,139 @@ const SuperAdminDashboard = ({ token, user }) => {
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => { setShowResetModal(null); setResetPassword(''); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
               <button onClick={handleResetPassword} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="confirm-reset-password">Reset</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create / Edit Flowra Staff Modal */}
+      {staffEditing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setStaffEditing(null)}>
+          <div className="bg-white rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6" data-testid="staff-modal">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-semibold text-slate-900">
+                {staffEditing._isNew ? 'New Staff Account' : `Edit ${staffEditing.username}`}
+              </h3>
+              <button onClick={() => setStaffEditing(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+
+            <div className="space-y-4">
+              {staffEditing._isNew ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Email *</label>
+                    <input type="email" value={staffEditing.username}
+                      onChange={e => setStaffEditing(p => ({ ...p, username: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                      placeholder="employee@flowra.in" data-testid="staff-email-input" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name *</label>
+                    <input type="text" value={staffEditing.name}
+                      onChange={e => setStaffEditing(p => ({ ...p, name: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                      placeholder="Riya Sharma" data-testid="staff-name-input" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Initial Password *</label>
+                    <div className="flex gap-2">
+                      <input type="text" value={staffEditing.password}
+                        onChange={e => setStaffEditing(p => ({ ...p, password: e.target.value }))}
+                        className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono"
+                        data-testid="staff-password-input" />
+                      <button type="button"
+                        onClick={() => setStaffEditing(p => ({ ...p, password: generateStrongPassword() }))}
+                        className="px-3 py-2 border border-slate-200 rounded-lg text-xs flex items-center gap-1 hover:bg-slate-50"
+                        data-testid="staff-generate-pwd">
+                        <Sparkles size={12} /> Generate
+                      </button>
+                      <button type="button"
+                        onClick={() => { navigator.clipboard.writeText(staffEditing.password); toast.success('Password copied'); }}
+                        className="px-3 py-2 border border-slate-200 rounded-lg text-xs flex items-center gap-1 hover:bg-slate-50">
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Staff will be required to change this on first login.</p>
+                  </div>
+                </>
+              ) : (
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <div className="text-xs text-slate-500">Editing</div>
+                  <div className="font-medium">{staffEditing.name} <span className="text-slate-400 font-normal">·</span> <span className="text-slate-500 font-normal">{staffEditing.username}</span></div>
+                </div>
+              )}
+
+              {/* Feature checklist */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">
+                  Tabs Enabled ({(staffEditing.features || []).length}/{STAFF_FEATURES_LIST.length})
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  {STAFF_FEATURES_LIST.map(f => {
+                    const checked = (staffEditing.features || []).includes(f.id);
+                    return (
+                      <label key={f.id}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs transition ${checked ? 'bg-blue-50 text-blue-800' : 'hover:bg-white text-slate-600'}`}
+                        data-testid={`staff-feature-${f.id}`}>
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          setStaffEditing(prev => ({
+                            ...prev,
+                            features: checked
+                              ? (prev.features || []).filter(x => x !== f.id)
+                              : [...(prev.features || []), f.id],
+                          }));
+                        }} className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                        <span className="font-medium">{f.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button type="button" onClick={() => setStaffEditing(p => ({ ...p, features: STAFF_FEATURES_LIST.map(x => x.id) }))}
+                    className="text-[11px] text-blue-600 hover:underline">Select all</button>
+                  <span className="text-slate-300">·</span>
+                  <button type="button" onClick={() => setStaffEditing(p => ({ ...p, features: [] }))}
+                    className="text-[11px] text-slate-500 hover:underline">Clear</button>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={() => setStaffEditing(null)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
+                <button onClick={submitStaffForm} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg font-medium" data-testid="staff-submit">
+                  {staffEditing._isNew ? 'Create Staff' : 'Save Features'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Staff Password Modal */}
+      {resetStaffPwd && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setResetStaffPwd(null)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-sm" data-testid="staff-reset-modal">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900">Reset Staff Password</h3>
+              <button onClick={() => setResetStaffPwd(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <p className="text-sm text-slate-500 mb-3">Reset for <strong>{resetStaffPwd.username}</strong></p>
+            <div className="flex gap-2">
+              <input type="text" value={resetStaffPwd.password}
+                onChange={e => setResetStaffPwd(p => ({ ...p, password: e.target.value }))}
+                className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono"
+                data-testid="staff-reset-input" />
+              <button onClick={() => setResetStaffPwd(p => ({ ...p, password: generateStrongPassword() }))}
+                className="px-3 py-2 border border-slate-200 rounded-lg text-xs flex items-center gap-1 hover:bg-slate-50">
+                <Sparkles size={12} />
+              </button>
+              <button onClick={() => { navigator.clipboard.writeText(resetStaffPwd.password); toast.success('Copied'); }}
+                className="px-3 py-2 border border-slate-200 rounded-lg text-xs flex items-center gap-1 hover:bg-slate-50">
+                <Copy size={12} />
+              </button>
+            </div>
+            <div className="flex justify-end gap-3 mt-5">
+              <button onClick={() => setResetStaffPwd(null)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
+              <button onClick={submitResetStaffPwd} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="staff-reset-confirm">Reset</button>
             </div>
           </div>
         </div>
