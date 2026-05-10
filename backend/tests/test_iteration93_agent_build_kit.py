@@ -104,3 +104,53 @@ def test_kit_copy_matches_source():
         "build-kit/tally_sync_agent_v9.py is out of sync with the source. "
         "Run: cp /app/desktop-agent/tally_sync_agent_v9.py /app/desktop-agent/build-kit/"
     )
+
+
+def test_gui_supports_system_tray():
+    """Tray + Pillow icon helpers are present in the GUI."""
+    src = open(os.path.join(KIT_DIR, "flowra_gui.py")).read()
+    # Pillow-based tray icon generator
+    assert "def build_tray_icon_image" in src
+    # pystray + menu items
+    assert "import pystray" in src
+    assert "Show FLOWRA" in src
+    assert "Quit FLOWRA" in src
+    assert "Sync Now" in src
+    # Closing the window hides to tray instead of exiting
+    assert "def hide_to_tray" in src
+    assert 'protocol("WM_DELETE_WINDOW", self.hide_to_tray)' in src
+
+
+def test_gui_supports_windows_autostart():
+    """Auto-start helpers + CLI flags are present."""
+    src = open(os.path.join(KIT_DIR, "flowra_gui.py")).read()
+    for sym in (
+        "def register_startup",
+        "def unregister_startup",
+        "def is_startup_registered",
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        "FlowraTallyAgent",
+    ):
+        assert sym in src, f"missing autostart symbol: {sym!r}"
+    # CLI flags exposed
+    for flag in ("--register-startup", "--unregister-startup", "--minimized"):
+        assert flag in src, f"missing CLI flag: {flag}"
+
+
+def test_spec_bundles_tray_dependencies():
+    """The .spec must declare hidden imports for pystray + Pillow + winreg
+    so PyInstaller can find them in the frozen .exe."""
+    spec = open(os.path.join(KIT_DIR, "agent.spec")).read()
+    for hidden in (
+        "'pystray'",
+        "'PIL.Image'",
+        "'PIL.ImageDraw'",
+        "'winreg'",
+    ):
+        assert hidden in spec, f"spec missing hidden import: {hidden}"
+
+
+def test_requirements_include_tray_libs():
+    req = open(os.path.join(KIT_DIR, "requirements.txt")).read().lower()
+    assert "pystray" in req
+    assert "pillow" in req

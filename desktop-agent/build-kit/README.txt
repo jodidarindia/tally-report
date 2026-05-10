@@ -76,6 +76,32 @@ Logs are written to:
    %LOCALAPPDATA%\Flowra\logs\agent_YYYYMMDD.log
 
 
+SYSTEM-TRAY BEHAVIOUR
+---------------------
+• Closing the window minimises FLOWRA to the system tray (notification
+  area near the clock). The sync service keeps running in the background.
+• Right-click the tray icon for: Show, Sync Now, Open Logs Folder,
+  Toggle "Auto-start with Windows", Quit.
+• "Quit FLOWRA" is the ONLY way to fully stop the service. Clicking
+  the X just hides the window.
+
+
+AUTO-START WITH WINDOWS
+-----------------------
+On first launch the app asks once whether to launch on Windows boot.
+Toggle it any time from:
+   • Settings tab → "Start FLOWRA automatically when Windows starts"
+   • Tray icon → right-click → "Auto-start with Windows"
+   • Command line:
+        FlowraTallyAgent.exe --register-startup
+        FlowraTallyAgent.exe --unregister-startup
+
+Auto-start uses the per-user registry key
+   HKCU\Software\Microsoft\Windows\CurrentVersion\Run\FlowraTallyAgent
+so no admin rights are required. When triggered by Windows the GUI
+opens directly minimised to tray (it passes itself the --minimized flag).
+
+
 REBUILDING WHEN THE AGENT CHANGES
 ---------------------------------
 Whenever a new agent version drops:

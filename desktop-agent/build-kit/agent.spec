@@ -33,6 +33,15 @@ a = Analysis(
         'websockets.client',
         'asyncio',
         'tally_sync_agent_v9',
+        # GUI tray + icon generation
+        'pystray',
+        'pystray._win32',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
+        'PIL.ImageFont',
+        # Auto-start registry on Windows
+        'winreg',
     ],
     hookspath=[],
     hooksconfig={},

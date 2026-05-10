@@ -4,6 +4,10 @@
 # Build tools
 pyinstaller==6.10.0
 
+# GUI / tray
+pystray==0.19.5
+Pillow==10.4.0
+
 # Agent runtime deps (must mirror the agent's imports)
 requests==2.32.3
 xmltodict==0.13.0
