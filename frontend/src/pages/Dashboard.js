@@ -19,7 +19,11 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { user } = useAuth();
   // Scope sync events to this tenant — prevents cross-tenant WS leak.
-  const { isConnected: wsConnected, syncProgress } = useSyncWebSocket(user?.tenant_id);
+  // Only admins need the live progress feed; employees see only the static
+  // "Last sync" stamp, so we skip the WS subscription entirely for them
+  // (saves a backend connection per shop-floor login).
+  const wsTenant = user?.role === 'admin' ? user?.tenant_id : null;
+  const { isConnected: wsConnected, syncProgress } = useSyncWebSocket(wsTenant);
 
   useEffect(() => {
     fetchData();
@@ -155,8 +159,11 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
         </div>
       </div>
 
-      {/* Live Sync Status Bar */}
-      {(syncProgress?.isSyncing || syncProgress?.phase) && (
+      {/* Live Sync Status Bar — admin-only. Employees (employee/dispatch/
+          salesman) only see the static "Last sync: ..." stamp in the header
+          above; the live progress UI is admin-only to avoid noise on shop-
+          floor logins. */}
+      {user?.role === 'admin' && (syncProgress?.isSyncing || syncProgress?.phase) && (
         <div data-testid="live-sync-status">
           <SyncStatusBar wsConnected={wsConnected} syncProgress={syncProgress} />
         </div>

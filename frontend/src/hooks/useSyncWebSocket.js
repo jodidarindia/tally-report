@@ -151,12 +151,15 @@ export function useSyncWebSocket(tenantId) {
   }, []);
 
   useEffect(() => {
+    // Skip WebSocket entirely when no tenantId (e.g., logged-out, super-admin,
+    // or non-admin roles where live sync UI is suppressed).
+    if (!tenantId) return;
     connect();
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [connect]);
+  }, [connect, tenantId]);
 
   const requestStatus = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
