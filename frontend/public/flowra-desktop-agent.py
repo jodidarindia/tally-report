@@ -571,6 +571,14 @@ class TallyCollectionClient:
         s = str(val).replace(',', '').strip()
         if not s or s in ('None', 'null'):
             return 0.0
+        # v9.8.8 — Tally returns Rate-typed values as "<amount>/<unit>"
+        # (e.g. "1495.00/Nos", "3646.00/Pcs"). Strip everything from the
+        # first '/' so float() doesn't choke. This was the root cause of
+        # standard_price being 0 for every user — Tally exports STANDARDPRICE
+        # AND STANDARDPRICELIST.LIST→RATE in this format, and the old parser
+        # silently returned 0.
+        if '/' in s:
+            s = s.split('/', 1)[0].strip()
         try:
             return abs(float(s.split()[0]))
         except:
@@ -587,6 +595,9 @@ class TallyCollectionClient:
         s = str(val).replace(',', '').strip()
         if not s or s in ('None', 'null'):
             return 0.0
+        # v9.8.8 — strip "/Unit" suffix from rate-typed values
+        if '/' in s:
+            s = s.split('/', 1)[0].strip()
         try:
             return float(s.split()[0])
         except:
@@ -2817,7 +2828,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.7-aliases-perf")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.8-rate-parse-fix")
         logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
         logger.info("=" * 60)
 
@@ -3946,7 +3957,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.7-aliases-perf")
+        print("FLOWRA Tally Sync Agent v9.8.8-rate-parse-fix")
         print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
         sys.exit(0)
     # Handle --logout flag

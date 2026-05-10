@@ -811,3 +811,23 @@ User reported (with screenshot from ASA Autotech, where sync started in FY 25-26
 - Frontend: `/app/frontend/src/pages/DispatchTerminal.js` (CancelModal, banners, strikethrough lane card, History tabs).
 - Tests: `/app/backend/tests/test_iteration85_dispatch_cancel.py` — 3/3 passing (constants + full DB integration of detect helper).
 - E2E curl verified: create → cancel → re-cancel blocked → status move blocked → active view shows today-cancelled → history `?include=cancelled` filters correctly.
+
+## Tally Sync Agent v9.8.8 — Rate-Parse Fix (Feb 2026 — CRITICAL FIX)
+**P0 bug** — Standard Price was 0 for **every single inventory item across all tenants** despite v9.8.7 shipping STANDARDPRICELIST extraction. Root cause was NOT the extraction — it was the `_num()` parser.
+
+**Bug**: Tally exports rate-typed XML values as `<amount>/<unit>` (e.g. `<STANDARDPRICE TYPE="Rate">1495.00/Nos</STANDARDPRICE>`). The pre-v9.8.8 `_num()` called `float("1495.00/Nos")` directly → `ValueError` → returned 0.
+
+**Fix**: In `_num()` and `_signed_num()` — strip everything from the first `/` before float-parsing.
+```python
+if '/' in s:
+    s = s.split('/', 1)[0].strip()
+```
+
+**Diagnosis**: User shared `stock_items_raw.xml` for ASA AUTOTECH. Confirmed every `<STANDARDPRICE>` and `<STANDARDPRICELIST.LIST>→<RATE>` value uses the `nnn.nn/Nos` rate-per-unit format. Verified the new parser extracts ₹3,646 / ₹4,422 / ₹52,788 etc. correctly across all 202 items in the user's XML.
+
+**Files**:
+- `/app/desktop-agent/tally_sync_agent_v9.py` — version bumped to v9.8.8-rate-parse-fix.
+- `/app/frontend/public/flowra-desktop-agent.py` — synced from source (live distributable).
+- `/app/backend/tests/test_iteration86_agent_v988_rate_parse.py` — 9/9 passing (unit + end-to-end XML fixture mirroring the user's data).
+
+**User action required**: Re-download `flowra-desktop-agent.py` from the agent download link, replace the existing copy on the Tally machine, and run a fresh sync. After sync, the Inventory page "Sale Price" column should switch from slate **"Last sold ₹X"** to green **"Tally master ₹X"** for every item that has a Standard Selling Rate set in Tally.
