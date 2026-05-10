@@ -2,74 +2,30 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
-  Users, Shield, ToggleLeft, ToggleRight, Trash2, Key,
-  Plus, ChevronDown, ChevronUp, RefreshCw, Activity,
-  Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
-  UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check,
-  IndianRupee, TrendingUp, CreditCard, Receipt, Heart, Download,
-  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift, Database,
-  Sparkles, Copy
+  Users, Shield, RefreshCw, Activity,
+  Eye, EyeOff, X, UserPlus,
+  FileText, AlertTriangle,
+  IndianRupee, TrendingUp, CreditCard, Receipt, Heart,
+  BarChart3, Wallet, Calendar, Gift, Database,
+  Sparkles, Copy,
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 import SuperAdminBackups from './SuperAdminBackups';
+import {
+  ALL_FEATURES, PLANS, STAFF_FEATURES_LIST,
+  formatINR, formatDate, generateStrongPassword,
+} from './super-admin/utils';
+import { OverviewTab } from './super-admin/tabs/OverviewTab';
+import { SubscriptionsTab } from './super-admin/tabs/SubscriptionsTab';
+import { PaymentsTab } from './super-admin/tabs/PaymentsTab';
+import { InvoicesTab } from './super-admin/tabs/InvoicesTab';
+import { ProspectsTab } from './super-admin/tabs/ProspectsTab';
+import { HealthTab } from './super-admin/tabs/HealthTab';
+import { AdminsTab } from './super-admin/tabs/AdminsTab';
+import { RenewalsTab } from './super-admin/tabs/RenewalsTab';
+import { StaffTab } from './super-admin/tabs/StaffTab';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
-
-const ALL_FEATURES = [
-  { id: 'dashboard', label: 'Dashboard', desc: 'Overview stats & charts' },
-  { id: 'sales', label: 'Sales', desc: 'Sales vouchers & analytics' },
-  { id: 'crm', label: 'CRM', desc: 'Customer outstanding & behavior' },
-  { id: 'inventory', label: 'Inventory', desc: 'Stock management & items' },
-  { id: 'analytics', label: 'Analytics', desc: 'Movement analysis & reports' },
-  { id: 'salesman', label: 'Salesman', desc: 'Salesman performance & orders' },
-  { id: 'ai_reports', label: 'AI Reports', desc: 'AI-powered insights' },
-  { id: 'insider', label: 'Insider Result', desc: 'BI analytics & forecasts' },
-  { id: 'ca_corner', label: 'CA Corner', desc: 'P&L, Balance Sheet, Cash Flow' },
-  { id: 'dispatch', label: 'Dispatch', desc: 'Dispatch terminal & tracking' },
-  { id: 'sync_history', label: 'Sync History', desc: 'Data sync logs' },
-  { id: 'setup', label: 'Setup', desc: 'Tally* connection settings' },
-];
-
-const PLANS = {
-  starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
-  professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'sync_history', 'setup'] },
-  enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) }
-};
-
-const formatINR = (n) => `Rs.${(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-const formatDate = (d) => {
-  if (!d) return '—';
-  const dt = (d.includes && (d.includes('+') || d.includes('Z'))) ? new Date(d) : new Date(d + 'Z');
-  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
-};
-
-// Generate a cryptographically-strong 12-char password.
-// Guarantees ≥1 from each set: lower, upper, digit, symbol. Avoids visually
-// ambiguous chars (0, O, l, 1, I) so users can read it from the welcome email.
-const generateStrongPassword = () => {
-  const lower = 'abcdefghijkmnopqrstuvwxyz';     // no l
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';      // no I, O
-  const digit = '23456789';                       // no 0, 1
-  const sym   = '@#$%&*?!';
-  const all = lower + upper + digit + sym;
-  const buf = new Uint32Array(12);
-  (window.crypto || window.msCrypto).getRandomValues(buf);
-  const pick = (set, n) => set.charAt(n % set.length);
-  // Force one from each category in the first 4 slots, fill rest from full alphabet
-  const arr = [
-    pick(lower, buf[0]), pick(upper, buf[1]),
-    pick(digit, buf[2]), pick(sym, buf[3]),
-  ];
-  for (let i = 4; i < 12; i++) arr.push(pick(all, buf[i]));
-  // Fisher–Yates shuffle so the category positions aren't predictable
-  const shuffleBuf = new Uint32Array(arr.length);
-  (window.crypto || window.msCrypto).getRandomValues(shuffleBuf);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = shuffleBuf[i] % (i + 1);
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr.join('');
-};
 
 const SuperAdminDashboard = ({ token, user }) => {
   // FLOWRA staff get the same UI but tabs are filtered to their feature
@@ -92,23 +48,8 @@ const SuperAdminDashboard = ({ token, user }) => {
   const [prospectStats, setProspectStats] = useState({});
   const [renewals, setRenewals] = useState({ renewal_requests: [], near_expiry: [], expired: [], stats: {} });
   const [staffList, setStaffList] = useState([]);
-  const [showCreateStaff, setShowCreateStaff] = useState(false);
   const [staffEditing, setStaffEditing] = useState(null);
   const [resetStaffPwd, setResetStaffPwd] = useState(null);
-  const STAFF_FEATURES_LIST = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'subscriptions', label: 'Subscriptions' },
-    { id: 'payments', label: 'Payments' },
-    { id: 'invoices', label: 'Invoices' },
-    { id: 'prospects', label: 'Prospects' },
-    { id: 'health', label: 'Customer Health' },
-    { id: 'admins', label: 'Admin Mgmt (view only)' },
-    { id: 'renewals', label: 'Renewals' },
-    { id: 'referrals', label: 'Referrals' },
-    { id: 'questionnaires', label: 'Leads' },
-    { id: 'backups', label: 'Backups' },
-    { id: 'activity', label: 'Activity Log' },
-  ];
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -402,690 +343,86 @@ const SuperAdminDashboard = ({ token, user }) => {
         })}
       </div>
 
-      {/* ===== OVERVIEW TAB ===== */}
+      {/* ===== TAB CONTENT (extracted to /pages/super-admin/tabs/) ===== */}
       {activeTab === 'overview' && businessData && (
-        <div data-testid="overview-tab">
-          {/* Revenue Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-5 text-white">
-              <div className="flex items-center gap-2 text-blue-200 text-xs mb-1"><IndianRupee size={14} /> Monthly Recurring</div>
-              <div className="text-2xl font-bold" data-testid="mrr-value">{formatINR(businessData.mrr)}</div>
-              <div className="text-blue-200 text-xs mt-1">MRR</div>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-5 text-white">
-              <div className="flex items-center gap-2 text-emerald-200 text-xs mb-1"><TrendingUp size={14} /> Annual Revenue</div>
-              <div className="text-2xl font-bold" data-testid="arr-value">{formatINR(businessData.arr)}</div>
-              <div className="text-emerald-200 text-xs mt-1">ARR</div>
-            </div>
-            <div className="bg-gradient-to-br from-violet-600 to-violet-700 rounded-xl p-5 text-white">
-              <div className="flex items-center gap-2 text-violet-200 text-xs mb-1"><CircleDollarSign size={14} /> Collections</div>
-              <div className="text-2xl font-bold" data-testid="collected-value">{formatINR(businessData.total_received)}</div>
-              <div className="text-violet-200 text-xs mt-1">{businessData.collection_rate}% collected</div>
-            </div>
-            <div className="bg-gradient-to-br from-rose-600 to-rose-700 rounded-xl p-5 text-white">
-              <div className="flex items-center gap-2 text-rose-200 text-xs mb-1"><AlertTriangle size={14} /> Outstanding</div>
-              <div className="text-2xl font-bold" data-testid="outstanding-value">{formatINR(businessData.outstanding)}</div>
-              <div className="text-rose-200 text-xs mt-1">Balance due</div>
-            </div>
-          </div>
-
-          {/* Customer & Plan metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Total Customers</div>
-              <div className="text-xl font-bold text-slate-900" data-testid="total-customers">{businessData.total_customers}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Active</div>
-              <div className="text-xl font-bold text-emerald-600">{businessData.active_customers}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">ARPU</div>
-              <div className="text-xl font-bold text-blue-600">{formatINR(businessData.arpu)}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Contract Value</div>
-              <div className="text-xl font-bold text-slate-900">{formatINR(businessData.total_contract_value)}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Total Payments</div>
-              <div className="text-xl font-bold text-slate-900">{businessData.total_payments}</div>
-            </div>
-          </div>
-
-          {/* Plan Distribution */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-slate-900 mb-4">Plan Distribution</h3>
-              {Object.entries(businessData.plan_distribution || {}).map(([plan, count]) => {
-                const total = businessData.active_customers || 1;
-                const pct = Math.round((count / total) * 100);
-                const colors = { starter: 'bg-slate-400', professional: 'bg-blue-500', enterprise: 'bg-purple-500' };
-                return (
-                  <div key={plan} className="mb-3">
-                    <div className="flex items-center justify-between text-sm mb-1">
-                      <span className="capitalize font-medium">{plan}</span>
-                      <span className="text-slate-500">{count} ({pct}%)</span>
-                    </div>
-                    <div className="w-full bg-slate-100 rounded-full h-2">
-                      <div className={`${colors[plan] || 'bg-blue-500'} h-2 rounded-full transition-all`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-slate-900 mb-4">Recent Payments</h3>
-              {businessData.recent_payments?.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">No payments recorded yet</p>
-              ) : (
-                <div className="space-y-3">
-                  {businessData.recent_payments?.map((p, i) => (
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
-                      <div>
-                        <div className="text-sm font-medium text-slate-800">{p.customer_name || p.customer_username}</div>
-                        <div className="text-xs text-slate-400">{formatDate(p.payment_date)} · {p.payment_mode?.replace('_', ' ')}</div>
-                      </div>
-                      <div className="text-sm font-bold text-emerald-600">{formatINR(p.amount)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="flex flex-wrap gap-3">
-            <button onClick={() => setShowPaymentModal(true)} className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-2" data-testid="quick-record-payment">
-              <IndianRupee size={16} /> Record Payment
-            </button>
-            <button onClick={() => setShowInvoiceModal(true)} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2" data-testid="quick-generate-invoice">
-              <Receipt size={16} /> Generate Invoice
-            </button>
-            <button onClick={() => setShowCreateModal(true)} className="px-4 py-2.5 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 flex items-center gap-2" data-testid="quick-new-admin">
-              <Plus size={16} /> New Customer
-            </button>
-          </div>
-        </div>
+        <OverviewTab
+          businessData={businessData}
+          onRecordPayment={() => setShowPaymentModal(true)}
+          onGenerateInvoice={() => setShowInvoiceModal(true)}
+          onNewAdmin={() => setShowCreateModal(true)}
+        />
       )}
 
-      {/* ===== SUBSCRIPTIONS TAB ===== */}
       {activeTab === 'subscriptions' && (
-        <div data-testid="subscriptions-tab">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">Subscription Management</h2>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="subscriptions-table">
-                <thead>
-                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                    <th className="py-3 px-4 text-left">Customer</th>
-                    <th className="py-3 px-4 text-left">Plan</th>
-                    <th className="py-3 px-4 text-left">Billing</th>
-                    <th className="py-3 px-4 text-left">Started</th>
-                    <th className="py-3 px-4 text-left">Expires</th>
-                    <th className="py-3 px-4 text-right">Value</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {admins.map(admin => {
-                    const plan = admin.plan || 'enterprise';
-                    const cycle = admin.billing_cycle || 'annual';
-                    const months = admin.subscription_months || 12;
-                    const pricing = PLANS[plan] || PLANS.enterprise;
-                    const value = cycle === 'annual' ? pricing.annual * (months / 12) : pricing.monthly * months;
-                    const start = admin.subscription_start || admin.created_at;
-                    let expires = '—'; let daysLeft = null; let isExpired = false;
-                    if (start) {
-                      const end = new Date(start); end.setMonth(end.getMonth() + months);
-                      expires = formatDate(end.toISOString());
-                      daysLeft = Math.ceil((end - new Date()) / 86400000);
-                      isExpired = daysLeft < 0;
-                    }
-                    return (
-                      <tr key={admin.username} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`sub-row-${admin.username}`}>
-                        <td className="py-3 px-4">
-                          <div className="font-medium text-slate-800">{admin.name || admin.username}</div>
-                          <div className="text-xs text-slate-400">{admin.username}</div>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {plan}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-600 capitalize">{cycle} · {months}mo</td>
-                        <td className="py-3 px-4 text-slate-600">{formatDate(start)}</td>
-                        <td className="py-3 px-4 text-slate-600">{expires}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-800">{formatINR(value)}</td>
-                        <td className="py-3 px-4 text-center">
-                          {isExpired ? (
-                            <span className="text-[10px] bg-red-50 text-red-700 px-2 py-0.5 rounded-full font-bold">EXPIRED</span>
-                          ) : daysLeft !== null && daysLeft <= 30 ? (
-                            <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold">{daysLeft}d LEFT</span>
-                          ) : admin.active ? (
-                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
-                          ) : (
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">INACTIVE</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => openLedger(admin.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View Ledger" data-testid={`ledger-${admin.username}`}>
-                              <FileText size={14} />
-                            </button>
-                            <button onClick={() => openEditAdmin(admin)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit" data-testid={`edit-sub-${admin.username}`}>
-                              <Pencil size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <SubscriptionsTab admins={admins} onOpenLedger={openLedger} onEditAdmin={openEditAdmin} />
       )}
 
-      {/* ===== PAYMENTS TAB ===== */}
       {activeTab === 'payments' && (
-        <div data-testid="payments-tab">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">Payment Ledger</h2>
-            <button onClick={() => setShowPaymentModal(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-2" data-testid="record-payment-btn">
-              <Plus size={14} /> Record Payment
-            </button>
-          </div>
-          {/* Summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Total Collected</div>
-              <div className="text-xl font-bold text-emerald-600" data-testid="total-collected">{formatINR(payments.total_amount)}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Transactions</div>
-              <div className="text-xl font-bold text-slate-900">{payments.payments?.length || 0}</div>
-            </div>
-            {Object.entries(payments.by_mode || {}).slice(0, 2).map(([mode, amt]) => (
-              <div key={mode} className="bg-white border border-slate-200 rounded-xl p-4">
-                <div className="text-xs text-slate-500 mb-1 capitalize">{mode.replace('_', ' ')}</div>
-                <div className="text-xl font-bold text-slate-900">{formatINR(amt)}</div>
-              </div>
-            ))}
-          </div>
-          {/* Payment list */}
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="payments-table">
-                <thead>
-                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                    <th className="py-3 px-4 text-left">Customer</th>
-                    <th className="py-3 px-4 text-right">Amount</th>
-                    <th className="py-3 px-4 text-left">Mode</th>
-                    <th className="py-3 px-4 text-left">Reference</th>
-                    <th className="py-3 px-4 text-left">Period</th>
-                    <th className="py-3 px-4 text-left">Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payments.payments?.map((p, i) => (
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`payment-row-${i}`}>
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-800">{p.customer_name || p.customer_username}</div>
-                        <div className="text-xs text-slate-400">{p.customer_username}</div>
-                      </td>
-                      <td className="py-3 px-4 text-right font-bold text-emerald-600">{formatINR(p.amount)}</td>
-                      <td className="py-3 px-4 text-slate-600 capitalize">{(p.payment_mode || '').replace('_', ' ')}</td>
-                      <td className="py-3 px-4 text-slate-600 font-mono text-xs">{p.reference_no || '—'}</td>
-                      <td className="py-3 px-4 text-slate-600">{p.period_description || '—'}</td>
-                      <td className="py-3 px-4 text-slate-600">{formatDate(p.payment_date)}</td>
-                    </tr>
-                  ))}
-                  {(!payments.payments || payments.payments.length === 0) && (
-                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">No payments recorded yet</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <PaymentsTab payments={payments} onRecordPayment={() => setShowPaymentModal(true)} />
       )}
 
-      {/* ===== INVOICES TAB ===== */}
       {activeTab === 'invoices' && (
-        <div data-testid="invoices-tab">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-900">Invoices</h2>
-            <button onClick={() => setShowInvoiceModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2" data-testid="generate-invoice-btn">
-              <Plus size={14} /> Generate Invoice
-            </button>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Total Invoiced</div>
-              <div className="text-xl font-bold text-blue-600">{formatINR(invoices.total_invoiced)}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Total Invoices</div>
-              <div className="text-xl font-bold text-slate-900">{invoices.total}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Paid</div>
-              <div className="text-xl font-bold text-emerald-600">{invoices.paid_count}</div>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-xs text-slate-500 mb-1">Unpaid</div>
-              <div className="text-xl font-bold text-red-600">{invoices.unpaid_count}</div>
-            </div>
-          </div>
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="invoices-table">
-                <thead>
-                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                    <th className="py-3 px-4 text-left">Invoice #</th>
-                    <th className="py-3 px-4 text-left">Customer</th>
-                    <th className="py-3 px-4 text-right">Amount</th>
-                    <th className="py-3 px-4 text-left">Date</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.invoices?.map((inv, i) => (
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`invoice-row-${i}`}>
-                      <td className="py-3 px-4 font-mono text-sm font-medium text-slate-800">{inv.invoice_number}</td>
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-800">{inv.customer_name}</div>
-                        <div className="text-xs text-slate-400">{inv.description?.substring(0, 40)}</div>
-                      </td>
-                      <td className="py-3 px-4 text-right font-bold text-blue-600">{formatINR(inv.amount)}</td>
-                      <td className="py-3 px-4 text-slate-600">{formatDate(inv.invoice_date)}</td>
-                      <td className="py-3 px-4 text-center">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : inv.status === 'cancelled' ? 'bg-slate-100 text-slate-500' : 'bg-red-50 text-red-700'}`}>
-                          {inv.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => downloadInvoicePDF(inv.invoice_id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download PDF" data-testid={`download-invoice-${i}`}>
-                            <Download size={14} />
-                          </button>
-                          {inv.status === 'unpaid' && (
-                            <button onClick={() => markInvoiceStatus(inv.invoice_id, 'paid')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Mark Paid" data-testid={`mark-paid-${i}`}>
-                              <BadgeCheck size={14} />
-                            </button>
-                          )}
-                          {inv.status === 'paid' && (
-                            <button onClick={() => markInvoiceStatus(inv.invoice_id, 'unpaid')} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Mark Unpaid">
-                              <XCircle size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {(!invoices.invoices || invoices.invoices.length === 0) && (
-                    <tr><td colSpan={6} className="py-8 text-center text-slate-400">No invoices generated yet</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <InvoicesTab
+          invoices={invoices}
+          onGenerateInvoice={() => setShowInvoiceModal(true)}
+          onDownloadPDF={downloadInvoicePDF}
+          onMarkStatus={markInvoiceStatus}
+        />
       )}
 
-      {/* ===== PROSPECTS TAB ===== */}
       {activeTab === 'prospects' && (
-        <div data-testid="prospects-tab">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            {[
-              { label: 'Total', value: prospectStats.total || 0, color: 'text-slate-700' },
-              { label: 'New', value: prospectStats.new || 0, color: 'text-blue-600' },
-              { label: 'Contacted', value: prospectStats.contacted || 0, color: 'text-amber-600' },
-              { label: 'Converted', value: prospectStats.converted || 0, color: 'text-emerald-600' },
-              { label: 'Lost', value: prospectStats.lost || 0, color: 'text-red-600' },
-            ].map(s => (
-              <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs text-slate-500">{s.label}</p>
-                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="space-y-3">
-            {prospects.map(p => (
-              <div key={p.prospect_id} className="bg-white border border-slate-200 rounded-xl p-4" data-testid={`prospect-${p.prospect_id}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <h4 className="font-medium text-slate-900">{p.company_name || p.email}</h4>
-                    <p className="text-xs text-slate-500">{p.email} · {p.contact_person}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <select value={p.status} onChange={e => updateProspectStatus(p.prospect_id, e.target.value)}
-                      className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" data-testid={`prospect-status-${p.prospect_id}`}>
-                      <option value="new">New</option>
-                      <option value="contacted">Contacted</option>
-                      <option value="demo_given">Demo Given</option>
-                      <option value="negotiating">Negotiating</option>
-                      <option value="converted">Converted</option>
-                      <option value="lost">Lost</option>
-                    </select>
-                    {p.status !== 'converted' && p.status !== 'lost' && (
-                      <button onClick={() => { setConvertModal(p.prospect_id); setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 }); }}
-                        className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-green-700 flex items-center gap-1"
-                        data-testid={`convert-${p.prospect_id}`}>
-                        <ArrowRightCircle size={12} /> Convert
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                  <div><span className="text-slate-400">Plan:</span> <span className="ml-1 capitalize">{p.selected_plan || '—'}</span></div>
-                  <div><span className="text-slate-400">Demo:</span> <span className={`ml-1 ${p.demo_completed ? 'text-green-600' : p.demo_requested ? 'text-amber-600' : 'text-slate-400'}`}>{p.demo_completed ? 'Done' : p.demo_requested ? 'Requested' : '—'}</span></div>
-                  <div><span className="text-slate-400">Phone:</span> <span className="ml-1">{p.phone || '—'}</span></div>
-                  <div><span className="text-slate-400">Date:</span> <span className="ml-1">{formatDate(p.created_at)}</span></div>
-                </div>
-              </div>
-            ))}
-            {prospects.length === 0 && <p className="text-center text-slate-400 py-8">No prospects yet</p>}
-          </div>
-        </div>
+        <ProspectsTab
+          prospects={prospects}
+          prospectStats={prospectStats}
+          onUpdateStatus={updateProspectStatus}
+          onConvert={(p) => {
+            setConvertModal(p.prospect_id);
+            setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 });
+          }}
+        />
       )}
 
-      {/* ===== CUSTOMER HEALTH TAB ===== */}
       {activeTab === 'health' && (
-        <div data-testid="health-tab">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Customer Health Monitor</h2>
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="health-table">
-                <thead>
-                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                    <th className="py-3 px-4 text-left">Customer</th>
-                    <th className="py-3 px-4 text-center">Health</th>
-                    <th className="py-3 px-4 text-left">Last Sync</th>
-                    <th className="py-3 px-4 text-right">Items</th>
-                    <th className="py-3 px-4 text-right">Sales</th>
-                    <th className="py-3 px-4 text-right">Customers</th>
-                    <th className="py-3 px-4 text-right">Paid</th>
-                    <th className="py-3 px-4 text-left">Sub Expires</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {healthData.map((h, i) => {
-                    const statusColors = { active: 'bg-emerald-50 text-emerald-700', moderate: 'bg-amber-50 text-amber-700', inactive: 'bg-red-50 text-red-700', never_synced: 'bg-slate-100 text-slate-500' };
-                    // Build "5 emp (3 sm · 2 dp)" style breakdown
-                    const sb = h.staff_breakdown || {};
-                    const sbBits = [
-                      sb.salesman ? `${sb.salesman} sm` : null,
-                      sb.dispatch ? `${sb.dispatch} dp` : null,
-                      sb.employee ? `${sb.employee} emp` : null,
-                    ].filter(Boolean).join(' · ');
-                    const empLabel = sbBits ? `${h.employee_count} (${sbBits})` : `${h.employee_count}`;
-                    return (
-                      <tr key={i} className="border-t border-slate-100 hover:bg-slate-50" data-testid={`health-row-${i}`}>
-                        <td className="py-3 px-4">
-                          <div className="font-medium text-slate-800">{h.name || h.username}</div>
-                          <div className="text-xs text-slate-400" title={`${h.employee_count} non-admin users · ${sbBits || 'none'}`}>
-                            {h.plan} · {empLabel} emp · {h.companies?.join(', ') || '—'}
-                          </div>
-                          {/* Module-coverage chips — quick read on which modules a tenant actually uses */}
-                          {(h.beat_runs || h.salesman_orders || h.dispatch_cards) ? (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {h.beat_runs > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded">Beat {h.beat_runs}</span>}
-                              {h.salesman_orders > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">Orders {h.salesman_orders}</span>}
-                              {h.dispatch_cards > 0 && <span className="text-[9px] px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">Dispatch {h.dispatch_cards}</span>}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${statusColors[h.health_status] || 'bg-slate-100 text-slate-500'}`}>
-                            {h.health_status?.replace('_', ' ')}
-                          </span>
-                          {h.agent_version && (
-                            <div className="text-[9px] text-slate-400 mt-0.5" title="Tally desktop agent version last seen">
-                              {h.agent_version}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-slate-600 text-xs">
-                          {h.last_sync ? (
-                            <div>
-                              <div>{formatDate(h.last_sync)}</div>
-                              <div className="text-slate-400">{h.days_since_sync === 0 ? 'Today' : `${h.days_since_sync}d ago`}</div>
-                            </div>
-                          ) : 'Never'}
-                        </td>
-                        <td className="py-3 px-4 text-right text-slate-700">{h.inventory_items?.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right text-slate-700">{h.sales_vouchers?.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right text-slate-700">{h.customers}</td>
-                        <td className="py-3 px-4 text-right font-medium text-emerald-600">{formatINR(h.total_paid)}</td>
-                        <td className="py-3 px-4 text-slate-600 text-xs">{formatDate(h.subscription_expires)}<br/><span className={h.days_left < 0 ? 'text-red-600 font-bold' : h.days_left <= 30 ? 'text-amber-600' : 'text-slate-400'}>{h.days_left < 0 ? `Exp ${Math.abs(h.days_left)}d` : `${h.days_left}d left`}</span></td>
-                        <td className="py-3 px-4 text-center">
-                          <button onClick={() => openLedger(h.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Ledger">
-                            <FileText size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <HealthTab healthData={healthData} onOpenLedger={openLedger} />
       )}
 
-      {/* ===== ADMINS TAB ===== */}
       {activeTab === 'admins' && (
-        <div data-testid="admins-tab">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-slate-900">Admin Management</h2>
-            <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5" data-testid="create-admin-btn">
-              <Plus size={14} /> New Admin
-            </button>
-          </div>
-          <div className="space-y-4">
-            {admins.map(admin => {
-              const subMonths = admin.subscription_months || 12;
-              const subStart = admin.subscription_start || admin.created_at || '';
-              let subEndDate = '—'; let subActive = false;
-              if (subStart) { const s = new Date(subStart); const e = new Date(s); e.setMonth(e.getMonth() + subMonths); subEndDate = formatDate(e.toISOString()); subActive = e > new Date(); }
-              return (
-                <div key={admin.username} className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-testid={`admin-card-${admin.username}`}>
-                  <div className="p-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)}>
-                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${admin.active ? 'bg-green-500' : 'bg-red-400'}`} />
-                        <div className="min-w-0">
-                          <div className="font-semibold text-slate-900">{admin.name || admin.username}</div>
-                          <div className="text-xs text-slate-500">@{admin.username} · {admin.employee_count || 0}/{admin.max_employees || 20} employees</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${admin.plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : admin.plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{admin.plan || 'enterprise'}</span>
-                        <button onClick={e => { e.stopPropagation(); toggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`} data-testid={`toggle-active-${admin.username}`}>
-                          {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} {admin.active ? 'Active' : 'Inactive'}
-                        </button>
-                        <button onClick={e => { e.stopPropagation(); openEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`edit-admin-${admin.username}`}><Pencil size={14} /></button>
-                        <button onClick={e => { e.stopPropagation(); setShowResetModal(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`reset-pwd-${admin.username}`}><Key size={14} /></button>
-                        <button onClick={e => { e.stopPropagation(); deleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" data-testid={`delete-admin-${admin.username}`}><Trash2 size={14} /></button>
-                        <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
-                          {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  {expandedAdmin === admin.username && (
-                    <div className="border-t border-slate-100 p-5 bg-slate-50 space-y-4">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div><span className="text-slate-400 text-xs">Companies:</span><div className="font-medium">{admin.companies?.join(', ') || 'None'}</div></div>
-                        <div><span className="text-slate-400 text-xs">Subscription:</span><div className="font-medium">{formatDate(subStart)} → {subEndDate}</div></div>
-                        <div><span className="text-slate-400 text-xs">Billing:</span><div className="font-medium capitalize">{admin.billing_cycle || 'annual'} · {subMonths}mo</div></div>
-                        <div><span className="text-slate-400 text-xs">Features:</span><div className="font-medium">{admin.features?.length || 0}/{ALL_FEATURES.length}</div></div>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {ALL_FEATURES.map(f => (
-                          <span key={f.id} className={`text-[10px] px-2 py-0.5 rounded ${admin.features?.includes(f.id) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{f.label}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <AdminsTab
+          admins={admins}
+          expandedAdmin={expandedAdmin}
+          setExpandedAdmin={setExpandedAdmin}
+          onCreateAdmin={() => setShowCreateModal(true)}
+          onToggleActive={toggleActive}
+          onEditAdmin={openEditAdmin}
+          onResetPassword={(u) => setShowResetModal(u)}
+          onDeleteAdmin={deleteAdmin}
+        />
       )}
 
-      {/* ===== RENEWALS TAB ===== */}
       {activeTab === 'renewals' && (
-        <div data-testid="renewals-tab">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            {[
-              { label: 'Pending', value: renewals.stats?.pending_renewals || 0, color: 'text-amber-600' },
-              { label: 'Near Expiry', value: renewals.stats?.near_expiry_count || 0, color: 'text-orange-600' },
-              { label: 'Expired', value: renewals.stats?.expired_count || 0, color: 'text-red-600' },
-              { label: 'Total Requests', value: renewals.stats?.total_requests || 0, color: 'text-slate-700' },
-            ].map(s => (
-              <div key={s.label} className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs text-slate-500">{s.label}</p>
-                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-              </div>
-            ))}
-          </div>
-          {renewals.expired?.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-1.5"><AlertTriangle size={14} /> Expired</h3>
-              {renewals.expired.map(u => (
-                <div key={u.username} className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between mb-2">
-                  <div>
-                    <p className="font-medium text-red-900">{u.name || u.username}</p>
-                    <p className="text-xs text-red-700">{u.username} | {u.plan?.toUpperCase()}</p>
-                    <p className="text-xs text-red-600 mt-1">Expired {Math.abs(u.days_left)} days ago</p>
-                  </div>
-                  <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700" data-testid={`renew-${u.username}`}>Renew</button>
-                </div>
-              ))}
-            </div>
-          )}
-          {renewals.near_expiry?.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-1.5"><Clock size={14} /> Expiring Soon</h3>
-              {renewals.near_expiry.map(u => (
-                <div key={u.username} className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between mb-2">
-                  <div>
-                    <p className="font-medium text-amber-900">{u.name || u.username}</p>
-                    <p className="text-xs text-amber-700">{u.username} | {u.plan?.toUpperCase()}</p>
-                    <p className="text-xs text-amber-600 mt-1">{u.days_left} days left</p>
-                  </div>
-                  <button onClick={() => { setProcessModal(u.username); setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' }); }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700">Renew</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <RenewalsTab
+          renewals={renewals}
+          onRenew={(u) => {
+            setProcessModal(u.username);
+            setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' });
+          }}
+        />
       )}
 
-      {/* ===== REFERRALS TAB ===== */}
       {activeTab === 'referrals' && <ReferralManagement token={token} />}
-
-      {/* ===== QUESTIONNAIRES (LEADS) TAB ===== */}
       {activeTab === 'questionnaires' && <QuestionnaireLeads headers={headers} />}
-
-      {/* ===== ACTIVITY TAB ===== */}
       {activeTab === 'activity' && <ActivityLog />}
-
-      {/* ===== BACKUPS TAB ===== */}
       {activeTab === 'backups' && <SuperAdminBackups />}
 
-      {/* ===== STAFF TAB (super_admin only) ===== */}
       {activeTab === 'staff' && isSuperAdmin && (
-        <div data-testid="staff-tab">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Flowra Staff (Control-panel employees)</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Delegate command-center access. Tick the tabs each employee needs — they only see what's enabled.</p>
-            </div>
-            <button onClick={() => setStaffEditing({ _isNew: true, username: '', name: '', password: generateStrongPassword(), features: ['overview'] })}
-              className="px-3 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5"
-              data-testid="staff-new-btn">
-              <UserPlus size={14} /> New Staff
-            </button>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="staff-table">
-                <thead>
-                  <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
-                    <th className="py-3 px-4 text-left">Name / Email</th>
-                    <th className="py-3 px-4 text-left">Tabs Enabled</th>
-                    <th className="py-3 px-4 text-left">Created</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {staffList.length === 0 && (
-                    <tr><td colSpan={5} className="py-12 text-center text-sm text-slate-400">No staff accounts yet. Click "New Staff" to delegate access.</td></tr>
-                  )}
-                  {staffList.map(s => (
-                    <tr key={s.username} className="border-t border-slate-100 hover:bg-slate-50/50" data-testid={`staff-row-${s.username}`}>
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-900">{s.name || s.username}</div>
-                        <div className="text-xs text-slate-500">{s.username}</div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex flex-wrap gap-1">
-                          {(s.staff_features || []).length === 0 && <span className="text-xs text-slate-400">No tabs enabled</span>}
-                          {(s.staff_features || []).map(f => (
-                            <span key={f} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] capitalize">{f.replace(/_/g, ' ')}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-xs text-slate-500">{formatDate(s.created_at)}</td>
-                      <td className="py-3 px-4 text-center">
-                        <button onClick={() => toggleStaffActive(s.username)}
-                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${s.active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
-                          data-testid={`staff-toggle-${s.username}`}>
-                          {s.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-                          {s.active ? 'Active' : 'Disabled'}
-                        </button>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => setStaffEditing({ _isNew: false, username: s.username, name: s.name, features: [...(s.staff_features || [])] })}
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Edit features"
-                            data-testid={`staff-edit-${s.username}`}>
-                            <Pencil size={14} />
-                          </button>
-                          <button onClick={() => setResetStaffPwd({ username: s.username, password: generateStrongPassword() })}
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Reset password"
-                            data-testid={`staff-reset-${s.username}`}>
-                            <Key size={14} />
-                          </button>
-                          <button onClick={() => deleteStaff(s.username)}
-                            className="p-1.5 hover:bg-red-50 rounded text-red-500" title="Delete"
-                            data-testid={`staff-delete-${s.username}`}>
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <StaffTab
+          staffList={staffList}
+          onNewStaff={setStaffEditing}
+          onEditStaff={setStaffEditing}
+          onResetPassword={setResetStaffPwd}
+          onToggleActive={toggleStaffActive}
+          onDeleteStaff={deleteStaff}
+        />
       )}
 
       {/* ===== MODALS ===== */}
