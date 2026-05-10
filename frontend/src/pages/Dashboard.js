@@ -410,9 +410,17 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
         </div>
         <div className="max-h-48 sm:max-h-56 overflow-y-auto divide-y divide-slate-50">
           {[
+            { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Cancel Dispatch Cards', desc: 'Cancel a card up to the Packed lane with a reason; cancelled cards strikethrough until end-of-day, then auto-archive.' },
+            { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Invoice Drift Detection', desc: 'Cards now auto-flag (amber/red badge) when the source Tally invoice is modified or deleted after sync — no silent drift.' },
+            { d: '2026-05-09', tag: 'NEW', tagColor: '#8b5cf6', title: 'Fuzzy Search Everywhere', desc: '"tvs 10" now finds "TVS-10", "TVS(10)", "TVS/10". Spaces and separators (- / ( ) ! : . , & _) ignored across all search boxes.' },
+            { d: '2026-05-08', tag: 'IMPROVE', tagColor: '#0891b2', title: 'SPIP — 12-Month Rolling Window', desc: 'Added rolling 12-month fallback and a "No Movement" bucket for idle items. Aliases included in global search.' },
+            { d: '2026-05-07', tag: 'FIX', tagColor: '#ef4444', title: 'SPIP & YoY Limits Removed', desc: 'Lifted the 5,000-row cap so all items surface in SPIP. Cross-FY YoY sales comparison + forecast tables added.' },
+            { d: '2026-05-05', tag: 'IMPROVE', tagColor: '#0891b2', title: 'Mobile Performance', desc: 'Server-side pagination + render caps for Inventory and Customer CRM. Tally API delay 2s → 0.5s. New compound DB indexes.' },
+            { d: '2026-05-03', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.7', desc: 'Standard price via STANDARDPRICELIST, root-group hierarchy, and item alias (LANGUAGENAME) extraction.' },
+            { d: '2026-05-01', tag: 'FIX', tagColor: '#ef4444', title: 'CA Corner BS & P&L Parity', desc: 'Fixed Assets, Sundry Debtors and Creditors re-mapped via root-group hierarchy. Removed double-counting of Stock-in-Hand.' },
+            { d: '2026-04-28', tag: 'NEW', tagColor: '#8b5cf6', title: 'Beat Run Monthly Report', desc: 'Salesman beat coverage and visit summary, exportable to Excel.' },
             { d: '2026-04-23', tag: 'NEW', tagColor: '#8b5cf6', title: 'Dispatch Terminal', desc: 'Kanban board, LR tracking, document uploads, porter settlement.' },
             { d: '2026-04-16', tag: 'FIX', tagColor: '#ef4444', title: 'Outstanding Calculation Fixed', desc: 'Opening balances per FY and journal voucher party amounts corrected.' },
-            { d: '2026-04-16', tag: 'FIX', tagColor: '#ef4444', title: 'SPIP Analysis Corrected', desc: 'Item name mapping fixed for accurate gap analysis.' },
             { d: '2026-04-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Desktop Agent v9', desc: 'Deletion reconciliation, command queue, dual-schedule syncing.' },
             { d: '2026-04-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'CRM Targets Overhaul', desc: 'Bulk targets, customer removal/reactivation, read-only past FYs.' },
             { d: '2026-04-05', tag: 'NEW', tagColor: '#8b5cf6', title: 'Digital Questionnaire', desc: 'Public customer forms with SuperAdmin leads and Excel export.' },
