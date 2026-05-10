@@ -7,7 +7,8 @@ import {
   Lock, Eye, EyeOff, X, Pencil, Calendar, Clock, Building2,
   UserPlus, Phone, Mail, FileText, ArrowRightCircle, AlertTriangle, Check,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart, Download,
-  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift, Database
+  BarChart3, Wallet, CircleDollarSign, BadgeCheck, XCircle, Gift, Database,
+  Sparkles, Copy
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 import SuperAdminBackups from './SuperAdminBackups';
@@ -40,6 +41,34 @@ const formatDate = (d) => {
   if (!d) return '—';
   const dt = (d.includes && (d.includes('+') || d.includes('Z'))) ? new Date(d) : new Date(d + 'Z');
   return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+};
+
+// Generate a cryptographically-strong 12-char password.
+// Guarantees ≥1 from each set: lower, upper, digit, symbol. Avoids visually
+// ambiguous chars (0, O, l, 1, I) so users can read it from the welcome email.
+const generateStrongPassword = () => {
+  const lower = 'abcdefghijkmnopqrstuvwxyz';     // no l
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';      // no I, O
+  const digit = '23456789';                       // no 0, 1
+  const sym   = '@#$%&*?!';
+  const all = lower + upper + digit + sym;
+  const buf = new Uint32Array(12);
+  (window.crypto || window.msCrypto).getRandomValues(buf);
+  const pick = (set, n) => set.charAt(n % set.length);
+  // Force one from each category in the first 4 slots, fill rest from full alphabet
+  const arr = [
+    pick(lower, buf[0]), pick(upper, buf[1]),
+    pick(digit, buf[2]), pick(sym, buf[3]),
+  ];
+  for (let i = 4; i < 12; i++) arr.push(pick(all, buf[i]));
+  // Fisher–Yates shuffle so the category positions aren't predictable
+  const shuffleBuf = new Uint32Array(arr.length);
+  (window.crypto || window.msCrypto).getRandomValues(shuffleBuf);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = shuffleBuf[i] % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.join('');
 };
 
 const SuperAdminDashboard = ({ token }) => {
@@ -1161,7 +1190,19 @@ const SuperAdminDashboard = ({ token }) => {
             </div>
             <div className="space-y-4">
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Email *</label><input type="email" value={newAdmin.username} onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-email" /></div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Password *</label><input type="text" value={newAdmin.password} onChange={e => setNewAdmin({ ...newAdmin, password: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-password" /></div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
+                <div className="flex gap-2">
+                  <input type="text" value={newAdmin.password} onChange={e => setNewAdmin({ ...newAdmin, password: e.target.value })} className="flex-1 min-w-0 px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono" placeholder="Enter or generate" data-testid="new-admin-password" />
+                  <button type="button" onClick={() => { const p = generateStrongPassword(); setNewAdmin({ ...newAdmin, password: p }); toast.success('Strong password generated'); }} className="flex items-center gap-1 px-3 py-2 text-xs font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 whitespace-nowrap" data-testid="generate-password-btn" title="Generate a 12-character strong password">
+                    <Sparkles size={14}/>Generate
+                  </button>
+                  <button type="button" disabled={!newAdmin.password} onClick={async () => { try { await navigator.clipboard.writeText(newAdmin.password); toast.success('Password copied'); } catch { toast.error('Copy failed'); } }} className="flex items-center gap-1 px-3 py-2 text-xs font-semibold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50" data-testid="copy-password-btn" title="Copy password to clipboard">
+                    <Copy size={14}/>
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Tip: this password is included in the welcome email sent to the new admin. Ask them to change it after first login.</p>
+              </div>
               <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input type="text" value={newAdmin.name} onChange={e => setNewAdmin({ ...newAdmin, name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-name" /></div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
