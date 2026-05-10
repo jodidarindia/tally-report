@@ -57,20 +57,47 @@ async def get_cash_flow(request: Request, fy: str = ""):
         total_income = pl.get("total_income", 0) if pl else 0
         total_expense = pl.get("total_expense", 0) if pl else 0
 
-        # Get bank/cash ledgers — agent stores discriminator under `category`,
-        # legacy/manual rows may use `ledger_type`. Honor either.
-        bank_cash = await db.bank_cash_ledgers.find(q, {"_id": 0}).to_list(100)
-        def _kind(l):
-            return l.get("category") or l.get("ledger_type") or ""
-        cash_ledgers = [l for l in bank_cash if _kind(l) == "cash"]
-        bank_ledgers = [l for l in bank_cash if _kind(l) == "bank"]
-        od_ledgers   = [l for l in bank_cash if _kind(l) == "bank_od"]
+        # Get bank/cash ledgers — read directly from `all_ledgers` (which the
+        # current sync agent populates) instead of the legacy
+        # `bank_cash_ledgers` collection (which v9.x doesn't fill — was
+        # leaving every Cash Flow figure at 0). Discriminate by parent_group
+        # so we cover sub-group variations (e.g. "Cash-in-Hand", "Bank
+        # Accounts", "Bank OD A/c").
+        cash_groups = {"cash-in-hand"}
+        bank_groups = {"bank accounts"}
+        # Bank OD / CC are LIABILITIES — kept separate so they don't inflate
+        # the asset cash position.
+        od_groups   = {"bank od a/c", "bank oa/c", "bank o/d", "bank o.d a/c"}
+
+        all_for_cash = await db.all_ledgers.find(
+            q,
+            {"_id": 0, "ledger_name": 1, "parent_group": 1, "root_group": 1,
+             "opening_balance": 1, "closing_balance": 1, "category": 1, "ledger_type": 1},
+        ).to_list(5000)
+
+        def _grp(l):
+            return (l.get("parent_group") or "").strip().lower()
+
+        cash_ledgers = [l for l in all_for_cash if _grp(l) in cash_groups]
+        bank_ledgers = [l for l in all_for_cash if _grp(l) in bank_groups]
+        od_ledgers   = [l for l in all_for_cash if _grp(l) in od_groups]
+
+        # Fallback: legacy bank_cash_ledgers (manual entries / pre-sync data)
+        # — only used if `all_ledgers` had nothing categorised, so we never
+        # double-count.
+        if not (cash_ledgers or bank_ledgers or od_ledgers):
+            legacy = await db.bank_cash_ledgers.find(q, {"_id": 0}).to_list(100)
+            def _kind(l):
+                return l.get("category") or l.get("ledger_type") or ""
+            cash_ledgers = [l for l in legacy if _kind(l) == "cash"]
+            bank_ledgers = [l for l in legacy if _kind(l) == "bank"]
+            od_ledgers   = [l for l in legacy if _kind(l) == "bank_od"]
 
         cash_opening = sum(abs(l.get("opening_balance", 0)) for l in cash_ledgers)
         cash_closing = sum(abs(l.get("closing_balance", 0)) for l in cash_ledgers)
         bank_opening = sum(abs(l.get("opening_balance", 0)) for l in bank_ledgers)
         bank_closing = sum(abs(l.get("closing_balance", 0)) for l in bank_ledgers)
-        od_balance = sum(l.get("closing_balance", 0) for l in od_ledgers)
+        od_balance = sum(abs(l.get("closing_balance", 0)) for l in od_ledgers)
 
         # Get voucher data for the FY
         receipts = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
@@ -159,23 +186,27 @@ async def get_cash_flow(request: Request, fy: str = ""):
                 #      negative = you owe, positive = extra deposit / overpaid loan).
                 {
                     "name": l.get("ledger_name", ""),
-                    "type": l.get("category", l.get("ledger_type", "")),
+                    "type": kind,
                     "opening": round(
                         -1 * l.get("opening_balance", 0)
-                        if l.get("category") == "bank_od"
-                        else l.get("opening_balance", 0),
+                        if kind == "bank_od"
+                        else abs(l.get("opening_balance", 0)),
                         2,
                     ),
                     "closing": round(
                         -1 * l.get("closing_balance", 0)
-                        if l.get("category") == "bank_od"
-                        else l.get("closing_balance", 0),
+                        if kind == "bank_od"
+                        else abs(l.get("closing_balance", 0)),
                         2,
                     ),
                     "bank_name": l.get("bank_name", ""),
                     "account_number": l.get("account_number", ""),
                 }
-                for l in bank_cash
+                for (l, kind) in (
+                    [(x, "cash") for x in cash_ledgers]
+                    + [(x, "bank") for x in bank_ledgers]
+                    + [(x, "bank_od") for x in od_ledgers]
+                )
             ],
         })
     except Exception as e:

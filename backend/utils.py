@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List
 from fastapi import WebSocket
 import json
@@ -217,10 +217,27 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
 
     sales = await db_ref.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
     receipts_raw = await db_ref.receipt_vouchers.find(q, {"_id": 0}).to_list(20000)
-    # The receipt_vouchers collection actually contains both receipts (CR party = pays down OS)
-    # and payment vouchers (DR party — e.g., cheque-bounce refund). Treat them separately so
-    # the customer's overdue isn't reduced by money we paid TO them.
-    receipts = [v for v in receipts_raw if (v.get("voucher_type") or "").strip().lower() != "payment"]
+    # The receipt_vouchers collection actually contains ALL bank/cash movements
+    # for a party — receipts (CR party, reduce outstanding) AND payments
+    # (DR party, e.g., refunds, bounce-cheque returns, commissions paid).
+    # Tally voucher types we've observed:
+    #   • app cash receipts / bank receipt / cash receipt / receipt → RECEIPT
+    #   • bank payment / cash payment / payment → PAYMENT (we paid the party — must NOT reduce overdue)
+    #   • cheque return voucher / dishonour → already reverses a prior receipt — exclude
+    # Pre-fix bug: only `voucher_type == "payment"` was excluded, so ~2.7k
+    # `bank payment` entries (₹7+ crore) were silently subtracted from the
+    # customer's overdue balance — driving most overdue customers to zero.
+    def _is_real_receipt(v):
+        t = (v.get("voucher_type") or "").strip().lower()
+        if not t:
+            # Empty type → trust it as a receipt (legacy behaviour)
+            return True
+        if "payment" in t:
+            return False                       # any *payment voucher
+        if "return" in t or "dishonour" in t or "bounce" in t:
+            return False                       # cheque return / dishonour
+        return True                             # everything else (incl. *receipt)
+    receipts = [v for v in receipts_raw if _is_real_receipt(v)]
     credit_notes = await db_ref.credit_notes.find(q, {"_id": 0}).to_list(20000)
     journals = await db_ref.journal_vouchers.find(q, {"_id": 0}).to_list(20000)
     synced_customers = await db_ref.customers.find(q, {"_id": 0}).to_list(5000)
@@ -389,9 +406,96 @@ async def compute_overdue_digest(db_ref, tenant_id=None, company_id=None, branch
         c["total_overdue"] = round(c["total_overdue"], 2)
 
     overdue_invoices.sort(key=lambda x: x["days_overdue"], reverse=True)
-    customer_summary = sorted(customer_overdue.values(), key=lambda x: x["total_overdue"], reverse=True)
 
-    total_overdue = round(sum(inv["overdue_amount"] for inv in overdue_invoices), 2)
+    # ── TALLY-ALIGNED AGING (Feb 2026 fix) ──────────────────────────────
+    # The voucher-by-voucher reconstruction above misses any unpaid
+    # invoices from PRIOR financial years (those exist as
+    # `customers.opening_balance` in the synced master, not as raw vouchers
+    # in our DB). Tally's aging report covers BOTH — that's why the
+    # screenshot shows ₹65 lakh / 199 customers when our app showed only
+    # ₹1.7L / 15 customers.
+    #
+    # Tally-aligned algorithm using `customers.outstanding_amount` as the
+    # source of truth, with FIFO assumption (receipts pay oldest first):
+    #   recent_unpaid_cap = Σ sales_vouchers ≤ 55 days for this customer
+    #   overdue           = max(0, outstanding_amount - recent_unpaid_cap)
+    # If the customer has no recent sales, ALL of their outstanding (incl.
+    # opening balance) is overdue — exactly what Tally's aging shows.
+    cutoff_date = today - timedelta(days=OVERDUE_THRESHOLD_DAYS)
+    cutoff_str = cutoff_date.strftime("%Y-%m-%d")
+
+    recent_invoice_sum = {}   # party_lower → Σ sales within 55d
+    recent_receipt_sum = {}   # party_lower → Σ receipts within 55d (real-receipts filter)
+    customer_oldest_inv = {}  # party_lower → oldest sales date (any age)
+    for v in sales:
+        party = safe_str(v.get("party_name")).strip()
+        if not party:
+            continue
+        v_date_str = v.get("voucher_date") or v.get("date") or ""
+        amt = safe_num(v.get("total_amount"))
+        if amt <= 0:
+            continue
+        if v_date_str and v_date_str >= cutoff_str:
+            recent_invoice_sum[party.lower()] = recent_invoice_sum.get(party.lower(), 0) + amt
+        if v_date_str:
+            cur_oldest = customer_oldest_inv.get(party.lower())
+            if cur_oldest is None or v_date_str < cur_oldest:
+                customer_oldest_inv[party.lower()] = v_date_str
+    for r in receipts:  # already filtered by _is_real_receipt above
+        party = safe_str(r.get("party_name")).strip()
+        if not party:
+            continue
+        v_date_str = r.get("voucher_date") or r.get("date") or ""
+        if v_date_str and v_date_str >= cutoff_str:
+            recent_receipt_sum[party.lower()] = recent_receipt_sum.get(party.lower(), 0) + safe_num(r.get("amount"))
+
+    customer_summary = []
+    for sc in synced_customers:
+        name = (sc.get("customer_name") or "").strip()
+        if not name:
+            continue
+        outstanding = safe_num(sc.get("outstanding_amount"))
+        if outstanding <= 0.5:
+            continue
+        # FIFO assumption: receipts pay oldest first. So the "still recent
+        # and possibly unpaid" cap = recent_invoices − recent_receipts
+        # (lower bound when no bill allocations are available).
+        recent_inv = recent_invoice_sum.get(name.lower(), 0)
+        recent_recpt = recent_receipt_sum.get(name.lower(), 0)
+        recent_unpaid_cap = max(0, recent_inv - recent_recpt)
+        overdue_amt = outstanding - recent_unpaid_cap
+        if overdue_amt <= 0.5:
+            continue
+
+        # Oldest-days: prefer the actual oldest unpaid invoice date in DB.
+        # If no current-FY invoices exist (entire dues = opening balance),
+        # mark as 365+ days (proxy for "previous FY balance").
+        oldest_days = 365
+        oldest_date_str = customer_oldest_inv.get(name.lower())
+        if oldest_date_str:
+            try:
+                parts = oldest_date_str.split("-")
+                if len(parts) == 3:
+                    od = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+                    oldest_days = max(oldest_days if recent_unpaid_cap >= outstanding else 0,
+                                       (today - od).days)
+            except Exception:
+                pass
+
+        customer_summary.append({
+            "customer_name": name,
+            "phone": sc.get("phone", ""),
+            "total_overdue": round(overdue_amt, 2),
+            "invoice_count": 0,  # bill-level reconstruction unavailable here
+            "oldest_days": oldest_days,
+        })
+
+    customer_summary.sort(key=lambda c: c["total_overdue"], reverse=True)
+
+    # Total overdue from the Tally-aligned customer-level aging — this is
+    # the headline number the dashboard surfaces. The voucher-level list
+    # below is kept for drill-down when bill-allocations ARE available.
+    total_overdue = round(sum(c["total_overdue"] for c in customer_summary), 2)
 
     digest = {
         "computed_at": datetime.now(timezone.utc).isoformat(),
