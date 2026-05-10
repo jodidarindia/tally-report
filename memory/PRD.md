@@ -831,3 +831,30 @@ if '/' in s:
 - `/app/backend/tests/test_iteration86_agent_v988_rate_parse.py` — 9/9 passing (unit + end-to-end XML fixture mirroring the user's data).
 
 **User action required**: Re-download `flowra-desktop-agent.py` from the agent download link, replace the existing copy on the Tally machine, and run a fresh sync. After sync, the Inventory page "Sale Price" column should switch from slate **"Last sold ₹X"** to green **"Tally master ₹X"** for every item that has a Standard Selling Rate set in Tally.
+
+## CRITICAL — Salesman Role Privilege Escalation (Feb 2026 — FIXED)
+**P0 security regression** — A user logged in as `salesman` role and clicking the "Salesman" sidebar item was shown the **admin-only Salesman Performance page** revealing every other salesman's targets, customer mapping, achieved revenue, and contact details.
+
+### Root cause
+In `/app/frontend/src/components/PageRenderer.js`, the switch statement had **two `case 'salesman':` branches**. JavaScript switches match the first case — the early case unconditionally rendered `<SalesmanPerformance>`, making the role guard in the second case dead code.
+
+### Fix — defense in depth (2 layers)
+1. **Frontend**: Removed the duplicate case. The single remaining `case 'salesman'` checks `user.role === 'salesman'` and routes to `<SalesmanOrderApp>` instead.
+2. **Backend** (NEW): Added `_require_admin()` helper in `/app/backend/routes/salesman.py` and applied it to ALL admin-only endpoints:
+   - `GET /api/salesman/master` (auto-create + listing)
+   - `POST /api/salesman/master`
+   - `DELETE /api/salesman/master/{name}`
+   - `GET /api/salesman/performance`
+   - `GET /api/salesman/performance-detailed`
+   - `GET /api/salesman/customer-ownership`
+   - `GET /api/salesman/export`
+   Salesman role now gets `Forbidden: admin role required` on all of these regardless of how they reach the API.
+
+### Tests
+- `/app/backend/tests/test_iteration87_salesman_role_security.py` — passing. Verifies salesman is blocked from all 4 admin GETs + POST + DELETE, AND that admin can still use them, AND that salesman's own ordering app endpoints still work.
+
+### Last sync stamp for Salesman & Dispatch logins (Feb 2026 — NEW)
+Salesmen and dispatch employees don't have a Dashboard. Upgraded the navbar (`/app/frontend/src/components/AppNavbar.js`) sync indicator from a static "Synced/No sync" label to a relative-time stamp ("Synced 5m ago" / "Synced 2h ago" / "Synced 3d ago") with full IST timestamp on hover. Visible on every page for every authenticated role.
+
+### Sync progress UI gate (Feb 2026 — NEW)
+`<SyncStatusBar>` (live progress) on Dashboard now renders ONLY for `user.role === 'admin'`. Non-admin roles see only the static last-sync stamp in the navbar. Also skipped the WS subscription itself for non-admins (saves one backend connection per shop-floor login).

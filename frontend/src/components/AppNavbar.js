@@ -83,9 +83,32 @@ const AppNavbar = ({
               {fyOptions.map(fy => <option key={fy} value={fy}>FY {fy}</option>)}
             </select>
 
-            <div className="flex items-center gap-1.5" data-testid="sync-indicator">
-              <RefreshCw size={12} className={`${syncStatus ? 'text-green-500' : 'text-slate-300'}`} />
-              <span className="text-[10px] text-slate-400 hidden sm:inline">{syncStatus?.last_sync ? 'Synced' : 'No sync'}</span>
+            <div className="flex items-center gap-1.5" data-testid="sync-indicator" title={(() => {
+              const ls = syncStatus?.last_sync;
+              if (!ls) return 'No sync yet — desktop agent has not run';
+              try {
+                const d = (ls.includes('+') || ls.includes('Z')) ? new Date(ls) : new Date(ls + 'Z');
+                return `Last synced: ${d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+              } catch { return 'Last sync time unavailable'; }
+            })()}>
+              <RefreshCw size={12} className={`${syncStatus?.last_sync ? 'text-green-500' : 'text-slate-300'}`} />
+              <span className="text-[10px] text-slate-500 hidden sm:inline" data-testid="sync-stamp">
+                {(() => {
+                  const ls = syncStatus?.last_sync;
+                  if (!ls) return 'No sync';
+                  try {
+                    const d = (ls.includes('+') || ls.includes('Z')) ? new Date(ls) : new Date(ls + 'Z');
+                    const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+                    if (diffMin < 1) return 'Synced just now';
+                    if (diffMin < 60) return `Synced ${diffMin}m ago`;
+                    const diffHr = Math.floor(diffMin / 60);
+                    if (diffHr < 24) return `Synced ${diffHr}h ago`;
+                    const diffDay = Math.floor(diffHr / 24);
+                    if (diffDay < 7) return `Synced ${diffDay}d ago`;
+                    return `Synced ${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}`;
+                  } catch { return 'Synced'; }
+                })()}
+              </span>
             </div>
 
             {showBranchToggle && (

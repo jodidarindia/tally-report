@@ -48,7 +48,6 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     case 'crm': return gated('crm', <CustomerCRM selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'analytics': return gated('analytics', <InventoryAnalytics selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'ai-reports': return gated('ai_reports', <EnhancedAIReports selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
-    case 'salesman': return gated('salesman', <SalesmanPerformance selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'sync-history': return gated('sync_history', <SyncHistory companyId={selectedCompany} />);
     case 'setup': return gated('setup', <TallySetup companyId={selectedCompany} />);
     case 'activity': return <ActivityLog token={token} role={user?.role} />;
@@ -64,8 +63,13 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
       return gated('dispatch', <DispatchAdmin selectedFY={selectedFY} companyId={selectedCompany} />);
     }
     case 'salesman': {
-      // Salesmen never see the useradmin Salesman Performance page —
-      // route them to their own ordering app instead.
+      // SECURITY GUARD — Salesmen MUST NEVER see the useradmin
+      // SalesmanPerformance page (which exposes other salesmen's targets,
+      // achievement % and customer counts). Route them to their own
+      // ordering app regardless of how they got here.
+      // NOTE: previously this file had a duplicate `case 'salesman':` above
+      // that always matched first and bypassed this guard — that bug
+      // re-leaked the admin view to salesmen. Do NOT add another match.
       if (user?.role === 'salesman') {
         return <SalesmanOrderApp user={user} selectedFY={selectedFY} companyId={selectedCompany} />;
       }

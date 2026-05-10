@@ -11,9 +11,32 @@ from db import db
 from models import APIResponse
 from utils import safe_num, filter_vouchers_by_fy, get_current_fy, get_previous_fy, is_fy_completed, fy_to_date_range
 from services.tenant_context import get_tenant_context
+from services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Defense-in-depth role guard ─────────────────────────────────────────
+# The Salesman Performance / Manage / Targets surfaces expose every
+# salesman's revenue, customer list and targets. A user with role
+# `salesman` MUST never see another salesman's data — they are scoped to
+# their own ordering app. Even if the frontend leaks a route (as it did
+# in the Feb-2026 PageRenderer dup-case bug), the API must refuse.
+_USER_ADMIN_ROLES = {"admin", "super_admin"}
+
+
+async def _require_admin(request: Request) -> Optional[APIResponse]:
+    """Returns None if caller is admin/super_admin. Otherwise returns a
+    403 APIResponse the route can short-circuit on."""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user.get("role") not in _USER_ADMIN_ROLES:
+            return APIResponse(success=False, error="Forbidden: admin role required")
+        return None
+    except Exception as e:
+        logger.warning(f"_require_admin auth check failed: {e}")
+        return APIResponse(success=False, error="Authentication required")
 
 
 def _build_query(ctx, company_id=None, extra=None):
@@ -92,6 +115,8 @@ def _get_month_label(month_str):
 @router.get("/salesman/master")
 async def get_salesman_master(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         salesmen = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
@@ -157,6 +182,8 @@ async def get_salesman_master(request: Request, fy: Optional[str] = None, compan
 @router.post("/salesman/master")
 async def create_salesman(request: Request):
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         body = await request.json()
         ctx = await get_tenant_context(request)
         salesman_name = body.get("salesman_name", "").strip()
@@ -287,6 +314,8 @@ async def get_customer_ownership(request: Request, fy: Optional[str] = None, com
     (and show which salesman currently owns each).
     """
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         ctx = await get_tenant_context(request)
         tq = _build_query(ctx, company_id)
         target_fy = fy or get_current_fy()
@@ -309,6 +338,8 @@ async def get_customer_ownership(request: Request, fy: Optional[str] = None, com
 @router.delete("/salesman/master/{salesman_name}")
 async def delete_salesman(salesman_name: str, request: Request):
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         ctx = await get_tenant_context(request)
         tq = _build_query(ctx)
         result = await db.salesman_master.delete_one({**tq, "salesman_name": salesman_name})
@@ -326,6 +357,8 @@ async def delete_salesman(salesman_name: str, request: Request):
 @router.get("/salesman/performance")
 async def get_salesman_performance(request: Request, fy: Optional[str] = None, company_id: Optional[str] = None):
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         target_fy = fy or get_current_fy()
@@ -402,6 +435,8 @@ async def get_salesman_performance_detailed(
 ):
     """Performance breakdown by monthly/quarterly/annual per salesman per customer."""
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         target_fy = fy or get_current_fy()
@@ -592,6 +627,8 @@ async def export_salesman_performance(
 ):
     """Export a salesman's customer-wise performance to Excel."""
     try:
+        denied = await _require_admin(request)
+        if denied: return denied
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
