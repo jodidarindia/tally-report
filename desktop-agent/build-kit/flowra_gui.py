@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.10"
+APP_VERSION = "v9.8.11"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -320,6 +320,62 @@ def fetch_tally_companies(host: str, port: str | int) -> list[str]:
         return []
 
 
+def fetch_tally_fys(host: str, port: str | int) -> list[str]:
+    """Ask Tally for company BOOKSFROM date → generate FY list up to current.
+    Falls back to last 5 FYs if Tally is unreachable or returns no date.
+
+    Returns FY strings like '2024-25', '2025-26', '2026-27'.
+    """
+    import requests
+    from datetime import date as _date, datetime as _dt
+    xml = (
+        '<ENVELOPE><HEADER><VERSION>1</VERSION>'
+        '<TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>'
+        '<ID>FlowraFYList</ID></HEADER><BODY><DESC>'
+        '<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
+        '</STATICVARIABLES><TDL><TDLMESSAGE>'
+        '<COLLECTION NAME="FlowraFYList" ISMODIFY="No">'
+        '<TYPE>Company</TYPE><FETCH>NAME, BOOKSFROM, STARTINGFROM</FETCH>'
+        '</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>'
+    )
+    today = _date.today()
+    current_start = today.year if today.month >= 4 else today.year - 1
+    fy_start_year = None
+    try:
+        r = requests.post(f"http://{host}:{port}",
+                          data=xml.encode("utf-8"),
+                          headers={"Content-Type": "application/xml"},
+                          timeout=5)
+        if r.status_code == 200:
+            import re as _re
+            for tag in ("BOOKSFROM", "STARTINGFROM"):
+                for m in _re.finditer(fr"<{tag}[^>]*>(\d{{8}})</{tag}>", r.text):
+                    dt = _dt.strptime(m.group(1), "%Y%m%d")
+                    yr = dt.year if dt.month >= 4 else dt.year - 1
+                    if fy_start_year is None or yr < fy_start_year:
+                        fy_start_year = yr
+                if fy_start_year is not None:
+                    break
+    except Exception:
+        pass
+
+    if fy_start_year is None:
+        # Fallback: last 5 FYs.
+        fy_start_year = current_start - 4
+
+    fys = []
+    for y in range(fy_start_year, current_start + 1):
+        fys.append(f"{y}-{str(y + 1)[-2:]}")
+    return fys
+
+
+def current_fy_string() -> str:
+    from datetime import date as _date
+    today = _date.today()
+    y = today.year if today.month >= 4 else today.year - 1
+    return f"{y}-{str(y + 1)[-2:]}"
+
+
 # ── Main GUI ─────────────────────────────────────────────────────────────
 class FlowraAgentGUI:
     def __init__(self, root: tk.Tk, start_minimized: bool = False):
@@ -499,86 +555,203 @@ class FlowraAgentGUI:
         self._schedule_indicator_refresh()
 
     def _build_settings_tab(self, nb: ttk.Notebook):
-        f = ttk.Frame(nb, padding=20)
-        nb.add(f, text="  Settings  ")
+        # Use ttk for native Windows look-and-feel.
+        outer = ttk.Frame(nb, padding=(20, 18))
+        nb.add(outer, text="  Settings  ")
 
-        rows = [
-            ("Login Email",             "email",                  "you@company.com",                False),
-            ("Password",                "password",               "",                                True),
-            ("Tally Host",              "tally_host",             "localhost",                       False),
-            ("Tally Port",              "tally_port",             "9000",                            False),
-            ("Sync Interval (minutes)", "sync_interval_minutes",  "20",                              False),
-            ("FLOWRA Server URL (advanced)", "backend_url",       DEFAULT_BACKEND_URL,               False),
-        ]
-        self.entries: dict[str, tk.Entry] = {}
-        for i, (label, key, placeholder, is_secret) in enumerate(rows):
-            tk.Label(f, text=label, fg="#334155", bg="#FFFFFF",
-                     font=("Segoe UI", 10)).grid(row=i, column=0, sticky="w",
-                                                  pady=8, padx=(0, 12))
-            e = tk.Entry(f, font=("Segoe UI", 10), width=52,
-                         show="•" if is_secret else "")
+        # Force the native "vista" / "xpnative" theme on Windows so buttons
+        # and entries look like standard Windows controls.
+        try:
+            ttk.Style().theme_use("vista")
+        except Exception:
+            pass
+
+        # ── Section 1: Login ────────────────────────────────────────────
+        sec1 = ttk.LabelFrame(outer, text="  1. FLOWRA Login  ", padding=14)
+        sec1.pack(fill="x", pady=(0, 12))
+        self.entries: dict[str, ttk.Entry] = {}
+
+        def add_entry(parent, row, label, key, default="", secret=False, width=46):
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w",
+                                                padx=(0, 12), pady=6)
+            e = ttk.Entry(parent, width=width, show="•" if secret else "")
             stored = self.config.get(key)
-            if stored:
-                value = stored
-            elif is_secret:
-                value = ""
-            else:
-                value = placeholder
-            e.insert(0, str(value))
-            e.grid(row=i, column=1, sticky="w", pady=8, columnspan=2)
+            e.insert(0, stored if stored else ("" if secret else default))
+            e.grid(row=row, column=1, sticky="w", pady=6)
             self.entries[key] = e
 
-        # Companies row — fetched live from Tally with the "Detect" button
-        row_idx = len(rows)
-        tk.Label(f, text="Tally Company", fg="#334155", bg="#FFFFFF",
-                 font=("Segoe UI", 10)).grid(row=row_idx, column=0, sticky="w",
-                                              pady=8, padx=(0, 12))
+        add_entry(sec1, 0, "Login Email",  "email",    "you@company.com")
+        add_entry(sec1, 1, "Password",     "password", "", secret=True)
+
+        # ── Section 2: Tally Connection ────────────────────────────────
+        sec2 = ttk.LabelFrame(outer, text="  2. Tally Connection  ", padding=14)
+        sec2.pack(fill="x", pady=(0, 12))
+        add_entry(sec2, 0, "Tally Host",  "tally_host", "localhost", width=20)
+        add_entry(sec2, 1, "Tally Port",  "tally_port", "9000",       width=20)
+
+        # Tally Company
+        ttk.Label(sec2, text="Tally Company").grid(row=2, column=0, sticky="w",
+                                                     padx=(0, 12), pady=(10, 6))
         self.company_var = tk.StringVar(value=self.config.get("company_name", ""))
-        self.company_combo = ttk.Combobox(f, textvariable=self.company_var,
-                                          font=("Segoe UI", 10), width=40, state="readonly")
-        self.company_combo.grid(row=row_idx, column=1, sticky="w", pady=8)
-        tk.Button(f, text="🔍 Detect", command=self._detect_companies,
-                  bg="#F1F5F9", fg="#0F172A", relief="flat",
-                  font=("Segoe UI", 9, "bold"),
-                  padx=12, pady=4, cursor="hand2").grid(row=row_idx, column=2,
-                                                         sticky="w", padx=(8, 0))
-        # Seed the dropdown from cached list if available
+        self.company_combo = ttk.Combobox(sec2, textvariable=self.company_var,
+                                          width=44, state="readonly")
+        self.company_combo.grid(row=2, column=1, sticky="w", pady=(10, 6))
+        ttk.Button(sec2, text="🔍  Detect from Tally",
+                   command=self._detect_companies).grid(row=2, column=2,
+                                                          padx=(8, 0), pady=(10, 6))
         cached = self.config.get("available_companies") or []
         if cached:
             self.company_combo["values"] = cached
-        row_idx += 1
+        self.company_combo.bind("<<ComboboxSelected>>",
+                                 lambda _e: self._on_company_chosen())
 
-        # Auto-start checkbox
+        # ── Section 3: Starting Financial Year (clickable chips) ───────
+        sec3 = ttk.LabelFrame(outer, text="  3. Starting Financial Year  ",
+                              padding=14)
+        sec3.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            sec3,
+            text=("Click an FY below to choose where to START syncing from. "
+                  "All data from that FY up to the current FY will be uploaded."),
+            wraplength=720, foreground="#475569",
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.fy_chip_frame = ttk.Frame(sec3)
+        self.fy_chip_frame.pack(anchor="w", pady=(2, 4))
+        self.fy_var = tk.StringVar(value=self.config.get("starting_fy", ""))
+        cached_fys = self.config.get("available_fys") or []
+        self._render_fy_chips(cached_fys or [])
+
+        action_row = ttk.Frame(sec3)
+        action_row.pack(anchor="w", pady=(8, 0))
+        ttk.Button(action_row, text="🔄  Detect FYs from Tally",
+                   command=self._detect_fys).pack(side="left")
+        self.fy_status_var = tk.StringVar(
+            value=(f"Starting FY:  {self.fy_var.get()}" if self.fy_var.get()
+                   else "No FY selected yet."))
+        ttk.Label(action_row, textvariable=self.fy_status_var,
+                  foreground="#0F172A", padding=(14, 0)).pack(side="left")
+
+        # ── Section 4: Advanced + integrations ──────────────────────────
+        sec4 = ttk.LabelFrame(outer, text="  4. Advanced  ", padding=14)
+        sec4.pack(fill="x", pady=(0, 12))
+        add_entry(sec4, 0, "Sync Interval (minutes)", "sync_interval_minutes",
+                  "20", width=12)
+        ttk.Label(sec4, text="FLOWRA Server URL").grid(row=1, column=0,
+                                                         sticky="w",
+                                                         padx=(0, 12), pady=6)
+        url_entry = ttk.Entry(sec4, width=56)
+        url_entry.insert(0, self.config.get("backend_url", DEFAULT_BACKEND_URL))
+        url_entry.grid(row=1, column=1, sticky="w", pady=6)
+        self.entries["backend_url"] = url_entry
+        ttk.Label(sec4,
+                  text=("Pre-filled. Only change if you self-host FLOWRA."),
+                  foreground="#94A3B8").grid(row=2, column=1,
+                                              sticky="w", pady=(0, 4))
+
+        # Auto-start + shortcut checkboxes
         self.startup_var = tk.BooleanVar(value=is_startup_registered())
-        tk.Checkbutton(
-            f, text="Start FLOWRA automatically when Windows starts",
-            variable=self.startup_var, command=self._toggle_startup,
-            font=("Segoe UI", 10), bg="#FFFFFF", fg="#0F172A",
-            activebackground="#FFFFFF", anchor="w",
-        ).grid(row=row_idx, column=1, sticky="w", pady=(14, 0), columnspan=2)
-        row_idx += 1
-
-        # Start Menu / Desktop shortcut
+        ttk.Checkbutton(sec4, text="Start FLOWRA automatically when Windows starts",
+                        variable=self.startup_var, command=self._toggle_startup
+                        ).grid(row=3, column=0, columnspan=3, sticky="w",
+                               pady=(12, 0))
         self.shortcut_var = tk.BooleanVar(value=is_start_menu_shortcut_installed())
-        tk.Checkbutton(
-            f, text="Place shortcut in Start Menu and on Desktop",
-            variable=self.shortcut_var, command=self._toggle_shortcut,
-            font=("Segoe UI", 10), bg="#FFFFFF", fg="#0F172A",
-            activebackground="#FFFFFF", anchor="w",
-        ).grid(row=row_idx, column=1, sticky="w", pady=(4, 0), columnspan=2)
+        ttk.Checkbutton(sec4, text="Place shortcut in Start Menu and on Desktop",
+                        variable=self.shortcut_var, command=self._toggle_shortcut
+                        ).grid(row=4, column=0, columnspan=3, sticky="w",
+                               pady=(2, 0))
 
-        tk.Button(f, text="💾  Save Settings", command=self.save_settings,
-                  bg="#2563EB", fg="white", relief="flat",
-                  font=("Segoe UI", 10, "bold"),
-                  padx=20, pady=8, cursor="hand2").grid(
-            row=row_idx + 1, column=1, sticky="w", pady=(16, 0))
+        # ── Save button bar ─────────────────────────────────────────────
+        bar = ttk.Frame(outer)
+        bar.pack(fill="x", pady=(8, 0))
+        ttk.Button(bar, text="💾  Save Settings",
+                   command=self.save_settings).pack(side="left")
+        ttk.Button(bar, text="Reset to defaults",
+                   command=self._reset_defaults).pack(side="left", padx=8)
 
-        tk.Label(f, text=("Tip: the FLOWRA Server URL is pre-filled — only "
-                          "change it if you are running a self-hosted FLOWRA "
-                          "deployment."),
-                 fg="#94A3B8", bg="#FFFFFF", font=("Segoe UI", 9),
-                 wraplength=620, justify="left").grid(
-            row=row_idx + 2, column=1, sticky="w", pady=(10, 0), columnspan=2)
+    def _render_fy_chips(self, fy_list: list[str]):
+        """Render FY values as a row of selectable ttk.Button chips."""
+        for child in self.fy_chip_frame.winfo_children():
+            child.destroy()
+        self._fy_buttons: dict[str, ttk.Button] = {}
+        if not fy_list:
+            ttk.Label(self.fy_chip_frame,
+                      text=("No FYs detected yet — make sure Tally is open with "
+                            "a company loaded, then click ‘Detect FYs from Tally’."),
+                      foreground="#94A3B8").pack(anchor="w")
+            return
+        cur = current_fy_string()
+        for fy in fy_list:
+            label = f"FY {fy}" + ("  (current)" if fy == cur else "")
+            btn = ttk.Button(
+                self.fy_chip_frame, text=label, width=20,
+                command=lambda v=fy: self._select_fy(v))
+            btn.pack(side="left", padx=4, pady=4)
+            self._fy_buttons[fy] = btn
+        # Re-style the currently-selected one so the user can see it.
+        if self.fy_var.get() in self._fy_buttons:
+            self._select_fy(self.fy_var.get(), persist=False)
+
+    def _select_fy(self, fy: str, persist: bool = True):
+        self.fy_var.set(fy)
+        self.fy_status_var.set(f"Starting FY:  {fy}")
+        # Re-style: selected = primary, others = normal.
+        for v, b in getattr(self, "_fy_buttons", {}).items():
+            try:
+                b.state(["pressed"] if v == fy else ["!pressed"])
+            except Exception:
+                pass
+        if persist:
+            self.config["starting_fy"] = fy
+            save_config(self.config)
+            self._toast(f"Starting FY set to {fy}.")
+
+    def _detect_fys(self):
+        host = self.entries["tally_host"].get().strip() or "localhost"
+        port = self.entries["tally_port"].get().strip() or "9000"
+        self.fy_status_var.set("Detecting…")
+        self.root.update_idletasks()
+
+        def worker():
+            fys = fetch_tally_fys(host, port)
+            self.root.after(0, lambda: self._apply_fys(fys))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_fys(self, fys: list[str]):
+        if not fys:
+            messagebox.showerror(
+                APP_NAME,
+                "Could not detect FYs. Make sure Tally is open with a company "
+                "loaded, then try again.")
+            self.fy_status_var.set("No FY selected yet.")
+            return
+        self.config["available_fys"] = fys
+        save_config(self.config)
+        self._render_fy_chips(fys)
+        if not self.fy_var.get() or self.fy_var.get() not in fys:
+            # Default selection: 2 FYs back (gives a meaningful backfill)
+            default = fys[max(0, len(fys) - 3)]
+            self._select_fy(default)
+        else:
+            self._select_fy(self.fy_var.get())
+        self._toast(f"Detected {len(fys)} financial years from Tally.")
+
+    def _on_company_chosen(self):
+        """When the user picks a company, persist it immediately."""
+        c = self.company_var.get().strip()
+        if c:
+            self.config["company_name"] = c
+            save_config(self.config)
+
+    def _reset_defaults(self):
+        if not messagebox.askyesno(APP_NAME, "Reset all settings to defaults?"):
+            return
+        keep = {"shortcut_installed", "startup_prompted", "tray_hint_shown"}
+        new_cfg = {k: self.config[k] for k in keep if k in self.config}
+        new_cfg["backend_url"] = DEFAULT_BACKEND_URL
+        save_config(new_cfg)
+        self.config = new_cfg
+        messagebox.showinfo(APP_NAME, "Settings reset. Re-open the window to refresh.")
 
     def _build_logs_tab(self, nb: ttk.Notebook):
         f = ttk.Frame(nb, padding=10)
@@ -789,25 +962,41 @@ class FlowraAgentGUI:
         if current not in names:
             self.company_var.set(names[0])
         self.config["available_companies"] = names
+        self.config["company_name"] = self.company_var.get()
         save_config(self.config)
         self._toast(f"Found {len(names)} company / companies in Tally.")
+        # Auto-fetch FYs too so the user only ever clicks once.
+        self._detect_fys()
 
     def save_settings(self):
         cfg = {k: e.get().strip() for k, e in self.entries.items()}
         if not cfg.get("password"):
             cfg["password"] = self.config.get("password", "")
-        # Always default the URL so users never have to type it.
         if not cfg.get("backend_url"):
             cfg["backend_url"] = DEFAULT_BACKEND_URL
-        # Remember selected company name (so the agent can scope its TDL).
         cfg["company_name"] = self.company_var.get().strip() if hasattr(self, "company_var") else ""
+        cfg["starting_fy"] = self.fy_var.get().strip() if hasattr(self, "fy_var") else ""
         cfg["available_companies"] = self.config.get("available_companies", [])
-        # Preserve flags
-        for k in ("startup_prompted", "tray_hint_shown"):
+        cfg["available_fys"]       = self.config.get("available_fys", [])
+        for k in ("startup_prompted", "tray_hint_shown", "shortcut_installed"):
             if k in self.config:
                 cfg[k] = self.config[k]
         save_config(cfg)
         self.config = cfg
+
+        # Validate before launching the sync service.
+        missing = []
+        if not cfg.get("email"):        missing.append("Login Email")
+        if not cfg.get("password"):     missing.append("Password")
+        if not cfg.get("company_name"): missing.append("Tally Company (click Detect)")
+        if not cfg.get("starting_fy"):  missing.append("Starting FY")
+        if missing:
+            messagebox.showwarning(
+                APP_NAME,
+                "Settings saved, but the sync service won't start until you fill:\n\n"
+                + "\n".join(f"  •  {m}" for m in missing))
+            return
+
         # Restart the sync service so it picks up the new env vars
         if self.proc and self.proc.poll() is None:
             self.stop_agent()
@@ -887,9 +1076,19 @@ class FlowraAgentGUI:
             "TALLY_HOST":             self.config.get("tally_host", "localhost"),
             "TALLY_PORT":             self.config.get("tally_port", "9000"),
             "SYNC_INTERVAL_MINUTES":  self.config.get("sync_interval_minutes", "20"),
-            "COMPANY_NAME":           self.config.get("company_name", ""),
+            # The agent reads TALLY_COMPANY — when set, it skips the
+            # interactive "Select company number" prompt.
+            "TALLY_COMPANY":          self.config.get("company_name", ""),
+            "SYNC_ALL_FY":            "true",
             "PYTHONUNBUFFERED":       "1",
         })
+
+        # Pre-write the agent's sync state file so it doesn't open an
+        # interactive "Enter starting FY" prompt in the headless subprocess.
+        try:
+            self._write_sync_state_for_agent()
+        except Exception as e:
+            self._append_log(f"[gui] could not pre-write sync state: {e}")
 
         if getattr(sys, "frozen", False):
             cmd = [sys.executable, "--run-agent"]
@@ -918,15 +1117,46 @@ class FlowraAgentGUI:
         self._set_running(True)
         self._append_log(f"[gui] agent started, pid={self.proc.pid}")
 
+    def _write_sync_state_for_agent(self):
+        """Persist company + starting-FY selection into sync_state_v9.json so
+        the headless agent subprocess never opens an interactive prompt.
+
+        The agent expects the key  `selected_start_fy__<company name with
+        spaces underscored>` to short-circuit its FY question."""
+        company = (self.config.get("company_name") or "").strip()
+        start_fy = (self.config.get("starting_fy") or "").strip()
+        if not company or not start_fy:
+            return  # nothing to seed yet; agent will fall back
+
+        state_path = APP_DIR / "sync_state_v9.json"
+        try:
+            existing = json.loads(state_path.read_text(encoding="utf-8")) \
+                if state_path.exists() else {}
+        except Exception:
+            existing = {}
+        key_active   = f"selected_start_fy___active_"
+        key_named    = f"selected_start_fy__{company.replace(' ', '_')}"
+        existing[key_active] = start_fy
+        existing[key_named]  = start_fy
+        # Save selected company too so the agent's `last_company.txt` guard
+        # doesn't prompt about a company switch.
+        try:
+            (APP_DIR / "last_company.txt").write_text(company, encoding="utf-8")
+        except Exception:
+            pass
+        state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        self._append_log(f"[gui] seeded sync_state: company={company!r}, "
+                         f"start_fy={start_fy}")
+
     def stop_agent(self):
         if not self.proc or self.proc.poll() is not None:
             self._set_running(False)
             return
         try:
-            if os.name == "nt":
-                self.proc.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                self.proc.terminate()
+            # CTRL_BREAK_EVENT requires the subprocess to have a console.
+            # We launch with CREATE_NO_WINDOW for the bundled .exe so the
+            # signal raises "handle is invalid". Use terminate() in that case.
+            self.proc.terminate()
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
