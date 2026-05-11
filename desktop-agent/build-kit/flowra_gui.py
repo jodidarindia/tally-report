@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.18"
+APP_VERSION = "v9.8.19"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,9 +40,9 @@ ENV_FILE = APP_DIR / "agent.env"
 LOG_DIR = APP_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-# Pre-filled FLOWRA cloud URL — admins should NOT have to type this. End-users
-# can still override from Settings → Advanced if they self-host.
-DEFAULT_BACKEND_URL = "https://tally-report-ai.preview.emergentagent.com"
+PROD_URL = "https://insights.flowralive.in"
+DEFAULT_BACKEND_URL = PROD_URL  # Pre-filled in Settings → Advanced.
+                                # Users override only if self-hosting.
 # A non-existent host the connectivity check uses to verify HTTPS internet.
 INTERNET_PROBE_URL = "https://www.google.com/generate_204"
 
