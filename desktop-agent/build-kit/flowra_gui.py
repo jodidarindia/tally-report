@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.12"
+APP_VERSION = "v9.8.13"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1093,8 +1093,16 @@ class FlowraAgentGUI:
             # interactive "Select company number" prompt.
             "TALLY_COMPANY":          self.config.get("company_name", ""),
             "SYNC_ALL_FY":            "true",
+            # Pin every path the agent might need to a writable, predictable
+            # location under %LOCALAPPDATA%\Flowra. Setting these means the
+            # agent script never falls back to `__file__` (which is undefined
+            # when the script is run via exec() inside a PyInstaller bundle).
+            "TALLY_EXPORT_DIR":       str(APP_DIR / "export_cache"),
+            "FLOWRA_DATA_DIR":        str(APP_DIR),
             "PYTHONUNBUFFERED":       "1",
         })
+        # Ensure the export cache directory exists (the agent assumes it does).
+        (APP_DIR / "export_cache").mkdir(parents=True, exist_ok=True)
 
         # Pre-write the agent's sync state file so it doesn't open an
         # interactive "Enter starting FY" prompt in the headless subprocess.
@@ -1270,9 +1278,18 @@ def _maybe_run_agent_directly():
     if "--run-agent" in sys.argv:
         sys.argv = [a for a in sys.argv if a != "--run-agent"]
         script = resource_path(AGENT_SCRIPT)
-        # The agent uses __file__ to locate its own folder for exports / logs.
-        # exec() doesn't define it by default → inject it explicitly so the
-        # script's `os.path.dirname(os.path.abspath(__file__))` resolves.
+
+        # Belt-and-braces: also set TALLY_EXPORT_DIR if the GUI did not, so
+        # the agent's module-level `EXPORT_DIR = os.path.dirname(__file__)`
+        # fallback is never reached.
+        os.environ.setdefault(
+            "TALLY_EXPORT_DIR",
+            str(Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+                / "Flowra" / "export_cache"),
+        )
+
+        # exec() doesn't define __file__ by default — inject it so the
+        # agent's `os.path.dirname(__file__)` calls resolve cleanly.
         globals_dict = {
             "__name__": "__main__",
             "__file__": script,
