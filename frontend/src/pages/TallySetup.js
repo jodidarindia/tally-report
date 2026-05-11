@@ -132,9 +132,35 @@ const TallySetup = ({ companyId }) => {
               <Download size={24} className="text-white" />
             </div>
             <div className="flex-1">
-              <a href="/flowra-desktop-agent.py" download className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors" data-testid="download-agent-btn">
-                <Download size={14} /> Download Desktop Connector
-              </a>
+              <h2 className="text-base font-semibold text-slate-900">FLOWRA Tally Sync Agent (Windows)</h2>
+              <p className="text-xs text-slate-600 mt-1">
+                v9.8.16 · Tkinter GUI + system tray + auto-start · for Tally Prime running on Windows 10/11.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <a
+                  href="/flowra-agent-buildkit.zip"
+                  download
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                  data-testid="download-agent-btn"
+                >
+                  <Download size={14} /> Download Agent Build Kit (.zip)
+                </a>
+                <a
+                  href="/docs/FLOWRA_COMPLETE_DOCUMENTATION.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-800"
+                  data-testid="agent-docs-link"
+                >
+                  View full setup guide →
+                </a>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-3">
+                Inside the zip: <code>build.bat</code> (one-click compile to .exe),
+                <code> flowra_gui.py</code>, <code> tally_sync_agent_v9.py</code>,
+                <code> README.txt</code>. Requires Python 3.10 or newer on the
+                Tally PC for the one-time build.
+              </p>
             </div>
           </div>
         </div>

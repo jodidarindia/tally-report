@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.15"
+APP_VERSION = "v9.8.16"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -369,6 +369,34 @@ def fetch_tally_fys(host: str, port: str | int) -> list[str]:
     return fys
 
 
+def fetch_subscription_info(backend_url: str, email: str, password: str) -> dict | None:
+    """Login to FLOWRA and return subscription details for the dashboard.
+    Returns dict with: plan, subscription_days_left, subscription_expires,
+    max_companies, max_employees, name — or None on failure."""
+    import requests
+    try:
+        r = requests.post(
+            f"{backend_url.rstrip('/')}/api/auth/login",
+            json={"username": email, "password": password, "captcha_token": ""},
+            timeout=8,
+        )
+        d = r.json()
+        if not d.get("success"):
+            return None
+        data = d.get("data", {}) or {}
+        return {
+            "name": data.get("name", ""),
+            "plan": (data.get("plan") or "free").lower(),
+            "subscription_days_left": data.get("subscription_days_left"),
+            "subscription_expires": data.get("subscription_expires", ""),
+            "max_companies": data.get("max_companies", 1),
+            "max_employees": data.get("max_employees", 1),
+            "tenant_id": data.get("tenant_id", ""),
+        }
+    except Exception:
+        return None
+
+
 def current_fy_string() -> str:
     from datetime import date as _date
     today = _date.today()
@@ -569,6 +597,66 @@ class FlowraAgentGUI:
         tk.Label(last_row, textvariable=self.lastsync_var, fg="#0F172A",
                  bg="#EFF6FF", font=("Segoe UI", 10, "bold")).pack(side="left")
 
+        # Sync interval row
+        intv_row = tk.Frame(sync_card, bg="#EFF6FF"); intv_row.pack(anchor="w", pady=(4, 0))
+        tk.Label(intv_row, text="Sync interval: ", fg="#475569",
+                 bg="#EFF6FF", font=("Segoe UI", 9)).pack(side="left")
+        self.sync_interval_var = tk.StringVar(
+            value=f"every {self.config.get('sync_interval_minutes', '20')} min (full)  "
+                  f"·  every 5 min (sales)")
+        tk.Label(intv_row, textvariable=self.sync_interval_var, fg="#0F172A",
+                 bg="#EFF6FF", font=("Segoe UI", 9)).pack(side="left")
+
+        # ── Subscription card ───────────────────────────────────────────
+        sub_card = tk.Frame(f, bg="#FEFCE8", relief="solid", bd=1, padx=16, pady=14)
+        sub_card.pack(fill="x", pady=(0, 12))
+        head_row = tk.Frame(sub_card, bg="#FEFCE8"); head_row.pack(fill="x")
+        tk.Label(head_row, text="Subscription", fg="#854D0E",
+                 bg="#FEFCE8", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.renew_button = tk.Button(
+            head_row, text="📨  Request Renewal",
+            command=self._request_renewal,
+            bg="#854D0E", fg="white", relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=12, pady=4, cursor="hand2",
+        )
+        self.renew_button.pack(side="right")
+
+        sub_grid = tk.Frame(sub_card, bg="#FEFCE8")
+        sub_grid.pack(fill="x", pady=(8, 0))
+
+        def _sub_field(parent, col, label):
+            cell = tk.Frame(parent, bg="#FEFCE8")
+            cell.grid(row=0, column=col, padx=(0, 22), sticky="w")
+            tk.Label(cell, text=label, fg="#854D0E", bg="#FEFCE8",
+                     font=("Segoe UI", 9)).pack(anchor="w")
+            v = tk.StringVar(value="—")
+            tk.Label(cell, textvariable=v, fg="#0F172A", bg="#FEFCE8",
+                     font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            return v
+
+        self.plan_var       = _sub_field(sub_grid, 0, "Plan")
+        self.account_var    = _sub_field(sub_grid, 1, "Account")
+        self.expires_var    = _sub_field(sub_grid, 2, "Expires on")
+        self.days_left_var  = _sub_field(sub_grid, 3, "Days remaining")
+
+        # Banner row (shown only when warning / expired)
+        self.sub_banner_var = tk.StringVar(value="")
+        self.sub_banner = tk.Label(
+            sub_card, textvariable=self.sub_banner_var,
+            fg="#7F1D1D", bg="#FEE2E2",
+            font=("Segoe UI", 9, "bold"), padx=10, pady=6,
+            anchor="w", justify="left", wraplength=860,
+        )  # packed only when needed
+
+        # Logout row
+        bottom_row = tk.Frame(sub_card, bg="#FEFCE8"); bottom_row.pack(fill="x", pady=(10, 0))
+        tk.Button(bottom_row, text="🚪  Logout (clear saved login)",
+                  command=self._logout,
+                  bg="#F1F5F9", fg="#0F172A", relief="flat",
+                  font=("Segoe UI", 9),
+                  padx=12, pady=4, cursor="hand2").pack(side="right")
+
         # Action row
         actions = tk.Frame(f); actions.pack(fill="x", pady=10)
         tk.Button(actions, text="🔄  Re-check Now", command=self._refresh_indicators_now,
@@ -590,6 +678,16 @@ class FlowraAgentGUI:
         # Kick off the first probe and a 15-second background refresh.
         self.root.after(300, self._refresh_indicators_now)
         self._schedule_indicator_refresh()
+        # Pull subscription info now and again every 5 minutes.
+        self.root.after(500, self._refresh_subscription_async)
+        self._schedule_subscription_refresh()
+
+    def _schedule_subscription_refresh(self):
+        self.root.after(5 * 60 * 1000, self._tick_subscription)
+
+    def _tick_subscription(self):
+        self._refresh_subscription_async()
+        self._schedule_subscription_refresh()
 
     def _build_settings_tab(self, nb: ttk.Notebook):
         # Use ttk for native Windows look-and-feel.
@@ -976,6 +1074,191 @@ class FlowraAgentGUI:
         self._refresh_indicators_now()
         self._schedule_indicator_refresh()
 
+    # ─── Subscription handling ───────────────────────────────────────────
+    def _refresh_subscription_async(self):
+        """Fetch subscription info in a background thread and update the
+        Subscription card. Called periodically and after login."""
+        email = self.config.get("email", "")
+        password = self.config.get("password", "")
+        url = self.config.get("backend_url", DEFAULT_BACKEND_URL)
+        if not email or not password:
+            self.plan_var.set("(not logged in)")
+            self.account_var.set("—")
+            self.expires_var.set("—")
+            self.days_left_var.set("—")
+            return
+
+        def worker():
+            info = fetch_subscription_info(url, email, password)
+            self.root.after(0, lambda: self._apply_subscription(info))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_subscription(self, info: dict | None):
+        if not info:
+            self.plan_var.set("(login failed)")
+            return
+        self._sub_info = info  # remember latest
+        self.plan_var.set((info.get("plan") or "").upper() or "—")
+        self.account_var.set(info.get("name") or self.config.get("email", "—"))
+        exp = info.get("subscription_expires") or ""
+        self.expires_var.set(exp[:10] if exp else "—")
+        days = info.get("subscription_days_left")
+        if days is None:
+            self.days_left_var.set("—")
+        else:
+            self.days_left_var.set(f"{days} days")
+
+        # Banner + agent control logic.
+        if days is not None and days < 0:
+            self.sub_banner_var.set(
+                "⚠  Your FLOWRA subscription has EXPIRED — the sync service has been "
+                "stopped. Click ‘Request Renewal’ to continue.")
+            try:
+                self.sub_banner.pack(fill="x", pady=(10, 0), before=
+                    [c for c in self.sub_banner.master.winfo_children()
+                     if isinstance(c, tk.Frame)][-1])
+            except Exception:
+                self.sub_banner.pack(fill="x", pady=(10, 0))
+            # Force-stop the sync service if it's running.
+            if self.proc and self.proc.poll() is None:
+                self._append_log("[sub] subscription expired — stopping sync service.")
+                self.stop_agent()
+            # Disable the bottom Start button as well.
+            try:
+                self.btn_start.configure(state="disabled",
+                                          text="▶  Subscription expired")
+            except Exception:
+                pass
+        elif days is not None and days <= 10:
+            self.sub_banner_var.set(
+                f"⚠  Your FLOWRA subscription expires in {days} day"
+                f"{'s' if days != 1 else ''}. Click ‘Request Renewal’ to keep "
+                "syncing without interruption.")
+            try:
+                self.sub_banner.pack(fill="x", pady=(10, 0))
+            except Exception:
+                pass
+            try:
+                self.btn_start.configure(state="normal", text="▶  Start Sync Service")
+            except Exception:
+                pass
+        else:
+            self.sub_banner_var.set("")
+            try:
+                self.sub_banner.pack_forget()
+            except Exception:
+                pass
+            try:
+                self.btn_start.configure(state="normal", text="▶  Start Sync Service")
+            except Exception:
+                pass
+
+    def _request_renewal(self):
+        """POST /api/auth/request-renewal using stored credentials."""
+        email = self.config.get("email", "")
+        password = self.config.get("password", "")
+        url = self.config.get("backend_url", DEFAULT_BACKEND_URL)
+        if not email or not password:
+            messagebox.showwarning(APP_NAME,
+                "Please save your Login Email and Password in Settings first.")
+            return
+        if not messagebox.askyesno(
+            APP_NAME,
+            "Send a renewal request for your current plan to FLOWRA team?\n\n"
+            "Our team will reach out shortly to extend your subscription."
+        ):
+            return
+
+        def worker():
+            import requests as _r
+            try:
+                login = _r.post(f"{url.rstrip('/')}/api/auth/login",
+                                json={"username": email, "password": password,
+                                       "captcha_token": ""}, timeout=8)
+                token = (login.json().get("data") or {}).get("token", "")
+                if not token:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        APP_NAME, "Login failed — cannot send renewal request."))
+                    return
+                r = _r.post(
+                    f"{url.rstrip('/')}/api/auth/request-renewal",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"plan_interest": self._sub_info.get("plan", "") if
+                           getattr(self, "_sub_info", None) else "",
+                          "message": "Sent from FLOWRA Tally Sync Agent."},
+                    timeout=10,
+                )
+                d = r.json()
+                msg = d.get("message") or d.get("error") or "Done."
+                ok = bool(d.get("success"))
+                self.root.after(0, lambda: (
+                    messagebox.showinfo(APP_NAME, msg) if ok
+                    else messagebox.showerror(APP_NAME, msg)))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    APP_NAME, f"Could not submit renewal request:\n{e}"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _logout(self):
+        """Stop the agent, clear saved login + cached agent state, so another
+        user can log in from scratch."""
+        if not messagebox.askyesno(
+            APP_NAME,
+            "Logout?\n\n• The sync service will stop immediately.\n"
+            "• Your email / password will be cleared from this PC.\n"
+            "• Any cached Tally company / FY selection will be reset.\n\n"
+            "After logout, another user can sign in with their FLOWRA credentials "
+            "and start syncing their own Tally company."
+        ):
+            return
+        # Stop sync first.
+        if self.proc and self.proc.poll() is None:
+            self.stop_agent()
+        # Clear GUI config keys.
+        cleared = {
+            "backend_url": DEFAULT_BACKEND_URL,
+            "tally_host": self.config.get("tally_host", "localhost"),
+            "tally_port": self.config.get("tally_port", "9000"),
+        }
+        save_config(cleared)
+        self.config = cleared
+        # Clear agent's encrypted auth + sync state so the new user gets a
+        # clean slate (and the agent doesn't try to resume someone else's FY).
+        for fname in ("flowra_auth.enc", ".flowra_key",
+                       "sync_state_v9.json", "last_company.txt"):
+            p = APP_DIR / fname
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        # Reset Settings + Status widgets immediately.
+        for key in ("email", "password", "company_name", "starting_fy"):
+            self.config.pop(key, None)
+        try:
+            for k, e in self.entries.items():
+                e.delete(0, "end")
+                if k == "backend_url":
+                    e.insert(0, DEFAULT_BACKEND_URL)
+                elif k == "tally_host":
+                    e.insert(0, "localhost")
+                elif k == "tally_port":
+                    e.insert(0, "9000")
+                elif k == "sync_interval_minutes":
+                    e.insert(0, "20")
+            self.company_var.set("")
+            self.company_combo["values"] = []
+            self.fy_var.set("")
+            self.fy_status_var.set("No FY selected yet.")
+            self._render_fy_chips([])
+        except Exception:
+            pass
+        self._refresh_subscription_async()
+        self._append_log("[gui] logged out — local credentials cleared.")
+        messagebox.showinfo(APP_NAME,
+            "Logged out. Open the Settings tab and sign in with the new "
+            "credentials to start syncing.")
+
     def _detect_companies(self):
         host = self.entries["tally_host"].get().strip() or "localhost"
         port = self.entries["tally_port"].get().strip() or "9000"
@@ -1049,7 +1332,15 @@ class FlowraAgentGUI:
         else:
             self.root.after(200, self.start_agent)
             self._toast("Settings saved — starting sync service.")
+        # Update the visible sync-interval label.
+        try:
+            self.sync_interval_var.set(
+                f"every {cfg.get('sync_interval_minutes', '20')} min (full)  "
+                f"·  every 5 min (sales)")
+        except Exception:
+            pass
         self._refresh_indicators_now()
+        self._refresh_subscription_async()
 
     def _toggle_startup(self):
         if self.startup_var.get():
@@ -1113,6 +1404,16 @@ class FlowraAgentGUI:
             messagebox.showwarning(
                 APP_NAME,
                 "Please fill in Settings (URL + Email + Password) first.")
+            return
+        # Subscription gate — never start the agent if the account has expired.
+        info = getattr(self, "_sub_info", None)
+        if info and info.get("subscription_days_left") is not None \
+                 and info["subscription_days_left"] < 0:
+            messagebox.showerror(
+                APP_NAME,
+                "Your FLOWRA subscription has expired. The sync service is "
+                "disabled.\n\nPlease use ‘Request Renewal’ on the Status tab "
+                "to extend your plan.")
             return
 
         env = os.environ.copy()
