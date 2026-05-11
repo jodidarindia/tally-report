@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 97 - Atlas cutover regression sweep. Ran 19 backend tests against MongoDB Atlas (Flowra-Insights DB) - ALL 19 PASSED. Atlas connectivity confirmed, admin + demo logins working, all demo tenant data flows (sales, customers, inventory, salesman, sync history, dispatch, CA Corner P&L + BS) returning expected counts, multi-company isolation verified, logout + renewal endpoints work, EXE downloads (26MB), frontend title updated to 'FLOWRA | Insights', docs PDF served. No ObjectId (_id) leakage detected in any sampled response.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/health", "issue": "Endpoint does not exist (404). Not a regression (never existed), but recommended for Atlas/k8s liveness probes."},
+      {"endpoint": "/api/auth/login (admin)", "issue": "First request after Atlas DNS warm-up returned 502 once; passed on immediate retry. Mitigated with retry logic in test fixture. May indicate initial cold-start latency on the new Atlas cluster."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration97_atlas_cutover.py",
+    "/app/test_reports/pytest/iteration97_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add a lightweight GET /api/health endpoint that pings Mongo - useful for Atlas/k8s probes and matches the user's expectation in the regression checklist.",
+    "Note for documentation: actual endpoint paths are /api/customers/outstanding, /api/inventory/items, /api/ca-corner/profit-loss, /api/ca-corner/balance-sheet (the regression checklist used shorter aliases like /api/customers, /api/ca/profit-loss which return 404). No regression, just a docs/spec mismatch."
+  ],
+  "critical_code_review_comments": [
+    "Atlas migration is clean - no BSON ObjectId leakage observed in any of the 13 data-fetch responses sampled by the recursive _no_objectid_leak() checker. Mongo motor driver + Pydantic response models appear to consistently exclude _id.",
+    "Salesman master returns tenant-wide list of 12 demo salesmen with per-company customers filter inside each row - this is by design (existing behaviour) not a regression; iteration 87 already enforced this model.",
+    "Dispatch returns exactly 10 cards for first company - matches seed expectation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration97_atlas_cutover.py"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "admin/admin123, demo@flowralive.in/demo2026 - both verified working against Atlas",
+  "seed_data_creation": "None - used existing migrated Atlas data (admin tenant + demo tenant)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Atlas cutover validated end-to-end. All flows from iterations 60-96 are still operational on the new Flowra-Insights Atlas DB. If you need to re-run, pytest /app/backend/tests/test_iteration97_atlas_cutover.py -v. Be aware that the first login request may flake with 502 on cold Atlas SRV - the fixture now retries 3x with 2s backoff. Endpoint name corrections applied to tests vs the original review request: /api/customers -> /api/customers/outstanding, /api/inventory -> /api/inventory/items, /api/ca/* -> /api/ca-corner/*."
+}
