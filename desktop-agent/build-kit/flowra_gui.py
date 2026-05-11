@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.16"
+APP_VERSION = "v9.8.17"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -455,6 +455,21 @@ class FlowraAgentGUI:
         # The user must explicitly click "▶ Start Sync Service" or
         # "💾 Save & Start Sync" so they can review settings first.
 
+        # If creds were stored previously, treat the user as already
+        # "logged in" so the UI reflects it and detect buttons unlock.
+        if self.config.get("email") and self.config.get("password"):
+            try:
+                self._set_logged_in(True, self.config["email"])
+                if self.config.get("company_name"):
+                    self.detect_fy_btn.configure(state="normal")
+            except Exception:
+                pass
+        else:
+            try:
+                self._set_logged_in(False)
+            except Exception:
+                pass
+
         if start_minimized:
             self.root.after(50, self.hide_to_tray)
 
@@ -481,6 +496,25 @@ class FlowraAgentGUI:
         tk.Label(header, text=f"Tally Sync Agent  ·  {APP_VERSION}",
                  font=("Segoe UI", 10), fg="#94A3B8",
                  bg="#0F172A").pack(side="left", padx=10, pady=14)
+
+        # Right side of header: logged-in email + logout button.
+        right = tk.Frame(header, bg="#0F172A")
+        right.pack(side="right", padx=16, pady=14)
+        self.header_logout_btn = tk.Button(
+            right, text="🚪  Logout",
+            command=self._logout,
+            bg="#1E293B", fg="white", relief="flat",
+            activebackground="#334155", activeforeground="white",
+            font=("Segoe UI", 9, "bold"),
+            padx=14, pady=6, cursor="hand2",
+            borderwidth=0,
+        )
+        self.header_logout_btn.pack(side="right", padx=(10, 0))
+        self.header_user_var = tk.StringVar(
+            value=self.config.get("email") or "(not logged in)")
+        tk.Label(right, textvariable=self.header_user_var,
+                 fg="#CBD5E1", bg="#0F172A",
+                 font=("Segoe UI", 9)).pack(side="right")
         self.status_var = tk.StringVar(value="● Stopped")
         tk.Label(header, textvariable=self.status_var,
                  font=("Segoe UI", 10, "bold"), fg="#F87171",
@@ -718,6 +752,24 @@ class FlowraAgentGUI:
         add_entry(sec1, 0, "Login Email",  "email",    "you@company.com")
         add_entry(sec1, 1, "Password",     "password", "", secret=True)
 
+        # Login action row — a BIG blue button + live status label.
+        login_row = tk.Frame(sec1)
+        login_row.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self.login_btn = tk.Button(
+            login_row, text="🔐  Login to FLOWRA",
+            command=self._do_login,
+            bg="#2563EB", fg="white", relief="flat",
+            activebackground="#1D4ED8", activeforeground="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=18, pady=8, cursor="hand2", borderwidth=0,
+        )
+        self.login_btn.pack(side="left")
+        self.login_status_var = tk.StringVar(value="Not logged in")
+        self.login_status_label = tk.Label(
+            login_row, textvariable=self.login_status_var,
+            fg="#94A3B8", font=("Segoe UI", 10, "bold"))
+        self.login_status_label.pack(side="left", padx=14)
+
         # ── Section 2: Tally Connection ────────────────────────────────
         sec2 = ttk.LabelFrame(outer, text="  2. Tally Connection  ", padding=14)
         sec2.pack(fill="x", pady=(0, 12))
@@ -731,14 +783,28 @@ class FlowraAgentGUI:
         self.company_combo = ttk.Combobox(sec2, textvariable=self.company_var,
                                           width=44, state="readonly")
         self.company_combo.grid(row=2, column=1, sticky="w", pady=(10, 6))
-        ttk.Button(sec2, text="🔍  Detect from Tally",
-                   command=self._detect_companies).grid(row=2, column=2,
-                                                          padx=(8, 0), pady=(10, 6))
+        # BLUE prominent button (was ttk default — easy to miss).
+        self.detect_company_btn = tk.Button(
+            sec2, text="🔍  Detect Company from Tally",
+            command=self._detect_companies,
+            bg="#2563EB", fg="white", relief="flat",
+            activebackground="#1D4ED8", activeforeground="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=12, pady=6, cursor="hand2", borderwidth=0,
+            state="disabled",  # enabled after login
+        )
+        self.detect_company_btn.grid(row=2, column=2, padx=(8, 0), pady=(10, 6))
         cached = self.config.get("available_companies") or []
         if cached:
             self.company_combo["values"] = cached
         self.company_combo.bind("<<ComboboxSelected>>",
                                  lambda _e: self._on_company_chosen())
+        ttk.Label(sec2,
+                  text=("Only ONE company can be synced at a time. If Tally has "
+                        "multiple companies open, pick which one this PC should "
+                        "send to FLOWRA — others stay untouched."),
+                  foreground="#94A3B8", wraplength=720).grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         # ── Section 3: Starting Financial Year (clickable chips) ───────
         sec3 = ttk.LabelFrame(outer, text="  3. Starting Financial Year  ",
@@ -754,19 +820,26 @@ class FlowraAgentGUI:
         self.fy_chip_frame = ttk.Frame(sec3)
         self.fy_chip_frame.pack(anchor="w", pady=(2, 4))
         self.fy_var = tk.StringVar(value=self.config.get("starting_fy", ""))
-        # Create fy_status_var FIRST — _render_fy_chips → _select_fy writes to it.
         self.fy_status_var = tk.StringVar(
             value=(f"Starting FY:  {self.fy_var.get()}" if self.fy_var.get()
                    else "No FY selected yet."))
         cached_fys = self.config.get("available_fys") or []
         self._render_fy_chips(cached_fys or [])
 
-        action_row = ttk.Frame(sec3)
+        action_row = tk.Frame(sec3)
         action_row.pack(anchor="w", pady=(8, 0))
-        ttk.Button(action_row, text="🔄  Detect FYs from Tally",
-                   command=self._detect_fys).pack(side="left")
-        ttk.Label(action_row, textvariable=self.fy_status_var,
-                  foreground="#0F172A", padding=(14, 0)).pack(side="left")
+        self.detect_fy_btn = tk.Button(
+            action_row, text="🔄  Detect FYs from Tally",
+            command=self._detect_fys,
+            bg="#2563EB", fg="white", relief="flat",
+            activebackground="#1D4ED8", activeforeground="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=14, pady=6, cursor="hand2", borderwidth=0,
+            state="disabled",  # enabled after a company is chosen
+        )
+        self.detect_fy_btn.pack(side="left")
+        tk.Label(action_row, textvariable=self.fy_status_var,
+                 fg="#0F172A", font=("Segoe UI", 10)).pack(side="left", padx=14)
 
         # ── Section 4: Advanced + integrations ──────────────────────────
         sec4 = ttk.LabelFrame(outer, text="  4. Advanced  ", padding=14)
@@ -1074,6 +1147,77 @@ class FlowraAgentGUI:
         self._refresh_indicators_now()
         self._schedule_indicator_refresh()
 
+    # ─── Login (Settings tab) ───────────────────────────────────────────
+    def _set_logged_in(self, is_logged_in: bool, email: str = ""):
+        """Toggle UI state based on login status."""
+        if is_logged_in:
+            self.login_status_var.set(f"✓ Logged in as {email}")
+            try:
+                self.login_status_label.configure(fg="#10B981")
+            except Exception:
+                pass
+            try:
+                self.header_user_var.set(email)
+            except Exception:
+                pass
+            self.login_btn.configure(text="🔓  Re-login", bg="#475569")
+            self.detect_company_btn.configure(state="normal")
+        else:
+            self.login_status_var.set("Not logged in")
+            try:
+                self.login_status_label.configure(fg="#94A3B8")
+            except Exception:
+                pass
+            try:
+                self.header_user_var.set("(not logged in)")
+            except Exception:
+                pass
+            self.login_btn.configure(text="🔐  Login to FLOWRA", bg="#2563EB")
+            self.detect_company_btn.configure(state="disabled")
+            self.detect_fy_btn.configure(state="disabled")
+
+    def _do_login(self):
+        """Validate credentials against FLOWRA backend. Only after success
+        does the user unlock Detect Company / Detect FY."""
+        email = self.entries["email"].get().strip()
+        password = self.entries["password"].get().strip()
+        url = self.entries["backend_url"].get().strip() or DEFAULT_BACKEND_URL
+        if not email or not password:
+            messagebox.showwarning(APP_NAME,
+                "Please enter both Login Email and Password.")
+            return
+        self.login_btn.configure(state="disabled", text="Logging in…")
+        self.login_status_var.set("Logging in…")
+        try:
+            self.login_status_label.configure(fg="#94A3B8")
+        except Exception:
+            pass
+
+        def worker():
+            info = fetch_subscription_info(url, email, password)
+            self.root.after(0, lambda: self._apply_login(info, email, password, url))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_login(self, info: dict | None, email: str, password: str, url: str):
+        self.login_btn.configure(state="normal")
+        if not info:
+            messagebox.showerror(APP_NAME,
+                "Login failed. Please check your email and password.")
+            self._set_logged_in(False)
+            return
+        # Persist creds so subsequent restarts know who is logged in.
+        self.config.update({
+            "email": email,
+            "password": password,
+            "backend_url": url,
+        })
+        save_config(self.config)
+        self._sub_info = info
+        self._set_logged_in(True, email)
+        self._apply_subscription(info)
+        self._toast(f"Logged in as {email}.")
+
     # ─── Subscription handling ───────────────────────────────────────────
     def _refresh_subscription_async(self):
         """Fetch subscription info in a background thread and update the
@@ -1284,16 +1428,94 @@ class FlowraAgentGUI:
                 "If Tally has no companies open, this list will be empty.")
             return
         self.company_combo["values"] = names
-        # Preserve current selection if it still exists, otherwise pick first.
-        current = self.company_var.get()
-        if current not in names:
-            self.company_var.set(names[0])
+
+        # If multiple companies are open in Tally, force the user to
+        # explicitly pick one — we only ever sync ONE company at a time.
+        chosen = self.company_var.get()
+        if len(names) > 1:
+            chosen = self._ask_company_pick(names, current=chosen)
+            if not chosen:
+                self._toast("Company selection cancelled.")
+                return
+        else:
+            chosen = names[0]
+
+        self.company_var.set(chosen)
         self.config["available_companies"] = names
-        self.config["company_name"] = self.company_var.get()
+        self.config["company_name"] = chosen
         save_config(self.config)
-        self._toast(f"Found {len(names)} company / companies in Tally.")
+        self._toast(f"Company set: {chosen}")
+        # Enable the Detect FY button now that a company is chosen.
+        try:
+            self.detect_fy_btn.configure(state="normal")
+        except Exception:
+            pass
         # Auto-fetch FYs too so the user only ever clicks once.
         self._detect_fys()
+
+    def _ask_company_pick(self, names: list[str], current: str = "") -> str | None:
+        """Modal dialog: radio-button list of Tally companies. Returns the
+        chosen name, or None if the user cancelled."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Select Tally Company to Sync")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("520x420")
+        dlg.configure(bg="#FFFFFF")
+
+        tk.Label(dlg, text="Multiple companies detected in Tally",
+                 font=("Segoe UI", 13, "bold"), bg="#FFFFFF",
+                 fg="#0F172A").pack(anchor="w", padx=20, pady=(18, 4))
+        tk.Label(dlg, text=("FLOWRA syncs ONE company at a time. Pick which "
+                            "company this PC should send to your FLOWRA "
+                            "account — the others stay untouched."),
+                 wraplength=460, justify="left", fg="#475569", bg="#FFFFFF",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=20, pady=(0, 12))
+
+        var = tk.StringVar(value=current if current in names else names[0])
+        scrolled = tk.Frame(dlg, bg="#FFFFFF")
+        scrolled.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        canvas = tk.Canvas(scrolled, bg="#FFFFFF", highlightthickness=0)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(scrolled, orient="vertical", command=canvas.yview)
+        sb.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=sb.set)
+        inner = tk.Frame(canvas, bg="#FFFFFF")
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        for n in names:
+            tk.Radiobutton(inner, text=n, variable=var, value=n,
+                           font=("Segoe UI", 10), bg="#FFFFFF",
+                           anchor="w", padx=4, pady=6,
+                           selectcolor="#EFF6FF").pack(fill="x", anchor="w")
+        inner.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+        result = {"value": None}
+
+        def on_ok():
+            result["value"] = var.get()
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+
+        btn_bar = tk.Frame(dlg, bg="#FFFFFF")
+        btn_bar.pack(fill="x", padx=20, pady=(0, 18))
+        tk.Button(btn_bar, text="Cancel", command=on_cancel,
+                  bg="#F1F5F9", fg="#0F172A", relief="flat",
+                  font=("Segoe UI", 10), padx=18, pady=8,
+                  cursor="hand2", borderwidth=0).pack(side="right", padx=(8, 0))
+        tk.Button(btn_bar, text="✓  Use this company",
+                  command=on_ok,
+                  bg="#2563EB", fg="white", relief="flat",
+                  activebackground="#1D4ED8", activeforeground="white",
+                  font=("Segoe UI", 10, "bold"),
+                  padx=18, pady=8, cursor="hand2",
+                  borderwidth=0).pack(side="right")
+
+        dlg.wait_window()
+        return result["value"]
 
     def save_settings(self):
         cfg = {k: e.get().strip() for k, e in self.entries.items()}

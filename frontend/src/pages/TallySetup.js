@@ -134,16 +134,16 @@ const TallySetup = ({ companyId }) => {
             <div className="flex-1">
               <h2 className="text-base font-semibold text-slate-900">FLOWRA Tally Sync Agent (Windows)</h2>
               <p className="text-xs text-slate-600 mt-1">
-                v9.8.16 · Tkinter GUI + system tray + auto-start · for Tally Prime running on Windows 10/11.
+                v9.8.17 · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
               </p>
               <div className="flex flex-wrap items-center gap-3 mt-3">
                 <a
-                  href="/flowra-agent-buildkit.zip"
+                  href="/FlowraTallyAgent.exe"
                   download
                   className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-                  data-testid="download-agent-btn"
+                  data-testid="download-agent-exe-btn"
                 >
-                  <Download size={14} /> Download Agent Build Kit (.zip)
+                  <Download size={14} /> Download FLOWRA Tally Sync Agent (.exe)
                 </a>
                 <a
                   href="/docs/FLOWRA_COMPLETE_DOCUMENTATION.pdf"
@@ -156,10 +156,10 @@ const TallySetup = ({ companyId }) => {
                 </a>
               </div>
               <p className="text-[11px] text-slate-500 mt-3">
-                Inside the zip: <code>build.bat</code> (one-click compile to .exe),
-                <code> flowra_gui.py</code>, <code> tally_sync_agent_v9.py</code>,
-                <code> README.txt</code>. Requires Python 3.10 or newer on the
-                Tally PC for the one-time build.
+                Single-file installer for Windows 10/11. No Python or other
+                runtime required on the customer's PC — just double-click and run.
+                The agent connects to Tally over ODBC port 9000 and syncs only
+                the company you choose, encrypted end-to-end.
               </p>
             </div>
           </div>
