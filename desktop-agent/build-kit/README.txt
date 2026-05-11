@@ -21,8 +21,14 @@ CONTENTS
 PREREQUISITES (Windows machine)
 -------------------------------
   • Windows 10 / 11 (64-bit recommended).
-  • Python 3.10 or newer  →  https://www.python.org/downloads/
+  • Python 3.10, 3.11, 3.12 OR 3.13  →  https://www.python.org/downloads/
+        RECOMMENDED: Python 3.12 (best wheel coverage today).
         IMPORTANT: tick "Add Python to PATH" during install.
+
+        ⚠  Python 3.14 is NOT supported yet — Pillow / cryptography
+        don't publish 3.14 wheels at the time of writing, so the build
+        will refuse to proceed and ask you to install Python 3.12.
+
   • Internet connection for the first build (to download pip packages).
   • ~500 MB free disk for the build cache + .venv.
 
@@ -38,6 +44,24 @@ HOW TO BUILD
 
 That's it. Distribute the .exe directly, or upload it to your FLOWRA
 Setup page so customers can download it.
+
+IF THE BUILD FAILS
+------------------
+  The full pip / PyInstaller output is saved to  build.log  in this
+  folder. Open it in Notepad, scroll to the bottom, and you'll see the
+  exact error. Mail that file to support@flowra.in and we'll debug it.
+
+  Common fixes:
+    • "Python 3.14 too new"  →  install Python 3.12, delete the .venv
+      folder, re-run build.bat.
+    • "Could not find a version of pyinstaller"  →  same as above —
+      Python version is too new for the pinned wheels.
+    • Long compiler errors mentioning "Microsoft Visual C++ 14.0"  →
+      you tried building from source. Install a supported Python
+      version and try again instead of installing Visual Studio.
+    • "pip: SSL: CERTIFICATE_VERIFY_FAILED"  →  corporate proxy or
+      out-of-date Windows TLS roots. Run on a non-corporate network
+      for the first build, or set HTTPS_PROXY in the cmd window.
 
 
 WHAT'S INSIDE THE .EXE

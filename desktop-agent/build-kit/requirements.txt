@@ -1,9 +1,11 @@
 # Runtime + build dependencies. build.bat installs these into a local venv.
-# Versions are minimum-pinned so the build works on Python 3.10 — 3.14+
-# (PyInstaller 6.15 is the first release with Python 3.14 wheels).
+# Versions are minimum-pinned so the build works on Python 3.10 — 3.13.
+# Python 3.14 is NOT supported yet (Pillow + cryptography have no 3.14 wheels
+# at the time of writing — build.bat refuses to proceed with 3.14).
+# RECOMMENDED: Python 3.12 from python.org.
 
 # Build tools
-pyinstaller>=6.15.0
+pyinstaller>=6.10.0
 
 # GUI / tray
 pystray>=0.19.5
