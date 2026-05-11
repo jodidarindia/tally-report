@@ -71,6 +71,26 @@ api_router.include_router(salesman_orders_router)
 api_router.include_router(backups_router)
 api_router.include_router(creditors_router)
 
+
+# ── Health endpoint (k8s / Atlas liveness probe + uptime monitor) ──────
+@api_router.get("/health")
+async def health():
+    """Lightweight ping that also pokes Mongo so we know the DB link is alive.
+
+    Returns 200 + {ok: True, db: 'connected'} when the API is reachable AND
+    can run a 1-document command against the configured Atlas cluster. If
+    Mongo fails, returns ok=True (API alive) + db='disconnected' so a
+    monitor can distinguish DB outages from app outages.
+    """
+    from db import db
+    db_status = "connected"
+    try:
+        await db.command("ping")
+    except Exception as e:  # noqa: BLE001
+        db_status = f"disconnected: {type(e).__name__}"
+    return {"ok": True, "db": db_status, "service": "flowra-backend"}
+
+
 # Include the combined router in the main app
 app.include_router(api_router)
 
