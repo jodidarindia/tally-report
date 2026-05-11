@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.13"
+APP_VERSION = "v9.8.14"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -624,6 +624,10 @@ class FlowraAgentGUI:
         self.fy_chip_frame = ttk.Frame(sec3)
         self.fy_chip_frame.pack(anchor="w", pady=(2, 4))
         self.fy_var = tk.StringVar(value=self.config.get("starting_fy", ""))
+        # Create fy_status_var FIRST — _render_fy_chips → _select_fy writes to it.
+        self.fy_status_var = tk.StringVar(
+            value=(f"Starting FY:  {self.fy_var.get()}" if self.fy_var.get()
+                   else "No FY selected yet."))
         cached_fys = self.config.get("available_fys") or []
         self._render_fy_chips(cached_fys or [])
 
@@ -631,9 +635,6 @@ class FlowraAgentGUI:
         action_row.pack(anchor="w", pady=(8, 0))
         ttk.Button(action_row, text="🔄  Detect FYs from Tally",
                    command=self._detect_fys).pack(side="left")
-        self.fy_status_var = tk.StringVar(
-            value=(f"Starting FY:  {self.fy_var.get()}" if self.fy_var.get()
-                   else "No FY selected yet."))
         ttk.Label(action_row, textvariable=self.fy_status_var,
                   foreground="#0F172A", padding=(14, 0)).pack(side="left")
 
@@ -704,7 +705,8 @@ class FlowraAgentGUI:
 
     def _select_fy(self, fy: str, persist: bool = True):
         self.fy_var.set(fy)
-        self.fy_status_var.set(f"Starting FY:  {fy}")
+        if hasattr(self, "fy_status_var"):
+            self.fy_status_var.set(f"Starting FY:  {fy}")
         # Re-style: selected = primary, others = normal.
         for v, b in getattr(self, "_fy_buttons", {}).items():
             try:
