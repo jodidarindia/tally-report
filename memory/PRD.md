@@ -4,6 +4,15 @@
 FLOWRA is a React + FastAPI + MongoDB SaaS synced with Tally for business analytics, inventory, CRM, dispatch, salesman ordering, and CA reporting.
 
 ## Latest Release Notes — Feb 2026
+- **Demo Account for Prospect Demos** (`/app/backend/scripts/seed_demo_account.py`):
+  - Single login `demo@flowralive.in` / `demo2026` (admin role, 24-month subscription).
+  - 3 companies pre-loaded under one user — Sharma Lubricants (FMCG/auto trading),
+    Bharat Electricals (electrical/hardware), Krishna Textiles (garments).
+  - Each company has 35 inventory items, 12-16 customers, 3-5 salesmen + login users,
+    70 sales vouchers, ~30 receipts, 20 purchase/expense vouchers, 10 dispatch cards
+    spread over the last 10 months with relative dates (so dashboards stay fresh).
+  - Idempotent — re-run any time with `python3 backend/scripts/seed_demo_account.py`.
+  - Total seeded revenue across companies: ~₹68L; 12 demo salesman logins included.
 - **Tally Sync Agent v9.8.9-daybook-lvd** (`/app/desktop-agent/tally_sync_agent_v9.py`,
   also at `/app/frontend/public/flowra-desktop-agent.py`):
   - `fetch_last_voucher_date()` now falls back to a Day-Book scan over the last
