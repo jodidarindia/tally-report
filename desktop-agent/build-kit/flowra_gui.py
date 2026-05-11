@@ -119,6 +119,86 @@ def is_startup_registered() -> bool:
         return False
 
 
+# ── Start Menu shortcut (per-user, no admin required) ──────────────────
+def _start_menu_dir() -> Path:
+    """%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Flowra"""
+    appdata = Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming")))
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Flowra"
+
+
+def _start_menu_shortcut_path() -> Path:
+    return _start_menu_dir() / "FLOWRA Tally Sync Agent.lnk"
+
+
+def _desktop_shortcut_path() -> Path:
+    desk = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+    return desk / "FLOWRA Tally Sync Agent.lnk"
+
+
+def _create_lnk(target_lnk: Path, exe_path: str, icon_path: str = "") -> bool:
+    """Create a .lnk shortcut using PowerShell's WScript.Shell COM.
+    No extra Python deps required — PowerShell ships with every Windows."""
+    if os.name != "nt":
+        return False
+    try:
+        target_lnk.parent.mkdir(parents=True, exist_ok=True)
+        # Strip surrounding quotes if any
+        clean_exe = exe_path.strip('"')
+        ps = (
+            f'$ws = New-Object -ComObject WScript.Shell; '
+            f'$s  = $ws.CreateShortcut("{target_lnk}"); '
+            f'$s.TargetPath = "{clean_exe}"; '
+            f'$s.WorkingDirectory = "{os.path.dirname(clean_exe)}"; '
+            f'$s.Description = "FLOWRA Tally Sync Agent"; '
+        )
+        if icon_path and os.path.exists(icon_path):
+            ps += f'$s.IconLocation = "{icon_path},0"; '
+        ps += '$s.Save();'
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+             "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, timeout=10,
+            creationflags=0x08000000 if os.name == "nt" else 0,  # CREATE_NO_WINDOW
+        )
+        return result.returncode == 0 and target_lnk.exists()
+    except Exception:
+        return False
+
+
+def install_start_menu_shortcut() -> bool:
+    """Install both Start Menu and Desktop shortcuts (per-user)."""
+    if os.name != "nt":
+        return False
+    if not getattr(sys, "frozen", False):
+        # Only meaningful when running as the built .exe
+        return False
+    exe = sys.executable
+    icon = exe  # Use the embedded icon from the .exe itself
+    ok1 = _create_lnk(_start_menu_shortcut_path(), exe, icon)
+    ok2 = _create_lnk(_desktop_shortcut_path(),  exe, icon)
+    return ok1 or ok2
+
+
+def is_start_menu_shortcut_installed() -> bool:
+    return _start_menu_shortcut_path().exists()
+
+
+def remove_start_menu_shortcut() -> bool:
+    ok = True
+    for p in (_start_menu_shortcut_path(), _desktop_shortcut_path()):
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            ok = False
+    try:
+        if _start_menu_dir().exists() and not any(_start_menu_dir().iterdir()):
+            _start_menu_dir().rmdir()
+    except Exception:
+        pass
+    return ok
+
+
 # ── Tray icon (pystray + Pillow) ────────────────────────────────────────
 def build_tray_icon_image():
     """Load the bundled FLOWRA logo for the tray icon. Falls back to a
@@ -273,6 +353,19 @@ class FlowraAgentGUI:
             ):
                 if register_startup():
                     self._toast("Auto-start enabled.")
+
+        # First-run Start Menu + Desktop shortcut install.
+        # Only attempt when running as the frozen .exe so dev runs don't
+        # install shortcuts pointing at python.exe.
+        if getattr(sys, "frozen", False) and not self.config.get("shortcut_installed"):
+            try:
+                ok = install_start_menu_shortcut()
+                if ok:
+                    self.config["shortcut_installed"] = True
+                    save_config(self.config)
+                    self.log_queue.put("[setup] Start Menu + Desktop shortcut installed.")
+            except Exception as e:
+                self.log_queue.put(f"[setup] shortcut install failed: {e}")
 
         # Auto-launch sync service if credentials are saved
         if self.config.get("backend_url") and self.config.get("email") \
@@ -463,6 +556,16 @@ class FlowraAgentGUI:
             font=("Segoe UI", 10), bg="#FFFFFF", fg="#0F172A",
             activebackground="#FFFFFF", anchor="w",
         ).grid(row=row_idx, column=1, sticky="w", pady=(14, 0), columnspan=2)
+        row_idx += 1
+
+        # Start Menu / Desktop shortcut
+        self.shortcut_var = tk.BooleanVar(value=is_start_menu_shortcut_installed())
+        tk.Checkbutton(
+            f, text="Place shortcut in Start Menu and on Desktop",
+            variable=self.shortcut_var, command=self._toggle_shortcut,
+            font=("Segoe UI", 10), bg="#FFFFFF", fg="#0F172A",
+            activebackground="#FFFFFF", anchor="w",
+        ).grid(row=row_idx, column=1, sticky="w", pady=(4, 0), columnspan=2)
 
         tk.Button(f, text="💾  Save Settings", command=self.save_settings,
                   bg="#2563EB", fg="white", relief="flat",
@@ -508,15 +611,30 @@ class FlowraAgentGUI:
 
     # ---- Tray ------------------------------------------------------------
     def _start_tray(self):
+        """Boot the system-tray icon. Logs any failure so the user can see
+        WHY the tray didn't appear (in the Logs tab + agent.log file)."""
+        self._tray_ok = False
         try:
             import pystray
             from pystray import MenuItem as Item, Menu
-        except ImportError:
-            return  # pystray unavailable → app still works, just no tray
-
-        image = build_tray_icon_image()
-        if image is None:
+        except Exception as e:
+            self.log_queue.put(f"[tray] pystray unavailable: {e}")
             return
+
+        try:
+            image = build_tray_icon_image()
+        except Exception as e:
+            self.log_queue.put(f"[tray] icon load failed: {e}")
+            image = None
+
+        if image is None:
+            # Last-ditch fallback so the tray icon still appears.
+            try:
+                from PIL import Image
+                image = Image.new("RGB", (64, 64), (37, 99, 235))
+            except Exception as e:
+                self.log_queue.put(f"[tray] PIL fallback failed: {e}")
+                return
 
         menu = Menu(
             Item("Show FLOWRA", self._tray_show, default=True),
@@ -530,8 +648,23 @@ class FlowraAgentGUI:
             Menu.SEPARATOR,
             Item("Quit FLOWRA", self._tray_quit),
         )
-        self.tray = pystray.Icon("flowra", image, APP_NAME, menu)
-        threading.Thread(target=self.tray.run, daemon=True).start()
+        try:
+            self.tray = pystray.Icon("flowra", image, APP_NAME, menu)
+            # Boot the tray on a daemon thread so it survives even after the
+            # main window is hidden.  `visible=True` is the default but we
+            # set it explicitly because some Windows versions hide the icon
+            # in the overflow chevron until the user pins it.
+            def _run_tray():
+                try:
+                    self.tray.run()
+                except Exception as e:
+                    self.log_queue.put(f"[tray] run() crashed: {e}")
+            threading.Thread(target=_run_tray, daemon=True).start()
+            self._tray_ok = True
+            self.log_queue.put("[tray] icon started — look near the clock; "
+                                "may be hidden behind the ‘^’ overflow chevron.")
+        except Exception as e:
+            self.log_queue.put(f"[tray] failed to start icon: {e}")
 
     def _tray_show(self, icon=None, item=None):
         self.root.after(0, self.show_window)
@@ -551,20 +684,31 @@ class FlowraAgentGUI:
         self.root.focus_force()
 
     def hide_to_tray(self):
+        # If the tray icon failed to start, never withdraw — the user would
+        # have no way to bring the window back. Minimize to the taskbar
+        # instead so it stays visible.
+        if not getattr(self, "_tray_ok", False) or self.tray is None:
+            self.root.iconify()
+            messagebox.showinfo(
+                APP_NAME,
+                "System tray is not available on this Windows configuration.\n"
+                "The app has been minimised to the taskbar instead — the sync "
+                "service keeps running in the background.")
+            return
         self.root.withdraw()
         # First-time hint so users know the app didn't actually quit
         if not self.config.get("tray_hint_shown"):
             self.config["tray_hint_shown"] = True
             save_config(self.config)
-            if self.tray:
-                try:
-                    self.tray.notify(
-                        "Sync continues in the background. "
-                        "Right-click the tray icon for quick actions.",
-                        "FLOWRA is still running",
-                    )
-                except Exception:
-                    pass
+            try:
+                self.tray.notify(
+                    "Sync continues in the background. "
+                    "If you don't see the FLOWRA icon, click the ‘^’ arrow "
+                    "near the clock — Windows may have hidden it.",
+                    "FLOWRA is still running",
+                )
+            except Exception:
+                pass
 
     # ---- Actions ---------------------------------------------------------
     def _set_indicator(self, key: str, ok: bool | None, text: str):
@@ -682,6 +826,34 @@ class FlowraAgentGUI:
         else:
             unregister_startup()
             self._toast("Auto-start disabled.")
+
+    def _toggle_shortcut(self):
+        if self.shortcut_var.get():
+            if not getattr(sys, "frozen", False):
+                self.shortcut_var.set(False)
+                messagebox.showinfo(
+                    APP_NAME,
+                    "Shortcuts can only be installed when running the built "
+                    "FlowraTallyAgent_v9.8.10.exe.\n\n"
+                    "Build it once with build.bat, then run the .exe — it "
+                    "will install the shortcuts on first launch.")
+                return
+            ok = install_start_menu_shortcut()
+            if not ok:
+                self.shortcut_var.set(False)
+                messagebox.showerror(
+                    APP_NAME,
+                    "Could not create Start Menu / Desktop shortcuts.\n"
+                    "Check the Logs tab for details.")
+            else:
+                self.config["shortcut_installed"] = True
+                save_config(self.config)
+                self._toast("Start Menu + Desktop shortcuts installed.")
+        else:
+            remove_start_menu_shortcut()
+            self.config["shortcut_installed"] = False
+            save_config(self.config)
+            self._toast("Shortcuts removed.")
 
     def test_connection(self):
         host = self.config.get("tally_host", "localhost")
