@@ -318,4 +318,27 @@ correctly-configured binary.
 - **WhatsApp + GST integrations**: still on the roadmap — don't block production launch waiting for these.
 - **Monitor uptime**: free option = https://uptimerobot.com → add `https://insights.flowralive.in/api/health` and get an email if it ever goes down.
 
+---
+
+## 15. Dev / Prod database isolation (already configured)
+
+Two databases live on the same Atlas cluster — no extra cost, full data isolation:
+
+| Environment | `DB_NAME` value | Used by |
+|---|---|---|
+| **Emergent preview** (development sandbox) | `Flowra-Insights-Dev` | Feature work, regression tests, demo seeds |
+| **DigitalOcean droplet** (production) | `Flowra-Insights` | Live customer data |
+
+The same code runs on both. The `.env` file (which is git-ignored, see `.gitignore`)
+is the only thing that differs. As a result:
+
+- Any change made on Emergent — schema migrations, demo re-seeds, broken
+  deployments — touches **only** `Flowra-Insights-Dev`.
+- `git pull` on the droplet pulls only the *code* (the droplet's `.env` is
+  never overwritten), so production data is untouched by any development.
+
+To refresh the dev database from production at any time, run
+`python3 /tmp/split_dev_db.py` from inside the Emergent container — it re-clones
+`Flowra-Insights` → `Flowra-Insights-Dev` in ~30 seconds.
+
 Last updated: May 2026 · FLOWRA v9.8.19 / Agent v9.8.19
