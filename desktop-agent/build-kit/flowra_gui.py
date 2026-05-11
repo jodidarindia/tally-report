@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.17"
+APP_VERSION = "v9.8.18"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -476,8 +476,10 @@ class FlowraAgentGUI:
     # ---- UI construction --------------------------------------------------
     def _build_ui(self):
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("960x660")
-        self.root.minsize(820, 560)
+        # Bigger default + minimum size so the FY section + subscription
+        # card are never hidden below the fold on common laptop screens.
+        self.root.geometry("1100x820")
+        self.root.minsize(960, 720)
         try:
             self.root.iconbitmap(resource_path("flowra.ico"))
         except Exception:
@@ -557,8 +559,26 @@ class FlowraAgentGUI:
         self._build_about_tab(nb)
 
     def _build_status_tab(self, nb: ttk.Notebook):
-        f = ttk.Frame(nb, padding=20)
-        nb.add(f, text="  Status  ")
+        # Wrap the Status tab in a scrollable canvas too, so the
+        # Subscription card at the bottom is always reachable.
+        scroll_holder = ttk.Frame(nb)
+        nb.add(scroll_holder, text="  Status  ")
+        canvas = tk.Canvas(scroll_holder, borderwidth=0, highlightthickness=0,
+                           background="#FFFFFF")
+        scroll = ttk.Scrollbar(scroll_holder, orient="vertical",
+                                command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        f = ttk.Frame(canvas, padding=20)
+        cwin = canvas.create_window((0, 0), window=f, anchor="nw")
+
+        def _cfg(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(cwin, width=canvas.winfo_width())
+        f.bind("<Configure>", _cfg)
+        canvas.bind("<Configure>",
+                     lambda e: canvas.itemconfig(cwin, width=e.width))
 
         # Live indicator cards
         cards = tk.Frame(f, bg="#FFFFFF")
@@ -655,18 +675,27 @@ class FlowraAgentGUI:
             padx=12, pady=4, cursor="hand2",
         )
         self.renew_button.pack(side="right")
+        tk.Button(
+            head_row, text="🔄 Refresh",
+            command=self._refresh_subscription_async,
+            bg="#FEFCE8", fg="#854D0E", relief="flat",
+            activebackground="#FDE68A",
+            font=("Segoe UI", 9, "bold"),
+            padx=10, pady=4, cursor="hand2", borderwidth=0,
+        ).pack(side="right", padx=(0, 8))
 
         sub_grid = tk.Frame(sub_card, bg="#FEFCE8")
         sub_grid.pack(fill="x", pady=(8, 0))
 
         def _sub_field(parent, col, label):
             cell = tk.Frame(parent, bg="#FEFCE8")
-            cell.grid(row=0, column=col, padx=(0, 22), sticky="w")
+            cell.grid(row=0, column=col, padx=(0, 28), sticky="nw")
             tk.Label(cell, text=label, fg="#854D0E", bg="#FEFCE8",
                      font=("Segoe UI", 9)).pack(anchor="w")
             v = tk.StringVar(value="—")
             tk.Label(cell, textvariable=v, fg="#0F172A", bg="#FEFCE8",
-                     font=("Segoe UI", 11, "bold")).pack(anchor="w")
+                     font=("Segoe UI", 12, "bold"),
+                     wraplength=200, justify="left").pack(anchor="w", pady=(2, 0))
             return v
 
         self.plan_var       = _sub_field(sub_grid, 0, "Plan")
@@ -683,13 +712,7 @@ class FlowraAgentGUI:
             anchor="w", justify="left", wraplength=860,
         )  # packed only when needed
 
-        # Logout row
-        bottom_row = tk.Frame(sub_card, bg="#FEFCE8"); bottom_row.pack(fill="x", pady=(10, 0))
-        tk.Button(bottom_row, text="🚪  Logout (clear saved login)",
-                  command=self._logout,
-                  bg="#F1F5F9", fg="#0F172A", relief="flat",
-                  font=("Segoe UI", 9),
-                  padx=12, pady=4, cursor="hand2").pack(side="right")
+        # (Logout button now lives in the header strip — top right.)
 
         # Action row
         actions = tk.Frame(f); actions.pack(fill="x", pady=10)
@@ -724,9 +747,37 @@ class FlowraAgentGUI:
         self._schedule_subscription_refresh()
 
     def _build_settings_tab(self, nb: ttk.Notebook):
-        # Use ttk for native Windows look-and-feel.
-        outer = ttk.Frame(nb, padding=(20, 18))
-        nb.add(outer, text="  Settings  ")
+        # Wrap the entire Settings tab in a scrollable canvas so every
+        # section (incl. Section 3 — Starting FY) is always reachable,
+        # even on shorter laptop screens or when the user resizes the
+        # window narrow.
+        scroll_holder = ttk.Frame(nb)
+        nb.add(scroll_holder, text="  Settings  ")
+        canvas = tk.Canvas(scroll_holder, borderwidth=0, highlightthickness=0,
+                           background="#FFFFFF")
+        scroll = ttk.Scrollbar(scroll_holder, orient="vertical",
+                                command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        outer = ttk.Frame(canvas, padding=(20, 18))
+        canvas_window = canvas.create_window((0, 0), window=outer, anchor="nw")
+
+        def _on_inner_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # Make inner frame at least as wide as the canvas
+            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+        outer.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>",
+                     lambda e: canvas.itemconfig(canvas_window, width=e.width))
+
+        # Mouse-wheel scrolling — Windows + Linux + macOS
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+            except Exception:
+                pass
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # Force the native "vista" / "xpnative" theme on Windows so buttons
         # and entries look like standard Windows controls.
@@ -1239,63 +1290,74 @@ class FlowraAgentGUI:
 
     def _apply_subscription(self, info: dict | None):
         if not info:
-            self.plan_var.set("(login failed)")
+            try:
+                self.plan_var.set("(login failed)")
+                self.account_var.set("—")
+                self.expires_var.set("—")
+                self.days_left_var.set("—")
+            except Exception:
+                pass
             return
-        self._sub_info = info  # remember latest
-        self.plan_var.set((info.get("plan") or "").upper() or "—")
-        self.account_var.set(info.get("name") or self.config.get("email", "—"))
-        exp = info.get("subscription_expires") or ""
-        self.expires_var.set(exp[:10] if exp else "—")
+        self._sub_info = info
+        plan_text = (info.get("plan") or "").upper() or "—"
+        name_text = info.get("name") or self.config.get("email", "—") or "—"
+
+        exp_raw = info.get("subscription_expires")
+        if exp_raw:
+            # Accept either "YYYY-MM-DD..." or "DD-MM-YYYY"
+            try:
+                exp_text = str(exp_raw)[:10]
+            except Exception:
+                exp_text = str(exp_raw)
+        else:
+            exp_text = "Lifetime"   # subscription_expires=None typically means
+                                    #  no expiry set (admin / lifetime / trial-extended)
+
         days = info.get("subscription_days_left")
         if days is None:
-            self.days_left_var.set("—")
+            days_text = "Unlimited" if exp_text == "Lifetime" else "—"
         else:
-            self.days_left_var.set(f"{days} days")
-
-        # Banner + agent control logic.
-        if days is not None and days < 0:
-            self.sub_banner_var.set(
-                "⚠  Your FLOWRA subscription has EXPIRED — the sync service has been "
-                "stopped. Click ‘Request Renewal’ to continue.")
             try:
-                self.sub_banner.pack(fill="x", pady=(10, 0), before=
-                    [c for c in self.sub_banner.master.winfo_children()
-                     if isinstance(c, tk.Frame)][-1])
+                d = int(days)
+                days_text = f"{d:,} days"
             except Exception:
+                days_text = str(days)
+
+        try:
+            self.plan_var.set(plan_text)
+            self.account_var.set(name_text)
+            self.expires_var.set(exp_text)
+            self.days_left_var.set(days_text)
+        except Exception:
+            pass
+
+        # ── Expiry banner + agent kill switch ──
+        try:
+            if days is not None and isinstance(days, (int, float)) and days < 0:
+                self.sub_banner_var.set(
+                    "⚠  Your FLOWRA subscription has EXPIRED — the sync service "
+                    "has been stopped. Click 'Request Renewal' to continue.")
                 self.sub_banner.pack(fill="x", pady=(10, 0))
-            # Force-stop the sync service if it's running.
-            if self.proc and self.proc.poll() is None:
-                self._append_log("[sub] subscription expired — stopping sync service.")
-                self.stop_agent()
-            # Disable the bottom Start button as well.
-            try:
+                if self.proc and self.proc.poll() is None:
+                    self._append_log("[sub] subscription expired — stopping sync.")
+                    self.stop_agent()
                 self.btn_start.configure(state="disabled",
                                           text="▶  Subscription expired")
-            except Exception:
-                pass
-        elif days is not None and days <= 10:
-            self.sub_banner_var.set(
-                f"⚠  Your FLOWRA subscription expires in {days} day"
-                f"{'s' if days != 1 else ''}. Click ‘Request Renewal’ to keep "
-                "syncing without interruption.")
-            try:
+            elif days is not None and isinstance(days, (int, float)) and days <= 10:
+                self.sub_banner_var.set(
+                    f"⚠  Your FLOWRA subscription expires in {int(days)} day"
+                    f"{'s' if int(days) != 1 else ''}. Click 'Request Renewal' "
+                    "to keep syncing without interruption.")
                 self.sub_banner.pack(fill="x", pady=(10, 0))
-            except Exception:
-                pass
-            try:
-                self.btn_start.configure(state="normal", text="▶  Start Sync Service")
-            except Exception:
-                pass
-        else:
-            self.sub_banner_var.set("")
-            try:
+                self.btn_start.configure(state="normal",
+                                          text="▶  Start Sync Service")
+            else:
+                self.sub_banner_var.set("")
                 self.sub_banner.pack_forget()
-            except Exception:
-                pass
-            try:
-                self.btn_start.configure(state="normal", text="▶  Start Sync Service")
-            except Exception:
-                pass
+                self.btn_start.configure(state="normal",
+                                          text="▶  Start Sync Service")
+        except Exception:
+            pass
 
     def _request_renewal(self):
         """POST /api/auth/request-renewal using stored credentials."""
@@ -1346,62 +1408,94 @@ class FlowraAgentGUI:
     def _logout(self):
         """Stop the agent, clear saved login + cached agent state, so another
         user can log in from scratch."""
-        if not messagebox.askyesno(
-            APP_NAME,
-            "Logout?\n\n• The sync service will stop immediately.\n"
-            "• Your email / password will be cleared from this PC.\n"
-            "• Any cached Tally company / FY selection will be reset.\n\n"
-            "After logout, another user can sign in with their FLOWRA credentials "
-            "and start syncing their own Tally company."
-        ):
-            return
-        # Stop sync first.
-        if self.proc and self.proc.poll() is None:
-            self.stop_agent()
-        # Clear GUI config keys.
-        cleared = {
-            "backend_url": DEFAULT_BACKEND_URL,
-            "tally_host": self.config.get("tally_host", "localhost"),
-            "tally_port": self.config.get("tally_port", "9000"),
-        }
-        save_config(cleared)
-        self.config = cleared
-        # Clear agent's encrypted auth + sync state so the new user gets a
-        # clean slate (and the agent doesn't try to resume someone else's FY).
-        for fname in ("flowra_auth.enc", ".flowra_key",
-                       "sync_state_v9.json", "last_company.txt"):
-            p = APP_DIR / fname
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception:
-                pass
-        # Reset Settings + Status widgets immediately.
-        for key in ("email", "password", "company_name", "starting_fy"):
-            self.config.pop(key, None)
+        # Disable the button immediately so a double-click can't open two
+        # dialogs at once.
         try:
-            for k, e in self.entries.items():
-                e.delete(0, "end")
-                if k == "backend_url":
-                    e.insert(0, DEFAULT_BACKEND_URL)
-                elif k == "tally_host":
-                    e.insert(0, "localhost")
-                elif k == "tally_port":
-                    e.insert(0, "9000")
-                elif k == "sync_interval_minutes":
-                    e.insert(0, "20")
-            self.company_var.set("")
-            self.company_combo["values"] = []
-            self.fy_var.set("")
-            self.fy_status_var.set("No FY selected yet.")
-            self._render_fy_chips([])
+            self.header_logout_btn.configure(state="disabled")
         except Exception:
             pass
-        self._refresh_subscription_async()
-        self._append_log("[gui] logged out — local credentials cleared.")
-        messagebox.showinfo(APP_NAME,
-            "Logged out. Open the Settings tab and sign in with the new "
-            "credentials to start syncing.")
+        try:
+            if not messagebox.askyesno(
+                APP_NAME,
+                "Logout?\n\n• The sync service will stop immediately.\n"
+                "• Your email / password will be cleared from this PC.\n"
+                "• Any cached Tally company / FY selection will be reset.\n\n"
+                "After logout, another user can sign in with their FLOWRA "
+                "credentials and start syncing their own Tally company."
+            ):
+                return
+            # Stop sync first.
+            if self.proc and self.proc.poll() is None:
+                self.stop_agent()
+            # Clear GUI config keys.
+            cleared = {
+                "backend_url": DEFAULT_BACKEND_URL,
+                "tally_host": self.config.get("tally_host", "localhost"),
+                "tally_port": self.config.get("tally_port", "9000"),
+                "sync_interval_minutes": self.config.get(
+                    "sync_interval_minutes", "20"),
+            }
+            save_config(cleared)
+            self.config = cleared
+            # Clear agent's encrypted auth + sync state so the new user
+            # gets a completely clean slate.
+            for fname in ("flowra_auth.enc", ".flowra_key",
+                           "sync_state_v9.json", "last_company.txt"):
+                p = APP_DIR / fname
+                try:
+                    if p.exists():
+                        p.unlink()
+                except Exception:
+                    pass
+            # Forget cached subscription so the card empties immediately.
+            self._sub_info = None
+            # Reset Settings + Status widgets immediately.
+            try:
+                for k, e in self.entries.items():
+                    e.delete(0, "end")
+                    if k == "backend_url":
+                        e.insert(0, DEFAULT_BACKEND_URL)
+                    elif k == "tally_host":
+                        e.insert(0, "localhost")
+                    elif k == "tally_port":
+                        e.insert(0, "9000")
+                    elif k == "sync_interval_minutes":
+                        e.insert(0, "20")
+                self.company_var.set("")
+                self.company_combo["values"] = []
+                self.fy_var.set("")
+                self.fy_status_var.set("No FY selected yet.")
+                self._render_fy_chips([])
+            except Exception:
+                pass
+            # Reset the login-state UI flags — Login button, header email,
+            # green check, detect buttons.
+            try:
+                self._set_logged_in(False)
+            except Exception:
+                pass
+            # Reset Subscription card on Status tab.
+            try:
+                self.plan_var.set("(not logged in)")
+                self.account_var.set("—")
+                self.expires_var.set("—")
+                self.days_left_var.set("—")
+                self.sub_banner_var.set("")
+                self.sub_banner.pack_forget()
+                self.btn_start.configure(state="normal",
+                                          text="▶  Start Sync Service")
+            except Exception:
+                pass
+            self._append_log("[gui] logged out — local credentials cleared.")
+            messagebox.showinfo(APP_NAME,
+                "Logged out. Open the Settings tab and sign in with the new "
+                "credentials to start syncing.")
+        finally:
+            # Always re-enable the Logout button afterwards.
+            try:
+                self.header_logout_btn.configure(state="normal")
+            except Exception:
+                pass
 
     def _detect_companies(self):
         host = self.entries["tally_host"].get().strip() or "localhost"
