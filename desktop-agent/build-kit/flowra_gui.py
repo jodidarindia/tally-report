@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.11"
+APP_VERSION = "v9.8.12"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -459,26 +459,24 @@ class FlowraAgentGUI:
                  font=("Segoe UI", 10, "bold"), fg="#F87171",
                  bg="#0F172A").pack(side="right", padx=20, pady=14)
 
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=12, pady=10)
-        self._build_status_tab(nb)
-        self._build_settings_tab(nb)
-        self._build_logs_tab(nb)
-        self._build_about_tab(nb)
-
-        bar = tk.Frame(self.root, bg="#F1F5F9", height=52)
+        # IMPORTANT — pack the bottom action bar BEFORE the notebook so Tk
+        # reserves vertical space for it. If we packed it after a Notebook
+        # with `expand=True`, Tk pushes the bar off-screen on smaller
+        # displays (which is what hid the Start/Stop buttons earlier).
+        bar = tk.Frame(self.root, bg="#F1F5F9", height=56)
         bar.pack(fill="x", side="bottom")
+        bar.pack_propagate(False)  # honour the 56-px height
         self.btn_start = tk.Button(bar, text="▶  Start Sync Service",
                                    command=self.start_agent,
                                    bg="#2563EB", fg="white", relief="flat",
-                                   font=("Segoe UI", 10, "bold"),
-                                   padx=16, pady=8, cursor="hand2")
+                                   font=("Segoe UI", 11, "bold"),
+                                   padx=18, pady=10, cursor="hand2")
         self.btn_start.pack(side="left", padx=12, pady=8)
         self.btn_stop = tk.Button(bar, text="■  Stop",
                                   command=self.stop_agent, state="disabled",
                                   bg="#E2E8F0", fg="#0F172A", relief="flat",
-                                  font=("Segoe UI", 10, "bold"),
-                                  padx=16, pady=8, cursor="hand2")
+                                  font=("Segoe UI", 11, "bold"),
+                                  padx=18, pady=10, cursor="hand2")
         self.btn_stop.pack(side="left", padx=4, pady=8)
         tk.Button(bar, text="📁 Open Logs Folder",
                   command=lambda: os.startfile(str(LOG_DIR))
@@ -489,6 +487,13 @@ class FlowraAgentGUI:
                   command=self.hide_to_tray,
                   bg="#F1F5F9", fg="#475569", relief="flat",
                   font=("Segoe UI", 9), cursor="hand2").pack(side="right")
+
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=12, pady=10)
+        self._build_status_tab(nb)
+        self._build_settings_tab(nb)
+        self._build_logs_tab(nb)
+        self._build_about_tab(nb)
 
     def _build_status_tab(self, nb: ttk.Notebook):
         f = ttk.Frame(nb, padding=20)
@@ -664,10 +669,15 @@ class FlowraAgentGUI:
         # ── Save button bar ─────────────────────────────────────────────
         bar = ttk.Frame(outer)
         bar.pack(fill="x", pady=(8, 0))
-        ttk.Button(bar, text="💾  Save Settings",
+        ttk.Button(bar, text="💾  Save & Start Sync",
                    command=self.save_settings).pack(side="left")
         ttk.Button(bar, text="Reset to defaults",
                    command=self._reset_defaults).pack(side="left", padx=8)
+        ttk.Label(
+            bar, foreground="#475569",
+            text=("Tip: fills in all sections above, then click Save & Start. "
+                  "The Start/Stop buttons at the bottom can also be used.")
+        ).pack(side="left", padx=12)
 
     def _render_fy_chips(self, fy_list: list[str]):
         """Render FY values as a row of selectable ttk.Button chips."""
@@ -997,11 +1007,14 @@ class FlowraAgentGUI:
                 + "\n".join(f"  •  {m}" for m in missing))
             return
 
-        # Restart the sync service so it picks up the new env vars
+        # Restart the sync service (or START it if it was idle).
         if self.proc and self.proc.poll() is None:
             self.stop_agent()
-            self.root.after(500, self.start_agent)
-        self._toast("Settings saved.")
+            self.root.after(700, self.start_agent)
+            self._toast("Settings saved — sync service restarting.")
+        else:
+            self.root.after(200, self.start_agent)
+            self._toast("Settings saved — starting sync service.")
         self._refresh_indicators_now()
 
     def _toggle_startup(self):
