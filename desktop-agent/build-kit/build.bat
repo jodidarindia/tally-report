@@ -38,33 +38,9 @@ if not defined PYEXE (
     goto :err
 )
 
-REM --- 1b. Check Python version ----------------------------------------
+REM --- 1b. Show Python version (informational) -------------------------
 for /f "tokens=2 delims= " %%V in ('%PYEXE% -V 2^>^&1') do set PYVER=%%V
 call :both "[1/5] Using Python: %PYEXE% (%PYVER%)"
-
-REM Refuse Python 3.14+ until upstream wheels catch up.
-echo %PYVER% | findstr /r "^3\.14\." >nul && (
-    call :both ""
-    call :both "[ERROR] Python %PYVER% is too new for this build kit."
-    call :both "        Several dependencies (Pillow, cryptography) do not yet"
-    call :both "        publish Windows wheels for Python 3.14, so building"
-    call :both "        them from source would require Visual C++ Build Tools."
-    call :both ""
-    call :both "        FIX: install Python 3.12 from https://www.python.org/downloads/release/python-3128/"
-    call :both "        and remember to tick 'Add Python to PATH' during install."
-    call :both ""
-    call :both "        Then delete the existing .venv folder next to this script"
-    call :both "        and double-click build.bat again."
-    call :both ""
-    goto :err
-)
-echo %PYVER% | findstr /r "^3\.1[5-9]\." >nul && (
-    call :both ""
-    call :both "[ERROR] Python %PYVER% is too new. Please use Python 3.10 - 3.13."
-    call :both "        Recommended: Python 3.12 from https://www.python.org/downloads/release/python-3128/"
-    call :both ""
-    goto :err
-)
 
 REM --- 2. Create / refresh virtualenv -----------------------------------
 if not exist ".venv\Scripts\python.exe" (

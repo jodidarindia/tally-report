@@ -1,20 +1,21 @@
 # Runtime + build dependencies. build.bat installs these into a local venv.
-# Versions are minimum-pinned so the build works on Python 3.10 — 3.13.
-# Python 3.14 is NOT supported yet (Pillow + cryptography have no 3.14 wheels
-# at the time of writing — build.bat refuses to proceed with 3.14).
-# RECOMMENDED: Python 3.12 from python.org.
+# Versions chosen so the build works on Python 3.10 through 3.14+.
+# Key minimums for Python 3.14 support:
+#   • pyinstaller   ≥ 6.15  → first release with cp314 wheels
+#   • Pillow        ≥ 11.3  → first release with cp314 wheels
+#   • cryptography  ≥ 44.0  → first release with cp314 wheels
 
 # Build tools
-pyinstaller>=6.10.0
+pyinstaller>=6.15.0
 
 # GUI / tray
 pystray>=0.19.5
-Pillow>=10.4.0
+Pillow>=11.3.0
 
 # Agent runtime deps (must mirror the agent's imports)
 requests>=2.32.3
 xmltodict>=0.13.0
 schedule>=1.2.2
 python-dotenv>=1.0.1
-cryptography>=43.0.1
-websockets>=12.0
+cryptography>=44.0.0
+websockets>=13.0

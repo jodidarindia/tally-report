@@ -21,14 +21,10 @@ CONTENTS
 PREREQUISITES (Windows machine)
 -------------------------------
   • Windows 10 / 11 (64-bit recommended).
-  • Python 3.10, 3.11, 3.12 OR 3.13  →  https://www.python.org/downloads/
-        RECOMMENDED: Python 3.12 (best wheel coverage today).
+  • Python 3.10 or newer (3.14.5 fully supported via the latest Pillow /
+    cryptography / PyInstaller wheels — see requirements.txt for minimums).
+        Download:  https://www.python.org/downloads/
         IMPORTANT: tick "Add Python to PATH" during install.
-
-        ⚠  Python 3.14 is NOT supported yet — Pillow / cryptography
-        don't publish 3.14 wheels at the time of writing, so the build
-        will refuse to proceed and ask you to install Python 3.12.
-
   • Internet connection for the first build (to download pip packages).
   • ~500 MB free disk for the build cache + .venv.
 
@@ -52,13 +48,17 @@ IF THE BUILD FAILS
   exact error. Mail that file to support@flowra.in and we'll debug it.
 
   Common fixes:
-    • "Python 3.14 too new"  →  install Python 3.12, delete the .venv
-      folder, re-run build.bat.
-    • "Could not find a version of pyinstaller"  →  same as above —
-      Python version is too new for the pinned wheels.
+    • "Could not find a version of pyinstaller / Pillow / cryptography"
+      →  pip can't see a wheel for your Python. Upgrade pip first:
+            .venv\Scripts\python.exe -m pip install --upgrade pip
+         then re-run build.bat. If still failing, your Python is newer
+         than the wheels published on PyPI — wait a few weeks or use
+         a slightly older Python release.
     • Long compiler errors mentioning "Microsoft Visual C++ 14.0"  →
-      you tried building from source. Install a supported Python
-      version and try again instead of installing Visual Studio.
+      pip couldn't find a wheel and is trying to compile from source.
+      Easiest fix: install Microsoft C++ Build Tools from
+      https://visualstudio.microsoft.com/visual-cpp-build-tools/  OR
+      switch to a Python version that does have a wheel.
     • "pip: SSL: CERTIFICATE_VERIFY_FAILED"  →  corporate proxy or
       out-of-date Windows TLS roots. Run on a non-corporate network
       for the first build, or set HTTPS_PROXY in the cmd window.
