@@ -855,8 +855,16 @@ def _maybe_run_agent_directly():
     if "--run-agent" in sys.argv:
         sys.argv = [a for a in sys.argv if a != "--run-agent"]
         script = resource_path(AGENT_SCRIPT)
+        # The agent uses __file__ to locate its own folder for exports / logs.
+        # exec() doesn't define it by default → inject it explicitly so the
+        # script's `os.path.dirname(os.path.abspath(__file__))` resolves.
+        globals_dict = {
+            "__name__": "__main__",
+            "__file__": script,
+            "__builtins__": __builtins__,
+        }
         with open(script, encoding="utf-8") as fh:
-            exec(compile(fh.read(), script, "exec"), {"__name__": "__main__"})
+            exec(compile(fh.read(), script, "exec"), globals_dict)
         sys.exit(0)
 
 
