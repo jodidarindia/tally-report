@@ -1,14 +1,8 @@
 @echo off
 REM ============================================================
 REM   FLOWRA Tally Sync Agent - Windows One-Click Build Script
-REM   v9.8.9.1 — hardened: logs to build.log, refuses Python 3.14,
-REM   surfaces pip errors instead of swallowing them.
-REM
-REM   Double-click this file. On the first run, install Python 3.12
-REM   from python.org (tick "Add Python to PATH"). Python 3.10 - 3.13
-REM   are also supported. Python 3.14 is not supported yet because
-REM   several compiled dependencies (Pillow, cryptography) do not
-REM   publish Python 3.14 wheels at the time of writing.
+REM   Version is read automatically from flowra_gui.py (APP_VERSION)
+REM   so the filename + log header always match the GUI title bar.
 REM ============================================================
 
 setlocal EnableExtensions EnableDelayedExpansion
@@ -18,9 +12,20 @@ REM Always log the whole run so failures can be shared with support.
 set BUILD_LOG=%~dp0build.log
 echo. > "%BUILD_LOG%"
 
+REM --- Read APP_VERSION from flowra_gui.py so we never go stale ---------
+set APP_VER=v9.8.13
+for /f "tokens=2 delims==" %%V in ('findstr /B "APP_VERSION" flowra_gui.py') do (
+    set "_LINE=%%V"
+)
+if defined _LINE (
+    set "_LINE=!_LINE: =!"
+    set "_LINE=!_LINE:"=!"
+    set "APP_VER=!_LINE!"
+)
+
 call :both ""
 call :both "============================================================"
-call :both "   FLOWRA Tally Sync Agent — Build Kit (v9.8.9)"
+call :both "   FLOWRA Tally Sync Agent - Build Kit (!APP_VER!)"
 call :both "   Log file: %BUILD_LOG%"
 call :both "============================================================"
 call :both ""
@@ -87,18 +92,18 @@ if errorlevel 1 (
 
 REM --- 5. Copy artifact -------------------------------------------------
 if exist "dist\FlowraTallyAgent.exe" (
-    copy /Y "dist\FlowraTallyAgent.exe" "FlowraTallyAgent_v9.8.9.exe" >nul
+    copy /Y "dist\FlowraTallyAgent.exe" "FlowraTallyAgent_!APP_VER!.exe" >nul
     call :both ""
     call :both "============================================================"
     call :both "   BUILD SUCCESSFUL"
     call :both "============================================================"
     call :both ""
-    call :both "   Output:  %~dp0FlowraTallyAgent_v9.8.9.exe"
-    for %%I in ("FlowraTallyAgent_v9.8.9.exe") do call :both "   Size:    %%~zI bytes"
+    call :both "   Output:  %~dp0FlowraTallyAgent_!APP_VER!.exe"
+    for %%I in ("FlowraTallyAgent_!APP_VER!.exe") do call :both "   Size:    %%~zI bytes"
     call :both ""
     call :both "   You can now distribute the .exe to your Tally machines."
     call :both "   First launch on a new machine may show a Windows SmartScreen"
-    call :both "   warning ('Unknown publisher') — click 'More info' then"
+    call :both "   warning ('Unknown publisher') - click 'More info' then"
     call :both "   'Run anyway'. Code-signing the binary will remove this."
     call :both ""
 ) else (
