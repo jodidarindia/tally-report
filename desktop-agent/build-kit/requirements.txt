@@ -1,17 +1,18 @@
 # Runtime + build dependencies. build.bat installs these into a local venv.
-# Pinned versions known to work with the agent v9.8.9.
+# Versions are minimum-pinned so the build works on Python 3.10 — 3.14+
+# (PyInstaller 6.15 is the first release with Python 3.14 wheels).
 
 # Build tools
-pyinstaller==6.10.0
+pyinstaller>=6.15.0
 
 # GUI / tray
-pystray==0.19.5
-Pillow==10.4.0
+pystray>=0.19.5
+Pillow>=10.4.0
 
 # Agent runtime deps (must mirror the agent's imports)
-requests==2.32.3
-xmltodict==0.13.0
-schedule==1.2.2
-python-dotenv==1.0.1
-cryptography==43.0.1
-websockets==12.0
+requests>=2.32.3
+xmltodict>=0.13.0
+schedule>=1.2.2
+python-dotenv>=1.0.1
+cryptography>=43.0.1
+websockets>=12.0

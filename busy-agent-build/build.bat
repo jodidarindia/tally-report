@@ -35,7 +35,7 @@ REM ── 3. Install dependencies
 echo.
 echo [2/4] Installing dependencies (pyodbc, requests, pyinstaller)...
 python -m pip install --upgrade pip --quiet
-python -m pip install pyodbc==5.1.0 requests==2.32.3 pyinstaller==6.10.0 --quiet
+python -m pip install "pyodbc>=5.1.0" "requests>=2.32.3" "pyinstaller>=6.15.0" --quiet
 if errorlevel 1 (
     echo [FAIL] Failed to install dependencies.
     echo        If pyodbc fails, install Microsoft Access Database Engine 2016 64-bit:
