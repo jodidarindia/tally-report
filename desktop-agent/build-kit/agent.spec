@@ -17,7 +17,8 @@ a = Analysis(
     datas=[
         ('tally_sync_agent_v9.py', '.'),
         # Include the optional icon if it exists; harmless if missing.
-        *( [('flowra.ico', '.')] if os.path.exists('flowra.ico') else [] ),
+        *( [('flowra.ico', '.')]        if os.path.exists('flowra.ico')        else [] ),
+        *( [('flowra_logo.png', '.')]   if os.path.exists('flowra_logo.png')   else [] ),
     ],
     hiddenimports=[
         # Modules the agent imports dynamically that PyInstaller can't see
@@ -40,6 +41,7 @@ a = Analysis(
         'PIL.Image',
         'PIL.ImageDraw',
         'PIL.ImageFont',
+        'PIL.ImageTk',
         # Auto-start registry on Windows
         'winreg',
     ],
@@ -49,7 +51,7 @@ a = Analysis(
     excludes=[
         # Cut bloat we don't use
         'matplotlib', 'numpy', 'pandas', 'scipy',
-        'PIL', 'tkinter.test', 'test', 'unittest',
+        'tkinter.test', 'test', 'unittest',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

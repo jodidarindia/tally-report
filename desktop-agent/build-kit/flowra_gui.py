@@ -32,13 +32,19 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.9"
+APP_VERSION = "v9.8.10"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
 ENV_FILE = APP_DIR / "agent.env"
 LOG_DIR = APP_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+
+# Pre-filled FLOWRA cloud URL — admins should NOT have to type this. End-users
+# can still override from Settings → Advanced if they self-host.
+DEFAULT_BACKEND_URL = "https://tally-report-ai.preview.emergentagent.com"
+# A non-existent host the connectivity check uses to verify HTTPS internet.
+INTERNET_PROBE_URL = "https://www.google.com/generate_204"
 
 # Windows Registry key that auto-launches programs at user login.
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -115,22 +121,123 @@ def is_startup_registered() -> bool:
 
 # ── Tray icon (pystray + Pillow) ────────────────────────────────────────
 def build_tray_icon_image():
-    """Build a 64×64 in-memory PNG: blue rounded square with white "F"."""
+    """Load the bundled FLOWRA logo for the tray icon. Falls back to a
+    drawn blue-square 'F' if the logo file or PIL is unavailable."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         return None
+
+    # Try the real logo first.
+    for candidate in ("flowra_logo.png", "flowra.ico"):
+        p = resource_path(candidate)
+        if os.path.exists(p):
+            try:
+                img = Image.open(p).convert("RGBA")
+                # System tray expects a square ~64x64; resize cleanly.
+                img.thumbnail((64, 64), Image.LANCZOS)
+                return img
+            except Exception:
+                continue
+
+    # Fallback: hand-drawn placeholder.
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # Brand blue
     d.rounded_rectangle((2, 2, 62, 62), radius=12, fill=(37, 99, 235, 255))
-    # Big "F"
     try:
         font = ImageFont.truetype("arial.ttf", 42)
     except Exception:
         font = ImageFont.load_default()
     d.text((20, 7), "F", fill=(255, 255, 255, 255), font=font)
     return img
+
+
+def load_header_logo():
+    """Return a Tkinter PhotoImage for the in-app header logo, or None."""
+    try:
+        from PIL import Image, ImageTk
+    except ImportError:
+        return None
+    for candidate in ("flowra_logo.png", "flowra.ico"):
+        p = resource_path(candidate)
+        if os.path.exists(p):
+            try:
+                im = Image.open(p).convert("RGBA")
+                im.thumbnail((40, 40), Image.LANCZOS)
+                return ImageTk.PhotoImage(im)
+            except Exception:
+                continue
+    return None
+
+
+# ── Connectivity probes ─────────────────────────────────────────────────
+def check_tally(host: str, port: str | int) -> tuple[bool, str]:
+    """TCP-ping the Tally ODBC port. Returns (ok, message)."""
+    import socket
+    try:
+        with socket.create_connection((host, int(port)), timeout=2):
+            return True, f"{host}:{port}"
+    except Exception as e:
+        return False, str(e)
+
+
+def check_internet() -> tuple[bool, str]:
+    """Quick HTTPS probe — connection only, doesn't matter what response."""
+    try:
+        import requests
+        r = requests.get(INTERNET_PROBE_URL, timeout=3)
+        return (r.status_code in (200, 204), f"HTTP {r.status_code}")
+    except Exception as e:
+        return False, str(e)
+
+
+def check_backend(url: str) -> tuple[bool, str]:
+    """Probe the FLOWRA backend's public health endpoint."""
+    if not url:
+        return False, "no URL configured"
+    try:
+        import requests
+        r = requests.get(url.rstrip("/") + "/api/public/plans", timeout=4)
+        return (r.status_code < 500, f"HTTP {r.status_code}")
+    except Exception as e:
+        return False, str(e)
+
+
+def fetch_tally_companies(host: str, port: str | int) -> list[str]:
+    """Ask Tally for the list of OPEN companies (its native XML protocol).
+    Returns an empty list if Tally is unreachable or no companies are loaded.
+    """
+    import requests
+    xml = (
+        '<ENVELOPE><HEADER><VERSION>1</VERSION>'
+        '<TALLYREQUEST>Export</TALLYREQUEST>'
+        '<TYPE>Collection</TYPE><ID>FlowraCompanyList</ID></HEADER>'
+        '<BODY><DESC><STATICVARIABLES>'
+        '<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
+        '</STATICVARIABLES><TDL><TDLMESSAGE>'
+        '<COLLECTION NAME="FlowraCompanyList" ISINITIALIZE="Yes">'
+        '<TYPE>Company</TYPE>'
+        '<FETCH>NAME, BASICCOMPANYFORMALNAME</FETCH>'
+        '</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>'
+    )
+    try:
+        r = requests.post(f"http://{host}:{port}",
+                          data=xml.encode("utf-8"),
+                          headers={"Content-Type": "application/xml"},
+                          timeout=5)
+        if r.status_code != 200:
+            return []
+        import re as _re
+        # Tally returns "<COMPANY NAME='...'>" or "<NAME>...</NAME>" — extract both.
+        names = set()
+        for m in _re.finditer(r'NAME="([^"]+)"', r.text):
+            names.add(m.group(1).strip())
+        for m in _re.finditer(r"<NAME[^>]*>([^<]+)</NAME>", r.text):
+            names.add(m.group(1).strip())
+        # Filter out junk Tally adds (default, blank).
+        return sorted(n for n in names if n and n.lower() != "default")
+    except Exception:
+        return []
 
 
 # ── Main GUI ─────────────────────────────────────────────────────────────
@@ -140,6 +247,10 @@ class FlowraAgentGUI:
         self.proc: subprocess.Popen | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.config = load_config()
+        # Seed defaults so the user never has to type the FLOWRA URL.
+        if not self.config.get("backend_url"):
+            self.config["backend_url"] = DEFAULT_BACKEND_URL
+            save_config(self.config)
         self.tray = None
         self._log_path: Path | None = None
 
@@ -174,22 +285,26 @@ class FlowraAgentGUI:
     # ---- UI construction --------------------------------------------------
     def _build_ui(self):
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("900x620")
-        self.root.minsize(720, 520)
+        self.root.geometry("960x660")
+        self.root.minsize(820, 560)
         try:
             self.root.iconbitmap(resource_path("flowra.ico"))
         except Exception:
             pass
 
-        # Header strip
-        header = tk.Frame(self.root, bg="#0F172A", height=64)
+        # Header strip with real FLOWRA logo
+        header = tk.Frame(self.root, bg="#0F172A", height=72)
         header.pack(fill="x")
+        self._header_logo = load_header_logo()  # keep ref so Tk doesn't GC it
+        if self._header_logo is not None:
+            tk.Label(header, image=self._header_logo,
+                     bg="#0F172A").pack(side="left", padx=(20, 12), pady=14)
         tk.Label(header, text="FLOWRA",
-                 font=("Segoe UI", 18, "bold"), fg="#FFFFFF",
-                 bg="#0F172A").pack(side="left", padx=20, pady=14)
+                 font=("Segoe UI", 20, "bold"), fg="#FFFFFF",
+                 bg="#0F172A").pack(side="left", pady=14)
         tk.Label(header, text=f"Tally Sync Agent  ·  {APP_VERSION}",
                  font=("Segoe UI", 10), fg="#94A3B8",
-                 bg="#0F172A").pack(side="left", pady=14)
+                 bg="#0F172A").pack(side="left", padx=10, pady=14)
         self.status_var = tk.StringVar(value="● Stopped")
         tk.Label(header, textvariable=self.status_var,
                  font=("Segoe UI", 10, "bold"), fg="#F87171",
@@ -230,64 +345,115 @@ class FlowraAgentGUI:
         f = ttk.Frame(nb, padding=20)
         nb.add(f, text="  Status  ")
 
+        # Live indicator cards
         cards = tk.Frame(f, bg="#FFFFFF")
         cards.pack(fill="x", pady=(0, 16))
-        for i, (label, var_attr, default) in enumerate([
-            ("Tally Connection",  "tally_var",   "Not checked"),
-            ("FLOWRA Backend",    "backend_var", "Not checked"),
-            ("Last Sync",         "lastsync_var", "Never"),
-            ("Service",           "service_var", "Stopped"),
-        ]):
+        self._indicators: dict[str, tuple[tk.Label, tk.StringVar]] = {}
+        layout = [
+            ("internet",     "Internet",          "Checking…"),
+            ("tally",        "Tally Connection",  "Checking…"),
+            ("backend",      "FLOWRA Cloud",      "Checking…"),
+            ("service",      "Sync Service",      "Stopped"),
+        ]
+        for i, (key, label, default) in enumerate(layout):
             card = tk.Frame(cards, bg="#F8FAFC", relief="solid", bd=1, padx=14, pady=12)
             card.grid(row=0, column=i, padx=6, sticky="nsew")
             cards.grid_columnconfigure(i, weight=1)
             tk.Label(card, text=label, fg="#64748B",
                      bg="#F8FAFC", font=("Segoe UI", 9)).pack(anchor="w")
+            row = tk.Frame(card, bg="#F8FAFC"); row.pack(anchor="w", pady=(4, 0))
+            dot = tk.Label(row, text="●", fg="#94A3B8",
+                           bg="#F8FAFC", font=("Segoe UI", 14, "bold"))
+            dot.pack(side="left")
             v = tk.StringVar(value=default)
-            setattr(self, var_attr, v)
-            tk.Label(card, textvariable=v, fg="#0F172A",
-                     bg="#F8FAFC", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(4, 0))
+            tk.Label(row, textvariable=v, fg="#0F172A",
+                     bg="#F8FAFC", font=("Segoe UI", 11, "bold")).pack(side="left", padx=(6, 0))
+            self._indicators[key] = (dot, v)
 
-        actions = tk.Frame(f)
-        actions.pack(fill="x", pady=10)
-        tk.Button(actions, text="🔄  Sync Now", command=self.sync_now,
+        # Convenience aliases for existing log-driven setters
+        self.service_var = self._indicators["service"][1]
+        self.tally_var = self._indicators["tally"][1]
+        self.backend_var = self._indicators["backend"][1]
+
+        # Last sync line
+        self.lastsync_var = tk.StringVar(value="Never")
+        last_row = tk.Frame(f, bg="#FFFFFF"); last_row.pack(anchor="w", pady=(0, 12))
+        tk.Label(last_row, text="Last successful sync:", fg="#64748B",
+                 bg="#FFFFFF", font=("Segoe UI", 9)).pack(side="left")
+        tk.Label(last_row, textvariable=self.lastsync_var, fg="#0F172A",
+                 bg="#FFFFFF", font=("Segoe UI", 10, "bold")).pack(side="left", padx=8)
+
+        # Action row
+        actions = tk.Frame(f); actions.pack(fill="x", pady=10)
+        tk.Button(actions, text="🔄  Re-check Now", command=self._refresh_indicators_now,
                   bg="#10B981", fg="white", relief="flat",
                   font=("Segoe UI", 10, "bold"),
                   padx=16, pady=8, cursor="hand2").pack(side="left")
-        tk.Button(actions, text="🧪  Test Connection", command=self.test_connection,
+        tk.Button(actions, text="🧪  Test Tally Connection", command=self.test_connection,
                   bg="#F1F5F9", fg="#0F172A", relief="flat",
                   font=("Segoe UI", 10),
                   padx=16, pady=8, cursor="hand2").pack(side="left", padx=8)
 
         tk.Label(f, justify="left", fg="#64748B", bg="#FFFFFF",
                  font=("Segoe UI", 9), wraplength=820,
-                 text=("This window can be closed safely — the sync service "
-                       "keeps running in the system tray (look for the FLOWRA "
-                       "icon near your clock). Right-click the tray icon for "
-                       "quick actions.")).pack(anchor="w", pady=(20, 0))
+                 text=("Green = connected · Red = offline / unreachable · "
+                       "Grey = checking.\nThis window can be closed safely — "
+                       "the sync service keeps running in the system tray.")).pack(anchor="w",
+                                                                                    pady=(20, 0))
+
+        # Kick off the first probe and a 15-second background refresh.
+        self.root.after(300, self._refresh_indicators_now)
+        self._schedule_indicator_refresh()
 
     def _build_settings_tab(self, nb: ttk.Notebook):
         f = ttk.Frame(nb, padding=20)
         nb.add(f, text="  Settings  ")
 
         rows = [
-            ("FLOWRA Server URL",       "backend_url",            "https://yourcompany.flowra.in", False),
             ("Login Email",             "email",                  "you@company.com",                False),
             ("Password",                "password",               "",                                True),
             ("Tally Host",              "tally_host",             "localhost",                       False),
             ("Tally Port",              "tally_port",             "9000",                            False),
             ("Sync Interval (minutes)", "sync_interval_minutes",  "20",                              False),
+            ("FLOWRA Server URL (advanced)", "backend_url",       DEFAULT_BACKEND_URL,               False),
         ]
         self.entries: dict[str, tk.Entry] = {}
         for i, (label, key, placeholder, is_secret) in enumerate(rows):
             tk.Label(f, text=label, fg="#334155", bg="#FFFFFF",
                      font=("Segoe UI", 10)).grid(row=i, column=0, sticky="w",
                                                   pady=8, padx=(0, 12))
-            e = tk.Entry(f, font=("Segoe UI", 10), width=46,
+            e = tk.Entry(f, font=("Segoe UI", 10), width=52,
                          show="•" if is_secret else "")
-            e.insert(0, str(self.config.get(key, placeholder if not is_secret else "")))
-            e.grid(row=i, column=1, sticky="w", pady=8)
+            stored = self.config.get(key)
+            if stored:
+                value = stored
+            elif is_secret:
+                value = ""
+            else:
+                value = placeholder
+            e.insert(0, str(value))
+            e.grid(row=i, column=1, sticky="w", pady=8, columnspan=2)
             self.entries[key] = e
+
+        # Companies row — fetched live from Tally with the "Detect" button
+        row_idx = len(rows)
+        tk.Label(f, text="Tally Company", fg="#334155", bg="#FFFFFF",
+                 font=("Segoe UI", 10)).grid(row=row_idx, column=0, sticky="w",
+                                              pady=8, padx=(0, 12))
+        self.company_var = tk.StringVar(value=self.config.get("company_name", ""))
+        self.company_combo = ttk.Combobox(f, textvariable=self.company_var,
+                                          font=("Segoe UI", 10), width=40, state="readonly")
+        self.company_combo.grid(row=row_idx, column=1, sticky="w", pady=8)
+        tk.Button(f, text="🔍 Detect", command=self._detect_companies,
+                  bg="#F1F5F9", fg="#0F172A", relief="flat",
+                  font=("Segoe UI", 9, "bold"),
+                  padx=12, pady=4, cursor="hand2").grid(row=row_idx, column=2,
+                                                         sticky="w", padx=(8, 0))
+        # Seed the dropdown from cached list if available
+        cached = self.config.get("available_companies") or []
+        if cached:
+            self.company_combo["values"] = cached
+        row_idx += 1
 
         # Auto-start checkbox
         self.startup_var = tk.BooleanVar(value=is_startup_registered())
@@ -296,13 +462,20 @@ class FlowraAgentGUI:
             variable=self.startup_var, command=self._toggle_startup,
             font=("Segoe UI", 10), bg="#FFFFFF", fg="#0F172A",
             activebackground="#FFFFFF", anchor="w",
-        ).grid(row=len(rows), column=1, sticky="w", pady=(14, 0))
+        ).grid(row=row_idx, column=1, sticky="w", pady=(14, 0), columnspan=2)
 
         tk.Button(f, text="💾  Save Settings", command=self.save_settings,
                   bg="#2563EB", fg="white", relief="flat",
                   font=("Segoe UI", 10, "bold"),
                   padx=20, pady=8, cursor="hand2").grid(
-            row=len(rows) + 1, column=1, sticky="w", pady=(16, 0))
+            row=row_idx + 1, column=1, sticky="w", pady=(16, 0))
+
+        tk.Label(f, text=("Tip: the FLOWRA Server URL is pre-filled — only "
+                          "change it if you are running a self-hosted FLOWRA "
+                          "deployment."),
+                 fg="#94A3B8", bg="#FFFFFF", font=("Segoe UI", 9),
+                 wraplength=620, justify="left").grid(
+            row=row_idx + 2, column=1, sticky="w", pady=(10, 0), columnspan=2)
 
     def _build_logs_tab(self, nb: ttk.Notebook):
         f = ttk.Frame(nb, padding=10)
@@ -394,10 +567,97 @@ class FlowraAgentGUI:
                     pass
 
     # ---- Actions ---------------------------------------------------------
+    def _set_indicator(self, key: str, ok: bool | None, text: str):
+        if key not in self._indicators:
+            return
+        dot, var = self._indicators[key]
+        var.set(text)
+        if ok is True:
+            dot.config(fg="#10B981")           # green
+        elif ok is False:
+            dot.config(fg="#EF4444")           # red
+        else:
+            dot.config(fg="#94A3B8")           # grey (checking)
+
+    def _refresh_indicators_now(self):
+        # Service status is read from the live subprocess.
+        running = bool(self.proc and self.proc.poll() is None)
+        self._set_indicator("service", running if running else None,
+                            "Running" if running else "Stopped")
+        # The other three involve network/socket calls — run on a thread
+        # so the UI doesn't freeze.
+        threading.Thread(target=self._probe_worker, daemon=True).start()
+
+    def _probe_worker(self):
+        # 1) Internet
+        ok, msg = check_internet()
+        self.root.after(0, lambda: self._set_indicator(
+            "internet", ok, "Online" if ok else f"Offline ({msg[:24]})"))
+        # 2) Tally
+        host = self.entries["tally_host"].get().strip() if hasattr(self, "entries") \
+            else self.config.get("tally_host", "localhost")
+        port = self.entries["tally_port"].get().strip() if hasattr(self, "entries") \
+            else self.config.get("tally_port", "9000")
+        ok, msg = check_tally(host or "localhost", port or "9000")
+        self.root.after(0, lambda: self._set_indicator(
+            "tally", ok, f"{host}:{port}" if ok else "Unreachable"))
+        # 3) FLOWRA backend
+        url = self.entries["backend_url"].get().strip() if hasattr(self, "entries") \
+            else self.config.get("backend_url", DEFAULT_BACKEND_URL)
+        ok, msg = check_backend(url or DEFAULT_BACKEND_URL)
+        self.root.after(0, lambda: self._set_indicator(
+            "backend", ok, "Reachable" if ok else "Unreachable"))
+
+    def _schedule_indicator_refresh(self):
+        self.root.after(15000, self._tick_indicators)
+
+    def _tick_indicators(self):
+        self._refresh_indicators_now()
+        self._schedule_indicator_refresh()
+
+    def _detect_companies(self):
+        host = self.entries["tally_host"].get().strip() or "localhost"
+        port = self.entries["tally_port"].get().strip() or "9000"
+        # Show a quick "working" hint
+        self.company_combo["values"] = ["Detecting…"]
+        self.company_var.set("Detecting…")
+        self.root.update_idletasks()
+
+        def worker():
+            names = fetch_tally_companies(host, port)
+            self.root.after(0, lambda: self._apply_companies(names))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_companies(self, names: list[str]):
+        if not names:
+            self.company_combo["values"] = []
+            self.company_var.set("")
+            messagebox.showerror(
+                APP_NAME,
+                "No companies detected. Make sure Tally is open and the "
+                "company is loaded.\n\n"
+                "If Tally has no companies open, this list will be empty.")
+            return
+        self.company_combo["values"] = names
+        # Preserve current selection if it still exists, otherwise pick first.
+        current = self.company_var.get()
+        if current not in names:
+            self.company_var.set(names[0])
+        self.config["available_companies"] = names
+        save_config(self.config)
+        self._toast(f"Found {len(names)} company / companies in Tally.")
+
     def save_settings(self):
         cfg = {k: e.get().strip() for k, e in self.entries.items()}
         if not cfg.get("password"):
             cfg["password"] = self.config.get("password", "")
+        # Always default the URL so users never have to type it.
+        if not cfg.get("backend_url"):
+            cfg["backend_url"] = DEFAULT_BACKEND_URL
+        # Remember selected company name (so the agent can scope its TDL).
+        cfg["company_name"] = self.company_var.get().strip() if hasattr(self, "company_var") else ""
+        cfg["available_companies"] = self.config.get("available_companies", [])
         # Preserve flags
         for k in ("startup_prompted", "tray_hint_shown"):
             if k in self.config:
@@ -409,6 +669,7 @@ class FlowraAgentGUI:
             self.stop_agent()
             self.root.after(500, self.start_agent)
         self._toast("Settings saved.")
+        self._refresh_indicators_now()
 
     def _toggle_startup(self):
         if self.startup_var.get():
@@ -448,12 +709,13 @@ class FlowraAgentGUI:
 
         env = os.environ.copy()
         env.update({
-            "BACKEND_URL":            self.config.get("backend_url", ""),
+            "BACKEND_URL":            self.config.get("backend_url", DEFAULT_BACKEND_URL),
             "FLOWRA_EMAIL":           self.config.get("email", ""),
             "FLOWRA_PASSWORD":        self.config.get("password", ""),
             "TALLY_HOST":             self.config.get("tally_host", "localhost"),
             "TALLY_PORT":             self.config.get("tally_port", "9000"),
             "SYNC_INTERVAL_MINUTES":  self.config.get("sync_interval_minutes", "20"),
+            "COMPANY_NAME":           self.config.get("company_name", ""),
             "PYTHONUNBUFFERED":       "1",
         })
 
