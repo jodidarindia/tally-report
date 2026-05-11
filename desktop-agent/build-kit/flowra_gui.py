@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.14"
+APP_VERSION = "v9.8.15"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -423,10 +423,9 @@ class FlowraAgentGUI:
             except Exception as e:
                 self.log_queue.put(f"[setup] shortcut install failed: {e}")
 
-        # Auto-launch sync service if credentials are saved
-        if self.config.get("backend_url") and self.config.get("email") \
-                and self.config.get("password"):
-            self.root.after(800, self.start_agent)
+        # NOTE: We no longer auto-start the sync service on launch.
+        # The user must explicitly click "▶ Start Sync Service" or
+        # "💾 Save & Start Sync" so they can review settings first.
 
         if start_minimized:
             self.root.after(50, self.hide_to_tray)
@@ -529,13 +528,46 @@ class FlowraAgentGUI:
         self.tally_var = self._indicators["tally"][1]
         self.backend_var = self._indicators["backend"][1]
 
+        # ── Active sync card ────────────────────────────────────────────
+        sync_card = tk.Frame(f, bg="#EFF6FF", relief="solid", bd=1, padx=16, pady=14)
+        sync_card.pack(fill="x", pady=(0, 14))
+        tk.Label(sync_card, text="Sync Status", fg="#1E3A8A",
+                 bg="#EFF6FF", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+
+        # Row 1: active company name
+        row_co = tk.Frame(sync_card, bg="#EFF6FF"); row_co.pack(anchor="w", pady=(6, 2))
+        tk.Label(row_co, text="Active company: ", fg="#475569",
+                 bg="#EFF6FF", font=("Segoe UI", 9)).pack(side="left")
+        self.active_company_var = tk.StringVar(value="—  (not syncing)")
+        tk.Label(row_co, textvariable=self.active_company_var, fg="#0F172A",
+                 bg="#EFF6FF", font=("Segoe UI", 10, "bold")).pack(side="left")
+
+        # Row 2: current phase
+        row_ph = tk.Frame(sync_card, bg="#EFF6FF"); row_ph.pack(anchor="w", pady=(2, 6))
+        tk.Label(row_ph, text="Current phase: ", fg="#475569",
+                 bg="#EFF6FF", font=("Segoe UI", 9)).pack(side="left")
+        self.phase_var = tk.StringVar(value="Idle")
+        tk.Label(row_ph, textvariable=self.phase_var, fg="#0F172A",
+                 bg="#EFF6FF", font=("Segoe UI", 10)).pack(side="left")
+
+        # Progress bar
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(sync_card, mode="determinate",
+                                            maximum=100, length=600,
+                                            variable=self.progress_var)
+        self.progress_bar.pack(fill="x", pady=(6, 2))
+        self.progress_pct_var = tk.StringVar(value="0%  ·  waiting")
+        tk.Label(sync_card, textvariable=self.progress_pct_var,
+                 fg="#1E3A8A", bg="#EFF6FF",
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+
         # Last sync line
         self.lastsync_var = tk.StringVar(value="Never")
-        last_row = tk.Frame(f, bg="#FFFFFF"); last_row.pack(anchor="w", pady=(0, 12))
-        tk.Label(last_row, text="Last successful sync:", fg="#64748B",
-                 bg="#FFFFFF", font=("Segoe UI", 9)).pack(side="left")
+        last_row = tk.Frame(sync_card, bg="#EFF6FF"); last_row.pack(anchor="w", pady=(8, 0))
+        tk.Label(last_row, text="Last successful sync: ", fg="#475569",
+                 bg="#EFF6FF", font=("Segoe UI", 9)).pack(side="left")
         tk.Label(last_row, textvariable=self.lastsync_var, fg="#0F172A",
-                 bg="#FFFFFF", font=("Segoe UI", 10, "bold")).pack(side="left", padx=8)
+                 bg="#EFF6FF", font=("Segoe UI", 10, "bold")).pack(side="left")
 
         # Action row
         actions = tk.Frame(f); actions.pack(fill="x", pady=10)
@@ -1106,6 +1138,14 @@ class FlowraAgentGUI:
         # Ensure the export cache directory exists (the agent assumes it does).
         (APP_DIR / "export_cache").mkdir(parents=True, exist_ok=True)
 
+        # Reset Status-tab progress widgets for a fresh visual.
+        if hasattr(self, "progress_var"):
+            self.progress_var.set(0)
+            self.progress_pct_var.set("0%  ·  starting…")
+            self.phase_var.set("Initialising")
+            company = self.config.get("company_name", "")
+            self.active_company_var.set(company if company else "(detecting…)")
+
         # Pre-write the agent's sync state file so it doesn't open an
         # interactive "Enter starting FY" prompt in the headless subprocess.
         try:
@@ -1234,22 +1274,89 @@ class FlowraAgentGUI:
         finally:
             self.log_queue.put("__AGENT_EXITED__")
 
+    # Mapping of human-friendly phase labels → progress weight in % units.
+    # Order matters: each label is a substring search against the agent log
+    # (lower-cased). Weights add up to 100.
+    _PHASE_WEIGHTS = [
+        ("phase 1: stock items",          8),
+        ("phase 2: sales vouchers",      18),
+        ("phase 3: receipts",             8),
+        ("phase 4: credit notes",         5),
+        ("phase 5a: journal vouchers",    4),
+        ("phase 5b: stock journals",      4),
+        ("phase 6: purchase vouchers",   12),
+        ("phase 7: debit notes",          4),
+        ("phase 4: customer ledgers",     8),
+        ("phase 8: sundry creditors",     5),
+        ("phase 9: contra vouchers",      4),
+        ("phase 10: all ledgers",        14),
+        ("[done]",                        6),
+    ]
+
     def _poll_log_queue(self):
         try:
             while True:
                 line = self.log_queue.get_nowait()
                 if line == "__AGENT_EXITED__":
                     self._set_running(False)
+                    self.phase_var.set("Idle")
+                    self.progress_var.set(0)
+                    self.progress_pct_var.set("0%  ·  stopped")
+                    self.active_company_var.set("—  (not syncing)")
                     self._append_log("[gui] agent process exited")
                     continue
                 self._append_log(line)
                 low = line.lower()
-                if "last voucher date" in low or "sync complete" in low:
-                    self.lastsync_var.set(datetime.now().strftime("%d %b %H:%M"))
+                # ── Connectivity hints ──
                 if "tally responded" in low or "ping ok" in low:
-                    self.tally_var.set("✅ Connected")
+                    self.tally_var.set("Connected")
                 if "login successful" in low or "authenticated" in low:
-                    self.backend_var.set("✅ Connected")
+                    self.backend_var.set("Connected")
+                # ── Active company ──
+                # Agent prints e.g. "Syncing company: ASA AUTOTECH ..."
+                # or "Single company detected: ASA AUTOTECH ..."
+                for marker in ("syncing company:", "single company detected:",
+                               "selected companies:"):
+                    if marker in low:
+                        try:
+                            name = line.split(":", 1)[1].strip()
+                            # Trim long FY tag and quotes
+                            if name and name not in ("_active_", "Default"):
+                                self.active_company_var.set(name)
+                        except Exception:
+                            pass
+                        break
+                # ── Phase-driven progress ──
+                cumulative = 0
+                for phase_marker, weight in self._PHASE_WEIGHTS:
+                    if phase_marker == low.strip() or phase_marker in low:
+                        # When we see the START of a phase, set progress
+                        # to the cumulative weight BEFORE this phase, plus a
+                        # nudge so the user sees motion.
+                        target = cumulative + max(1, weight // 3)
+                        # Show full credit for the "[done]" marker.
+                        if phase_marker == "[done]":
+                            target = 100
+                        self.progress_var.set(min(100, target))
+                        self.progress_pct_var.set(
+                            f"{int(self.progress_var.get())}%  ·  "
+                            f"{phase_marker.title().replace('[Done]', 'Completed')}")
+                        # Pretty phase label
+                        phase_label = phase_marker.split(":", 1)
+                        if len(phase_label) == 2:
+                            self.phase_var.set(phase_label[1].strip().title())
+                        elif phase_marker == "[done]":
+                            self.phase_var.set("Completed")
+                        else:
+                            self.phase_var.set(phase_marker.title())
+                        break
+                    cumulative += weight
+                # ── Last sync timestamp ──
+                if "[done]" in low and "sync completed" in low:
+                    self.lastsync_var.set(datetime.now().strftime("%d %b %Y, %H:%M"))
+                    self.progress_var.set(100)
+                    self.progress_pct_var.set("100%  ·  Sync complete")
+                    self.phase_var.set("Idle")
         except queue.Empty:
             pass
         self.root.after(200, self._poll_log_queue)
