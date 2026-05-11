@@ -9,6 +9,9 @@
 >
 > **Last updated:** February 2026 · **App version:** FY 2026-27 release
 > **For:** end-users, accountants, sales managers, admins, and partners.
+> **Includes:** 10 ASCII flowcharts covering the architecture, data flow, auth,
+> sync loop, salesman orders, dispatch lifecycle, AI query, role matrix,
+> renewal lifecycle, tenant isolation, and onboarding.
 
 ---
 
@@ -169,6 +172,25 @@ Each of those questions has a dedicated FLOWRA module — see [§6](#6-modules).
 Here is what actually happens between "I made a sale in Tally" and "It shows on
 my phone".
 
+### End-to-end flow at a glance
+
+```
+   [You]                  [Tally/Busy]            [Desktop Agent]            [FLOWRA Cloud]              [Web/Mobile]
+     │                         │                         │                          │                          │
+     │── save voucher ────────▶│                         │                          │                          │
+     │                         │                         │                          │                          │
+     │                         │◀──────── poll ──────────│  (every 5 / 20 min)      │                          │
+     │                         │── XML rows ────────────▶│                          │                          │
+     │                         │                         │── login (JWT) ─────────▶│                          │
+     │                         │                         │── POST /sync/* chunks ─▶│                          │
+     │                         │                         │── POST manifest ───────▶│                          │
+     │                         │                         │                          │── reconcile + store ─▶  │
+     │                         │                         │                          │── WebSocket "synced" ─▶ │
+     │                         │                         │                          │                          │── refresh ▶
+     │                                                                                                          │
+     │◀──────────────────────── live dashboard, charts, alerts ───────────────────────────────────────────────│
+```
+
 ### Step 1 — You record a voucher in Tally / Busy
 
 A Sales voucher (or Receipt, Credit Note, Journal, Purchase, Debit Note, Contra,
@@ -241,6 +263,28 @@ moment they log in.
 
 **Important:** an admin can also be a salesman (in some shops the owner *is* the
 sales lead). Salesman role for that admin is set via Setup → Manage Salesmen.
+
+### Role × Feature matrix (who sees what)
+
+```
+                          admin   employee   salesman   dispatch   flowra_staff   super_admin
+   ─────────────────────────────────────────────────────────────────────────────────────────────
+   Dashboard                ●        ◐           ·          ·             ·              ·
+   Sales                    ●        ◐           ·          ·             ·              ·
+   CRM (Customers)          ●        ◐           ·          ·             ·              ·
+   Inventory                ●        ◐           ·          ·             ·              ·
+   Analytics                ●        ◐           ·          ·             ·              ·
+   AI Reports               ●        ◐           ·          ·             ·              ·
+   Insider Result           ●        ·           ·          ·             ·              ·
+   CA Corner                ●        ◐           ·          ·             ·              ·
+   Salesman Order App       ·        ·           ●          ·             ·              ·
+   Dispatch Terminal        ●        ◐           ·          ●             ·              ·
+   Sync History             ●        ◐           ·          ·             ·              ·
+   Setup / Settings         ●        ·           ·          ·             ·              ·
+   SuperAdmin tabs          ·        ·           ·          ·             ◐              ●
+   ─────────────────────────────────────────────────────────────────────────────────────────────
+   ● = full access     ◐ = admin-controlled subset     · = no access
+```
 
 ---
 
@@ -409,6 +453,49 @@ All views have CSV export.
 Sales → *Salesman Orders* tab shows all incoming orders. Admin approves /
 rejects / holds them, and the dispatch terminal billing step closes the loop.
 
+### Salesman Order lifecycle (flowchart)
+
+```
+   [Salesman in field]
+         │
+         │ "New Order" on phone
+         ▼
+   ┌─────────────────┐         ┌────────────┐
+   │   DRAFT         │────────▶│  Discarded │   (salesman cancels)
+   └────────┬────────┘         └────────────┘
+            │ "Submit"
+            ▼
+   ┌─────────────────┐
+   │   PENDING       │──────────────────────────┐
+   └────────┬────────┘                          │
+            │                                    │
+   ┌────────┴────────┐                           ▼
+   │ Admin reviews   │                  ┌────────────────┐
+   │ (web app)       │                  │   REJECTED     │
+   └────────┬────────┘                  │ (reason saved) │
+            │                            └────────────────┘
+       ┌────┴─────┐
+       │          │
+       ▼          ▼
+   ┌──────┐  ┌─────────────────┐
+   │ HOLD │  │   APPROVED      │   (qty / rate confirmed)
+   └──┬───┘  └────────┬────────┘
+      │               │
+      │               │ goes to Dispatch → "Pending Billing"
+      │               ▼
+      │      ┌─────────────────┐
+      │      │  BILLED         │   (admin enters Tally invoice no.)
+      │      └────────┬────────┘
+      │               │
+      │               ▼
+      │      ┌─────────────────┐
+      │      │ SYNCED FROM     │   (Tally agent reconciles next round)
+      │      │ TALLY           │
+      │      └─────────────────┘
+      │
+      └──── resume → back to PENDING
+```
+
 <a id="68-ai-reports"></a>
 ### 6.8 AI Reports & AI Query Builder
 
@@ -427,6 +514,49 @@ rejects / holds them, and the dispatch terminal billing step closes the loop.
    *"Mujhe pichle 3 mahine ke top 5 customers chahiye jinka order kam ho gaya
    hai."* GPT-5.2 reads the question, picks the right data, returns a chart +
    table. The answer is saved in `ai_queries` so you can re-open it later.
+
+### AI Query flow (flowchart)
+
+```
+   [User]
+     │ types question (English / Hindi / Hinglish)
+     ▼
+   ┌────────────────────────┐
+   │  AI Query Builder UI   │
+   └────────────┬───────────┘
+                │ POST /api/insights/query
+                ▼
+   ┌──────────────────────────────────────────┐
+   │  Backend                                 │
+   │  1. Validate user + tenant scope         │
+   │  2. Build system prompt with             │
+   │     allowed collections + schema         │
+   │  3. Send to GPT-5.2 via Universal Key    │
+   └────────────┬─────────────────────────────┘
+                │
+        ┌───────┴───────┐
+        ▼               ▼
+   ┌────────┐    ┌────────────────┐
+   │ Mongo  │◀───│  AI generates  │
+   │ query  │    │  Mongo pipeline │
+   └───┬────┘    └────────────────┘
+       │
+       ▼
+   ┌─────────────────────┐
+   │ Filter rows scoped  │     (every row check: tenant_id + company_id)
+   │ to tenant + company │
+   └──────────┬──────────┘
+              │
+              ▼
+   ┌─────────────────────┐
+   │ Result → chart +    │
+   │ table + saved in    │
+   │ ai_queries          │
+   └──────────┬──────────┘
+              │
+              ▼
+       [Back to UI]
+```
 
 **Powered by:** Universal LLM Key (Emergent-managed) calling GPT-5.2 for text.
 See [§10](#10-ai-features).
@@ -495,6 +625,47 @@ See [§10](#10-ai-features).
 
 **Data source:** `dispatch_cards`, `dispatch_porters`, `dispatch_transporters`,
 `dispatch_porter_payments`, `dispatch_transporter_payments`, `dispatch_settings`.
+
+### Dispatch Kanban lifecycle (flowchart)
+
+```
+   [Tally / Busy invoice synced]   [Admin: manual card]   [Salesman order: BILLED]
+                  │                          │                        │
+                  └──────────────┬───────────┴────────────────────────┘
+                                 ▼
+                          ┌─────────────┐
+                          │    NEW      │
+                          └──────┬──────┘
+                                 │  "Queue for picking"
+                                 ▼
+                          ┌─────────────┐
+                          │   QUEUED    │
+                          └──────┬──────┘
+                                 │  picker assigned
+                                 ▼
+                          ┌─────────────┐                    ┌──────────┐
+                          │ PROCESSING  │───── any step ────▶│   HOLD   │
+                          └──────┬──────┘   (reason saved)   │ (reason) │
+                                 │                            └────┬─────┘
+                                 │                                 │
+                                 │           resume                │
+                                 │◀────────────────────────────────┘
+                                 ▼
+                          ┌─────────────┐
+                          │   PACKED    │   (physical_check = true)
+                          └──────┬──────┘
+                                 │  LR # + transporter assigned
+                                 ▼
+                          ┌─────────────┐
+                          │ DISPATCHED  │
+                          └──────┬──────┘
+                                 │ porter / driver confirms
+                                 ▼
+                          ┌─────────────┐
+                          │ INFO SHARED │  ← LR PDF mailed to customer,
+                          └─────────────┘    porter / transporter payable booked,
+                                             Close-of-Day PDF generated
+```
 
 <a id="612-sync-history"></a>
 ### 6.12 Sync History
@@ -655,6 +826,61 @@ the manifest, scoped to `tenant_id + company_id + financial_year`. Net result:
 when a voucher is deleted inside Tally, it disappears from FLOWRA at the next
 sync. No more ghost data.
 
+### 7.8 Agent sync loop (flowchart)
+
+```
+                  ┌─────────────────────────────────────┐
+                  │   Desktop Agent starts (Windows)     │
+                  └──────────────────┬───────────────────┘
+                                     │
+                                     ▼
+                  ┌─────────────────────────────────────┐
+                  │   Load encrypted local config        │
+                  │   (tenant_id, company_id, FY, token) │
+                  └──────────────────┬───────────────────┘
+                                     │
+                                     ▼
+                  ┌─────────────────────────────────────┐
+                  │   Login to FLOWRA, refresh JWT      │
+                  └──────────────────┬───────────────────┘
+                                     │
+                                     ▼
+                  ┌─────────────────────────────────────┐
+                  │   Connect to Tally ODBC :9000        │
+                  │   / Busy .bds via ODBC               │
+                  └──────────────────┬───────────────────┘
+                                     │
+                  ┌──────────────────┼──────────────────────┐
+                  │                  │                      │
+                  ▼                  ▼                      ▼
+       every 30s             every 5 min            every 20 min
+       ┌──────────────┐      ┌──────────────┐       ┌─────────────────┐
+       │  Poll agent  │      │ Quick sync   │       │ Full sync       │
+       │  commands    │      │ - Sales      │       │ - All vouchers  │
+       │  (resync,    │      │ - Receipts   │       │ - All masters   │
+       │  cancel)     │      │ today only   │       │ - All ledgers   │
+       └──────┬───────┘      └──────┬───────┘       │ - P&L groups    │
+              │                     │               └────────┬────────┘
+              │                     │                        │
+              │                     ▼                        ▼
+              │            ┌─────────────────────────────────────┐
+              │            │ POST chunks of 500 rows  ──────────▶│ /api/sync/{type}
+              │            └─────────────────────────────────────┘
+              │                          │
+              │                          ▼
+              │            ┌─────────────────────────────────────┐
+              │            │ POST manifest of voucher IDs ──────▶│ /api/sync/reconcile/{type}
+              │            └─────────────────────────────────────┘
+              │                          │
+              │                          ▼
+              │            ┌─────────────────────────────────────┐
+              │            │ Append sync_history row             │
+              │            └─────────────────────────────────────┘
+              │
+              ▼
+       Execute command (resync month / drop company / etc.)
+```
+
 ---
 
 <a id="8-busy-agent"></a>
@@ -780,6 +1006,36 @@ English — so nothing feels like a "black box".
   case where the admin connects a wrong Tally company by mistake).
 - **Disconnect Tenant** — kill-switch; wipes everything for this tenant.
 
+### 9.5 Subscription & renewal lifecycle (flowchart)
+
+```
+   day 0           day (n-30)        day (n-7)          day n            day n+7
+     │                 │                 │                 │                  │
+     ▼                 ▼                 ▼                 ▼                  ▼
+   ┌──────┐       ┌────────────┐    ┌────────────┐   ┌────────────┐     ┌────────┐
+   │ paid │       │ first warn │    │ urgent     │   │ EXPIRED:   │     │ HARD   │
+   │ sub  │──────▶│ email +    │───▶│ daily warn │──▶│ login OK   │────▶│ DELETE │
+   │starts│       │ banner UI  │    │ + banner   │   │ but APIs   │     │ tenant │
+   └──────┘       └────────────┘    └────────────┘   │ return 402 │     │ data   │
+                                                     └─────┬──────┘     └────────┘
+                                                           │
+                                                           │ admin clicks
+                                                           │ "Request Renewal"
+                                                           ▼
+                                                  ┌──────────────────┐
+                                                  │ SuperAdmin sees  │
+                                                  │ request, accepts │
+                                                  │ + extends months │
+                                                  └────────┬─────────┘
+                                                           │
+                                                           ▼
+                                                  ┌──────────────────┐
+                                                  │ Subscription     │
+                                                  │ renewed email +  │
+                                                  │ APIs unblocked   │
+                                                  └──────────────────┘
+```
+
 ---
 
 <a id="10-ai-features"></a>
@@ -865,6 +1121,35 @@ ones you'll hear about most, with what they hold:
 > millions of vouchers across all customers, a single query for one tenant is
 > milliseconds.
 
+### Multi-tenant data isolation (visual)
+
+```
+                   ┌────────────────────────────────────────────────────┐
+                   │              MongoDB cluster                        │
+                   │                                                     │
+   tenant A ─────▶ │   ┌──────────────┐  ┌──────────────┐  ┌─────────┐  │
+   (Sharma)        │   │ Company A1   │  │ Company A2   │  │ Company │  │
+                   │   │ sales = 12k  │  │ sales = 8k   │  │ A3 …    │  │
+                   │   └──────────────┘  └──────────────┘  └─────────┘  │
+                   │   ↑ same tenant_id, different company_id            │
+                   │                                                     │
+                   │   ════════ DATA WALL (tenant_id check) ═════════   │
+                   │                                                     │
+   tenant B ─────▶ │   ┌──────────────┐  ┌──────────────┐               │
+   (Bharat)        │   │ Company B1   │  │ Company B2   │               │
+                   │   │ sales = 5k   │  │ sales = 3k   │               │
+                   │   └──────────────┘  └──────────────┘               │
+                   │                                                     │
+                   │   ════════ DATA WALL ════════════════════════════   │
+                   │                                                     │
+   tenant C ─────▶ │   ┌──────────────┐                                  │
+   (Krishna)       │   │ Company C1   │   …                              │
+                   │   └──────────────┘                                  │
+                   └────────────────────────────────────────────────────┘
+
+   Every API call: req.user.tenant_id  ==  query.tenant_id  ?  proceed : 403
+```
+
 ---
 
 <a id="12-security"></a>
@@ -894,6 +1179,41 @@ The marketing site says *No Data on Cloud\**. Here's exactly what that means:
 - Company names: Fernet (symmetric AES-128) using `JWT_SECRET` as the key
   derivation seed. Lookups happen via deterministic HMAC-SHA256 hash so two
   syncs of the same name still resolve to the same UUID.
+
+### Authentication flow (flowchart)
+
+```
+   [Browser / Mobile / Agent]
+              │
+              │  POST /api/auth/login {email, password, captcha?}
+              ▼
+   ┌─────────────────────────────────┐
+   │ Backend:                        │
+   │ 1. Verify reCAPTCHA (fail-open) │
+   │ 2. Lookup user by email          │
+   │ 3. bcrypt.checkpw(password, …)  │
+   │ 4. Check active + sub not expired│
+   └────────────┬────────────────────┘
+                │
+        ┌───────┴────────┐
+       fail            success
+        │                │
+        ▼                ▼
+   ┌────────┐    ┌─────────────────────────────────────┐
+   │ log    │    │ Sign JWT (HS256, 24h)               │
+   │ failed │    │ payload: {sub, role, tenant_id}     │
+   │ audit  │    │ Set httpOnly cookie + return token  │
+   └────────┘    └────────────┬────────────────────────┘
+                              │
+                              ▼
+                ┌─────────────────────────────────────┐
+                │ For every future /api/* call:       │
+                │   1. Read JWT from cookie or header │
+                │   2. Decode + verify signature      │
+                │   3. Resolve user, attach to req    │
+                │   4. Check tenant_id on every query │
+                └─────────────────────────────────────┘
+```
 
 ### Authentication
 - Email + bcrypt password hash (cost factor 12).
@@ -972,6 +1292,61 @@ in `/app/memory/test_credentials.md`.
   (`must_change_password` flag).
 - **Pause an employee:** toggle Active off. Their JWT is invalidated within
   one minute.
+
+### 13.4 Tenant onboarding flow (flowchart)
+
+```
+   [Prospect visits flowra.in]
+              │
+              │ click "Get Started"
+              ▼
+   ┌────────────────────────┐
+   │  Signup page           │
+   │  (email + password +   │
+   │   company name +       │
+   │   referral code?)      │
+   └───────────┬────────────┘
+               │
+               ▼
+   ┌────────────────────────────────────────┐
+   │  Backend creates:                      │
+   │   • tenant_id (UUID)                   │
+   │   • admin user with hashed password    │
+   │   • company_id + encrypted name        │
+   │   • 12-month enterprise subscription   │
+   │   • welcome email triggered            │
+   │   • referral credit (if applicable)    │
+   └───────────┬────────────────────────────┘
+               │
+               ▼
+   ┌────────────────────────┐
+   │ Login → Onboarding tour │
+   │ Marks onboarding_done   │
+   └───────────┬────────────┘
+               │
+               ▼
+   ┌────────────────────────────────────────┐
+   │ Setup → Tally / Busy Connection         │
+   │  • Download agent zip                   │
+   │  • Copy sync token                      │
+   │  • Run build.bat on Windows PC          │
+   │  • Pick starting FY (e.g. 2024-25)      │
+   └───────────┬────────────────────────────┘
+               │
+               ▼
+   ┌────────────────────────┐
+   │ Agent backfills FY      │   (initial sync — 5-30 minutes)
+   │ then enters 5/20 min    │
+   │ live mode               │
+   └───────────┬────────────┘
+               │
+               ▼
+   ┌────────────────────────┐
+   │ Dashboard populated.    │
+   │ Admin can now add       │
+   │ employees / salesmen.   │
+   └────────────────────────┘
+```
 
 ---
 
