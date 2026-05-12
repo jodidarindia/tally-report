@@ -18,7 +18,16 @@ ALL_FEATURES = [
 
 
 def get_jwt_secret() -> str:
-    return os.environ.get("JWT_SECRET", "flowra_default_jwt_secret_key_2026_change_in_production")
+    """JWT_SECRET MUST be set via env. We deliberately do not fall back to a
+    hard-coded value in production — that would let anyone who reads the
+    source code forge tokens. The bundled `.env` ships a 256-bit random
+    secret; rotate before each deploy if compromised."""
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        raise RuntimeError(
+            "JWT_SECRET environment variable is not set. Refusing to start "
+            "with a default/insecure key.")
+    return secret
 
 
 def hash_password(password: str) -> str:

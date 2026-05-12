@@ -1,0 +1,7 @@
+{
+  "version": "9.8.20",
+  "download_url": "/FlowraTallyAgent.exe",
+  "min_supported_version": "9.8.0",
+  "release_notes": "Auto-update support: agent now checks for new versions every 24 hours and offers one-click upgrade. Security hardening for /api/agent/* endpoints.",
+  "released_at": "2026-02-15T00:00:00+05:30"
+}

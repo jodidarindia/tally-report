@@ -16,6 +16,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ── Agent release manifest (24h cache) ────────────────────────────────
+_AGENT_RELEASE_CACHE: dict = {"data": None, "loaded_at": 0.0}
+
+
+def _load_agent_release() -> dict:
+    """Read /app/backend/agent_release.json with a small in-process cache.
+    No DB writes. Safe to call from any public endpoint."""
+    import os as _os
+    import time as _time
+    now = _time.time()
+    if _AGENT_RELEASE_CACHE["data"] and (now - _AGENT_RELEASE_CACHE["loaded_at"] < 300):
+        return _AGENT_RELEASE_CACHE["data"]
+    path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "agent_release.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as e:
+        logger.warning(f"agent_release.json read failed: {e}")
+        data = {"version": "0.0.0", "download_url": "/FlowraTallyAgent.exe",
+                "min_supported_version": "0.0.0", "release_notes": "", "released_at": ""}
+    _AGENT_RELEASE_CACHE["data"] = data
+    _AGENT_RELEASE_CACHE["loaded_at"] = now
+    return data
+
+
+def _ver_tuple(v: str) -> tuple:
+    """Permissive semver parse: '9.8.20-foo' → (9, 8, 20)."""
+    if not v:
+        return (0,)
+    parts = []
+    for seg in str(v).lstrip("v").split("."):
+        num = ""
+        for ch in seg:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return tuple(parts) or (0,)
+
+
+@router.get("/agent/latest-version")
+async def get_latest_agent_version():
+    """Public endpoint. The desktop agent + frontend Setup page poll this
+    every 24h to detect if a newer agent build is available.
+
+    Read-only — never touches the DB. Cached in memory for 5 min."""
+    rel = _load_agent_release()
+    return APIResponse(success=True, data=rel)
+
+
+@router.get("/agent/check-update")
+async def check_update(current: str = ""):
+    """Convenience: agent passes ?current=9.8.18 and we tell it whether
+    an upgrade is available. No auth required."""
+    rel = _load_agent_release()
+    latest = rel.get("version", "0.0.0")
+    update_available = _ver_tuple(current) < _ver_tuple(latest)
+    return APIResponse(success=True, data={
+        "current": current,
+        "latest": latest,
+        "update_available": bool(update_available),
+        "download_url": rel.get("download_url", "/FlowraTallyAgent.exe"),
+        "release_notes": rel.get("release_notes", ""),
+        "released_at": rel.get("released_at", ""),
+        "min_supported_version": rel.get("min_supported_version", "0.0.0"),
+    })
+
+
 def _clean_tally_val(val):
     """Extract plain text from Tally XML dict strings like {'@TYPE': 'String', '#text': 'value'}."""
     if isinstance(val, dict):
@@ -41,18 +110,17 @@ async def receive_agent_sync(request: dict):
         sync_token = request.get('sync_token', '')
         company_name_raw = request.get('company_name', '') or req_company_id
 
-        # Verify sync token if provided
-        if req_tenant_id and sync_token:
-            if not verify_sync_token(req_tenant_id, sync_token):
-                return APIResponse(success=False, error="Invalid sync token")
-        elif req_tenant_id:
-            logger.warning(f"Sync without token for tenant {req_tenant_id}")
-
-        # Fallback: if no tenant_id, use default
+        # HARD-ENFORCE sync auth — production posture as of v9.8.20.
+        # No anonymous writes ever. tenant_id MUST be provided and the
+        # sync_token MUST be a valid HMAC for that tenant. Previously this
+        # block fell back to "first admin in DB" if tenant_id was missing —
+        # that was a cross-tenant data-injection vector.
         if not req_tenant_id:
-            admin = await db.users.find_one({"role": "admin"}, {"_id": 0, "tenant_id": 1})
-            req_tenant_id = admin.get("tenant_id", "") if admin else ""
-            logger.info(f"No tenant_id in sync request, using default: {req_tenant_id}")
+            return APIResponse(success=False, error="tenant_id is required")
+        if not sync_token:
+            return APIResponse(success=False, error="sync_token is required")
+        if not verify_sync_token(req_tenant_id, sync_token):
+            return APIResponse(success=False, error="Invalid sync token")
 
         # Resolve company_id: if it's a plain name (not UUID), map it to UUID
         from services.id_mapping_service import register_company_mapping, get_company_uuid
@@ -672,10 +740,11 @@ async def reconcile_deleted_records(request: dict):
         if not data_type or not req_tenant_id:
             return APIResponse(success=False, error="data_type and tenant_id required")
 
-        # Verify sync token
-        if req_tenant_id and sync_token:
-            if not verify_sync_token(req_tenant_id, sync_token):
-                return APIResponse(success=False, error="Invalid sync token")
+        # HARD-ENFORCE: reconcile DELETES records — sync_token is mandatory.
+        if not sync_token:
+            return APIResponse(success=False, error="sync_token is required")
+        if not verify_sync_token(req_tenant_id, sync_token):
+            return APIResponse(success=False, error="Invalid sync token")
 
         # Resolve company_id if name-based
         from services.id_mapping_service import get_company_uuid
@@ -741,11 +810,31 @@ async def reconcile_deleted_records(request: dict):
 
 @router.post("/agent/sync-progress")
 async def receive_sync_progress(request: dict):
-    """Receive real-time sync progress from desktop agent."""
+    """Receive real-time sync progress from desktop agent.
+
+    Requires tenant_id. sync_token is verified when provided; when absent we
+    soft-allow ONLY if the env var STRICT_AGENT_AUTH is falsy (default).
+    Production deployments should set STRICT_AGENT_AUTH=true after all field
+    agents are on v9.8.20+, which sends sync_token on every event."""
     try:
+        import os as _os
         event_type = request.get('type', 'unknown')
         req_tenant_id = request.get('tenant_id', '')
         req_company_id = request.get('company_id', '')
+        sync_token = request.get('sync_token', '')
+
+        if not req_tenant_id:
+            return APIResponse(success=False, error="tenant_id required")
+
+        strict = (_os.environ.get("STRICT_AGENT_AUTH", "false").lower()
+                  in ("1", "true", "yes"))
+        if sync_token:
+            if not verify_sync_token(req_tenant_id, sync_token):
+                return APIResponse(success=False, error="Invalid sync token")
+        elif strict:
+            return APIResponse(success=False, error="sync_token required")
+        # else: soft-allow during the v9.8.19 → 9.8.20 rollout window.
+
         logger.info(f"Sync progress: {event_type}")
 
         # Track is_syncing flag per company
@@ -809,9 +898,36 @@ async def websocket_sync_status(websocket: WebSocket):
                 action = msg.get('action')
                 if action == 'subscribe':
                     t_id = msg.get('tenant_id', '')
+                    s_tok = msg.get('sync_token', '')
                     if t_id:
-                        ws_manager.set_tenant(websocket, t_id)
-                        await websocket.send_json({'event': 'subscribed', 'tenant_id': t_id})
+                        # HARD-ENFORCE: WebSocket subscribers must prove
+                        # they own the tenant via sync_token. The frontend
+                        # passes the same token returned by /auth/sync-token.
+                        # If absent or wrong, fall back to NO subscription
+                        # (client gets nothing). We don't close the socket
+                        # so older clients still see "subscribed" but no
+                        # events arrive — graceful degradation.
+                        import os as _os
+                        strict = (_os.environ.get("STRICT_AGENT_AUTH", "false")
+                                  .lower() in ("1", "true", "yes"))
+                        if s_tok and verify_sync_token(t_id, s_tok):
+                            ws_manager.set_tenant(websocket, t_id)
+                            await websocket.send_json(
+                                {'event': 'subscribed', 'tenant_id': t_id})
+                        elif s_tok:
+                            await websocket.send_json(
+                                {'event': 'subscribe_failed',
+                                 'error': 'invalid sync_token'})
+                        elif not strict:
+                            # Soft-mode: legacy clients without token still
+                            # bind so dashboards keep working during rollout.
+                            ws_manager.set_tenant(websocket, t_id)
+                            await websocket.send_json(
+                                {'event': 'subscribed', 'tenant_id': t_id})
+                        else:
+                            await websocket.send_json(
+                                {'event': 'subscribe_failed',
+                                 'error': 'sync_token required'})
                 elif action == 'get_status':
                     t_id = msg.get('tenant_id', '')
                     c_id = msg.get('company_id', '')
@@ -1133,14 +1249,16 @@ async def create_agent_command(request: Request):
 
 @router.get("/agent/commands")
 async def get_agent_commands(request: Request, tenant_id: str = "", sync_token: str = ""):
-    """Agent polls this to get pending commands. Returns all pending commands for the tenant."""
+    """Agent polls this to get pending commands. Returns all pending commands for the tenant.
+    HARD-ENFORCE sync_token to prevent cross-tenant command leakage."""
     try:
         if not tenant_id:
             return APIResponse(success=True, data={"commands": []})
 
-        if tenant_id and sync_token:
-            if not verify_sync_token(tenant_id, sync_token):
-                return APIResponse(success=False, error="Invalid sync token")
+        if not sync_token:
+            return APIResponse(success=False, error="sync_token is required")
+        if not verify_sync_token(tenant_id, sync_token):
+            return APIResponse(success=False, error="Invalid sync token")
 
         commands = await db.agent_commands.find(
             {"tenant_id": tenant_id, "status": "pending"},
@@ -1155,14 +1273,26 @@ async def get_agent_commands(request: Request, tenant_id: str = "", sync_token: 
 
 @router.post("/agent/commands/ack")
 async def ack_agent_command(request: dict):
-    """Agent acknowledges a command as executed."""
+    """Agent acknowledges a command as executed. sync_token verified when
+    provided; soft-allowed during the v9.8.19 → 9.8.20 rollout window unless
+    STRICT_AGENT_AUTH=true (production should enable after rollout)."""
     try:
+        import os as _os
         tenant_id = request.get("tenant_id", "")
         company_id = request.get("company_id", "")
         action = request.get("action", "")
+        sync_token = request.get("sync_token", "")
 
         if not tenant_id or not action:
             return APIResponse(success=False, error="tenant_id and action required")
+
+        strict = (_os.environ.get("STRICT_AGENT_AUTH", "false").lower()
+                  in ("1", "true", "yes"))
+        if sync_token:
+            if not verify_sync_token(tenant_id, sync_token):
+                return APIResponse(success=False, error="Invalid sync token")
+        elif strict:
+            return APIResponse(success=False, error="sync_token required")
 
         q = {"tenant_id": tenant_id, "action": action, "status": "pending"}
         if company_id:

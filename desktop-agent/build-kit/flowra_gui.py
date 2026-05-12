@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.19"
+APP_VERSION = "v9.8.20"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -404,6 +404,124 @@ def current_fy_string() -> str:
     return f"{y}-{str(y + 1)[-2:]}"
 
 
+# ── Auto-update plumbing ────────────────────────────────────────────────
+def _parse_ver(v: str) -> tuple:
+    """'9.8.20-foo' → (9, 8, 20). Permissive."""
+    if not v:
+        return (0,)
+    parts = []
+    for seg in str(v).lstrip("v").split("."):
+        num = ""
+        for ch in seg:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return tuple(parts) or (0,)
+
+
+def fetch_latest_release(backend_url: str) -> dict | None:
+    """GET /api/agent/latest-version. Returns dict or None on failure.
+    Never raises — failures are silent so the user is never blocked."""
+    try:
+        import requests
+        r = requests.get(
+            f"{backend_url.rstrip('/')}/api/agent/latest-version",
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        if not d.get("success"):
+            return None
+        return d.get("data") or None
+    except Exception:
+        return None
+
+
+def download_to_temp(url: str, dest_path: str,
+                      progress_cb=None) -> tuple[bool, str]:
+    """Stream-download the new .exe to a temp path. Returns (ok, message)."""
+    try:
+        import requests
+        with requests.get(url, stream=True, timeout=180) as r:
+            if r.status_code != 200:
+                return False, f"HTTP {r.status_code}"
+            total = int(r.headers.get("Content-Length", "0") or 0)
+            done = 0
+            with open(dest_path, "wb") as fh:
+                for chunk in r.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    done += len(chunk)
+                    if progress_cb and total > 0:
+                        try:
+                            progress_cb(done, total)
+                        except Exception:
+                            pass
+            # Sanity: the .exe is ~26 MB. Refuse anything below 5 MB.
+            try:
+                sz = os.path.getsize(dest_path)
+            except Exception:
+                sz = 0
+            if sz < 5 * 1024 * 1024:
+                try:
+                    os.unlink(dest_path)
+                except Exception:
+                    pass
+                return False, f"Downloaded file too small ({sz} bytes)"
+            return True, f"Downloaded {sz // (1024*1024)} MB"
+    except Exception as e:
+        return False, str(e)
+
+
+def write_updater_batch(new_exe: str, target_exe: str,
+                          pid: int, log_path: str) -> str:
+    """Generate a Windows .bat that:
+       1) Waits for the current PID to exit (up to 60s).
+       2) Backs up the existing .exe → .bak (kept for one cycle).
+       3) Moves the new .exe over the old one.
+       4) Launches the new .exe.
+       5) Deletes itself.
+
+       Returns the path to the generated .bat file.
+       NOTE: We never touch Tally, MongoDB, or anything outside the agent's
+       own install location. The .bak file lets the user roll back if the
+       new build fails to start."""
+    bat_path = str(Path(os.environ.get("TEMP", str(APP_DIR))) /
+                    "flowra_agent_updater.bat")
+    new_exe_q = new_exe.replace("/", "\\")
+    target_q = target_exe.replace("/", "\\")
+    bak = target_q + ".bak"
+    bat = f"""@echo off
+setlocal
+echo [FLOWRA updater] waiting for PID {pid} to exit... >> "{log_path}"
+set /a tries=0
+:wait
+tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
+if errorlevel 1 goto exited
+set /a tries+=1
+if %tries% GEQ 60 goto force
+timeout /t 1 /nobreak >nul
+goto wait
+:force
+echo [FLOWRA updater] PID {pid} still alive after 60s — proceeding anyway >> "{log_path}"
+:exited
+if exist "{bak}" del /Q "{bak}" >nul 2>&1
+if exist "{target_q}" move /Y "{target_q}" "{bak}" >> "{log_path}" 2>&1
+move /Y "{new_exe_q}" "{target_q}" >> "{log_path}" 2>&1
+echo [FLOWRA updater] new binary installed at {target_q} >> "{log_path}"
+start "" "{target_q}"
+del /Q "%~f0"
+endlocal
+"""
+    with open(bat_path, "w", encoding="ascii") as fh:
+        fh.write(bat)
+    return bat_path
+
+
 # ── Main GUI ─────────────────────────────────────────────────────────────
 class FlowraAgentGUI:
     def __init__(self, root: tk.Tk, start_minimized: bool = False):
@@ -472,6 +590,12 @@ class FlowraAgentGUI:
 
         if start_minimized:
             self.root.after(50, self.hide_to_tray)
+
+        # Kick off the first auto-update check 3 s after launch so the UI
+        # is fully painted, then poll every 24 h. The check itself is HTTP
+        # GET — no DB writes, never touches Tally.
+        self.root.after(3000, self._check_for_update_async)
+        self._schedule_update_check()
 
     # ---- UI construction --------------------------------------------------
     def _build_ui(self):
@@ -550,6 +674,21 @@ class FlowraAgentGUI:
                   command=self.hide_to_tray,
                   bg="#F1F5F9", fg="#475569", relief="flat",
                   font=("Segoe UI", 9), cursor="hand2").pack(side="right")
+
+        # ── Update button (hidden until a newer release is detected) ──
+        # Sits between Start/Stop and the right-side utility buttons.
+        # Flashes amber → red while it's visible so it grabs attention.
+        self._update_info: dict | None = None
+        self.update_btn = tk.Button(
+            bar, text="⬆  Update Available",
+            command=self._do_update,
+            bg="#F59E0B", fg="white", relief="flat",
+            activebackground="#D97706", activeforeground="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=14, pady=8, cursor="hand2", borderwidth=0,
+        )
+        # Don't pack yet — _show_update_button() will do it when needed.
+        self._update_flash_state = False
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=12, pady=10)
@@ -1986,6 +2125,223 @@ class FlowraAgentGUI:
             self.log_box.delete("1.0", "1000.0")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
+
+    # ── Auto-update (24-hour cycle) ───────────────────────────────────
+    def _schedule_update_check(self):
+        # 24 hours.
+        self.root.after(24 * 60 * 60 * 1000, self._tick_update_check)
+
+    def _tick_update_check(self):
+        self._check_for_update_async()
+        self._schedule_update_check()
+
+    def _check_for_update_async(self):
+        """Fetch /api/agent/latest-version on a background thread, then
+        compare to our APP_VERSION. Reveals the flashing button if newer."""
+        url = self.config.get("backend_url", DEFAULT_BACKEND_URL)
+
+        def worker():
+            rel = fetch_latest_release(url)
+            self.root.after(0, lambda: self._apply_update_check(rel))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_update_check(self, rel: dict | None):
+        if not rel:
+            return
+        latest = rel.get("version") or ""
+        if not latest:
+            return
+        if _parse_ver(APP_VERSION) >= _parse_ver(latest):
+            # Already on the latest build → ensure the button is hidden
+            self._hide_update_button()
+            return
+        # Newer build available — remember it and reveal the flashing button.
+        backend_url = self.config.get("backend_url", DEFAULT_BACKEND_URL)
+        download_url = rel.get("download_url", "/FlowraTallyAgent.exe")
+        # Convert relative URL to absolute against backend.
+        if download_url.startswith("/"):
+            download_url = backend_url.rstrip("/") + download_url
+        self._update_info = {
+            "version": latest,
+            "download_url": download_url,
+            "release_notes": rel.get("release_notes", ""),
+            "released_at": rel.get("released_at", ""),
+        }
+        try:
+            self._append_log(
+                f"[update] new version available: v{latest} "
+                f"(current {APP_VERSION}).")
+        except Exception:
+            pass
+        self._show_update_button()
+
+    def _show_update_button(self):
+        """Pack the update button + start the amber/red flash animation."""
+        try:
+            if not self.update_btn.winfo_ismapped():
+                self.update_btn.pack(side="left", padx=12, pady=8,
+                                      after=self.btn_stop)
+                # Start flashing
+                self.root.after(700, self._flash_update_button)
+        except Exception:
+            pass
+
+    def _hide_update_button(self):
+        try:
+            if self.update_btn.winfo_ismapped():
+                self.update_btn.pack_forget()
+        except Exception:
+            pass
+
+    def _flash_update_button(self):
+        """Toggle amber ↔ red bg every 700 ms while the button is visible.
+        Stops automatically once the button is hidden (post-update)."""
+        try:
+            if not self.update_btn.winfo_ismapped():
+                return
+            self._update_flash_state = not self._update_flash_state
+            self.update_btn.configure(
+                bg="#DC2626" if self._update_flash_state else "#F59E0B"
+            )
+            self.root.after(700, self._flash_update_button)
+        except Exception:
+            pass
+
+    def _do_update(self):
+        """User clicked the flashing Update button. Confirms, downloads,
+        and hands over to updater.bat.
+
+        Safety guarantees:
+          • Does NOT touch any data on the server (uses public GET endpoint).
+          • Does NOT touch Tally — we only replace our own .exe.
+          • Stops the sync subprocess gracefully before relaunching.
+          • Keeps a .bak of the old .exe in case the new one fails.
+        """
+        if not getattr(self, "_update_info", None):
+            return
+        info = self._update_info
+        new_ver = info["version"]
+        # Only works when running as the frozen .exe — otherwise we'd be
+        # replacing the dev script which makes no sense.
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(
+                APP_NAME,
+                f"A new version (v{new_ver}) is available, but you are "
+                "running the Python source rather than the compiled .exe. "
+                "Auto-update only works for the .exe build. Rebuild from "
+                "source to pick up the latest changes.")
+            return
+
+        msg = (
+            f"Update FLOWRA Tally Sync Agent\n\n"
+            f"Current:  {APP_VERSION}\n"
+            f"Latest:    v{new_ver}\n\n"
+            f"Notes: {info.get('release_notes') or '(no release notes)'}\n\n"
+            "The sync service will stop for a few seconds while the new "
+            "build is installed. Your Tally data and FLOWRA cloud data "
+            "are NOT touched. After the update, the agent will relaunch "
+            "automatically.\n\n"
+            "Proceed?"
+        )
+        if not messagebox.askyesno(APP_NAME, msg):
+            return
+
+        # Disable the button so it can't be clicked twice.
+        try:
+            self.update_btn.configure(state="disabled",
+                                       text="⬇  Downloading…")
+        except Exception:
+            pass
+
+        def worker():
+            # Stop the running sync subprocess (this is the SAFE pause —
+            # writes have already been flushed to MongoDB during phase-end
+            # checkpoints, and an interrupted sync just resumes next tick).
+            try:
+                if self.proc and self.proc.poll() is None:
+                    self.stop_agent()
+            except Exception:
+                pass
+
+            temp_exe = str(Path(os.environ.get("TEMP", str(APP_DIR))) /
+                            f"FlowraTallyAgent_new_{new_ver}.exe")
+            ok, msg2 = download_to_temp(info["download_url"], temp_exe,
+                                          progress_cb=self._update_progress_cb)
+            if not ok:
+                self.root.after(0, lambda: self._update_failed(msg2))
+                return
+
+            target_exe = sys.executable  # the .exe we're currently running
+            log_path = str(LOG_DIR / "updater.log")
+            try:
+                bat = write_updater_batch(temp_exe, target_exe,
+                                            os.getpid(), log_path)
+            except Exception as e:
+                self.root.after(0, lambda: self._update_failed(
+                    f"Could not write updater: {e}"))
+                return
+
+            self.root.after(0, lambda: self._launch_updater_and_exit(bat))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_progress_cb(self, done: int, total: int):
+        pct = int((done / total) * 100) if total > 0 else 0
+        try:
+            self.root.after(0, lambda: self.update_btn.configure(
+                text=f"⬇  Downloading… {pct}%"))
+        except Exception:
+            pass
+
+    def _update_failed(self, reason: str):
+        try:
+            self.update_btn.configure(
+                state="normal", text="⬆  Update Available")
+        except Exception:
+            pass
+        messagebox.showerror(
+            APP_NAME,
+            f"Update could not be downloaded:\n\n{reason}\n\n"
+            "No data was changed. Please try again later or "
+            "re-download the agent manually from the FLOWRA "
+            "Setup page.")
+        try:
+            self._append_log(f"[update] failed: {reason}")
+        except Exception:
+            pass
+
+    def _launch_updater_and_exit(self, bat_path: str):
+        """Spawn the updater .bat detached and quit ourselves so Windows
+        releases the file lock on the old .exe."""
+        try:
+            self._append_log(f"[update] launching updater: {bat_path}")
+        except Exception:
+            pass
+        try:
+            # CREATE_NO_WINDOW + DETACHED_PROCESS so the .bat doesn't
+            # flash a console window and survives our exit.
+            CREATE_NO_WINDOW = 0x08000000
+            DETACHED_PROCESS = 0x00000008
+            subprocess.Popen(
+                ["cmd", "/c", bat_path],
+                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+                close_fds=True,
+            )
+        except Exception as e:
+            self._update_failed(f"Could not launch updater: {e}")
+            return
+
+        # Tear everything down. _real_quit handles the running subprocess
+        # and the tray icon. os._exit forces release of file handles so
+        # the .bat can move/replace the .exe.
+        try:
+            self._real_quit()
+        except Exception:
+            pass
+        try:
+            os._exit(0)
+        except Exception:
+            sys.exit(0)
 
     def _real_quit(self):
         if self.proc and self.proc.poll() is None:

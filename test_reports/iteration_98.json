@@ -1,0 +1,51 @@
+{
+  "summary": "Pre-DigitalOcean security audit. 24 backend tests covering agent-endpoint hardening (sync_token enforcement), tenant isolation, RBAC, rate-limiting, NoSQL injection, security headers, and public-endpoint leak checks. RESULTS: 22 passed, 1 FAILED (salesman RBAC gap on /api/customers/outstanding), 1 skipped (encryption test — motor direct-DB inspection skipped in this env). All NEW security work (sync_token hard-enforcement on /agent/sync, /agent/reconcile, /agent/commands GET; soft-mode on /agent/sync-progress and /agent/commands/ack; JWT_SECRET fail-fast; agent_release.json /latest-version + /check-update endpoints) is working as designed.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/customers/outstanding",
+        "issue": "Salesman role (ravi@test.com) can read ALL 83 customers in the tenant via this endpoint. The route filters only by tenant_id, not by salesman→customer mapping. This violates the salesman isolation requirement: 'salesman sees ONLY their mapped customers — cannot use ?customer_id=X to read non-mapped customer data'. Cross-tenant isolation is intact (admin tenant only), but intra-tenant role isolation has a gap — a salesman can enumerate every customer's outstanding/aging in their tenant via this admin endpoint.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/auth/users (POST)",
+        "issue": "Returns 422 (Pydantic validation) before reaching the role-based auth check. Final outcome is still 'rejected' so no security impact, but ordering means a salesman cannot reliably tell from the status code whether the role was rejected or the payload was malformed. Recommend running auth/role guard before body validation, or returning 401/403 first for non-admin callers."
+      },
+      {
+        "endpoint": "/api/agent/latest-version",
+        "issue": "Occasional 502 from preview ingress on first call (cold-path). Test now retries 3× with 2s backoff and passes. Same flake noted in iteration_97. Not a code bug — flaky preview-cluster proxy."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration98_security_audit.py",
+    "/app/test_reports/pytest/iteration98_results.xml"
+  ],
+  "action_items": [
+    "Add salesman→customer scoping to /api/customers/outstanding (and any other /api/customers/* endpoints that don't already gate on role). Pattern: if ctx.user.role == 'salesman', filter customer list to ONLY the salesman's mapped customers (similar to /api/salesman-orders/my-customers). Reject ?customer_id= for non-mapped customers with 403.",
+    "Audit every endpoint under /api/customers/, /api/sales-vouchers, /api/inventory/items, /api/ca-corner/, /api/audit/logs, and /api/insider/ for the same role-scoping gap. A tenant_id filter alone is NOT enough — salesman must additionally be scoped to mapped customer IDs.",
+    "Consider running role/auth check BEFORE Pydantic validation on admin-only POST routes so 401/403 is returned consistently (minor)."
+  ],
+  "critical_code_review_comments": [
+    "Agent endpoint hardening (sync_token enforcement) in /app/backend/routes/sync.py is correctly implemented — verified that /agent/sync, /agent/reconcile and /agent/commands GET hard-reject missing/invalid sync_token, while /agent/sync-progress and /agent/commands/ack soft-allow without token in default mode (STRICT_AGENT_AUTH=false). HMAC-SHA256(JWT_SECRET, 'flowra_sync:<tenant>') verification works end-to-end.",
+    "JWT_SECRET fail-fast in services/auth_service.py:get_jwt_secret() correctly raises RuntimeError when env missing — confirmed in test fixtures (had to load_dotenv() to call generate_sync_token).",
+    "Security headers (X-Frame-Options, X-Content-Type-Options, HSTS, CSP) present on /api/agent/latest-version response — middleware in server.py works on public endpoints too.",
+    "Login rate limit triggers between attempts #11–#22 in our run (per-IP slowapi limiter). Working but threshold is slightly higher than the documented '10/min'.",
+    "NoSQL injection guard: login with {'$ne': null} for both fields returned 429 (rate-limited) — guard is implicit via Pydantic str typing; explicit type rejection (400/422) would be cleaner.",
+    "/api/agent/latest-version + /api/agent/check-update are correctly read-only, public, no tenant leak — manifest contains only version metadata.",
+    "Cross-tenant header forgery (X-Company-ID) properly ignored — server uses JWT tenant_id, not header. Demo user could NOT read admin tenant data."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration98_security_audit.py"
+  ],
+  "success_rate": {"backend": "91.7% (22/24 — 1 failure is a real RBAC gap, 1 skip is env-only)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "Used admin/admin123, demo@flowralive.in/demo2026, ravi@test.com/ravi1234, superadmin/superadmin123 — all worked. dispatch@test.com/dispatch123 not exercised this iteration but available.",
+  "seed_data_creation": "test_sync_accepts_valid_token used a throwaway tenant_id 'security-audit-pytest-<uuid>' so any inserted sync_status / sync_history rows are easy to clean. No collection received real-customer payloads (data:[] empty).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 98 produced 1 real HIGH-priority finding: /api/customers/outstanding leaks all 83 tenant customers to a salesman. To reproduce: login as ravi@test.com/ravi1234, GET /api/customers/outstanding — expect filtered list (≤2 mapped customers), actual is full 83-row dump. Fix lives in /app/backend/routes/customers.py:46 (`_build_query` must add salesman→customer filter when ctx.user.role=='salesman'). Re-run pytest /app/backend/tests/test_iteration98_security_audit.py -v after the fix to confirm. All agent-endpoint sync_token tests are stable green and can be used as regression for any future change in /app/backend/routes/sync.py.",
+  "rca_of_the_issue": "ROOT CAUSE: /api/customers/outstanding calls `_build_query(ctx, company_id)` which builds {tenant_id, company_id} but never inspects ctx.user.role. Salesman role is multi-tenant-safe but NOT intra-tenant-role-safe on this endpoint. REPRODUCTION: 1) POST /api/auth/login {username:'ravi@test.com', password:'ravi1234'} → token. 2) GET /api/customers/outstanding with Bearer token → returns 83 customers (entire tenant) instead of 2 mapped. MITIGATION: In routes/customers.py around line 60, after `ctx = await get_tenant_context(request)`, add: if ctx['user']['role'] == 'salesman': fetch ctx['user']['mapped_customers'] (or equivalent salesman_mapping collection) and add {'customer_name': {'$in': mapped_names}} to the query. Apply the same pattern to /api/customers/outstanding/export and any other customer-listing endpoints accessible to salesman."
+}

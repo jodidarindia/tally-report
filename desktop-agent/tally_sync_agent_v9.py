@@ -3240,9 +3240,15 @@ class FlowraSyncAgent:
         if self.ws_server:
             self.ws_server.broadcast(progress)
         try:
+            # Include tenant_id + sync_token so the backend can verify
+            # ownership in strict mode. Legacy backends ignore the extra
+            # keys silently. (v9.8.20+)
+            payload = dict(progress)
+            payload.setdefault('tenant_id', self.tenant_id)
+            payload.setdefault('sync_token', self.sync_token)
             requests.post(
                 f"{self.backend_url}/api/agent/sync-progress",
-                json=progress,
+                json=payload,
                 headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
                 timeout=5
             )
@@ -3269,7 +3275,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.7-aliases-perf',
+                'agent_version': '9.8.20-secure-sync',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3326,7 +3332,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.7-aliases-perf',
+                'agent_version': '9.8.20-secure-sync',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3435,6 +3441,7 @@ class FlowraSyncAgent:
                             "tenant_id": self.tenant_id,
                             "company_id": cmd_company_id,
                             "action": action,
+                            "sync_token": self.sync_token,
                         },
                         headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
                         timeout=10

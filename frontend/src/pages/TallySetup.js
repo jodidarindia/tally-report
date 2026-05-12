@@ -1,11 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download, Trash2, RotateCcw, AlertTriangle, ArrowUpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import CreditorGroupsPanel from '../components/CreditorGroupsPanel';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Compare two semver-ish version strings. Returns true if a < b.
+const verLT = (a, b) => {
+  const parse = (v) => String(v || '0').replace(/^v/, '').split('.').map((seg) => {
+    const m = String(seg).match(/^\d+/);
+    return m ? parseInt(m[0], 10) : 0;
+  });
+  const pa = parse(a); const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0; const y = pb[i] || 0;
+    if (x !== y) return x < y;
+  }
+  return false;
+};
 
 const TallySetup = ({ companyId }) => {
   const [connectionType, setConnectionType] = useState('xml');
@@ -18,11 +32,26 @@ const TallySetup = ({ companyId }) => {
   const [syncStatus, setSyncStatus] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null); // {type: 'resync'|'delete', company}
   const [actionLoading, setActionLoading] = useState(false);
+  const [latestRelease, setLatestRelease] = useState(null);
 
   useEffect(() => {
     checkStatus();
     fetchSyncStatus();
+    fetchLatestRelease();
+    // Recheck the agent release manifest every 24 hours while this tab
+    // stays open. The endpoint is read-only and cached server-side.
+    const id = setInterval(fetchLatestRelease, 24 * 60 * 60 * 1000);
+    return () => clearInterval(id);
   }, []);
+
+  const fetchLatestRelease = async () => {
+    try {
+      const r = await axios.get(`${API}/agent/latest-version`);
+      if (r.data?.success) setLatestRelease(r.data.data);
+    } catch (_) {
+      // Silent — never block the page if release manifest is unreachable.
+    }
+  };
 
   const checkStatus = async () => {
     setChecking(true);
@@ -132,13 +161,44 @@ const TallySetup = ({ companyId }) => {
               <Download size={24} className="text-white" />
             </div>
             <div className="flex-1">
-              <h2 className="text-base font-semibold text-slate-900">FLOWRA Tally Sync Agent (Windows)</h2>
+              <h2 className="text-base font-semibold text-slate-900">
+                FLOWRA Tally Sync Agent (Windows)
+                {latestRelease?.version && (
+                  <span className="ml-2 inline-block text-[10px] font-semibold bg-blue-600 text-white px-1.5 py-0.5 rounded">
+                    v{latestRelease.version}
+                  </span>
+                )}
+              </h2>
               <p className="text-xs text-slate-600 mt-1">
-                v9.8.17 · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
+                Latest: v{latestRelease?.version || '9.8.20'} · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
               </p>
+
+              {/* Update banner — visible when the agent currently syncing
+                  reports an older version than the latest release. */}
+              {latestRelease && syncStatus?.agent_version
+                && verLT(syncStatus.agent_version, latestRelease.version) && (
+                <div
+                  className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
+                  data-testid="agent-update-banner"
+                >
+                  <ArrowUpCircle size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold text-amber-900">
+                      Agent update available — v{syncStatus.agent_version} → v{latestRelease.version}
+                    </div>
+                    <div className="text-[11px] text-amber-700 mt-0.5">
+                      Your desktop agent will offer a one-click update on its
+                      next 24-hour check, or open the agent now and click
+                      "Update available" in the status bar. Sync data and
+                      Tally are not affected.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-3 mt-3">
                 <a
-                  href="/FlowraTallyAgent.exe"
+                  href={latestRelease?.download_url || "/FlowraTallyAgent.exe"}
                   download
                   className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                   data-testid="download-agent-exe-btn"
@@ -197,8 +257,18 @@ const TallySetup = ({ companyId }) => {
               </div>
               <div className="p-3 rounded-lg bg-slate-50">
                 <div className="text-xs text-slate-500 flex items-center gap-1 mb-1"><Monitor size={12} /> Agent Version</div>
-                <div className="text-sm font-medium text-slate-800" data-testid="agent-version">
-                  {syncStatus.agent_version || 'Unknown'}
+                <div className="text-sm font-medium text-slate-800 flex items-center gap-2 flex-wrap" data-testid="agent-version">
+                  <span>{syncStatus.agent_version || 'Unknown'}</span>
+                  {latestRelease && syncStatus.agent_version
+                    && verLT(syncStatus.agent_version, latestRelease.version) && (
+                    <span
+                      className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                      data-testid="agent-update-pill"
+                      title={`Latest is v${latestRelease.version}`}
+                    >
+                      <ArrowUpCircle size={10} /> update available
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="p-3 rounded-lg bg-slate-50 sm:col-span-2">
