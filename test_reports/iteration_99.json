@@ -1,0 +1,29 @@
+{
+  "summary": "Iter99 retest of iter98 HIGH-priority RBAC finding on /api/customers/*. 20/20 tests passed. The salesman→customer scoping fix in /app/backend/routes/customers.py (_salesman_customer_filter helper + chained {customer_name: {$in: [...]}} filter on outstanding, followups, targets, payment-behavior, ledger/export) is working correctly. Admin/super_admin tenant view unchanged. Iter98 agent-endpoint hardening, tenant isolation and auth regression all still green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration99_salesman_rbac.py",
+    "/app/test_reports/pytest/iteration99_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_salesman_customer_filter() in routes/customers.py:46 — clean implementation. Tries exact match first, falls back to case-insensitive regex. Returns [] for unmapped salesman (locks them out, correct) and None for non-salesman roles (no extra filter, correct).",
+    "Live numbers confirm the fix: admin sees 37 / 0 / 39 / 37 (full) on outstanding/followups/targets/payment-behavior, salesman ravi sees 1 / 0 / 0 / 1 (only 'Ankit Automobiles, Indore'). Previously was 83 customers leaking.",
+    "Ledger export now correctly rejects 'Krishna Sales Corporation' for ravi with 'Access denied for this customer', and allows 'Ankit Automobiles, Indore'.",
+    "All iter98 sync_token enforcement tests (sync, reconcile, commands GET hard-reject; sync-progress and commands/ack soft-allow) still pass. /agent/latest-version + /check-update still green.",
+    "Tenant isolation across X-Company-ID header forgery still intact — demo cannot read admin tenant.",
+    "Note: the fix uses customer NAME-based filtering ({customer_name: {$in: [...]}}). Names are unique-per-tenant in this schema and the salesman_master.fy_customers maps salesman→list-of-names per FY, so this is consistent. If at some future point names become non-unique, switch to customer_id mapping.",
+    "Edge case verified: a salesman with NO salesman_master row (or no mapping for current FY) gets an empty payload, not the full tenant. Helper returns [] in that case and the route short-circuits to {customers:[], total_outstanding:0, total_paid:0}."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration99_salesman_rbac.py"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "admin/admin123, ravi@test.com/ravi1234, demo@flowralive.in/demo2026, superadmin/superadmin123 — all working.",
+  "seed_data_creation": "None. Tests are read-only against existing seed data; ledger/export does not persist anything.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter98 HIGH-priority salesman RBAC gap is RESOLVED. Regression file at /app/backend/tests/test_iteration99_salesman_rbac.py covers: (1) all 4 list endpoints scoped for salesman, (2) ledger/export name guard, (3) unmapped salesman empty-not-full, (4) iter98 sync_token regression, (5) tenant isolation, (6) 4-role login. Safe to reuse this file for any future change to routes/customers.py or routes/sync.py.",
+  "rca_of_the_issue": "PREVIOUS ROOT CAUSE (iter98): _build_query in routes/customers.py only filtered tenant_id/company_id, never inspected ctx.user.role. APPLIED FIX: New _salesman_customer_filter(ctx) helper looks up salesman_master.fy_customers[current_fy] for the logged-in salesman's name and returns the list of mapped customer names. Each /customers/* endpoint calls this helper after _build_query and, when the role is salesman, chains {customer_name: {$in: mapped_list}} into the Mongo query. ledger/export checks the requested customer_name against the same list and returns 'Access denied for this customer' on mismatch. VERIFIED: admin still sees full 37-row tenant, salesman ravi sees 1 row (only Ankit Automobiles, Indore). All 20 regression assertions pass."
+}

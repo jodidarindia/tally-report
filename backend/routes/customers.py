@@ -43,6 +43,44 @@ def _build_query(ctx, company_id=None, extra=None):
     return q
 
 
+async def _salesman_customer_filter(ctx) -> Optional[list]:
+    """If the logged-in user is a salesman, return the list of customer
+    names they are mapped to for the current FY. Returns None for
+    admin/super_admin/dispatch/employee (no role-based filter applied).
+
+    SECURITY: every customer-listing endpoint accessible to salesmen MUST
+    chain this filter into its query so a salesman can never enumerate
+    customers they're not assigned to (iter98 security audit finding)."""
+    if not ctx or not ctx.get("user"):
+        return None
+    user = ctx["user"]
+    if user.get("role") != "salesman":
+        return None
+    from utils import get_current_fy as _gcf
+    fy = _gcf()
+    base = {}
+    if ctx.get("tenant_id"):
+        base["tenant_id"] = ctx["tenant_id"]
+    if ctx.get("company_id"):
+        base["company_id"] = ctx["company_id"]
+
+    # Try exact-name match first, fall back to case-insensitive.
+    sm_name = user.get("name", "")
+    master = await db.salesman_master.find_one(
+        {**base, "salesman_name": sm_name}, {"_id": 0}
+    )
+    if not master and sm_name:
+        master = await db.salesman_master.find_one(
+            {**base, "salesman_name": {"$regex": f"^{sm_name}$",
+                                         "$options": "i"}}, {"_id": 0}
+        )
+    if not master:
+        # Salesman has no mapping → expose nothing.
+        return []
+    fy_map = master.get("fy_customers", {}) or {}
+    return list(fy_map.get(fy, master.get("customers", []) or []))
+
+
 @router.get("/customers/outstanding")
 async def get_customer_outstanding(
     request: Request,
@@ -59,6 +97,19 @@ async def get_customer_outstanding(
         today = date_type.today()
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
+
+        # SECURITY: salesman role must only see their mapped customers.
+        # Apply this filter at the DB level so the salesman can never
+        # observe non-mapped customers' outstanding/aging numbers.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            if not salesman_scope:
+                # Mapped to no customers → return empty payload immediately.
+                return APIResponse(success=True, data={
+                    "customers": [], "total_outstanding": 0, "total_paid": 0,
+                    "page": 1, "total": 0, "page_size": page_size or 0,
+                })
+            q["customer_name"] = {"$in": salesman_scope}
 
         synced_customers = await db.customers.find(q, {"_id": 0}).to_list(5000)
 
@@ -340,6 +391,14 @@ async def get_followups(request: Request, status: Optional[str] = None, company_
         if status:
             extra["status"] = status
         query = _build_query(ctx, company_id, extra)
+
+        # SECURITY: salesman role only sees follow-ups for their mapped customers.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            if not salesman_scope:
+                return APIResponse(success=True, data={"followups": [], "count": 0})
+            query["customer_name"] = {"$in": salesman_scope}
+
         followups = await db.customer_followups.find(query, {"_id": 0}).sort("followup_date", -1).to_list(100)
 
         # Apply branch exclusion
@@ -414,6 +473,14 @@ async def get_customer_targets(request: Request, fy: Optional[str] = None, compa
     try:
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
+
+        # SECURITY: salesman role only sees targets for their mapped customers.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            if not salesman_scope:
+                return APIResponse(success=True, data={"targets": [], "count": 0})
+            q["customer_name"] = {"$in": salesman_scope}
+
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         custom_targets = await db.customer_targets.find(q, {"_id": 0}).to_list(100)
         custom_target_map = {t["customer_name"]: t for t in custom_targets}
@@ -721,6 +788,12 @@ async def export_customer_ledger(request: Request):
             return APIResponse(success=False, error="Customer name is required")
 
         ctx = await get_tenant_context(request)
+
+        # SECURITY: salesman role can only export ledgers for their mapped customers.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None and customer_name not in salesman_scope:
+            return APIResponse(success=False, error="Access denied for this customer")
+
         tq = _build_query(ctx, body.get("company_id"))
 
         # Fetch all voucher types for this customer
@@ -880,6 +953,13 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         today = date_type.today()
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
+
+        # SECURITY: salesman role only sees payment behavior for their mapped customers.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            if not salesman_scope:
+                return APIResponse(success=True, data={"customers": [], "count": 0})
+            q["customer_name"] = {"$in": salesman_scope}
 
         # Fetch ALL vouchers first
         all_sales_raw = await db.sales_vouchers.find(q, {"_id": 0}).to_list(20000)
