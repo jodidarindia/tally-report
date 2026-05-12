@@ -1,0 +1,156 @@
+================================================================
+FLOWRA — DigitalOcean Login Failure Fix
+================================================================
+
+DIAGNOSIS
+---------
+Opening https://insights.flowralive.in/api/health returns the
+React landing page (HTML) instead of JSON. That means nginx on
+your droplet is routing /api/* to the static React build instead
+of proxying it to FastAPI on port 8001. The frontend POSTs the
+login request, receives HTML back, fails to parse it as JSON,
+and shows the generic "Login failed" toast.
+
+This is a server-configuration issue on the droplet. The backend
+code is fine.
+
+
+================================================================
+STEP 1 — Confirm which sub-case you are in
+================================================================
+
+SSH into your DigitalOcean droplet and run:
+
+    # Should print HTML right now (the bug)
+    curl -s https://insights.flowralive.in/api/health | head -3
+
+    # Should print JSON if FastAPI is up
+    curl -s http://127.0.0.1:8001/api/health
+
+There are two cases. Run the section below that matches.
+
+
+================================================================
+CASE A — curl http://127.0.0.1:8001/api/health returns
+         {"ok":true,"db":"connected","service":"flowra-backend"}
+================================================================
+
+Backend is fine, only nginx is wrong. Rewrite the vhost:
+
+sudo bash -c 'cat > /etc/nginx/sites-available/flowra <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name insights.flowralive.in;
+    client_max_body_size 50M;
+
+    root /opt/flowra/frontend/build;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       \$host;
+        proxy_read_timeout 86400s;
+    }
+
+    location ~* \.(?:js|css|woff2?|ttf|png|jpg|jpeg|gif|svg|ico)\$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files \$uri =404;
+    }
+
+    location ~* \.(?:pdf|exe|zip)\$ {
+        expires 0;
+        try_files \$uri =404;
+    }
+
+    location / {
+        try_files \$uri /index.html;
+    }
+}
+EOF'
+
+sudo ln -sf /etc/nginx/sites-available/flowra /etc/nginx/sites-enabled/flowra
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+
+# Re-run certbot so the API + WS blocks are copied into the HTTPS vhost too
+sudo certbot --nginx -d insights.flowralive.in --non-interactive --redirect
+
+# Verify — should now return JSON
+curl -s https://insights.flowralive.in/api/health
+
+
+================================================================
+CASE B — curl http://127.0.0.1:8001/api/health returns nothing
+         (connection refused / empty)
+================================================================
+
+The backend service didn't come up. Most likely cause is a
+missing JWT_SECRET in .env (the latest code refuses to start
+without it). Check and fix:
+
+    # 1) Find your backend path
+    ls /opt/flowra/backend/.env || ls /var/www/flowra/backend/.env
+
+    # 2) Confirm critical keys are present
+    cd /opt/flowra/backend     # adjust path if different
+    grep -E "^(MONGO_URL|DB_NAME|JWT_SECRET|RECAPTCHA_SECRET_KEY|RESEND_API_KEY)=" .env
+
+    # Expected: 5 lines.
+    # If JWT_SECRET is missing, generate and append a random one:
+    echo "JWT_SECRET=$(openssl rand -hex 32)" | sudo tee -a .env
+
+    # 3) Restart the backend service
+    sudo systemctl restart flowra-backend
+    sleep 5
+    sudo systemctl status flowra-backend --no-pager | head -15
+
+    # 4) Tail the error log if it still won't start
+    sudo journalctl -u flowra-backend -n 50 --no-pager
+
+
+================================================================
+SANITY CHECK AFTER FIX
+================================================================
+
+    curl -s https://insights.flowralive.in/api/health
+
+Expected response:
+    {"ok":true,"db":"connected","service":"flowra-backend"}
+
+If db says "disconnected: ..." instead of "connected", that is a
+MongoDB Atlas access issue — most likely the droplet's public IP
+is not on the Atlas Network Access whitelist. Add it via
+Atlas Cloud Console > Network Access > Add IP Address.
+
+
+================================================================
+WHY THIS HAPPENED
+================================================================
+
+The default nginx vhost installed with `apt install nginx` ships
+a `try_files $uri $uri/ /index.html` fallback that catches every
+URL, including /api/*. Without an explicit `location /api/`
+block that proxy_passes to 127.0.0.1:8001, every API call ends
+up returning index.html. The /etc/nginx/sites-available/flowra
+file above adds those `location /api/` and `location /ws/`
+blocks above the SPA fallback, so /api/* is proxied first and
+the SPA fallback only catches non-API routes.
+
+================================================================
