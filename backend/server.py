@@ -170,11 +170,14 @@ async def security_middleware(request: Request, call_next):
             )
         _rate_limit_store[f"api:{client_ip}"].append(now)
 
-    # Block oversized payloads (10MB max)
+    # Block oversized payloads. 100 MB is enough for the largest full-sync
+    # batch we have seen from production agents (Krishna Sales ~7,500 stock
+    # items + 4,500 sales vouchers ≈ 30 MB JSON). The matching nginx
+    # `client_max_body_size 100M` on the droplet vhost completes the chain.
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 10 * 1024 * 1024:
+    if content_length and int(content_length) > 100 * 1024 * 1024:
         return Response(
-            content='{"success":false,"error":"Request too large"}',
+            content='{"success":false,"error":"Request too large (>100MB)"}',
             status_code=413,
             media_type="application/json"
         )

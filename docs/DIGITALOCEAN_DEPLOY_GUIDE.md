@@ -185,8 +185,9 @@ server {
     listen [::]:80;
     server_name insights.flowralive.in;
 
-    # Increase upload limit for Tally syncs (some manifests can be large)
-    client_max_body_size 50M;
+    # Increase upload limit to 100 MB so large initial full-syncs
+    # (e.g. ~7.5k stock items + ~4.5k sales) are not rejected with HTTP 413.
+    client_max_body_size 100M;
 
     # ── Static frontend ─────────────────────────────────────────────
     root /opt/flowra/frontend/build;
@@ -307,6 +308,7 @@ correctly-configured binary.
 | Agent says "Cannot reach FLOWRA" | DNS not propagated yet | `dig insights.flowralive.in` — wait 5-10 min |
 | reCAPTCHA fails on login | Site key restricted to localhost in Google console | Add `insights.flowralive.in` to allowed domains in https://www.google.com/recaptcha/admin |
 | EXE 404 | Build folder doesn't contain it | `cp /opt/flowra/frontend/public/FlowraTallyAgent.exe /opt/flowra/frontend/build/` then `systemctl reload nginx` |
+| Agent log shows `Sync X failed: HTTP 413` | nginx + backend body limit too small | (a) Add/raise `client_max_body_size 100M;` in `/etc/nginx/sites-available/flowra` then `nginx -t && systemctl reload nginx`. (b) `git pull` to pick up `server.py` 100 MB limit, then `systemctl restart flowra-backend`. Re-run sync. |
 
 ---
 
@@ -341,4 +343,4 @@ To refresh the dev database from production at any time, run
 `python3 /tmp/split_dev_db.py` from inside the Emergent container — it re-clones
 `Flowra-Insights` → `Flowra-Insights-Dev` in ~30 seconds.
 
-Last updated: May 2026 · FLOWRA v9.8.19 / Agent v9.8.19
+Last updated: May 2026 · FLOWRA v9.8.20 / Agent v9.8.20
