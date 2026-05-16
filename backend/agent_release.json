@@ -2,8 +2,8 @@
   "version": "9.8.20",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "Auto-update support: agent now checks for new versions every 24 hours and offers one-click upgrade. Security hardening for /api/agent/* endpoints.",
-  "released_at": "2026-02-15T00:00:00+05:30",
-  "sha256": "",
-  "size_bytes": 0
+  "release_notes": "Auto-update support: agent now checks for new versions every 24 hours and offers one-click upgrade. Security hardening for /api/agent/* endpoints (sync_token now mandatory on /sync, /reconcile, /commands).",
+  "released_at": "2026-05-16T05:19:00+05:30",
+  "sha256": "f1e60a79d52d15425a8f0ca872e964c2ff753ddab6c5dcf50a4762b80ca4b8e4",
+  "size_bytes": 27008530
 }
