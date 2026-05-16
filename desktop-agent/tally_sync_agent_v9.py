@@ -3275,7 +3275,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.20-secure-sync',
+                'agent_version': '9.8.21-single-instance',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3332,7 +3332,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.20-secure-sync',
+                'agent_version': '9.8.21-single-instance',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",

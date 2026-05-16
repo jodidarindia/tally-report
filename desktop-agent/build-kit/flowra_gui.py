@@ -24,6 +24,7 @@ import sys
 import json
 import queue
 import signal
+import socket
 import threading
 import subprocess
 import tkinter as tk
@@ -32,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.20"
+APP_VERSION = "v9.8.21"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,6 +49,15 @@ INTERNET_PROBE_URL = "https://www.google.com/generate_204"
 
 # Windows Registry key that auto-launches programs at user login.
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+# ── Single-instance guard ──────────────────────────────────────────────
+# Binds a TCP socket to a fixed local-only port. A second copy of the .exe
+# will find the port in use and bail out (preventing duplicate writes to
+# MongoDB + duplicate Tally fetches that customers were hitting in v9.8.18).
+# 38765 was chosen to be deliberately above the IANA registered range and
+# well away from the WebSocket port (8765) the agent already uses.
+SINGLE_INSTANCE_PORT = 38765
+_single_instance_socket = None  # module-level so the GC never closes it
 RUN_VALUE = "FlowraTallyAgent"
 
 
@@ -2399,10 +2409,58 @@ def _handle_cli_flags() -> bool:
     return False
 
 
+def _acquire_single_instance_lock() -> bool:
+    """Bind a TCP socket to 127.0.0.1:SINGLE_INSTANCE_PORT.
+
+    Returns True if this is the first instance (lock acquired), False if
+    another agent is already running. The bound socket is kept alive for
+    the lifetime of the process via the module-level reference."""
+    global _single_instance_socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # DO NOT set SO_REUSEADDR — we want the bind to fail when a
+        # second copy starts up. Linux honours SO_REUSEADDR more loosely
+        # than Windows, but we ship for Windows anyway.
+        s.bind(("127.0.0.1", SINGLE_INSTANCE_PORT))
+        s.listen(1)
+        _single_instance_socket = s  # pin so the GC never closes it
+        return True
+    except OSError:
+        # Port already in use ⇒ another FLOWRA agent is running.
+        return False
+
+
 def main():
     _maybe_run_agent_directly()
     if _handle_cli_flags():
         return
+
+    # SINGLE-INSTANCE GUARD — must run BEFORE we create any window or
+    # spawn the sync subprocess. Prevents duplicate MongoDB writes +
+    # duplicate Tally fetches when a user accidentally double-clicks the
+    # .exe or runs auto-start while a tray instance is already up.
+    if not _acquire_single_instance_lock():
+        # Show a friendly dialog and bail. We deliberately do not try to
+        # raise the existing instance's window — that needs Win32 IPC and
+        # adds complexity for marginal gain. The existing instance is
+        # already in the system tray; the user can click it.
+        try:
+            tmp = tk.Tk()
+            tmp.withdraw()
+            messagebox.showinfo(
+                APP_NAME,
+                "FLOWRA Tally Sync Agent is already running.\n\n"
+                "Look for the green FLOWRA icon in your Windows system "
+                "tray (bottom-right corner, next to the clock). "
+                "Right-click it to show the window, view logs, or quit.\n\n"
+                "Only one copy of the agent can run at a time — multiple "
+                "copies would cause duplicate data to be synced to FLOWRA.",
+            )
+            tmp.destroy()
+        except Exception:
+            # Headless / no display — just print and exit quietly.
+            print(f"{APP_NAME} is already running. Exiting duplicate instance.")
+        sys.exit(0)
 
     start_minimized = "--minimized" in sys.argv
 
