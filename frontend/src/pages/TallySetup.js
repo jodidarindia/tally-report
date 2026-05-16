@@ -170,7 +170,7 @@ const TallySetup = ({ companyId }) => {
                 )}
               </h2>
               <p className="text-xs text-slate-600 mt-1">
-                Latest: v{latestRelease?.version || '9.8.20'} · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
+                Latest: v{latestRelease?.version || '9.8.21'} · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
               </p>
 
               {/* Update banner — visible when the agent currently syncing
