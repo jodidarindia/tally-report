@@ -3,5 +3,7 @@
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
   "release_notes": "Single-instance enforcement: agent now refuses to start a second copy on the same PC (prevents duplicate Tally fetches + duplicate MongoDB writes). Includes all v9.8.20 features: auto-update + security hardening for /api/agent/* endpoints.",
-  "released_at": "2026-05-16T07:36:00+05:30"
+  "released_at": "2026-05-16T08:12:00+05:30",
+  "sha256": "9d6309a5baa21001e5444b72a18097cae708636dd3f3e3250a634a305c49a9ba",
+  "size_bytes": 27009536
 }
