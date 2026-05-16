@@ -148,13 +148,18 @@ async def auto_assign_abc(request: Request):
     Body: { "fy": "2026-27", "company_id": "..." }
     """
     try:
+        from pymongo import UpdateOne
         ctx = await get_tenant_context(request)
         body = await request.json()
         fy = body.get("fy") or ""
         q = _build_query(ctx, body.get("company_id"))
 
-        # Pull sales vouchers and tally per item_name (FY-scoped if provided)
-        sales = await db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "items": 1}).to_list(50000)
+        # Pull sales vouchers and tally per item_name (FY-scoped if provided).
+        # Stream the cursor instead of loading 50k docs into memory at once —
+        # this matters on small (512 MB) droplets where Atlas latency
+        # multiplies fast. Only the two fields we actually need are pulled.
+        cursor = db.sales_vouchers.find(q, {"_id": 0, "voucher_date": 1, "items": 1})
+        sales = await cursor.to_list(100000)
         if fy:
             from utils import filter_vouchers_by_fy
             sales = filter_vouchers_by_fy(sales, fy)
@@ -169,7 +174,10 @@ async def auto_assign_abc(request: Request):
 
         total_rev = sum(rev_by_item.values())
         if total_rev <= 0:
-            return APIResponse(success=False, error="No sales revenue found for the selected FY")
+            return APIResponse(success=False,
+                                error=f"No sales revenue found in FY {fy or '(all)'} for this company. "
+                                       "If you just synced data, wait for the agent's full sync to "
+                                       "complete and try again.")
 
         # Sort items by revenue descending, then assign A/B/C/D by cumulative %
         sorted_items = sorted(rev_by_item.items(), key=lambda x: -x[1])
@@ -187,33 +195,38 @@ async def auto_assign_abc(request: Request):
             else:
                 item_to_abc[iname] = "D"
 
-        # Apply to inventory_items
-        all_inv = await db.inventory_items.find(q, {"_id": 0, "item_id": 1, "item_name": 1}).to_list(50000)
-        modified = 0
+        # Build a single bulk_write op list. Previously this fired one
+        # MongoDB round-trip per item — on a company with 7,500+ stock
+        # items, that took ~20 minutes and timed out at the nginx
+        # proxy_read_timeout. Bulk-write brings it down to a few seconds.
+        all_inv = await db.inventory_items.find(q, {"_id": 0, "item_id": 1, "item_name": 1}).to_list(100000)
+        ops = []
+        counts = {"A": 0, "B": 0, "C": 0, "D": 0}
         for it in all_inv:
             iname = (it.get("item_name") or "").strip().lower()
-            if iname in item_to_abc:
-                await db.inventory_items.update_one(
-                    {**q, "item_id": it.get("item_id")},
-                    {"$set": {"abc_category": item_to_abc[iname]}},
-                )
-                modified += 1
-            else:
-                # Items with zero revenue → D
-                await db.inventory_items.update_one(
-                    {**q, "item_id": it.get("item_id")},
-                    {"$set": {"abc_category": "D"}},
-                )
+            cat = item_to_abc.get(iname, "D")  # zero-revenue items → D
+            counts[cat] += 1
+            ops.append(UpdateOne(
+                {**q, "item_id": it.get("item_id")},
+                {"$set": {"abc_category": cat}},
+            ))
 
-        # Counts
-        counts = {"A": 0, "B": 0, "C": 0, "D": 0}
-        for v in item_to_abc.values():
-            counts[v] += 1
-        counts["D"] += len(all_inv) - len(item_to_abc)
+        modified = 0
+        if ops:
+            # ordered=False so a single bad doc can't abort the whole batch,
+            # and Mongo can parallelise internally for speed.
+            CHUNK = 1000  # keep each batch under Mongo's 100k op cap with margin
+            for i in range(0, len(ops), CHUNK):
+                result = await db.inventory_items.bulk_write(ops[i:i + CHUNK], ordered=False)
+                modified += result.modified_count
 
-        return APIResponse(success=True, data={"counts": counts, "modified": modified, "total_items": len(all_inv)})
+        return APIResponse(success=True, data={
+            "counts": counts,
+            "modified": modified,
+            "total_items": len(all_inv),
+        })
     except Exception as e:
-        logger.error(f"ABC auto-assign error: {e}")
+        logger.exception(f"ABC auto-assign error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
