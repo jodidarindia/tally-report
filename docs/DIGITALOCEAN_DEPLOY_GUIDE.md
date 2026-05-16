@@ -295,6 +295,8 @@ correctly-configured binary.
 | Re-pull from GitHub | `cd /opt/flowra && git pull && cd backend && source .venv/bin/activate && pip install -r requirements.txt && deactivate && cd ../frontend && yarn install && yarn build && systemctl restart flowra-backend && systemctl reload nginx` |
 | Renew certs (auto) | `certbot renew --dry-run` — should say "Congratulations" |
 | Check Atlas connection | `curl https://insights.flowralive.in/api/health` |
+| Ship a new Agent .exe build | `sudo curl -L -o /var/www/Flowra_insights/tally-report/frontend/build/FlowraTallyAgent.exe "<emergent-preview-url>/FlowraTallyAgent.exe"` then `sha256sum` to verify. Don't forget to also update `/app/backend/agent_release.json` + frontend build zip so the auto-updater advertises the new version. |
+| Ship a new frontend build (no Node needed on droplet) | Build on Emergent → download the `flowra-frontend-build-<ver>.zip` → `cd /tmp && curl -L -o fe.zip "<preview-url>/flowra-frontend-build-<ver>.zip" && sudo unzip -o fe.zip -d /var/www/.../frontend/build/ && sudo systemctl reload nginx` |
 
 ---
 
