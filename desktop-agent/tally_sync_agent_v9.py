@@ -3275,7 +3275,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.21-single-instance',
+                'agent_version': '9.8.22-lvd-gated',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3332,7 +3332,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.21-single-instance',
+                'agent_version': '9.8.22-lvd-gated',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3453,7 +3453,14 @@ class FlowraSyncAgent:
             logger.debug(f"Command poll error: {e}")
 
     def run_sales_quick_sync(self):
-        """Quick sync: only sales vouchers for all companies (runs every 5 min)."""
+        """Quick sync: only sales vouchers for all companies (runs every 5 min).
+
+        v9.8.22 — LVD short-circuit: we cache the previous `$$LastVoucherDate`
+        per company in sync_state.json. If Tally's current LVD matches the
+        cached value, the agent does NOT pull any voucher data — it just
+        returns immediately. This is what BizAnalyst and similar agents do
+        and what was making our agent re-fetch ~24 month-ranges from Tally
+        every 5 minutes for no reason."""
         if self.sync_running:
             return
         self.sync_running = True
@@ -3488,17 +3495,69 @@ class FlowraSyncAgent:
                 else:
                     fys = get_sync_fys()
 
-                logger.info(f"[QUICK] Sales sync: {company}")
-
-                # Detect last voucher date for this company
+                # ── LVD short-circuit ────────────────────────────────────
+                # Cheap single-value query to Tally. If unchanged since
+                # the previous quick-sync, we skip the entire fetch loop.
                 lvd = self.tally.fetch_last_voucher_date() or date.today()
+                state = load_sync_state()
+                key = f"lvd::{company}"
+                prev_lvd_str = state.get(key)
+                cur_lvd_str = lvd.strftime("%Y-%m-%d")
+
+                if prev_lvd_str == cur_lvd_str:
+                    logger.info(
+                        f"[QUICK] {company}: no new vouchers since {cur_lvd_str} "
+                        "(skipping Tally fetch entirely)."
+                    )
+                    # Still emit a heartbeat to the cloud so the "Last Sync"
+                    # tile keeps ticking — proves the agent IS alive even
+                    # when there's nothing new.
+                    try:
+                        import requests as _r
+                        _r.post(
+                            f"{self.backend_url}/api/agent/sync-progress",
+                            json={
+                                'type': 'heartbeat',
+                                'tenant_id': self.tenant_id,
+                                'sync_token': self.sync_token,
+                                'company_id': company,
+                                'company_name': company,
+                                'lvd': cur_lvd_str,
+                                'agent_version': '9.8.22-lvd-gated',
+                            },
+                            headers={'Authorization': f'Bearer {self.auth_token}'},
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
+                    continue
+
+                logger.info(
+                    f"[QUICK] {company}: LVD moved {prev_lvd_str or '(first run)'} "
+                    f"→ {cur_lvd_str} — fetching incremental sales."
+                )
 
                 all_quick_sales = []
                 for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
                     fy_sales = []
+                    # Only fetch months that contain or follow the new LVD
+                    # if we have a previous LVD. First run still fetches
+                    # the whole FY (one-time cost).
+                    if prev_lvd_str:
+                        from datetime import datetime as _dt
+                        try:
+                            prev_lvd = _dt.strptime(prev_lvd_str, "%Y-%m-%d").date()
+                        except ValueError:
+                            prev_lvd = None
+                    else:
+                        prev_lvd = None
                     for m_start, m_end in months_in_fy(fy, cap_date=lvd):
+                        # Skip months that ended BEFORE the last seen LVD —
+                        # nothing in them could have changed.
+                        if prev_lvd and m_end < prev_lvd:
+                            continue
                         fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
                         time.sleep(SLEEP_BETWEEN_REQUESTS)
                     if fy_sales:
@@ -3508,6 +3567,10 @@ class FlowraSyncAgent:
 
                 # Reconcile AFTER all FYs
                 self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')])
+
+                # Save new LVD so the next cycle can short-circuit.
+                state[key] = cur_lvd_str
+                save_sync_state(state)
 
         except Exception as e:
             logger.debug(f"Quick sales sync error: {e}")

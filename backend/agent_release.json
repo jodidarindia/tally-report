@@ -1,9 +1,9 @@
 {
-  "version": "9.8.21",
+  "version": "9.8.22",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "Single-instance enforcement: agent now refuses to start a second copy on the same PC (prevents duplicate Tally fetches + duplicate MongoDB writes). Includes all v9.8.20 features: auto-update + security hardening for /api/agent/* endpoints.",
-  "released_at": "2026-05-16T08:12:00+05:30",
-  "sha256": "9d6309a5baa21001e5444b72a18097cae708636dd3f3e3250a634a305c49a9ba",
-  "size_bytes": 27009536
+  "release_notes": "LVD-gated incremental sync: agent now skips Tally entirely when nothing has changed since the last cycle (matches BizAnalyst behaviour). Drastically reduces Tally RAM/CPU during quiet periods. Heartbeat keeps the cloud's 'Last Sync' tile updated. Plus v9.8.21 single-instance lock and v9.8.20 security hardening.",
+  "released_at": "2026-05-17T05:40:00+05:30",
+  "sha256": "",
+  "size_bytes": 0
 }

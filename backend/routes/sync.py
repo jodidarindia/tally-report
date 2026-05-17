@@ -974,6 +974,21 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
 
         sync_status = await db.sync_status.find_one(q, {'_id': 0})
 
+        # v9.8.22 — Fallback: if no record matches the requested
+        # (tenant, company) pair, return the most recent record for the
+        # tenant regardless of company_id. Without this, switching the
+        # company selector (or losing flowra_company after a logout)
+        # caused the Setup page to show "Last Sync: Never" even though a
+        # full sync had just completed.
+        if not sync_status and ctx and ctx.get("tenant_id"):
+            sync_status = await db.sync_status.find_one(
+                {"type": "agent_sync", "tenant_id": ctx["tenant_id"]},
+                {"_id": 0},
+                sort=[("last_sync", -1)],
+            )
+            if sync_status:
+                sync_status["_fallback_company_mismatch"] = True
+
         if not sync_status:
             return APIResponse(
                 success=True,
