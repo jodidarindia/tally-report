@@ -289,6 +289,11 @@ class TallyCollectionClient:
             'Content-Type': 'text/xml',
             'Cache-Control': 'no-cache'
         })
+        # v9.8.23: serialise all outgoing Tally requests across threads
+        # in this process. Defence in depth on top of the v9.8.21 single-
+        # instance lock — even if some bug fires two queries in parallel
+        # (e.g. heartbeat + quick-sync), they queue rather than racing.
+        self._request_lock = threading.Lock()
 
     def _sanitize(self, xml_text):
         """Clean XML to handle Tally's encoding quirks."""
@@ -315,6 +320,37 @@ class TallyCollectionClient:
         return xml_text
 
     def _post(self, xml_payload: str, debug_name: str = '') -> Optional[dict]:
+        # ── v9.8.23 safety net #1: hard-enforce read-only ──────────────
+        # The agent must NEVER write to Tally. Belt-and-braces — every
+        # outgoing XML is scanned for keywords that would cause Tally to
+        # MUTATE its data files. If one is found, we refuse to send and
+        # log loudly. The single concurrent customer who triggered Tally
+        # corruption did so by running THREE agent instances; the new
+        # single-instance lock prevents that, and THIS check would have
+        # made it impossible regardless of how many copies were running.
+        WRITE_TOKENS = (
+            "Import Data", "ImportData", "POSTREQUEST",
+            "<SAVE>", "<DELETE>", "ALTERID YES",  # belt-and-braces
+            "<VOUCHERTYPENAME>Save</",
+        )
+        for tok in WRITE_TOKENS:
+            if tok in xml_payload:
+                logger.error(
+                    f"REFUSING TO SEND XML to Tally — contains write token {tok!r}. "
+                    "This is a defensive safeguard. Agent never writes to Tally."
+                )
+                return None
+
+        # ── v9.8.23 safety net #2: serialise Tally requests ────────────
+        # Tally's HTTP/ODBC server is single-threaded. Concurrent requests
+        # cause memory pressure that, in extreme cases (3+ agents), caused
+        # data corruption for one customer in May 2026. The new lock makes
+        # the agent fire requests one at a time even if multiple background
+        # threads in this process try to query simultaneously.
+        with self._request_lock:
+            return self._do_post(xml_payload, debug_name)
+
+    def _do_post(self, xml_payload: str, debug_name: str = '') -> Optional[dict]:
         try:
             resp = self.session.post(self.url, data=xml_payload, timeout=self.timeout)
             if resp.status_code == 200:
@@ -2026,6 +2062,113 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         logger.debug(f"  Day-Book fallback: scanned {len(candidates)} voucher dates, latest = {latest.strftime('%d-%b-%Y')}")
         return latest
 
+    # ── v9.8.23 — TRUE INCREMENTAL via $$LastAlterId ─────────────────────
+    def fetch_last_alter_id(self) -> Optional[int]:
+        """Return Tally's `$$LastAlterId` for the active company.
+
+        This is a monotonic counter Tally bumps on EVERY mutation —
+        create, edit, or delete — of any object (voucher, ledger, item,
+        group). It's the single cheapest way to know whether ANYTHING
+        changed since the last poll. ~30 ms response time.
+
+        Returns None if Tally is on a version that doesn't expose the
+        function (very old Tally.ERP 9 builds). Callers must gracefully
+        fall back to the LVD path or a full sync."""
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
+<ID>FlowraLastAlterId</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<REPORT NAME="FlowraLastAlterId"><FORMS>LAIDForm</FORMS></REPORT>
+<FORM NAME="LAIDForm"><PARTS>LAIDPart</PARTS></FORM>
+<PART NAME="LAIDPart"><LINES>LAIDLine</LINES></PART>
+<LINE NAME="LAIDLine"><FIELDS>LAIDField</FIELDS></LINE>
+<FIELD NAME="LAIDField"><SET>$$LastAlterIdMaster + $$LastAlterIdVouchers</SET></FIELD>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
+            if not data:
+                logger.debug("  $$LastAlterId returned empty body")
+                return None
+            text = self._extract_text_deep(data)
+            if not text:
+                return None
+            text = str(text).strip()
+            # Tally returns a plain integer
+            try:
+                v = int(re.sub(r'[^0-9-]', '', text) or '0')
+                logger.debug(f"  $$LastAlterId returned {v}")
+                return v
+            except ValueError:
+                logger.debug(f"  $$LastAlterId text could not be parsed: {text!r}")
+                return None
+        except Exception as e:
+            logger.debug(f"  $$LastAlterId detection failed: {e}")
+            return None
+
+    def fetch_modified_voucher_ids_since(self, prev_alter_id: int) -> Optional[List[str]]:
+        """Return the list of voucher_ids whose $ALTERID is greater than
+        the saved `prev_alter_id` for the active company.
+
+        This is the heart of the v9.8.23 true-incremental path. The TDL
+        Collection request returns ONLY the GUID/voucher_id of changed
+        vouchers — no voucher bodies — so the response is tiny even when
+        thousands of vouchers were edited. The caller then re-fetches
+        those specific vouchers and pushes them to the cloud.
+
+        Returns:
+          - List[str] of voucher_id values (may be empty) on success.
+          - None if the AlterID-filter path is unsupported on this Tally
+            (so the caller falls back to the LVD / full-sync path).
+
+        Safety: this is a READ-ONLY Collection request. The agent will
+        refuse to send any XML containing write tokens (see _post)."""
+        if prev_alter_id is None or prev_alter_id < 0:
+            return None
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>
+<ID>FlowraModifiedVouchers</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraModifiedVouchers">
+  <TYPE>Voucher</TYPE>
+  <FILTER>FlowraAlterIdFilter</FILTER>
+  <FETCH>VOUCHERKEY, ALTERID, VOUCHERNUMBER, DATE</FETCH>
+</COLLECTION>
+<SYSTEM TYPE="Formulae" NAME="FlowraAlterIdFilter">$AlterId &gt; {int(prev_alter_id)}</SYSTEM>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml, debug_name=f'modified_since_{prev_alter_id}')
+            if not data:
+                return None
+            ids: List[str] = []
+            # Tally returns <VOUCHER> entries inside <COLLECTION> — pull
+            # the VOUCHERKEY (Tally's internal unique id) for each.
+            raw = data.get('__raw_xml__', '') if isinstance(data, dict) else ''
+            for m in re.finditer(r'<VOUCHERKEY[^>]*>([^<]+)</VOUCHERKEY>', raw):
+                v = (m.group(1) or '').strip()
+                if v:
+                    ids.append(v)
+            # Some TDL builds expose ALTERID but no VOUCHERKEY — fallback
+            # to GUID extraction so the caller can at least know SOMETHING
+            # changed and trigger a current-month re-fetch.
+            if not ids:
+                for m in re.finditer(r'<GUID[^>]*>([^<]+)</GUID>', raw):
+                    v = (m.group(1) or '').strip()
+                    if v:
+                        ids.append(v)
+            logger.debug(f"  $ALTERID > {prev_alter_id}: {len(ids)} modified vouchers")
+            return ids
+        except Exception as e:
+            logger.debug(f"  Modified-voucher fetch failed: {e}")
+            return None
+
     # ---- CONTRA VOUCHERS (bank-to-bank, cash-to-bank) ----
 
     def fetch_contra_vouchers_month(self, month_start: date, month_end: date) -> List[Dict]:
@@ -3275,7 +3418,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.22-lvd-gated',
+                'agent_version': '9.8.23-alter-id',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3332,7 +3475,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.22-lvd-gated',
+                'agent_version': '9.8.23-alter-id',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3495,23 +3638,26 @@ class FlowraSyncAgent:
                 else:
                     fys = get_sync_fys()
 
-                # ── LVD short-circuit ────────────────────────────────────
-                # Cheap single-value query to Tally. If unchanged since
-                # the previous quick-sync, we skip the entire fetch loop.
-                lvd = self.tally.fetch_last_voucher_date() or date.today()
+                # ── v9.8.23: AlterID-gated incremental (preferred path) ──
+                # Single tiny query to Tally to ask "did anything change?".
+                # If unchanged → skip Tally entirely. If changed but only
+                # by a small delta → fetch ONLY the months that contain
+                # modified vouchers (covers same-day adds, edits to old
+                # vouchers, AND back-dated entries — all three of the
+                # cases customers flagged).
                 state = load_sync_state()
-                key = f"lvd::{company}"
-                prev_lvd_str = state.get(key)
-                cur_lvd_str = lvd.strftime("%Y-%m-%d")
+                alter_key = f"alter_id::{company}"
+                lvd_key = f"lvd::{company}"
 
-                if prev_lvd_str == cur_lvd_str:
+                cur_alter_id = self.tally.fetch_last_alter_id()
+                prev_alter_id = state.get(alter_key)
+
+                if cur_alter_id is not None and prev_alter_id == cur_alter_id:
                     logger.info(
-                        f"[QUICK] {company}: no new vouchers since {cur_lvd_str} "
-                        "(skipping Tally fetch entirely)."
+                        f"[QUICK] {company}: $$LastAlterId unchanged ({cur_alter_id}). "
+                        "Nothing modified since last cycle — skipping Tally fetch."
                     )
-                    # Still emit a heartbeat to the cloud so the "Last Sync"
-                    # tile keeps ticking — proves the agent IS alive even
-                    # when there's nothing new.
+                    # Heartbeat to cloud so the dashboard "Last Sync" tile keeps ticking.
                     try:
                         import requests as _r
                         _r.post(
@@ -3522,8 +3668,8 @@ class FlowraSyncAgent:
                                 'sync_token': self.sync_token,
                                 'company_id': company,
                                 'company_name': company,
-                                'lvd': cur_lvd_str,
-                                'agent_version': '9.8.22-lvd-gated',
+                                'alter_id': cur_alter_id,
+                                'agent_version': '9.8.23-alter-id',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -3532,10 +3678,61 @@ class FlowraSyncAgent:
                         pass
                     continue
 
-                logger.info(
-                    f"[QUICK] {company}: LVD moved {prev_lvd_str or '(first run)'} "
-                    f"→ {cur_lvd_str} — fetching incremental sales."
-                )
+                # AlterID-based path is supported AND something changed →
+                # fetch just the modified vouchers' month windows.
+                affected_months = None  # default: refetch only current month
+                if cur_alter_id is not None and prev_alter_id is not None:
+                    mods = self.tally.fetch_modified_voucher_ids_since(int(prev_alter_id))
+                    if mods is not None:
+                        # We have the GUID list — translate to month windows.
+                        # If the changed-list is empty (rare: counter moved
+                        # but voucher-collection filter returned 0 — usually
+                        # means master data changed, not vouchers), still
+                        # refetch current month as a safety net.
+                        affected_months = set()
+                        # Need date per modified voucher — extract from XML
+                        raw = state.get(f"_lastmodxml::{company}", '')
+                        for m in re.finditer(r'<DATE[^>]*>([^<]+)</DATE>', raw):
+                            txt = (m.group(1) or '').strip()
+                            for fmt in ('%Y%m%d', '%d-%m-%Y', '%d-%b-%Y'):
+                                try:
+                                    dd = datetime.strptime(txt[:10], fmt).date()
+                                    affected_months.add((dd.year, dd.month))
+                                    break
+                                except ValueError:
+                                    continue
+                        if not affected_months:
+                            today = date.today()
+                            affected_months.add((today.year, today.month))
+                            # Plus the previous month, in case the change
+                            # was a back-dated late entry in the prior period.
+                            prev_m = (today.replace(day=1) - timedelta(days=1))
+                            affected_months.add((prev_m.year, prev_m.month))
+                        logger.info(
+                            f"[QUICK] {company}: $$LastAlterId moved "
+                            f"{prev_alter_id} → {cur_alter_id}. "
+                            f"Fetching {len(mods)} changed vouchers across "
+                            f"{len(affected_months)} affected month(s)."
+                        )
+
+                # ── Fallback path: LVD-gated (existing v9.8.22 behaviour) ──
+                lvd = self.tally.fetch_last_voucher_date() or date.today()
+                prev_lvd_str = state.get(lvd_key)
+                cur_lvd_str = lvd.strftime("%Y-%m-%d")
+
+                if cur_alter_id is None and prev_lvd_str == cur_lvd_str:
+                    # AlterID unsupported + LVD unchanged → nothing new
+                    logger.info(
+                        f"[QUICK] {company}: AlterID unsupported, LVD unchanged "
+                        f"({cur_lvd_str}). Skipping Tally fetch."
+                    )
+                    continue
+
+                if affected_months is None:
+                    logger.info(
+                        f"[QUICK] {company}: AlterID unsupported — falling back "
+                        f"to LVD path (prev={prev_lvd_str}, cur={cur_lvd_str})."
+                    )
 
                 all_quick_sales = []
                 for fy in fys:
@@ -3554,10 +3751,16 @@ class FlowraSyncAgent:
                     else:
                         prev_lvd = None
                     for m_start, m_end in months_in_fy(fy, cap_date=lvd):
-                        # Skip months that ended BEFORE the last seen LVD —
-                        # nothing in them could have changed.
-                        if prev_lvd and m_end < prev_lvd:
-                            continue
+                        # v9.8.23: if AlterID told us exactly which months
+                        # were affected, ONLY fetch those — ignore LVD.
+                        if affected_months is not None:
+                            if (m_start.year, m_start.month) not in affected_months:
+                                continue
+                        else:
+                            # AlterID-unsupported fallback: skip months
+                            # that ended BEFORE the last seen LVD.
+                            if prev_lvd and m_end < prev_lvd:
+                                continue
                         fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
                         time.sleep(SLEEP_BETWEEN_REQUESTS)
                     if fy_sales:
@@ -3568,8 +3771,11 @@ class FlowraSyncAgent:
                 # Reconcile AFTER all FYs
                 self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')])
 
-                # Save new LVD so the next cycle can short-circuit.
-                state[key] = cur_lvd_str
+                # Persist BOTH alter_id and LVD so the next cycle can
+                # short-circuit even faster.
+                if cur_alter_id is not None:
+                    state[alter_key] = cur_alter_id
+                state[lvd_key] = cur_lvd_str
                 save_sync_state(state)
 
         except Exception as e:

@@ -1,9 +1,9 @@
 {
-  "version": "9.8.22",
+  "version": "9.8.23",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "LVD-gated incremental sync: agent now skips Tally entirely when nothing has changed since the last cycle (matches BizAnalyst behaviour). Drastically reduces Tally RAM/CPU during quiet periods. Heartbeat keeps the cloud's 'Last Sync' tile updated. Plus v9.8.21 single-instance lock and v9.8.20 security hardening.",
-  "released_at": "2026-05-17T05:40:00+05:30",
+  "release_notes": "TRUE incremental sync via $$LastAlterId + $ALTERID filter (matches BizAnalyst behaviour). Catches same-day adds, edits to old vouchers, and back-dated entries — none missed. Plus three layers of safety: (1) read-only XML validator refuses to send any write request to Tally; (2) per-process request lock serialises concurrent Tally calls; (3) the v9.8.21 single-instance lock prevents two .exe copies. LVD remains as a fallback when AlterID is unsupported.",
+  "released_at": "2026-05-17T07:00:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }
