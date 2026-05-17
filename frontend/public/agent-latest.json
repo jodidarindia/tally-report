@@ -3,5 +3,7 @@
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
   "release_notes": "TRUE incremental sync via $$LastAlterId + $ALTERID filter (matches BizAnalyst behaviour). Catches same-day adds, edits to old vouchers, and back-dated entries — none missed. Plus three layers of safety: (1) read-only XML validator refuses to send any write request to Tally; (2) per-process request lock serialises concurrent Tally calls; (3) the v9.8.21 single-instance lock prevents two .exe copies. LVD remains as a fallback when AlterID is unsupported.",
-  "released_at": "2026-05-17T07:00:00+05:30"
+  "released_at": "2026-05-17T08:23:00+05:30",
+  "sha256": "88f48b6c6175e2ec5c3d2fad7653614b7e7cf16e9156e3185fde2207446f9c21",
+  "size_bytes": 27017916
 }
