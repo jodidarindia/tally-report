@@ -1,6 +1,13 @@
 """
 Email service for FLOWRA subscription lifecycle emails.
 Uses Resend API. Emails sent from support@flowralive.in.
+
+CC policy:
+  • GLOBAL_ADMIN_CC is auto-included on general administrative / business
+    information emails (lead alerts, renewals, expiry reminders, employee-
+    added admin notifications, Insights-branded mails).
+  • Sensitive emails (passwords, OTPs, credentials, password resets) MUST
+    pass cc=None to suppress the global CC.
 """
 import os
 import asyncio
@@ -12,32 +19,80 @@ logger = logging.getLogger(__name__)
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "support@flowralive.in")
 
+# Admin recipient that must be CC'd on all non-sensitive emails.
+GLOBAL_ADMIN_CC = "jodidarindiaoffice@gmail.com"
+# Where new-lead / Insights signup notifications land (TO field).
+LEAD_NOTIFY_TO = "support@flowralive.in"
+# FLOWRA logo hosted on the marketing site.
+FLOWRA_LOGO_URL = "https://flowralive.in/assets/flowra-logo.png"
+
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 
-async def send_email(to_email: str, subject: str, html: str) -> bool:
-    """Send an email via Resend. Returns True on success."""
+async def send_email(to_email, subject: str, html: str, cc=None, tag: str = "") -> bool:
+    """Send an email via Resend.
+
+    Args:
+        to_email: A single email string or a list of recipient emails.
+        subject:  Email subject. Callers add any branding prefix themselves.
+        html:     Rendered HTML body.
+        cc:       List/string of CC addresses, or the sentinel value
+                  ``None`` to suppress the global admin CC (used for
+                  sensitive emails like credentials/OTP/password resets).
+                  Pass ``"auto"`` (default) to attach GLOBAL_ADMIN_CC.
+        tag:      Optional Resend tag (e.g. "insights", "lead").
+    """
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping email")
         return False
+
+    to_list = [to_email] if isinstance(to_email, str) else list(to_email)
+
+    if cc == "auto":
+        cc_list = [GLOBAL_ADMIN_CC]
+    elif cc is None:
+        cc_list = []
+    elif isinstance(cc, str):
+        cc_list = [cc]
+    else:
+        cc_list = list(cc)
+
+    # Never let the global CC duplicate the TO address.
+    cc_list = [c for c in cc_list if c and c.lower() not in {t.lower() for t in to_list}]
+
     try:
         params = {
             "from": f"FLOWRA <{SENDER_EMAIL}>",
-            "to": [to_email],
+            "to": to_list,
             "subject": subject,
             "html": html,
         }
+        if cc_list:
+            params["cc"] = cc_list
+        if tag:
+            params["tags"] = [{"name": "category", "value": tag}]
         result = await asyncio.to_thread(resend.Emails.send, params)
-        logger.info(f"Email sent to {to_email}: {result.get('id', 'ok')}")
+        logger.info(f"Email sent to {to_list} (cc={cc_list}): {result.get('id', 'ok')}")
         return True
     except Exception as e:
-        logger.error(f"Email send failed to {to_email}: {e}")
+        logger.error(f"Email send failed to {to_list}: {e}")
         return False
 
 
-def _base_template(content: str) -> str:
-    """Wrap content in FLOWRA email template."""
+def _base_template(content: str, insights: bool = False) -> str:
+    """Wrap content in FLOWRA email template.
+
+    When ``insights=True`` the header carries the FLOWRA logo and an
+    explicit "FLOWRA Insights" sub-brand band — used for lead alerts and
+    general business notifications.
+    """
+    insights_band = (
+        '<div style="font-size:11px;color:#bfdbfe;margin-top:6px;'
+        'letter-spacing:3px;text-transform:uppercase;font-weight:600;">'
+        'FLOWRA INSIGHTS</div>'
+        if insights else ''
+    )
     return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -48,8 +103,10 @@ def _base_template(content: str) -> str:
   <!-- Header -->
   <tr>
     <td style="background:linear-gradient(135deg,#2563EB,#1D4ED8);padding:28px 32px;text-align:center;">
+      <img src="{FLOWRA_LOGO_URL}" alt="FLOWRA" width="44" height="44" style="display:inline-block;border-radius:8px;background:#fff;padding:4px;margin-bottom:8px;" />
       <div style="font-size:28px;font-weight:800;color:#ffffff;letter-spacing:1px;">FLOWRA</div>
       <div style="font-size:12px;color:#93c5fd;margin-top:4px;letter-spacing:2px;">ORGANIZE &middot; AUTOMATE &middot; ACCELERATE</div>
+      {insights_band}
     </td>
   </tr>
   <!-- Body -->
@@ -174,7 +231,7 @@ async def send_subscription_started(to_email: str, name: str, plan: str, months:
 
       <p style="font-size:13px;color:#94a3b8;margin:20px 0 0;text-align:center;">Need help? Reply to this email or WhatsApp us at +91 81204 70018</p>
     """
-    return await send_email(to_email, "Welcome to FLOWRA — Your Subscription is Active!", _base_template(content))
+    return await send_email(to_email, "Welcome to FLOWRA — Your Subscription is Active!", _base_template(content), cc=None, tag="welcome")
 
 
 async def send_subscription_renewed(to_email: str, name: str, plan: str, months: int, new_expires_date: str):
@@ -218,7 +275,13 @@ async def send_subscription_renewed(to_email: str, name: str, plan: str, months:
 
       <p style="font-size:13px;color:#94a3b8;margin:20px 0 0;text-align:center;">Questions about your subscription? Contact us at support@flowralive.in</p>
     """
-    return await send_email(to_email, "FLOWRA Subscription Renewed — You're All Set!", _base_template(content))
+    return await send_email(
+        to_email,
+        "FLOWRA Insights · Subscription Renewed — You're All Set!",
+        _base_template(content, insights=True),
+        cc="auto",
+        tag="insights-renewal",
+    )
 
 
 async def send_subscription_expiry_warning(to_email: str, name: str, days_left: int, expires_date: str):
@@ -274,8 +337,14 @@ async def send_subscription_expiry_warning(to_email: str, name: str, days_left: 
 
       <p style="font-size:13px;color:#94a3b8;margin:20px 0 0;text-align:center;">Don't lose your business insights — renew today!</p>
     """
-    subject = f"{'URGENT: ' if days_left <= 7 else ''}Your FLOWRA Subscription Expires in {days_left} Day{'s' if days_left != 1 else ''}"
-    return await send_email(to_email, subject, _base_template(content))
+    subject = f"FLOWRA Insights · {'URGENT: ' if days_left <= 7 else ''}Subscription Expires in {days_left} Day{'s' if days_left != 1 else ''}"
+    return await send_email(
+        to_email,
+        subject,
+        _base_template(content, insights=True),
+        cc="auto",
+        tag="insights-expiry",
+    )
 
 
 async def send_employee_created_to_employee(to_email: str, employee_name: str, password: str, admin_company: str):
@@ -318,7 +387,7 @@ async def send_employee_created_to_employee(to_email: str, employee_name: str, p
 
       <p style="font-size:13px;color:#94a3b8;margin:20px 0 0;text-align:center;">Need help? Contact your administrator or reach us at support@flowralive.in</p>
     """
-    return await send_email(to_email, f"Your FLOWRA Account — Login Credentials for {admin_company}", _base_template(content))
+    return await send_email(to_email, f"Your FLOWRA Account — Login Credentials for {admin_company}", _base_template(content), cc=None, tag="credentials")
 
 
 async def send_employee_created_to_admin(to_email: str, admin_name: str, employee_name: str, employee_email: str, employee_role: str):
@@ -360,4 +429,206 @@ async def send_employee_created_to_admin(to_email: str, admin_name: str, employe
         </td></tr>
       </table>
     """
-    return await send_email(to_email, f"Employee Added — {employee_name} ({employee_email})", _base_template(content))
+    return await send_email(
+        to_email,
+        f"FLOWRA Insights · Employee Added — {employee_name} ({employee_email})",
+        _base_template(content, insights=True),
+        cc="auto",
+        tag="insights-employee",
+    )
+
+
+
+# ==================== INSIGHTS LANDING-PAGE LEAD NOTIFICATIONS ====================
+
+def _row(label: str, value: str, value_color: str = "#1e293b") -> str:
+    """Helper: render a label/value row inside the lead summary table."""
+    safe = (value or "—").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        f'<tr>'
+        f'<td style="padding:6px 0;font-size:13px;color:#64748b;width:38%;">{label}</td>'
+        f'<td style="padding:6px 0;font-size:14px;color:{value_color};'
+        f'font-weight:600;text-align:right;">{safe}</td>'
+        f'</tr>'
+    )
+
+
+async def send_lead_signup_notification(prospect: dict) -> bool:
+    """Notify admins (support@ + jodidarindiaoffice CC) of a new Insights
+    landing-page signup ("Start Free Trial" form)."""
+    company = prospect.get("company_name", "")
+    contact = prospect.get("contact_person", "")
+    email = prospect.get("email", "")
+    phone = prospect.get("phone", "")
+    plan = prospect.get("selected_plan", "—")
+    gst = prospect.get("gst_number", "")
+    address = prospect.get("address", "")
+    message = prospect.get("message", "")
+    referral = prospect.get("referral_code", "")
+    pid = prospect.get("prospect_id", "")
+    returning = prospect.get("returning_user", False)
+    ip = prospect.get("ip_address", "")
+
+    msg_block = ""
+    if message:
+        safe_msg = message.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        msg_block = (
+            '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;'
+            'padding:14px 18px;margin-bottom:24px;">'
+            '<div style="font-size:11px;color:#92400e;font-weight:700;letter-spacing:1px;'
+            'text-transform:uppercase;margin-bottom:6px;">Prospect Message</div>'
+            f'<div style="font-size:13px;color:#451a03;line-height:1.6;">{safe_msg}</div>'
+            '</div>'
+        )
+
+    returning_badge = (
+        '<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:10px;'
+        'font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:1px;margin-left:8px;">'
+        'RETURNING USER</span>'
+        if returning else ''
+    )
+
+    content = f"""
+      <span style="display:inline-block;background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:1px;">NEW LEAD</span>{returning_badge}
+      <h2 style="margin:10px 0 8px;font-size:22px;color:#1e293b;">New Free-Trial Signup</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 24px;">A prospect just submitted the <strong>Start Free Trial</strong> form on insights.flowralive.in.</p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {_row('Prospect ID', pid, '#2563EB')}
+            {_row('Company', company)}
+            {_row('Contact Person', contact)}
+            {_row('Email', email)}
+            {_row('Phone', phone)}
+            {_row('Plan Interested', (plan or '—').title() if plan else '—', '#2563EB')}
+            {_row('GST Number', gst)}
+            {_row('Address', address)}
+            {_row('Referral Code', referral)}
+            {_row('Submitted From IP', ip)}
+          </table>
+        </td></tr>
+      </table>
+
+      {msg_block}
+
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="https://insights.flowralive.in" style="display:inline-block;background:#2563EB;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">Open Super-Admin Console</a>
+        </td></tr>
+      </table>
+
+      <p style="font-size:12px;color:#94a3b8;margin:20px 0 0;text-align:center;">
+        Reach out to the prospect within 24 hours for best conversion.
+      </p>
+    """
+    subject = f"FLOWRA Insights · New Lead — {company or contact or email}"
+    return await send_email(
+        LEAD_NOTIFY_TO,
+        subject,
+        _base_template(content, insights=True),
+        cc=GLOBAL_ADMIN_CC,
+        tag="insights-lead",
+    )
+
+
+async def send_lead_demo_requested_notification(prospect: dict) -> bool:
+    """Notify admins when an existing prospect requests demo access."""
+    company = prospect.get("company_name", "")
+    email = prospect.get("email", "")
+    pid = prospect.get("prospect_id", "")
+
+    content = f"""
+      <span style="display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:1px;">DEMO REQUESTED</span>
+      <h2 style="margin:10px 0 8px;font-size:22px;color:#1e293b;">Prospect Requested a Demo</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 24px;">
+        <strong>{company or email}</strong> has just clicked "Try Demo" on the Insights landing page.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {_row('Prospect ID', pid, '#2563EB')}
+            {_row('Company', company)}
+            {_row('Email', email)}
+          </table>
+        </td></tr>
+      </table>
+
+      <p style="font-size:13px;color:#64748b;line-height:1.6;">
+        This prospect is actively exploring FLOWRA — a good moment to follow up
+        with a personalised demo invite.
+      </p>
+    """
+    subject = f"FLOWRA Insights · Demo Requested — {company or email}"
+    return await send_email(
+        LEAD_NOTIFY_TO,
+        subject,
+        _base_template(content, insights=True),
+        cc=GLOBAL_ADMIN_CC,
+        tag="insights-demo",
+    )
+
+
+async def send_lead_requirements_notification(prospect: dict, requirements, notes: str = "") -> bool:
+    """Notify admins when a prospect submits feature requirements after demo."""
+    company = prospect.get("company_name", "")
+    email = prospect.get("email", "")
+    pid = prospect.get("prospect_id", "")
+
+    req_list = requirements if isinstance(requirements, list) else []
+    req_html = "".join(
+        f'<li style="padding:4px 0;font-size:13px;color:#334155;">'
+        f'{str(r).replace("<", "&lt;").replace(">", "&gt;")}</li>'
+        for r in req_list
+    ) or '<li style="font-size:13px;color:#94a3b8;">(no specific items)</li>'
+
+    notes_block = ""
+    if notes:
+        safe_notes = notes.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        notes_block = (
+            '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;'
+            'padding:14px 18px;margin-bottom:24px;">'
+            '<div style="font-size:11px;color:#92400e;font-weight:700;letter-spacing:1px;'
+            'text-transform:uppercase;margin-bottom:6px;">Additional Notes</div>'
+            f'<div style="font-size:13px;color:#451a03;line-height:1.6;">{safe_notes}</div>'
+            '</div>'
+        )
+
+    content = f"""
+      <span style="display:inline-block;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;letter-spacing:1px;">REQUIREMENTS SUBMITTED</span>
+      <h2 style="margin:10px 0 8px;font-size:22px;color:#1e293b;">Prospect Shared Their Requirements</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 24px;">
+        <strong>{company or email}</strong> completed the post-demo questionnaire.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {_row('Prospect ID', pid, '#2563EB')}
+            {_row('Company', company)}
+            {_row('Email', email)}
+          </table>
+        </td></tr>
+      </table>
+
+      <div style="margin-bottom:20px;">
+        <div style="font-size:11px;color:#2563EB;font-weight:700;letter-spacing:1px;
+          text-transform:uppercase;margin-bottom:8px;">Requested Features</div>
+        <ul style="margin:0;padding-left:20px;">{req_html}</ul>
+      </div>
+
+      {notes_block}
+
+      <p style="font-size:13px;color:#64748b;line-height:1.6;">
+        Prepare a tailored proposal and reach out to close.
+      </p>
+    """
+    subject = f"FLOWRA Insights · Requirements Submitted — {company or email}"
+    return await send_email(
+        LEAD_NOTIFY_TO,
+        subject,
+        _base_template(content, insights=True),
+        cc=GLOBAL_ADMIN_CC,
+        tag="insights-requirements",
+    )

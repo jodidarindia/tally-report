@@ -40,6 +40,20 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 19 2026 (this session)
+### Email — Global Admin CC + FLOWRA Insights branding
+- Added `GLOBAL_ADMIN_CC = "jodidarindiaoffice@gmail.com"` in `services/email_service.py`. All non-sensitive admin/business emails carry it.
+- New helpers: `send_lead_signup_notification`, `send_lead_demo_requested_notification`, `send_lead_requirements_notification` — TO=`support@flowralive.in`, CC=global admin, Insights-branded HTML.
+- Wired into `routes/prospects.py` for `/api/public/signup`, `/api/public/demo-request`, `/api/public/submit-requirements` as fire-and-forget tasks.
+- Existing emails updated:
+  - `send_subscription_renewed` → Insights subject + global CC
+  - `send_subscription_expiry_warning` → Insights subject + global CC
+  - `send_employee_created_to_admin` → Insights subject + global CC
+  - `send_subscription_started`, `send_employee_created_to_employee` → NO CC (contain credentials)
+- Email template now embeds the FLOWRA logo (`https://flowralive.in/assets/flowra-logo.png`) and an "FLOWRA INSIGHTS" sub-band when `insights=True`.
+- De-duplication guard: CC is auto-dropped when it would equal the TO address.
+- Tests: `backend/tests/test_iteration100_email_cc_and_insights.py` — 9/9 passing (monkeypatch on `resend.Emails.send`, no real network calls).
+
 ## Already shipped (April–May 2026)
 - MongoDB Atlas migration + DB isolation (Prod vs Dev)
 - Demo Account seeding (`demo@flowralive.in`)

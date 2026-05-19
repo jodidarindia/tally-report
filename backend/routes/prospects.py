@@ -17,6 +17,12 @@ from services.auth_service import (
 from services.encryption_service import encrypt_pii, decrypt_pii, PROSPECT_PII_FIELDS
 from services.audit_service import log_audit, get_client_ip
 from services.recaptcha import verify_recaptcha
+from services.email_service import (
+    send_lead_signup_notification,
+    send_lead_demo_requested_notification,
+    send_lead_requirements_notification,
+)
+import asyncio
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -131,6 +137,15 @@ async def prospect_signup(request: Request):
         await db.prospects.insert_one(encrypted)
         logger.info(f"New prospect signup: {prospect_id}")
 
+        # Fire-and-forget admin lead notification email (Insights branded,
+        # TO=support@flowralive.in, CC=jodidarindiaoffice@gmail.com).
+        try:
+            # ``prospect_data`` still has plaintext PII (encryption happened on
+            # a separate dict above), so it is safe to forward to the email.
+            asyncio.create_task(send_lead_signup_notification(prospect_data))
+        except Exception as mail_err:
+            logger.error(f"Lead notification email scheduling failed: {mail_err}")
+
         # Link referral if code provided
         if referral_code:
             referrer = await db.referral_codes.find_one({"referral_code": referral_code}, {"_id": 0})
@@ -180,6 +195,14 @@ async def request_demo(request: Request):
             {"_id": prospect["_id"]},
             {"$set": {"demo_requested": True, "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
+
+        # Notify admins (Insights-branded).
+        try:
+            decrypted_prospect = decrypt_pii(dict(prospect), PROSPECT_PII_FIELDS)
+            decrypted_prospect.pop("_id", None)
+            asyncio.create_task(send_lead_demo_requested_notification(decrypted_prospect))
+        except Exception as mail_err:
+            logger.error(f"Demo-request notification email failed: {mail_err}")
 
         demo_token = f"demo_{uuid.uuid4().hex[:16]}"
         await db.demo_sessions.insert_one({
@@ -238,6 +261,14 @@ async def submit_requirements(request: Request):
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }}
         )
+
+        # Notify admins (Insights-branded).
+        try:
+            decrypted_prospect = decrypt_pii(dict(prospect), PROSPECT_PII_FIELDS)
+            decrypted_prospect.pop("_id", None)
+            asyncio.create_task(send_lead_requirements_notification(decrypted_prospect, requirements, notes))
+        except Exception as mail_err:
+            logger.error(f"Requirements notification email failed: {mail_err}")
 
         return APIResponse(success=True, message="Requirements submitted! Our team will prepare a customized proposal for you.")
     except Exception as e:
