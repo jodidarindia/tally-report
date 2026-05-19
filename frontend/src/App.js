@@ -211,6 +211,7 @@ function App() {
           </div>
         )}
         <PageRenderer
+          key={`pg-${company.selectedCompany || 'none'}`}
           currentPage={currentPage}
           user={user}
           selectedFY={company.selectedFY}
