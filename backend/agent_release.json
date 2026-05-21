@@ -2,8 +2,8 @@
   "version": "9.8.26",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.26 — CRITICAL fix for Tally Prime 7.0 AlterID detection (3 root causes found by analyzing a real customer's daybook export). (1) Tally Prime 7.0 LOWERCASES every response tag — fixed by switching the AlterID regex to case-insensitive matching. (2) Voucher collections in Tally Prime 7.0 return EMPTY unless SVFROMDATE / SVTODATE are provided — now included with a 2014-2099 wide range. (3) NEW Path-4 side-channel: when all dedicated AlterID queries fail, the agent now scrapes <alterid> directly out of recently-cached voucher / daybook export XML files (Tally emits this field on every voucher in every build). Guarantees the cumulative AlterID is always known even on the most stubborn Tally configurations. Each path logs which one fired so the agent log clearly shows: AlterID via Path-N (...) = N.",
-  "released_at": "2026-05-22T12:00:00+05:30",
-  "sha256": "PENDING_REBUILD",
-  "size_bytes": 0
+  "release_notes": "v9.8.26 — CRITICAL fix for Tally Prime 7.0 AlterID detection (RCA done from a real customer's daybook XML export). (1) Tally Prime 7.0 lowercases every response tag — Path-3 regex is now case-insensitive. (2) Voucher collections in Tally Prime 7.0 return EMPTY without SVFROMDATE / SVTODATE — now included with a 2014-2099 wide range. (3) NEW Path-4 side-channel scrapes <alterid> directly from cached voucher / daybook XMLs as a last-resort. (4) Misleading 'AlterID unsupported' log on the first cycle after upgrade is now 'AlterID baseline captured (N). One-time LVD-gated sync this cycle.' so customers immediately understand the agent IS working. Each path prints which one fired so the agent log clearly shows: AlterID via Path-N (...) = N.",
+  "released_at": "2026-05-22T14:30:00+05:30",
+  "sha256": "d890e3c64cd26cbaefda19caa943220c5c15c88e2ba405d00840bf1f1a2ce32a",
+  "size_bytes": 27030187
 }
