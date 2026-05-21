@@ -4060,10 +4060,33 @@ class FlowraSyncAgent:
                     continue
 
                 if affected_months is None:
-                    logger.info(
-                        f"[QUICK] {company}: AlterID unsupported — falling back "
-                        f"to LVD path (prev={prev_lvd_str}, cur={cur_lvd_str})."
-                    )
+                    if cur_alter_id is not None and prev_alter_id is None:
+                        # v9.8.26: AlterID is fully supported, this is just
+                        # the first cycle after upgrade — no saved baseline.
+                        # We do ONE full LVD-gated sync, save cur_alter_id at
+                        # the end, and from the NEXT cycle onwards we'll be
+                        # able to skip Tally entirely when nothing changed.
+                        logger.info(
+                            f"[QUICK] {company}: AlterID baseline captured "
+                            f"({cur_alter_id}). One-time LVD-gated sync this "
+                            f"cycle — next cycles will skip Tally when AlterID "
+                            f"is unchanged."
+                        )
+                    elif cur_alter_id is not None and prev_alter_id is not None:
+                        # Delta detection failed silently (Tally returned no
+                        # modified-vouchers list even though counter moved).
+                        # This can happen when only masters changed.
+                        logger.info(
+                            f"[QUICK] {company}: AlterID changed "
+                            f"({prev_alter_id} → {cur_alter_id}) but Tally "
+                            f"didn't return a modified-vouchers list. Falling "
+                            f"back to LVD path (prev={prev_lvd_str}, cur={cur_lvd_str})."
+                        )
+                    else:
+                        logger.info(
+                            f"[QUICK] {company}: AlterID unsupported — falling back "
+                            f"to LVD path (prev={prev_lvd_str}, cur={cur_lvd_str})."
+                        )
 
                 all_quick_sales = []
                 for fy in fys:
