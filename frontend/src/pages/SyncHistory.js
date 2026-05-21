@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { RefreshCw, Clock, Database, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Clock, Database, CheckCircle, AlertCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import AgentBadge from '../components/AgentBadge';
 
@@ -130,7 +130,9 @@ const SyncHistory = () => {
               <div
                 key={idx}
                 className={`bg-white border rounded-xl overflow-hidden transition-all ${
-                  isRecent ? 'border-[#2563EB] ring-1 ring-[#2563EB]/20' : 'border-slate-200'
+                  cycle.had_errors
+                    ? 'border-red-300 ring-1 ring-red-100'
+                    : isRecent ? 'border-[#2563EB] ring-1 ring-[#2563EB]/20' : 'border-slate-200'
                 }`}
                 data-testid={`sync-cycle-${idx}`}
               >
@@ -145,7 +147,7 @@ const SyncHistory = () => {
                       {isRecent ? <CheckCircle size={18} /> : <Clock size={18} />}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-slate-900">
                           {formatDate(cycle.timestamp)}
                         </span>
@@ -157,6 +159,17 @@ const SyncHistory = () => {
                         }`}>
                           {cycle.sync_mode || 'full'}
                         </span>
+                        {cycle.had_errors && (
+                          <span
+                            className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-100 text-red-700 border border-red-200 flex items-center gap-1"
+                            title={cycle.failed_phases?.length
+                              ? `Failed phases: ${cycle.failed_phases.map(f => f.phase).join(', ')}`
+                              : 'One or more phases failed during this sync cycle'}
+                            data-testid={`cycle-incomplete-badge-${idx}`}
+                          >
+                            <AlertTriangle size={10} /> SYNC INCOMPLETE
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
                         FY {cycle.financial_year || '-'} | {totalItems.toLocaleString()} items synced | {Object.keys(cycle.data_types).length} data types
@@ -180,6 +193,23 @@ const SyncHistory = () => {
 
                 {isExpanded && (
                   <div className="border-t border-slate-100 p-4 bg-slate-50">
+                    {cycle.had_errors && cycle.failed_phases?.length > 0 && (
+                      <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3" data-testid={`cycle-failed-phases-${idx}`}>
+                        <div className="flex items-center gap-2 text-xs font-bold text-red-700 mb-2">
+                          <AlertTriangle size={12} /> Failed phases ({cycle.failed_phases.length})
+                        </div>
+                        <ul className="space-y-1">
+                          {cycle.failed_phases.map((f, j) => (
+                            <li key={j} className="text-xs text-red-700 flex items-start gap-2">
+                              <span className="font-mono bg-red-100 px-1.5 py-0.5 rounded text-[10px]">{f.phase}</span>
+                              <span className="text-red-600">{f.reason || 'unknown'}</span>
+                              {f.count > 1 && <span className="text-red-400">×{f.count}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="text-[10px] text-red-500 mt-2">Re-run the agent — successful phases will skip via hash-match; only the failed types will retry.</p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       {Object.entries(cycle.data_types || {}).map(([dtype, count]) => {
                         const cfg = DATA_TYPE_LABELS[dtype] || { label: dtype, color: 'bg-slate-100 text-slate-600' };

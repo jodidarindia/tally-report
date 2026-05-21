@@ -2062,18 +2062,26 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         logger.debug(f"  Day-Book fallback: scanned {len(candidates)} voucher dates, latest = {latest.strftime('%d-%b-%Y')}")
         return latest
 
-    # ── v9.8.23 — TRUE INCREMENTAL via $$LastAlterId ─────────────────────
+    # ── v9.8.24 — Improved AlterID detection with Tally Prime 7.0 fallback ──
     def fetch_last_alter_id(self) -> Optional[int]:
-        """Return Tally's `$$LastAlterId` for the active company.
+        """Return Tally's current cumulative AlterID for the active company.
 
-        This is a monotonic counter Tally bumps on EVERY mutation —
-        create, edit, or delete — of any object (voucher, ledger, item,
-        group). It's the single cheapest way to know whether ANYTHING
-        changed since the last poll. ~30 ms response time.
+        Strategy (v9.8.24 — Tally Prime 7.0 compatibility):
+          1. Try the v9.8.23 path: `$$LastAlterIdMaster + $$LastAlterIdVouchers`
+             (works on Tally Prime 4.0+).
+          2. Fallback 1: query MAX of `$AlterID` directly from the Voucher
+             collection — works on Tally Prime 7.0 and most builds because
+             `$AlterID` is a per-object FIELD (per user note: "For Vouchers:
+             Query the $AlterID field").
+          3. Fallback 2: same query against the Ledger collection using
+             `$Alterid` (per user note: "For Masters: Query the $Alterid or
+             $Alteridd field"). Summed with the voucher result.
 
-        Returns None if Tally is on a version that doesn't expose the
-        function (very old Tally.ERP 9 builds). Callers must gracefully
-        fall back to the LVD path or a full sync."""
+        Returns None only when EVERY path fails — caller falls back to LVD.
+        Cumulative value is `max_voucher_alter_id + max_ledger_alter_id`
+        so that ANY change (voucher or master) bumps the counter.
+        """
+        # --- Path 1: existing TDL system functions (Prime ≥ 4.0) ----------
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
@@ -2090,23 +2098,73 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 </DESC></BODY></ENVELOPE>"""
         try:
             data = self._post(xml)
+            if data:
+                text = self._extract_text_deep(data)
+                if text:
+                    text = str(text).strip()
+                    try:
+                        v = int(re.sub(r'[^0-9-]', '', text) or '0')
+                        if v > 0:
+                            logger.debug(f"  $$LastAlterId (TDL func) returned {v}")
+                            return v
+                    except ValueError:
+                        pass
+        except Exception as e:
+            logger.debug(f"  $$LastAlterId (TDL func) failed: {e}")
+
+        # --- Path 2: COMPUTE max($AlterID) on Voucher collection ----------
+        # Works on Tally Prime 7.0 — $AlterID is a per-voucher FIELD that
+        # exists on every Tally Prime build.
+        vmax = self._fetch_max_alter_id_for_collection(
+            collection_type='Voucher',
+            field_name='AlterID',
+            report_id='FlowraMaxVchAlterId',
+        )
+        # --- Path 3: COMPUTE max($Alterid) on Ledger collection -----------
+        lmax = self._fetch_max_alter_id_for_collection(
+            collection_type='Ledger',
+            field_name='Alterid',
+            report_id='FlowraMaxLedAlterId',
+        )
+        if vmax is None and lmax is None:
+            logger.debug("  All AlterID detection paths returned None — unsupported on this Tally.")
+            return None
+        total = (vmax or 0) + (lmax or 0)
+        logger.debug(f"  AlterID (collection-MAX fallback) = vouchers:{vmax} + ledgers:{lmax} = {total}")
+        return total if total > 0 else None
+
+    def _fetch_max_alter_id_for_collection(
+        self, collection_type: str, field_name: str, report_id: str
+    ) -> Optional[int]:
+        """Return MAX($<field_name>) over `<collection_type>` collection,
+        or None if the query failed. READ-ONLY."""
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
+<ID>{report_id}</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<REPORT NAME="{report_id}"><FORMS>{report_id}_Form</FORMS></REPORT>
+<FORM NAME="{report_id}_Form"><PARTS>{report_id}_Part</PARTS></FORM>
+<PART NAME="{report_id}_Part"><LINES>{report_id}_Line</LINES></PART>
+<LINE NAME="{report_id}_Line"><FIELDS>{report_id}_Field</FIELDS></LINE>
+<FIELD NAME="{report_id}_Field"><SET>$$Max:Collection:{report_id}_Coll:${field_name}</SET></FIELD>
+<COLLECTION NAME="{report_id}_Coll"><TYPE>{collection_type}</TYPE><FETCH>{field_name}</FETCH></COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
             if not data:
-                logger.debug("  $$LastAlterId returned empty body")
                 return None
             text = self._extract_text_deep(data)
             if not text:
                 return None
             text = str(text).strip()
-            # Tally returns a plain integer
-            try:
-                v = int(re.sub(r'[^0-9-]', '', text) or '0')
-                logger.debug(f"  $$LastAlterId returned {v}")
-                return v
-            except ValueError:
-                logger.debug(f"  $$LastAlterId text could not be parsed: {text!r}")
-                return None
+            v = int(re.sub(r'[^0-9-]', '', text) or '0')
+            return v if v >= 0 else None
         except Exception as e:
-            logger.debug(f"  $$LastAlterId detection failed: {e}")
+            logger.debug(f"  MAX({field_name}) on {collection_type} failed: {e}")
             return None
 
     def fetch_modified_voucher_ids_since(self, prev_alter_id: int) -> Optional[List[str]]:
@@ -3398,6 +3456,59 @@ class FlowraSyncAgent:
         except:
             pass
 
+    # v9.8.24 ── per-cycle failure tracker helpers ─────────────────────────
+    def _mark_phase_failed(self, phase: str, reason: str = ""):
+        """Record a phase failure so the end-of-cycle summary can flag it.
+        Idempotent — multiple failures of the same phase are collapsed."""
+        try:
+            if not hasattr(self, '_failed_phases'):
+                self._failed_phases = []
+            existing = next((f for f in self._failed_phases if f.get('phase') == phase), None)
+            if existing:
+                # Keep the latest reason — usually most informative.
+                existing['reason'] = reason or existing.get('reason', '')
+                existing['count'] = existing.get('count', 1) + 1
+            else:
+                self._failed_phases.append(
+                    {'phase': phase, 'reason': reason or 'unknown', 'count': 1}
+                )
+        except Exception:
+            pass
+
+    def _post_cycle_summary(self, *, company_name: str, financial_year: str,
+                             sync_mode: str, totals: dict):
+        """POST a final cycle summary to the cloud. The backend stores it
+        in `sync_history` so the web Sync History page can render an
+        "Incomplete" badge when any phase failed.
+
+        Non-blocking: a failed summary POST never breaks the sync itself."""
+        try:
+            payload = {
+                'tenant_id': self.tenant_id,
+                'sync_token': self.sync_token,
+                'company_id': self._resolve_company_id(company_name) or '',
+                'company_name': company_name,
+                'financial_year': financial_year,
+                'sync_mode': sync_mode,
+                'agent_version': '9.8.24-alter-id',
+                'started_at': getattr(self, '_cycle_started_at', ''),
+                'ended_at': datetime.now(timezone.utc).isoformat(),
+                'failed_phases': list(getattr(self, '_failed_phases', [])),
+                'had_errors': bool(getattr(self, '_failed_phases', [])),
+                'totals': totals or {},
+            }
+            requests.post(
+                f"{self.backend_url}/api/agent/cycle-summary",
+                json=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {self.auth_token}',
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            logger.debug(f"cycle-summary POST failed (non-fatal): {e}")
+
     def sync_to_backend(self, data_type, data):
         if not data:
             return True
@@ -3418,7 +3529,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.23-alter-id',
+                'agent_version': '9.8.24-alter-id',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3429,7 +3540,7 @@ class FlowraSyncAgent:
                 f"{self.backend_url}/api/agent/sync",
                 json=payload,
                 headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
-                timeout=30
+                timeout=120  # v9.8.24: bumped 30→120 — large FYs (4500+ vouchers) were timing out on slow links.
             )
             if resp.status_code == 200:
                 result = resp.json()
@@ -3441,9 +3552,11 @@ class FlowraSyncAgent:
                     return True
                 else:
                     logger.error(f"  Sync {data_type} failed: {result.get('error', 'unknown')}")
+                    self._mark_phase_failed(data_type, result.get('error', 'unknown'))
                     return False
             else:
                 logger.error(f"  Sync {data_type} failed: HTTP {resp.status_code}")
+                self._mark_phase_failed(data_type, f"HTTP {resp.status_code}")
                 # If 401/403, try to re-authenticate
                 if resp.status_code in (401, 403):
                     logger.warning("Auth token expired during sync, refreshing...")
@@ -3456,6 +3569,7 @@ class FlowraSyncAgent:
                 return False
         except Exception as e:
             logger.error(f"  Sync error ({data_type}): {e}")
+            self._mark_phase_failed(data_type, str(e))
             return False
 
     def reconcile_with_backend(self, data_type, manifest_ids, id_key='voucher_id'):
@@ -3475,13 +3589,13 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.23-alter-id',
+                'agent_version': '9.8.24-alter-id',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
                 json=payload,
                 headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
-                timeout=30
+                timeout=120  # v9.8.24: bumped 30→120 for large reconcile payloads.
             )
             if resp.status_code == 200:
                 result = resp.json()
@@ -3669,7 +3783,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.23-alter-id',
+                                'agent_version': '9.8.24-alter-id',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -3860,6 +3974,13 @@ class FlowraSyncAgent:
             # invoices/items/vouchers would be missed by partial fetches.
             # Hash comparison on upload side still prevents unnecessary DB writes.
             sync_mode = 'full'
+
+            # v9.8.24 — per-cycle failure tracker. Each phase appends here on
+            # any error so we can post a structured "cycle summary" at the
+            # end (used by the cloud Sync History page to show an "Incomplete"
+            # badge instead of silently dropping types).
+            self._failed_phases = []
+            self._cycle_started_at = datetime.now(timezone.utc).isoformat()
 
             logger.info(f"Starting {sync_mode} sync at {datetime.now().strftime('%H:%M:%S')}")
 
@@ -4274,9 +4395,44 @@ class FlowraSyncAgent:
                                  customers=len(customers),
                                  fys_synced=fys_to_sync, sync_mode=sync_mode)
 
+            # v9.8.24 — post a structured cycle summary so the cloud Sync
+            # History page can flag incomplete runs.
+            try:
+                self._post_cycle_summary(
+                    company_name=self._active_company or company_name,
+                    financial_year=(fys_to_sync[-1] if fys_to_sync else self.financial_year),
+                    sync_mode=sync_mode,
+                    totals={
+                        'inventory': len(items),
+                        'sales': total_sales,
+                        'purchases': total_purchases,
+                        'debit_notes': total_dn,
+                        'receipts': total_receipts,
+                        'credit_notes': total_cn,
+                        'journal_vouchers': total_jv,
+                        'stock_journals': total_sj,
+                        'contra_vouchers': total_contra,
+                        'customers': len(customers),
+                        'sundry_creditors': len(creditors),
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"cycle-summary post error: {e}")
+
         except Exception as e:
             logger.error(f"Sync error for {company_name}: {e}")
             self.report_progress('sync_error', error=str(e))
+            self._mark_phase_failed('cycle', str(e))
+            # Still try to post a summary so the UI knows the cycle aborted.
+            try:
+                self._post_cycle_summary(
+                    company_name=company_name,
+                    financial_year=getattr(self, 'financial_year', ''),
+                    sync_mode='full',
+                    totals={},
+                )
+            except Exception:
+                pass
 
     def start(self):
         if ENABLE_WS:

@@ -881,6 +881,70 @@ async def receive_sync_progress(request: dict):
         return APIResponse(success=False, error=str(e))
 
 
+# v9.8.24 — agent posts a structured cycle summary at the end of each
+# sync cycle so the web Sync History page can show an "Incomplete" badge
+# when any phase failed.
+@router.post("/agent/cycle-summary")
+async def receive_cycle_summary(request: dict):
+    """Persist a per-cycle summary record from the desktop agent.
+
+    Payload fields:
+      tenant_id, sync_token, company_id, company_name, financial_year,
+      sync_mode, agent_version, started_at, ended_at, had_errors,
+      failed_phases (list of {phase, reason, count}), totals (dict).
+
+    Authentication: same sync_token HMAC check as /agent/sync. No DB
+    writes outside this collection — read-only as far as customer data
+    goes."""
+    try:
+        from services.auth_service import verify_sync_token
+        req_tenant_id = (request.get('tenant_id') or '').strip()
+        req_sync_token = (request.get('sync_token') or '').strip()
+
+        if not req_tenant_id:
+            return APIResponse(success=False, error="tenant_id is required")
+        if not req_sync_token:
+            return APIResponse(success=False, error="sync_token is required")
+        if not verify_sync_token(req_tenant_id, req_sync_token):
+            return APIResponse(success=False, error="Invalid sync_token")
+
+        doc = {
+            "tenant_id": req_tenant_id,
+            "company_id": (request.get('company_id') or '').strip(),
+            "company_name": request.get('company_name') or '',
+            "financial_year": request.get('financial_year') or '',
+            "sync_mode": request.get('sync_mode') or 'full',
+            "agent_version": request.get('agent_version') or '',
+            "started_at": request.get('started_at') or '',
+            "ended_at": request.get('ended_at') or datetime.now(timezone.utc).isoformat(),
+            "had_errors": bool(request.get('had_errors')),
+            "failed_phases": request.get('failed_phases') or [],
+            "totals": request.get('totals') or {},
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.sync_cycle_summaries.insert_one(doc)
+        # Best-effort: keep only the last 200 summaries per (tenant, company).
+        # Wrapped tightly so a slow Mongo cursor can never make the agent
+        # call time out (it has its own 10s budget).
+        try:
+            cutoff_ids = []
+            cursor = db.sync_cycle_summaries.find(
+                {"tenant_id": doc["tenant_id"], "company_id": doc["company_id"]},
+                {"_id": 1}
+            ).sort("received_at", -1).skip(200).limit(50)
+            async for c in cursor:
+                cutoff_ids.append(c["_id"])
+            if cutoff_ids:
+                await db.sync_cycle_summaries.delete_many({"_id": {"$in": cutoff_ids}})
+        except Exception:
+            pass
+
+        return APIResponse(success=True, message="Cycle summary recorded")
+    except Exception as e:
+        logger.error(f"Error recording cycle summary: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.websocket("/ws/sync-status")
 async def websocket_sync_status(websocket: WebSocket):
     """WebSocket endpoint for real-time sync status updates.
@@ -1159,6 +1223,33 @@ async def get_sync_history(request: Request, limit: int = 100, company_id: Optio
 
         history = await db.sync_history.find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
 
+        # v9.8.24 — fetch cycle summaries so we can flag incomplete runs.
+        # Keyed by (financial_year, started_at-ish window). We just match
+        # the summary whose [started_at, ended_at] window contains the
+        # cycle's timestamp.
+        summary_q = {k: v for k, v in q.items() if k in ('tenant_id', 'company_id')}
+        summaries = await db.sync_cycle_summaries.find(
+            summary_q, {"_id": 0}
+        ).sort("ended_at", -1).to_list(200) if summary_q.get('tenant_id') else []
+
+        def _find_summary(ts: str, fy: str):
+            """Return the cycle-summary whose [started_at, ended_at]
+            window contains `ts` (or matches FY+ended_at closely)."""
+            if not ts:
+                return None
+            for s in summaries:
+                started = s.get('started_at') or ''
+                ended = s.get('ended_at') or ''
+                if started and ended and started <= ts <= ended:
+                    return s
+            # Fallback: same FY and ended within 10 min after `ts`.
+            for s in summaries:
+                if s.get('financial_year') == fy:
+                    ended = s.get('ended_at') or ''
+                    if ended and ended >= ts and _time_diff_minutes(ended, ts) <= 10:
+                        return s
+            return None
+
         cycles = []
         current_cycle = None
         for entry in history:
@@ -1172,13 +1263,22 @@ async def get_sync_history(request: Request, limit: int = 100, company_id: Optio
                     'financial_year': entry.get('financial_year', ''),
                     'sync_mode': entry.get('sync_mode', 'full'),
                     'agent_version': entry.get('agent_version', ''),
-                    'data_types': {}
+                    'data_types': {},
+                    'had_errors': False,
+                    'failed_phases': [],
                 }
             dtype = entry.get('data_type', 'unknown')
             current_cycle['data_types'][dtype] = entry.get('count', 0)
 
         if current_cycle:
             cycles.append(current_cycle)
+
+        # Attach cycle summary info (had_errors / failed_phases) per cycle.
+        for cyc in cycles:
+            s = _find_summary(cyc['timestamp'], cyc.get('financial_year', ''))
+            if s:
+                cyc['had_errors'] = bool(s.get('had_errors'))
+                cyc['failed_phases'] = s.get('failed_phases') or []
 
         return APIResponse(success=True, data={"cycles": cycles, "total": len(cycles)})
     except Exception as e:

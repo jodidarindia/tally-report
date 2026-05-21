@@ -33,6 +33,8 @@ const TallySetup = ({ companyId }) => {
   const [confirmAction, setConfirmAction] = useState(null); // {type: 'resync'|'delete', company}
   const [actionLoading, setActionLoading] = useState(false);
   const [latestRelease, setLatestRelease] = useState(null);
+  // v9.8.24 — guard the .exe download behind a "quit running agent" modal.
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
 
   useEffect(() => {
     checkStatus();
@@ -197,14 +199,13 @@ const TallySetup = ({ companyId }) => {
               )}
 
               <div className="flex flex-wrap items-center gap-3 mt-3">
-                <a
-                  href={latestRelease?.download_url || "/FlowraTallyAgent.exe"}
-                  download
+                <button
+                  onClick={() => setShowDownloadModal(true)}
                   className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                   data-testid="download-agent-exe-btn"
                 >
                   <Download size={14} /> Download FLOWRA Tally Sync Agent (.exe)
-                </a>
+                </button>
                 <a
                   href="/docs/FLOWRA_COMPLETE_DOCUMENTATION.pdf"
                   target="_blank"
@@ -518,6 +519,64 @@ const TallySetup = ({ companyId }) => {
               >
                 {actionLoading ? 'Processing...' : confirmAction.type === 'delete' ? 'Yes, Delete Everything' : 'Yes, Clear & Resync'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v9.8.24 — Download modal: warns the user to quit the running
+          agent BEFORE saving the new .exe over the old one. */}
+      {showDownloadModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setShowDownloadModal(false)}
+          data-testid="download-modal-backdrop"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white max-w-lg w-full rounded-xl shadow-xl overflow-hidden"
+            data-testid="download-modal"
+          >
+            <div className="bg-blue-600 text-white px-5 py-3 flex items-center gap-2">
+              <AlertTriangle size={18} />
+              <h3 className="text-sm font-semibold">Before You Install — Quit the Running Agent</h3>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-slate-700">
+              <p>
+                You're about to download <span className="font-semibold text-slate-900">FLOWRA Tally Sync Agent {latestRelease?.version ? `v${latestRelease.version}` : ''}</span>.
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="font-semibold text-amber-900 mb-1">Important — please do this in order:</p>
+                <ol className="text-xs text-amber-800 list-decimal pl-4 space-y-1">
+                  <li>If the FLOWRA agent is open, click <span className="font-mono bg-amber-100 px-1 rounded">Stop Sync</span> → File menu → <span className="font-mono bg-amber-100 px-1 rounded">Quit</span> (or right-click the system-tray icon → Exit).</li>
+                  <li>Save the new <code>FlowraTallyAgent.exe</code> to the SAME folder as the old one and choose <span className="font-semibold">"Replace"</span> when Windows asks. Otherwise both versions will sit side-by-side and the wrong one may launch.</li>
+                  <li>Double-click the new file to launch — your login, Tally settings and selected company are preserved.</li>
+                </ol>
+              </div>
+              <p className="text-xs text-slate-500">
+                The .exe is portable — no installer. The auto-update inside a running agent handles all of this automatically; this manual download is for fresh installs or recovering a broken install.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <button
+                onClick={() => setShowDownloadModal(false)}
+                className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-100"
+                data-testid="download-modal-cancel"
+              >
+                Cancel
+              </button>
+              <a
+                href={latestRelease?.download_url || "/FlowraTallyAgent.exe"}
+                download
+                onClick={() => {
+                  // Close the modal after the browser kicks off the download.
+                  setTimeout(() => setShowDownloadModal(false), 500);
+                }}
+                className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+                data-testid="download-modal-confirm"
+              >
+                <Download size={14} /> I've Quit the Old Agent — Download Now
+              </a>
             </div>
           </div>
         </div>

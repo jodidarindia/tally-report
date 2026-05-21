@@ -40,6 +40,27 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 21 2026 (iteration 103) — v9.8.24 agent + Sync Incomplete badge
+- **Desktop agent v9.8.24** (`tally_sync_agent_v9.py`, `flowra_gui.py`):
+  - POST timeout 30 s → **120 s** for `/api/agent/sync` and `/api/agent/reconcile` — fixes the read-timeout chain that left FY 25-26 with only 4 data types for Krishna Sales Corp.
+  - `fetch_last_alter_id()` now has a 3-tier fallback chain: `$$LastAlterIdMaster + $$LastAlterIdVouchers` → MAX(`$AlterID`) on Voucher collection → MAX(`$Alterid`) on Ledger collection. Restores true incremental sync on Tally Prime 7.0 (Krishna Sales' install).
+  - Per-cycle failure tracker: every `sync_to_backend` failure appends `{phase, reason, count}` to `self._failed_phases`, posted at cycle end via new `/api/agent/cycle-summary` endpoint.
+  - Version bump everywhere: `APP_VERSION = v9.8.24`, `agent_version = 9.8.24-alter-id`, `backend/agent_release.json`, `frontend/public/agent-latest.json`.
+- **Backend** (`routes/sync.py`):
+  - New `POST /api/agent/cycle-summary` (HMAC `sync_token` auth, tenant-scoped).
+  - `GET /api/sync/history` now joins `sync_cycle_summaries` and exposes `had_errors` + `failed_phases` per cycle.
+  - Rolling cap of 200 summaries per (tenant, company) to keep collection bounded.
+- **Frontend Sync History** (`SyncHistory.js`):
+  - Red **"SYNC INCOMPLETE"** badge appears next to a cycle's mode pill when any phase failed.
+  - Cycle card border turns red with a soft red ring for instant scanability.
+  - Expanded view shows the list of failed phases with their reasons + a hint that re-syncing will skip already-successful types via hash match.
+- **Frontend Setup page** (`TallySetup.js`):
+  - Download .exe button now opens a confirmation modal explaining the 3 critical steps:
+    (1) quit running agent → (2) save new .exe over old one (Replace) → (3) double-click to launch with preserved settings.
+  - Prevents the two-versions-side-by-side situation the user reported.
+- **Tests**: `test_iteration103_cycle_summary.py` (4/4) — endpoint persists payload, rejects bad sync_token, requires tenant, and the history endpoint correctly surfaces `had_errors` + `failed_phases`. **All 23 tests across iter 100–103 pass green.**
+- **Next step for the user**: rebuild the Windows .exe with the bumped source (`pyinstaller` on the existing build kit), drop the new file into `frontend/public/FlowraTallyAgent.exe` and update `sha256` / `size_bytes` in `agent-latest.json`.
+
 ## Shipped — May 21 2026 (this session)
 ### Bugfix — Sync History header showed another tenant's agent version
 - `GET /api/tally/status` previously did `find_one({type:'agent_sync'})` with NO tenant filter — leaked an old `9.8.7-aliases-perf` row from another shop onto every customer's Sync History header.
