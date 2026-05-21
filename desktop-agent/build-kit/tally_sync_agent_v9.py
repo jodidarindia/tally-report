@@ -2062,26 +2062,66 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         logger.debug(f"  Day-Book fallback: scanned {len(candidates)} voucher dates, latest = {latest.strftime('%d-%b-%Y')}")
         return latest
 
-    # ── v9.8.24 — Improved AlterID detection with Tally Prime 7.0 fallback ──
+    # ── v9.8.25 — AlterID with universal-iteration fallback ──────────────
+    # Fixes Tally Prime 7.0 "unsupported" loop reported in v9.8.24.
+    #
+    # Three layered paths, each with INFO-level logging so the user can
+    # tell from a single sync run which one actually fired:
+    #
+    #   Path 1 — TDL system functions
+    #     `$$LastAlterIdMaster + $$LastAlterIdVouchers`. Cheapest, works on
+    #     Tally Prime ≥ 4.0. Sometimes returns 0 or blank on Prime 7.0.
+    #
+    #   Path 2 — TDL aggregation
+    #     `$$Max:Collection:CollName:$AlterID` as a SET expression. Should
+    #     work on most builds but is famously flaky on Prime 7.0.
+    #
+    #   Path 3 — Universal client-side iteration (NEW in v9.8.25)
+    #     Ask Tally to dump JUST the $AlterID of every Voucher (and every
+    #     Ledger) — one number per line — and pick the max in Python. This
+    #     uses only the most basic TDL primitives (REPEAT over a COLLECTION
+    #     with a single FETCH) so it works on every Tally build that ever
+    #     supported HTTP/ODBC, including Tally Prime 7.0. The payload is
+    #     small (1 int per voucher → ~80 KB for a 14k-voucher company).
+    #
+    # AlterID is per master-class in Tally, so we sum Voucher + Ledger to
+    # ensure ANY change (transaction or party/item edit) bumps the counter.
     def fetch_last_alter_id(self) -> Optional[int]:
-        """Return Tally's current cumulative AlterID for the active company.
+        # ── Path 1: TDL system functions ─────────────────────────────────
+        v1 = self._fetch_alter_id_path1_sys_funcs()
+        if v1 is not None and v1 > 0:
+            logger.info(f"  AlterID via Path-1 (TDL $$LastAlterId*) = {v1}")
+            return v1
 
-        Strategy (v9.8.24 — Tally Prime 7.0 compatibility):
-          1. Try the v9.8.23 path: `$$LastAlterIdMaster + $$LastAlterIdVouchers`
-             (works on Tally Prime 4.0+).
-          2. Fallback 1: query MAX of `$AlterID` directly from the Voucher
-             collection — works on Tally Prime 7.0 and most builds because
-             `$AlterID` is a per-object FIELD (per user note: "For Vouchers:
-             Query the $AlterID field").
-          3. Fallback 2: same query against the Ledger collection using
-             `$Alterid` (per user note: "For Masters: Query the $Alterid or
-             $Alteridd field"). Summed with the voucher result.
+        # ── Path 2: $$Max aggregation ───────────────────────────────────
+        vmax_agg = self._fetch_max_alter_id_aggregation('Voucher', 'AlterID', 'FlowraMaxVchAlterId')
+        lmax_agg = self._fetch_max_alter_id_aggregation('Ledger', 'Alterid', 'FlowraMaxLedAlterId')
+        if (vmax_agg or 0) > 0 or (lmax_agg or 0) > 0:
+            total = (vmax_agg or 0) + (lmax_agg or 0)
+            logger.info(f"  AlterID via Path-2 ($$Max aggregation) = "
+                        f"vouchers:{vmax_agg or 0} + ledgers:{lmax_agg or 0} = {total}")
+            return total if total > 0 else None
 
-        Returns None only when EVERY path fails — caller falls back to LVD.
-        Cumulative value is `max_voucher_alter_id + max_ledger_alter_id`
-        so that ANY change (voucher or master) bumps the counter.
-        """
-        # --- Path 1: existing TDL system functions (Prime ≥ 4.0) ----------
+        # ── Path 3: universal client-side iteration ─────────────────────
+        vmax_iter = self._fetch_max_alter_id_via_iteration('Voucher', 'AlterID', 'FlowraIterVchAID')
+        lmax_iter = self._fetch_max_alter_id_via_iteration('Ledger', 'AlterID', 'FlowraIterLedAID')
+        # Lower-case d variant for Tally Prime 7.0 masters
+        if lmax_iter is None or lmax_iter == 0:
+            lmax_iter = self._fetch_max_alter_id_via_iteration('Ledger', 'Alterid', 'FlowraIterLedAid')
+
+        if vmax_iter is None and lmax_iter is None:
+            logger.warning(
+                "  AlterID detection FAILED on all 3 paths — Tally never "
+                "returned a parseable response. Falling back to LVD."
+            )
+            return None
+        total = (vmax_iter or 0) + (lmax_iter or 0)
+        logger.info(f"  AlterID via Path-3 (collection iteration) = "
+                    f"vouchers:{vmax_iter or 0} + ledgers:{lmax_iter or 0} = {total}")
+        return total if total > 0 else None
+
+    # ── Path 1 helper ────────────────────────────────────────────────────
+    def _fetch_alter_id_path1_sys_funcs(self) -> Optional[int]:
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
@@ -2098,46 +2138,22 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 </DESC></BODY></ENVELOPE>"""
         try:
             data = self._post(xml)
-            if data:
-                text = self._extract_text_deep(data)
-                if text:
-                    text = str(text).strip()
-                    try:
-                        v = int(re.sub(r'[^0-9-]', '', text) or '0')
-                        if v > 0:
-                            logger.debug(f"  $$LastAlterId (TDL func) returned {v}")
-                            return v
-                    except ValueError:
-                        pass
+            if not data:
+                return None
+            raw = data.get('__raw_xml__', '') if isinstance(data, dict) else ''
+            n = self._first_int_in_raw(raw)
+            if n is not None:
+                return n
+            # If raw extraction missed, fall back to deep walk (allow short numbers).
+            return self._first_int_via_deep_walk(data)
         except Exception as e:
-            logger.debug(f"  $$LastAlterId (TDL func) failed: {e}")
-
-        # --- Path 2: COMPUTE max($AlterID) on Voucher collection ----------
-        # Works on Tally Prime 7.0 — $AlterID is a per-voucher FIELD that
-        # exists on every Tally Prime build.
-        vmax = self._fetch_max_alter_id_for_collection(
-            collection_type='Voucher',
-            field_name='AlterID',
-            report_id='FlowraMaxVchAlterId',
-        )
-        # --- Path 3: COMPUTE max($Alterid) on Ledger collection -----------
-        lmax = self._fetch_max_alter_id_for_collection(
-            collection_type='Ledger',
-            field_name='Alterid',
-            report_id='FlowraMaxLedAlterId',
-        )
-        if vmax is None and lmax is None:
-            logger.debug("  All AlterID detection paths returned None — unsupported on this Tally.")
+            logger.debug(f"  Path-1 system-func call failed: {e}")
             return None
-        total = (vmax or 0) + (lmax or 0)
-        logger.debug(f"  AlterID (collection-MAX fallback) = vouchers:{vmax} + ledgers:{lmax} = {total}")
-        return total if total > 0 else None
 
-    def _fetch_max_alter_id_for_collection(
+    # ── Path 2 helper — single-row aggregation report ───────────────────
+    def _fetch_max_alter_id_aggregation(
         self, collection_type: str, field_name: str, report_id: str
     ) -> Optional[int]:
-        """Return MAX($<field_name>) over `<collection_type>` collection,
-        or None if the query failed. READ-ONLY."""
         company_tag = self._company_tag()
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
@@ -2157,15 +2173,120 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             data = self._post(xml)
             if not data:
                 return None
-            text = self._extract_text_deep(data)
-            if not text:
-                return None
-            text = str(text).strip()
-            v = int(re.sub(r'[^0-9-]', '', text) or '0')
-            return v if v >= 0 else None
+            raw = data.get('__raw_xml__', '') if isinstance(data, dict) else ''
+            n = self._first_int_in_raw(raw)
+            return n if (n is not None and n >= 0) else None
         except Exception as e:
-            logger.debug(f"  MAX({field_name}) on {collection_type} failed: {e}")
+            logger.debug(f"  Path-2 MAX({field_name}) on {collection_type} failed: {e}")
             return None
+
+    # ── Path 3 helper — universal iteration (new in v9.8.25) ────────────
+    def _fetch_max_alter_id_via_iteration(
+        self, collection_type: str, field_name: str, report_id: str
+    ) -> Optional[int]:
+        """Ask Tally to repeat one line per object in <collection_type>,
+        emitting just $<field_name>. Then take the max of every integer
+        the response contains.
+
+        Uses the most basic TDL primitives that work on every Tally build
+        from Tally.ERP 9 through Tally Prime 7.0. The response is small
+        because each row is just an integer.
+
+        Returns None if Tally returned NO numeric tokens (true unsupported)."""
+        company_tag = self._company_tag()
+        xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
+<ID>{report_id}</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<REPORT NAME="{report_id}"><FORMS>{report_id}_Form</FORMS></REPORT>
+<FORM NAME="{report_id}_Form"><PARTS>{report_id}_Part</PARTS></FORM>
+<PART NAME="{report_id}_Part">
+  <LINES>{report_id}_Line</LINES>
+  <REPEAT>{report_id}_Line : {report_id}_Coll</REPEAT>
+  <SCROLLED>Vertical</SCROLLED>
+</PART>
+<LINE NAME="{report_id}_Line"><FIELDS>{report_id}_F</FIELDS></LINE>
+<FIELD NAME="{report_id}_F"><SET>${field_name}</SET></FIELD>
+<COLLECTION NAME="{report_id}_Coll"><TYPE>{collection_type}</TYPE><FETCH>{field_name}</FETCH></COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
+            if not data:
+                return None
+            raw = data.get('__raw_xml__', '') if isinstance(data, dict) else ''
+            if not raw:
+                return None
+            # Strip the envelope/header noise so we don't pick up `<VERSION>1</VERSION>`.
+            # The fields appear as <{report_id}_F>123</{report_id}_F>
+            field_tag = f"{report_id}_F"
+            matches = re.findall(rf"<{field_tag}>\s*(-?\d+)\s*</{field_tag}>", raw)
+            if not matches:
+                # Some Tally builds emit <FIELD NAME="..."><![CDATA[123]]></FIELD>
+                # rather than the named tag we requested — fall back to a
+                # generic numeric scan inside <FCCFIELD> / <FIELD> nodes.
+                matches = re.findall(r"<(?:FCCFIELD|FIELD)[^>]*>\s*(-?\d+)\s*</(?:FCCFIELD|FIELD)>", raw)
+            if not matches:
+                return None
+            try:
+                ints = [int(m) for m in matches if m.lstrip('-').isdigit()]
+            except ValueError:
+                ints = []
+            ints = [v for v in ints if v >= 0]
+            if not ints:
+                return None
+            return max(ints)
+        except Exception as e:
+            logger.debug(f"  Path-3 iteration on {collection_type}.{field_name} failed: {e}")
+            return None
+
+    # ── helpers ─────────────────────────────────────────────────────────
+    def _first_int_in_raw(self, raw_xml: str) -> Optional[int]:
+        """Return the first integer found inside any <FCCFIELD> / <FIELD>
+        / explicit-named-tag element of the raw response. Tolerates 1- and
+        2-digit values (the legacy `_extract_text_deep` filtered them)."""
+        if not raw_xml:
+            return None
+        for pat in (
+            r"<FCCFIELD[^>]*>\s*(-?\d+)\s*</FCCFIELD>",
+            r"<FIELD[^>]*>\s*(-?\d+)\s*</FIELD>",
+            r"<LAIDField>\s*(-?\d+)\s*</LAIDField>",
+        ):
+            m = re.search(pat, raw_xml)
+            if m:
+                try:
+                    return int(m.group(1))
+                except ValueError:
+                    continue
+        return None
+
+    def _first_int_via_deep_walk(self, parsed) -> Optional[int]:
+        """Recursive deep walk that, unlike `_extract_text_deep`, accepts
+        single-digit numbers. Used as a last-resort extractor."""
+        seen = []
+        def walk(o):
+            if isinstance(o, str):
+                s = o.strip()
+                if s.lstrip('-').isdigit():
+                    try:
+                        seen.append(int(s))
+                    except ValueError:
+                        pass
+            elif isinstance(o, dict):
+                for k, v in o.items():
+                    if k == '__raw_xml__':
+                        continue
+                    walk(v)
+            elif isinstance(o, list):
+                for it in o:
+                    walk(it)
+        try:
+            walk(parsed)
+        except Exception:
+            pass
+        return max(seen) if seen else None
 
     def fetch_modified_voucher_ids_since(self, prev_alter_id: int) -> Optional[List[str]]:
         """Return the list of voucher_ids whose $ALTERID is greater than
@@ -3490,7 +3611,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.24-alter-id',
+                'agent_version': '9.8.25-alter-id',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3529,7 +3650,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.24-alter-id',
+                'agent_version': '9.8.25-alter-id',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3589,7 +3710,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.24-alter-id',
+                'agent_version': '9.8.25-alter-id',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3783,7 +3904,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.24-alter-id',
+                                'agent_version': '9.8.25-alter-id',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,

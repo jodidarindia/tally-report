@@ -40,6 +40,21 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 104) — v9.8.25 AlterID robust detection
+- **Root cause of v9.8.24 "still unsupported" report**: two distinct bugs
+  1. Tally Prime 7.0 commonly returns blank/empty for `$$Max:Collection:CollName:$AlterID` SET expressions, so all aggregation paths silently failed.
+  2. `_extract_text_deep` had `len(val) > 2` filtering which silently DISCARDED 1- and 2-digit AlterIDs, so even when Path-1 worked it'd mis-report "unsupported" on fresh installs.
+- **Fix in `tally_sync_agent_v9.py`** (`fetch_last_alter_id` completely rewritten):
+  - Path 1: `$$LastAlterIdMaster + $$LastAlterIdVouchers` system function.
+  - Path 2: `$$Max:Collection` aggregation.
+  - **Path 3 (NEW)**: universal client-side iteration — Tally is asked to REPEAT one line per object in the Voucher / Ledger collection emitting just `$AlterID`. Python `re.findall` grabs every integer and `max()`s. Uses only the most basic TDL primitives that work on every Tally build from Tally.ERP 9 → Prime 7.0.
+  - New helpers `_first_int_in_raw()` + `_first_int_via_deep_walk()` accept 1- and 2-digit numbers (legacy length-guard bypassed).
+  - **INFO-level logging** so the user can see from `agent.log` which path actually fired: `AlterID via Path-N (...) = …`.
+- **Manifests bumped**: `APP_VERSION=v9.8.25`, `agent_version='9.8.25-alter-id'` (4 call sites), `backend/agent_release.json`, `frontend/public/agent-latest.json`.
+- **Tests**: `test_iteration104_alterid_robust_detection.py` — 11/11 pass (covers length-guard bypass, iteration max, FCCFIELD fallback, truly-unsupported branch, sum vouchers+ledgers).
+- **Total green suite**: 34/34 across iter 100-104.
+- **User action**: rebuild Windows .exe from current source, drop into `frontend/public/FlowraTallyAgent.exe`, update `sha256` + `size_bytes` in both manifests, push to droplet.
+
 ## Shipped — May 21 2026 (iteration 103) — v9.8.24 agent + Sync Incomplete badge
 - **Desktop agent v9.8.24** (`tally_sync_agent_v9.py`, `flowra_gui.py`):
   - POST timeout 30 s → **120 s** for `/api/agent/sync` and `/api/agent/reconcile` — fixes the read-timeout chain that left FY 25-26 with only 4 data types for Krishna Sales Corp.
