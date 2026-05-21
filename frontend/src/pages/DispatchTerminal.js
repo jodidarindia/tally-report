@@ -5,7 +5,7 @@ import {
   Package, Truck, Clock, CheckCircle2, AlertTriangle, Plus, Search,
   Camera, FileText, UploadCloud, X, User, MapPin, Boxes, Hash,
   MessageSquare, Pause, Play, History, ArrowRight, ChevronDown,
-  Ban, FileWarning,
+  Ban, FileWarning, Calendar,
 } from 'lucide-react';
 import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
@@ -32,6 +32,8 @@ const CANCEL_REASON_LABELS = {
 };
 const fmt = n => { if(!n) return '0'; if(Math.abs(n)>=100000) return `${(n/100000).toFixed(2)}L`; if(Math.abs(n)>=1000) return `${(n/1000).toFixed(1)}K`; return n.toLocaleString('en-IN'); };
 const elapsed = iso => { if(!iso) return ''; const m=(Date.now()-new Date(iso).getTime())/60000; if(m<60) return `${Math.round(m)}m`; if(m<1440) return `${Math.round(m/60)}h`; return `${Math.round(m/1440)}d`; };
+// "2026-04-15" -> "15 Apr". Falls back to the original string if parsing fails.
+const fmtInvDate = (s) => { if(!s) return ''; try { const [y,m,d]=String(s).slice(0,10).split('-'); const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m,10)-1]; return mo ? `${parseInt(d,10)} ${mo}` : s; } catch { return s; } };
 const toIST = iso => { if(!iso) return '-'; try { return new Date(iso).toLocaleString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:true}); } catch { return iso; } };
 
 export default function DispatchTerminal({ selectedFY, companyId, filterDate }) {
@@ -212,11 +214,21 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
                         </div>
                       </div>
                       <div className="text-[11px] sm:text-xs font-semibold text-slate-800 truncate">{card.party_name||'Unknown'}</div>
-                      <div className="text-[10px] text-slate-500 truncate">Inv: {card.invoice_number}</div>
+                      <div className="text-[10px] text-slate-500 truncate flex items-center justify-between gap-1">
+                        <span className="truncate">Inv: {card.invoice_number}</span>
+                        {card.voucher_date && <span className="text-slate-400 flex items-center gap-0.5 flex-shrink-0" data-testid={`card-invoice-date-${card.card_id}`}><Calendar size={9}/>{fmtInvDate(card.voucher_date)}</span>}
+                      </div>
                       {card.total_amount>0 && <div className="text-[10px] font-medium text-slate-600 mt-0.5">Rs.{fmt(card.total_amount)}</div>}
                       {isCancel && card.cancel_reason && <div className="text-[9px] text-slate-500 italic mt-0.5 no-underline" style={{textDecoration:'none'}}>{CANCEL_REASON_LABELS[card.cancel_reason]||card.cancel_reason}</div>}
                       <div className="flex items-center justify-between mt-1">
-                        <span className="text-[9px] text-slate-400 truncate">{card.assigned_to ? `@${card.assigned_to.split('@')[0]}` : 'Unassigned'}</span>
+                        <span
+                          className={`text-[9px] truncate ${card.assigned_to ? 'text-slate-400' : 'text-amber-600 font-medium'}`}
+                          title={card.assigned_to
+                            ? `Assigned to dispatch employee ${card.assigned_to}`
+                            : 'No dispatch employee assigned — open the card to assign one'}
+                        >
+                          {card.assigned_to ? `@${card.assigned_to.split('@')[0]}` : 'No employee assigned'}
+                        </span>
                         <span className="text-[9px] text-slate-400 flex items-center gap-0.5"><Clock size={9}/>{elapsed(card.status_history?.[card.status_history.length-1]?.at)}</span>
                       </div>
                     </div>

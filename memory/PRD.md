@@ -40,6 +40,19 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 21 2026 (this session)
+### Bugfix — Sync History header showed another tenant's agent version
+- `GET /api/tally/status` previously did `find_one({type:'agent_sync'})` with NO tenant filter — leaked an old `9.8.7-aliases-perf` row from another shop onto every customer's Sync History header.
+- Fix in `backend/routes/tally.py`: tenant_id is taken from the JWT, company_id from `X-Company-ID` header. Without a tenant ⇒ no row returned. Falls back to the latest sync row under the same tenant when the specific company has none. Tests: `backend/tests/test_iteration102_tally_status_tenant_scoped.py` — 5/5 pass.
+
+### Bugfix — Dispatch Terminal card UX
+- Invoice cards now show the **invoice date** (eg "15 Apr") next to the invoice number.
+- "Unassigned" relabelled to "No employee assigned" with explanatory tooltip; rendered in amber so it stands out (signals dispatch ops to allocate someone).
+- File: `frontend/src/pages/DispatchTerminal.js`.
+
+### Bugfix — Dashboard "Recent Transactions" ordering (iteration 101)
+- See earlier entry. 5/5 tests pass.
+
 ## Shipped — May 19 2026 (this session)
 ### Bugfix — Pages stale after switching company
 - `App.js` now passes `key={`pg-${selectedCompany || 'none'}`}` to `<PageRenderer>`. Switching companies via the navbar forces a remount of the active page → mount-time `useEffect`s re-fire with the updated `X-Company-ID` axios header. Tenant isolation (JWT) untouched. Filters/pagination intentionally reset on switch because they are company-scoped.
