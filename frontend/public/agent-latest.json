@@ -3,7 +3,7 @@
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
   "release_notes": "v9.8.24 — (1) Bumped cloud-upload timeout from 30s to 120s so large FY sync uploads (4000+ vouchers) no longer drop on slow connections. (2) Improved AlterID detection: now tries TDL system functions first ($$LastAlterIdMaster + $$LastAlterIdVouchers) and falls back to a direct MAX($AlterID/$Alterid) over the Voucher and Ledger collections — restoring true incremental sync on Tally Prime 7.0. (3) End-of-cycle structured summary is now posted to the cloud so the web Sync History page can show an 'Incomplete' badge instead of silently dropping types when a phase fails.",
-  "released_at": "2026-05-21T12:00:00+05:30",
-  "sha256": "PENDING_REBUILD",
-  "size_bytes": 0
+  "released_at": "2026-05-21T16:30:00+05:30",
+  "sha256": "87bdd5ec0252f455ebfcfb6501388dc29dceea12e332b174230fbcfa0105e851",
+  "size_bytes": 27022309
 }
