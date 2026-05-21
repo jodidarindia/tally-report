@@ -188,7 +188,17 @@ async def get_sales_summary(request: Request, fy: Optional[str] = None, company_
 
         recent_vouchers = sorted(
             vouchers,
-            key=lambda x: x.get("voucher_date", ""),
+            # Primary: latest voucher_date first.
+            # Tie-break: latest voucher_id (Tally's per-day running serial,
+            # e.g. "VCG0005/2526" — string compare works because Tally
+            # zero-pads its serial within a series).
+            # Final fallback: sync timestamp, to deal with very old rows
+            # that may be missing voucher_id.
+            key=lambda x: (
+                x.get("voucher_date", ""),
+                x.get("voucher_id", ""),
+                x.get("last_updated", ""),
+            ),
             reverse=True
         )[:10]
 
