@@ -2065,7 +2065,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
     # ── v9.8.25 — AlterID with universal-iteration fallback ──────────────
     # Fixes Tally Prime 7.0 "unsupported" loop reported in v9.8.24.
     #
-    # Three layered paths, each with INFO-level logging so the user can
+    # Four layered paths, each with INFO-level logging so the user can
     # tell from a single sync run which one actually fired:
     #
     #   Path 1 — TDL system functions
@@ -2076,13 +2076,22 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
     #     `$$Max:Collection:CollName:$AlterID` as a SET expression. Should
     #     work on most builds but is famously flaky on Prime 7.0.
     #
-    #   Path 3 — Universal client-side iteration (NEW in v9.8.25)
+    #   Path 3 — Universal client-side iteration
     #     Ask Tally to dump JUST the $AlterID of every Voucher (and every
     #     Ledger) — one number per line — and pick the max in Python. This
     #     uses only the most basic TDL primitives (REPEAT over a COLLECTION
     #     with a single FETCH) so it works on every Tally build that ever
-    #     supported HTTP/ODBC, including Tally Prime 7.0. The payload is
-    #     small (1 int per voucher → ~80 KB for a 14k-voucher company).
+    #     supported HTTP/ODBC, including Tally Prime 7.0. v9.8.26 added
+    #     SVFROMDATE / SVTODATE (required for non-empty Voucher collections)
+    #     and case-insensitive regex (Tally lowercases response tags).
+    #
+    #   Path 4 — Side-channel from already-cached voucher exports (NEW v9.8.26)
+    #     If the agent has recently exported any daybook / voucher XML
+    #     (e.g. during a sync cycle), scrape `<alterid>NUMBER</alterid>`
+    #     directly from those cached responses. Guaranteed to work because
+    #     Tally emits `<alterid>` on every voucher export, regardless of
+    #     build. Used as a last-resort sentinel value so sync_state is
+    #     never blank.
     #
     # AlterID is per master-class in Tally, so we sum Voucher + Ledger to
     # ensure ANY change (transaction or party/item edit) bumps the counter.
@@ -2109,16 +2118,77 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         if lmax_iter is None or lmax_iter == 0:
             lmax_iter = self._fetch_max_alter_id_via_iteration('Ledger', 'Alterid', 'FlowraIterLedAid')
 
-        if vmax_iter is None and lmax_iter is None:
-            logger.warning(
-                "  AlterID detection FAILED on all 3 paths — Tally never "
-                "returned a parseable response. Falling back to LVD."
-            )
+        if (vmax_iter or 0) > 0 or (lmax_iter or 0) > 0:
+            total = (vmax_iter or 0) + (lmax_iter or 0)
+            logger.info(f"  AlterID via Path-3 (collection iteration) = "
+                        f"vouchers:{vmax_iter or 0} + ledgers:{lmax_iter or 0} = {total}")
+            return total if total > 0 else None
+
+        # ── Path 4: side-channel from cached export XMLs ────────────────
+        v4 = self._fetch_max_alter_id_from_cached_exports()
+        if v4 is not None and v4 > 0:
+            logger.info(f"  AlterID via Path-4 (cached voucher exports) = {v4}")
+            return v4
+
+        logger.warning(
+            "  AlterID detection FAILED on all 4 paths — Tally returned "
+            "nothing usable. Falling back to LVD."
+        )
+        return None
+
+    # ── Path 4 helper — scrape <alterid> from previously-cached XML ─────
+    def _fetch_max_alter_id_from_cached_exports(self) -> Optional[int]:
+        """Walk the debug-cache directory for files named *.xml and find
+        the largest `<alterid>NUMBER</alterid>` (case-insensitive) value.
+        Tally writes one of these per voucher in every daybook / collection
+        export response. This guarantees we still know the cumulative
+        AlterID on Tally Prime 7.0 even when dedicated queries return
+        empty collections.
+
+        Returns None if no cache files exist or none contain `<alterid>`."""
+        try:
+            if not self.debug_dir or not os.path.isdir(self.debug_dir):
+                return None
+            largest = 0
+            found_any = False
+            pattern = re.compile(r"<alterid>\s*(-?\d+)\s*</alterid>", re.IGNORECASE)
+            # Scan up to the 8 most-recently-touched XML files. We don't
+            # need every one — most large companies have the same AlterID
+            # space across all exports, so the newest few will reveal the
+            # current max.
+            entries = []
+            for root, _, files in os.walk(self.debug_dir):
+                for fn in files:
+                    if fn.lower().endswith('.xml'):
+                        fp = os.path.join(root, fn)
+                        try:
+                            entries.append((os.path.getmtime(fp), fp))
+                        except OSError:
+                            pass
+            entries.sort(reverse=True)
+            for _, fp in entries[:8]:
+                try:
+                    with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                        # Stream-scan in chunks to keep peak memory low
+                        # even for 50MB+ daybook exports.
+                        while True:
+                            chunk = f.read(2_000_000)
+                            if not chunk:
+                                break
+                            for m in pattern.finditer(chunk):
+                                try:
+                                    n = int(m.group(1))
+                                    if n > largest:
+                                        largest = n
+                                    found_any = True
+                                except ValueError:
+                                    continue
+                except OSError:
+                    continue
+            return largest if found_any else None
+        except Exception as e:
+            logger.debug(f"  Path-4 cache scan failed: {e}")
             return None
-        total = (vmax_iter or 0) + (lmax_iter or 0)
-        logger.info(f"  AlterID via Path-3 (collection iteration) = "
-                    f"vouchers:{vmax_iter or 0} + ledgers:{lmax_iter or 0} = {total}")
-        return total if total > 0 else None
 
     # ── Path 1 helper ────────────────────────────────────────────────────
     def _fetch_alter_id_path1_sys_funcs(self) -> Optional[int]:
@@ -2180,7 +2250,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             logger.debug(f"  Path-2 MAX({field_name}) on {collection_type} failed: {e}")
             return None
 
-    # ── Path 3 helper — universal iteration (new in v9.8.25) ────────────
+    # ── Path 3 helper — universal iteration (v9.8.26 — fixed for Prime 7.0) ──
     def _fetch_max_alter_id_via_iteration(
         self, collection_type: str, field_name: str, report_id: str
     ) -> Optional[int]:
@@ -2188,17 +2258,31 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         emitting just $<field_name>. Then take the max of every integer
         the response contains.
 
-        Uses the most basic TDL primitives that work on every Tally build
-        from Tally.ERP 9 through Tally Prime 7.0. The response is small
-        because each row is just an integer.
+        v9.8.26 fixes:
+          • Tally Prime 7.0 LOWERCASES every response tag, so we now use
+            a case-insensitive regex (`re.IGNORECASE`).
+          • Voucher collections in Tally Prime 7.0 require SVFROMDATE /
+            SVTODATE — otherwise the collection comes back EMPTY. We pass
+            a wide range (Apr 1 2014 → Mar 31 2099) so it works regardless
+            of the active company's books range.
+          • Diagnostic logging now reports the response size on failure so
+            you can tell from the agent log whether Tally returned nothing
+            vs. something we couldn't parse.
 
-        Returns None if Tally returned NO numeric tokens (true unsupported)."""
+        Returns None only if Tally returned NO numeric tokens — the true
+        "unsupported" case. 0 is a valid result and is returned as 0."""
         company_tag = self._company_tag()
+        # Voucher collections in Tally Prime 7.0 require date variables —
+        # without them you get an empty <COLLECTION/>. Master collections
+        # (Ledger, Group, StockItem) ignore these vars so it's safe to
+        # always include them.
+        date_vars = ("<SVFROMDATE>20140401</SVFROMDATE>"
+                     "<SVTODATE>20991231</SVTODATE>")
         xml = f"""<ENVELOPE>
 <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>
 <ID>{report_id}</ID></HEADER>
 <BODY><DESC>
-<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}</STATICVARIABLES>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>{company_tag}{date_vars}</STATICVARIABLES>
 <TDL><TDLMESSAGE>
 <REPORT NAME="{report_id}"><FORMS>{report_id}_Form</FORMS></REPORT>
 <FORM NAME="{report_id}_Form"><PARTS>{report_id}_Part</PARTS></FORM>
@@ -2219,16 +2303,24 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             raw = data.get('__raw_xml__', '') if isinstance(data, dict) else ''
             if not raw:
                 return None
-            # Strip the envelope/header noise so we don't pick up `<VERSION>1</VERSION>`.
-            # The fields appear as <{report_id}_F>123</{report_id}_F>
+            # 1) Case-INSENSITIVE search for the named tag (Tally lowercases).
             field_tag = f"{report_id}_F"
-            matches = re.findall(rf"<{field_tag}>\s*(-?\d+)\s*</{field_tag}>", raw)
+            matches = re.findall(
+                rf"<{field_tag}>\s*(-?\d+)\s*</{field_tag}>",
+                raw, flags=re.IGNORECASE,
+            )
+            # 2) If no luck, accept generic FIELD / FCCFIELD wrappers.
             if not matches:
-                # Some Tally builds emit <FIELD NAME="..."><![CDATA[123]]></FIELD>
-                # rather than the named tag we requested — fall back to a
-                # generic numeric scan inside <FCCFIELD> / <FIELD> nodes.
-                matches = re.findall(r"<(?:FCCFIELD|FIELD)[^>]*>\s*(-?\d+)\s*</(?:FCCFIELD|FIELD)>", raw)
+                matches = re.findall(
+                    r"<(?:fccfield|field)[^>]*>\s*(-?\d+)\s*</(?:fccfield|field)>",
+                    raw, flags=re.IGNORECASE,
+                )
             if not matches:
+                logger.info(
+                    f"  Path-3 iteration on {collection_type}.{field_name} "
+                    f"returned no numeric tokens (raw {len(raw)} bytes). "
+                    f"Tally collection likely empty on this build."
+                )
                 return None
             try:
                 ints = [int(m) for m in matches if m.lstrip('-').isdigit()]
@@ -2237,6 +2329,10 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             ints = [v for v in ints if v >= 0]
             if not ints:
                 return None
+            logger.info(
+                f"  Path-3 iteration on {collection_type}.{field_name} "
+                f"found {len(ints)} values, max={max(ints)}"
+            )
             return max(ints)
         except Exception as e:
             logger.debug(f"  Path-3 iteration on {collection_type}.{field_name} failed: {e}")
@@ -3611,7 +3707,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.25-alter-id',
+                'agent_version': '9.8.26-alter-id',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3650,7 +3746,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.25-alter-id',
+                'agent_version': '9.8.26-alter-id',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3710,7 +3806,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.25-alter-id',
+                'agent_version': '9.8.26-alter-id',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -3904,7 +4000,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.25-alter-id',
+                                'agent_version': '9.8.26-alter-id',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,

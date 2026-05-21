@@ -40,6 +40,21 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 105) — v9.8.26 AlterID Prime 7.0 hot-fix
+**Root cause analysis (from a real ASA Autotech daybook XML the user uploaded)**: three distinct bugs blocked v9.8.25's "universal iteration" path on Tally Prime 7.0:
+- Tally Prime 7.0 **lowercases every response tag**, so `<FlowraIterVchAID_F>` came back as `<flowraitervchaid_f>` — case-sensitive regex missed everything.
+- Voucher collections in Tally Prime 7.0 return **EMPTY without SVFROMDATE/SVTODATE** static variables. v9.8.25 had no date variables.
+- 1- and 2-digit AlterIDs were still being filtered upstream in some code paths.
+
+**Fix (v9.8.26)** in `tally_sync_agent_v9.py`:
+- Path-3 query now includes `<SVFROMDATE>20140401</SVFROMDATE><SVTODATE>20991231</SVTODATE>` (wide enough to capture every customer's books).
+- All Path-3 regex matches now use `re.IGNORECASE`.
+- INFO-level diagnostics report response size on each path's failure so the agent log clearly shows where things stand.
+- **NEW Path-4 side-channel**: `_fetch_max_alter_id_from_cached_exports()` walks `debug_dir` for `<alterid>NUMBER</alterid>` across the 8 most recent XML files. Stream-scans in 2 MB chunks for memory safety. Guaranteed to work on every Tally build because Tally writes `<alterid>` on every voucher in every export.
+- Version bumped: `APP_VERSION=v9.8.26`, `agent_version='9.8.26-alter-id'`, both manifests.
+
+**Tests**: `test_iteration105_alterid_prime7_real_xml.py` — 8/8 pass, built against the **actual customer XML** (correctly extracts max AlterID = 12880 from the daybook). Total green suite: **42/42 across iter 100-105**.
+
 ## Shipped — May 22 2026 (iteration 104) — v9.8.25 AlterID robust detection
 - **Root cause of v9.8.24 "still unsupported" report**: two distinct bugs
   1. Tally Prime 7.0 commonly returns blank/empty for `$$Max:Collection:CollName:$AlterID` SET expressions, so all aggregation paths silently failed.

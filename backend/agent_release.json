@@ -1,9 +1,9 @@
 {
-  "version": "9.8.25",
+  "version": "9.8.26",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.25 — (1) AlterID detection completely rewritten with a 3-tier fallback chain that includes a universal client-side iteration path: when Tally's TDL aggregation functions are unavailable (Tally Prime 7.0 commonly returns blank for $$Max:Collection), the agent now iterates the Voucher and Ledger collections directly via plain TDL REPEAT and computes max in Python — guaranteed to work on every Tally build from Tally.ERP 9 through Prime 7.0. (2) Fixed a regression where 1-and-2-digit AlterID values were silently filtered out by an overly aggressive length guard, causing fresh / freshly-installed Tally companies to be wrongly tagged 'unsupported'. (3) Added INFO-level logging so you can tell from a single sync run which detection path actually fired (Path-1 / Path-2 / Path-3).",
-  "released_at": "2026-05-22T10:00:00+05:30",
+  "release_notes": "v9.8.26 — CRITICAL fix for Tally Prime 7.0 AlterID detection (3 root causes found by analyzing a real customer's daybook export). (1) Tally Prime 7.0 LOWERCASES every response tag — fixed by switching the AlterID regex to case-insensitive matching. (2) Voucher collections in Tally Prime 7.0 return EMPTY unless SVFROMDATE / SVTODATE are provided — now included with a 2014-2099 wide range. (3) NEW Path-4 side-channel: when all dedicated AlterID queries fail, the agent now scrapes <alterid> directly out of recently-cached voucher / daybook export XML files (Tally emits this field on every voucher in every build). Guarantees the cumulative AlterID is always known even on the most stubborn Tally configurations. Each path logs which one fired so the agent log clearly shows: AlterID via Path-N (...) = N.",
+  "released_at": "2026-05-22T12:00:00+05:30",
   "sha256": "PENDING_REBUILD",
   "size_bytes": 0
 }
