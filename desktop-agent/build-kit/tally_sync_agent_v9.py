@@ -3343,8 +3343,8 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.9-daybook-lvd")
-        logger.info("  Custom Voucher Type Names + STDPRICE Multi-Fallback")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.27-alter-id")
+        logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
         # --- LOGIN-BASED AUTH ---
@@ -4726,8 +4726,8 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.9-daybook-lvd")
-        print("Features: STDPRICE multi-fallback + Custom Voucher Type Names")
+        print("FLOWRA Tally Sync Agent v9.8.27-alter-id")
+        print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag
     if '--logout' in sys.argv:

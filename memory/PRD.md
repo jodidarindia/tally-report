@@ -40,6 +40,13 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 108b) — Inner-banner version drift fix
+**Bug** (caught by customer screenshot — full credit): The outer GUI showed v9.8.27 correctly in the title bar, but the inner `tally_sync_agent_v9.py` startup banner was still printing `FLOWRA TALLY SYNC AGENT v9.8.9-daybook-lvd` because two hardcoded string literals were never updated when `APP_VERSION` was bumped across iter 107.
+
+The functional code WAS already at v9.8.27 — only the printed identification was stale. But this was misleading enough to mask real diagnostics ("am I actually running the fix or not?"). Fixed at lines 3346, 3347, 4729, 4730 of `tally_sync_agent_v9.py`. Customer rebuild + .exe re-upload required to take effect.
+
+**Additionally**: confirmed via grep that `_company_tag()` is the ONLY place that emits `<SVCURRENTCOMPANY>` and the escape logic (parens, `&`, `<`, `>`, quotes) is correct. The customer's previous .exe was a stale build from before iter 107 — needs a fresh PyInstaller build with `__pycache__` cleared.
+
 ## Shipped — May 22 2026 (iteration 108) — AI Insights renderer fix
 **Bug** (frontend-only): on the AI Insights page, asking "Show items with low stock that need immediate reordering" returned a perfectly correct LLM response, but the UI displayed each insight / recommendation as a raw JSON blob like `{"insight":"Zero immediate reorder triggers","detail":"Across all 35 inventory items...","risk":"..."}`. The LLM returns structured `{insight, detail, risk}` and `{priority, action, expected_impact}` objects inside the response arrays — the old code only handled string inputs and fell back to `JSON.stringify()`.
 
