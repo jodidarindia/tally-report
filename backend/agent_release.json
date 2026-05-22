@@ -4,6 +4,6 @@
   "min_supported_version": "9.8.0",
   "release_notes": "v9.8.27 — CRITICAL fix for company names containing parentheses, ampersands, or quotes. The previous build emitted SVCURRENTCOMPANY with the raw company name; Tally's TDL parser treats raw '(', ')', '&', '<', '>' as expression delimiters and rejects the company-switch with 'Could not set SVCurrentCompany'. Company names like 'Krishna Sales Corporation (from 1-Apr-24)' or 'M/s. Patel & Sons' now have their special characters HTML-escaped (parens become &#40;/&#41;, ampersand becomes &amp;, etc.) before being injected into the XML envelope. This unblocks 100% of sync queries for affected customers — every single Tally call (AlterID detection, sales, receipts, purchases, daybook, inventory) was failing silently because of this.",
   "released_at": "2026-05-22T18:30:00+05:30",
-  "sha256": "PENDING_REBUILD",
-  "size_bytes": 0
+  "sha256": "f0a2975284351c0d74b74534deb29d2135604639b482247b3b2efcfb4c7f21c7",
+  "size_bytes": 27031673
 }
