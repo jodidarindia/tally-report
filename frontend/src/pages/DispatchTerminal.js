@@ -181,15 +181,13 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
             // Active cards in this lane + cancelled cards whose pre-cancel
             // lane was this one (shown with strikethrough until end-of-day —
             // backend already filters out older cancelled cards).
-            let lane = filtered.filter(c =>
+            // v9.8.27: backend now sorts by (voucher_date, voucher_id,
+            // created_at) DESC for every lane, so no client-side resort
+            // needed — the order is identical and predictable across lanes.
+            const lane = filtered.filter(c =>
               c.status === status
               || (c.status === 'cancelled' && (c.cancelled_from_status || 'new') === status)
             );
-            // For the "new" lane, sort by invoice number DESC so newest invoices surface first.
-            if (status === 'new') {
-              const invNum = c => { const n = parseInt(String(c.invoice_number||'').replace(/\D/g,''),10); return Number.isFinite(n) ? n : -1; };
-              lane = [...lane].sort((a,b) => invNum(b) - invNum(a));
-            }
             return (
               <div key={status} className="min-w-[220px] sm:min-w-[260px] w-[220px] sm:w-[260px] flex-shrink-0 rounded-xl border border-slate-200 flex flex-col" style={{background: cfg.bg+'60'}} data-testid={`lane-${status}`}>
                 <div className="p-2.5 sm:p-3 border-b flex items-center gap-2" style={{borderColor: cfg.color+'30'}}>

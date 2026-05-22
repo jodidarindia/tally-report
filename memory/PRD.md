@@ -40,6 +40,17 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 106) — Dispatch kanban sort consistency
+**Issue**: 
+- "New" lane was client-side-sorted by digit-stripped `invoice_number` DESC, which mis-ranked multi-series shops (Krishna Sales' `CGSA2627/0013` outranked today's `KTG/0030/2526`). 
+- All other lanes were sorted by `created_at` DESC on the backend → moving a card from New → Queued caused it to jump position relative to siblings.
+
+**Fix**:
+- `backend/routes/dispatch.py`: `GET /api/dispatch/cards` now sorts `(voucher_date DESC, voucher_id DESC, created_at DESC)` for every lane. `voucher_id` tiebreak uses Tally's running serial — highest serial of the day wins, predictable across multi-series shops.
+- `frontend/src/pages/DispatchTerminal.js`: removed the special-case New-lane client-side sort; cards now render in backend order.
+- Tests: `test_iteration106_dispatch_kanban_sort.py` — 5/5 pass (latest date wins, same-date voucher_id tiebreak, cross-lane consistency, multi-series predictability, legacy-card fallback).
+- **47/47 tests pass across iter 100-106.**
+
 ## Shipped — May 22 2026 (iteration 105) — v9.8.26 AlterID Prime 7.0 hot-fix
 **Root cause analysis (from a real ASA Autotech daybook XML the user uploaded)**: three distinct bugs blocked v9.8.25's "universal iteration" path on Tally Prime 7.0:
 - Tally Prime 7.0 **lowercases every response tag**, so `<FlowraIterVchAID_F>` came back as `<flowraitervchaid_f>` — case-sensitive regex missed everything.

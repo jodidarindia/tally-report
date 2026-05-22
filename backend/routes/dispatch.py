@@ -83,7 +83,18 @@ async def get_dispatch_cards(request: Request, status: Optional[str] = None, sea
                 q["created_at"] = {"$gte": fy_start, "$lte": fy_end + "T23:59:59"}
         total = await db.dispatch_cards.count_documents(q)
         skip = (page - 1) * limit
-        cards = await db.dispatch_cards.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+        # v9.8.27 — consistent sort across every dispatch lane.
+        # Primary:   voucher_date DESC → newest bill on top
+        # Tiebreak1: voucher_id  DESC → Tally per-series running serial,
+        #                              so the highest series number of the
+        #                              day floats up. Works correctly for
+        #                              multi-series shops where the same
+        #                              date has multiple invoice prefixes.
+        # Tiebreak2: created_at  DESC → final fallback for legacy rows
+        #                              that may have no voucher_id.
+        cards = await db.dispatch_cards.find(q, {"_id": 0}).sort(
+            [("voucher_date", -1), ("voucher_id", -1), ("created_at", -1)]
+        ).skip(skip).limit(limit).to_list(limit)
         return APIResponse(success=True, data={"cards": cards, "total": total, "page": page})
     except Exception as e:
         logger.error(f"Get dispatch cards error: {e}")
