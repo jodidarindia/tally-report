@@ -7,7 +7,22 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Hosting target**: DigitalOcean (Droplet 2GB) + MongoDB Atlas (Mumbai)
 - **Atlas DBs**: `Flowra-Insights` (prod) / `Flowra-Insights-Dev` (Emergent sandbox)
 - **Backend**: FastAPI behind nginx, /api/health probe live
-- **Desktop agent**: v9.8.20-secure-sync, .exe published at `/FlowraTallyAgent.exe`
+- **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
+
+## Shipped — May 22 2026 (iteration 109) — v9.8.28 REVERT iter-107 over-escape (P0 regression)
+**Field report** (Krishna Sales Corporation, live customer): agent log on v9.8.27 showed every Tally call failing with `Tally error: Could not set 'SVCurrentCompany' to 'Krishna Sales Corporation (from 1-Apr-24)'`. User explicitly noted: "the agent was getting correct company till version 9.8.25, why this error has started?".
+
+**Root cause** (from comparing iter-105 → iter-107 diffs): iter-107 (v9.8.27) escaped `(` → `&#40;`, `)` → `&#41;`, `'` → `&apos;`, `"` → `&quot;` in `_company_tag()` on the assumption that Tally's TDL parser treated them as expression delimiters. Wrong direction. The reality is that Tally Prime 7.0's XML/TDL layer does NOT decode numeric character references (`&#40;`) or `&apos;`/`&quot;` back to literal chars when matching SVCURRENTCOMPANY against the loaded-company catalog. So `Krishna Sales Corporation &#40;from 1-Apr-24&#41;` was being compared LITERALLY against the actual company name `Krishna Sales Corporation (from 1-Apr-24)` and failing. v9.8.25 worked precisely because it sent raw parens (which are legal in XML element content).
+
+**Fix** in `tally_sync_agent_v9.py:_company_tag()`: keep ONLY the three mandatory XML-element-content escapes — `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;` (every conformant XML parser including Tally's DOES decode these). Parens, single-quote, double-quote are sent RAW — they are legal inside XML element content per the spec and match v9.8.25's behaviour.
+
+**Tests** (`test_iteration107_company_name_escape.py` rewritten): 9/9 pass — pins raw parens, raw single-quote, raw double-quote, mandatory escape of `&`/`<`/`>`, plus a regression guard that `<SVCURRENTCOMPANY>` is only emitted from `_company_tag()`.
+
+**Version bumped**: `APP_VERSION=v9.8.28` (flowra_gui), `agent_version='9.8.28-company-raw-parens'` (4 sites in tally_sync_agent_v9), `backend/agent_release.json`, `frontend/public/agent-latest.json`.
+
+**Total green suite: 62/62 across iter-100..108 (iter-107 grew from 8 → 9 tests).**
+
+**User action**: rebuild Windows .exe from current source (clear `__pycache__` first), drop into `frontend/public/FlowraTallyAgent.exe`, update `sha256` + `size_bytes` in both manifests, push to droplet, restart uvicorn so manifest cache rebuilds.
 
 ## Iteration 99 — Security & Tenant-Isolation Audit (Feb 2026)
 ### Security hardening (production blockers)

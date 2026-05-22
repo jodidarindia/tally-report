@@ -410,27 +410,40 @@ class TallyCollectionClient:
     def _company_tag(self):
         """Return SVCurrentCompany XML tag for the active company.
 
-        v9.8.27 — HTML/XML-escape the company name. Tally's TDL parser
-        treats `(`, `)`, `&`, `<`, `>` as expression delimiters in
-        SVCurrentCompany. Names like 'Krishna Sales Corporation
-        (from 1-Apr-24)' fail with `Could not set 'SVCurrentCompany'
-        to '...'` unless the parens are escaped to `&#40;` / `&#41;`.
+        v9.8.28 — REVERT the v9.8.27 paren/apostrophe/quote escape.
 
-        Also handles the ampersand case (e.g. 'M/s. Patel & Sons') and
-        the embedded-quotes case the user reported on the QA droplet.
+        Field report from Krishna Sales Corporation: v9.8.25 (with the
+        raw company name) successfully switched company in Tally Prime
+        7.0. v9.8.27 — which escaped `(` → `&#40;`, `)` → `&#41;`,
+        `'` → `&apos;`, `"` → `&quot;` — started failing with
+        `Could not set 'SVCurrentCompany' to '...'`.
+
+        Diagnosis: Tally's XML/TDL layer does NOT decode numeric
+        character references (`&#40;`) back to literal characters when
+        matching the SVCurrentCompany value against the loaded-company
+        catalog. The escaped name is compared LITERALLY → no match →
+        error. Same applies to `&apos;` / `&quot;`.
+
+        We keep only the three escapes that are STRICTLY required for
+        XML well-formedness inside element content: `&`, `<`, `>`.
+        These ARE decoded by any conformant XML parser (including
+        Tally's) before being passed to the TDL matching layer, so the
+        round-trip is safe.
+
+        Parens, single-quote, double-quote are left RAW. They are
+        perfectly legal inside XML element content (the spec only
+        restricts `&` and `<`), and matching v9.8.25's behavior is the
+        only known way to make Tally Prime 7.0 happy.
         """
         c = (self.company or '').strip()
         if not c or c.lower() in ('default', '##default', '_active_') or 'default' in c.lower():
             return ""
-        # Standard XML entity escape …
+        # The MINIMAL XML escape required for well-formed element content.
+        # Any conformant XML parser decodes these back before the TDL
+        # matching layer sees them, so the round-trip is lossless.
         c = (c.replace('&', '&amp;')
               .replace('<', '&lt;')
-              .replace('>', '&gt;')
-              .replace('"', '&quot;')
-              .replace("'", '&apos;'))
-        # … plus paren escape (Tally-specific: TDL treats raw `(`/`)` as
-        # expression grouping, even inside a quoted SVCurrentCompany).
-        c = c.replace('(', '&#40;').replace(')', '&#41;')
+              .replace('>', '&gt;'))
         return f"<SVCURRENTCOMPANY>{c}</SVCURRENTCOMPANY>"
 
     def _ping_tally(self) -> bool:
@@ -3343,7 +3356,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.27-alter-id")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.28-company-raw-parens")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3726,7 +3739,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.27-alter-id',
+                'agent_version': '9.8.28-company-raw-parens',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3765,7 +3778,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.27-alter-id',
+                'agent_version': '9.8.28-company-raw-parens',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3825,7 +3838,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.27-alter-id',
+                'agent_version': '9.8.28-company-raw-parens',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4019,7 +4032,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.27-alter-id',
+                                'agent_version': '9.8.28-company-raw-parens',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4726,7 +4739,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.27-alter-id")
+        print("FLOWRA Tally Sync Agent v9.8.28-company-raw-parens")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag

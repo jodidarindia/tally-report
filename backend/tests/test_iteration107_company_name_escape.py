@@ -1,18 +1,26 @@
-"""Iteration 107 — v9.8.27 escape company name in SVCURRENTCOMPANY.
+"""Iteration 107 (revised in iter-109 / v9.8.28) — SVCURRENTCOMPANY
+minimal-escape contract.
 
-Built directly from the real customer (Krishna Sales Corp) agent log:
-every Tally call failed with:
+History:
+  iter-107 (v9.8.27): aggressive HTML/XML escape of company name —
+    parens → `&#40;`/`&#41;`, apostrophe → `&apos;`, double-quote →
+    `&quot;`, plus the mandatory `&`/`<`/`>`. This was a misdiagnosis.
 
-  Tally error: Could not set 'SVCurrentCompany' to
-    'Krishna Sales Corporation (from 1-Apr-24)'
+  Field report from Krishna Sales Corporation (v9.8.27 in production):
+    Tally Prime 7.0 rejected `Krishna Sales Corporation &#40;from
+    1-Apr-24&#41;` with `Could not set 'SVCurrentCompany' to
+    'Krishna Sales Corporation (from 1-Apr-24)'`. Same raw name had
+    worked in v9.8.25.
 
-…because the agent emitted the raw company name into the SVCURRENTCOMPANY
-XML element. Tally's TDL parser treats raw `(`, `)`, `&`, `<`, `>` as
-expression delimiters, so the company-switch fails and every subsequent
-query returns 0 results — including the AlterID detection itself.
+  iter-109 (v9.8.28) — this test: REVERT the iter-107 over-escape.
+    Tally's TDL matching layer does NOT decode `&#40;`, `&apos;`,
+    `&quot;` back to literal characters before matching the loaded-
+    company catalog — so the escaped string never matches. We keep
+    ONLY the three strictly XML-mandated escapes for element content:
+    `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. These ARE decoded by
+    Tally's XML parser, so the round-trip is lossless.
 
-These tests pin the fix: company names containing each special character
-must be HTML/XML-escaped before being embedded in the XML envelope.
+These tests pin the new contract.
 """
 import os
 import sys
@@ -45,38 +53,34 @@ def _make(Cls, company_name):
     return inst
 
 
-def test_real_krishna_sales_company_name_is_escaped(Cls):
-    """The exact failing name from the agent log."""
+def test_krishna_sales_company_name_keeps_raw_parens(Cls):
+    """v9.8.28 contract: parens MUST be sent RAW (Tally 7.0 rejects &#40;)."""
     inst = _make(Cls, "Krishna Sales Corporation (from 1-Apr-24)")
     tag = inst._company_tag()
-    # Parens must be escaped to numeric entities.
-    assert "&#40;" in tag
-    assert "&#41;" in tag
-    # The raw form (which Tally rejects) must NOT appear.
-    assert "(from" not in tag
-    assert "1-Apr-24)" not in tag
-    # The textual content (with raw chars) must NOT survive untransformed
-    # inside the SVCURRENTCOMPANY element.
-    assert "(from 1-Apr-24)" not in tag
-    # The encoded form should reproduce the original on the Tally side.
-    inner = tag.replace("<SVCURRENTCOMPANY>", "").replace("</SVCURRENTCOMPANY>", "")
-    assert inner == "Krishna Sales Corporation &#40;from 1-Apr-24&#41;"
+    # Raw parens preserved — matches what v9.8.25 used to send.
+    assert "(from 1-Apr-24)" in tag
+    # Numeric character references MUST NOT appear (regression guard).
+    assert "&#40;" not in tag
+    assert "&#41;" not in tag
+    assert tag == "<SVCURRENTCOMPANY>Krishna Sales Corporation (from 1-Apr-24)</SVCURRENTCOMPANY>"
 
 
-def test_company_name_with_ampersand_is_escaped(Cls):
-    """Common pattern: 'M/s. Patel & Sons' — the bare & breaks XML."""
+def test_company_name_with_ampersand_is_xml_escaped(Cls):
+    """Ampersand IS escaped — it's mandatory for XML well-formedness, and
+    Tally's XML parser DOES decode `&amp;` back to `&` before matching."""
     inst = _make(Cls, "M/s. Patel & Sons")
     tag = inst._company_tag()
     assert "&amp;" in tag
-    # No raw "&" outside of a complete entity reference.
     inner = tag.replace("<SVCURRENTCOMPANY>", "").replace("</SVCURRENTCOMPANY>", "")
-    # The only "&" left should be the leading "&" of "&amp;".
+    # No bare ampersands (would break the XML envelope itself).
     import re
-    bare_amps = re.findall(r"&(?!(?:amp|lt|gt|quot|apos|#\d+);)", inner)
+    bare_amps = re.findall(r"&(?!(?:amp|lt|gt);)", inner)
     assert bare_amps == []
 
 
-def test_company_name_with_lt_gt_is_escaped(Cls):
+def test_company_name_with_lt_gt_is_xml_escaped(Cls):
+    """`<` and `>` MUST be escaped — Tally's XML parser would otherwise
+    treat them as element delimiters and break the envelope."""
     inst = _make(Cls, "Acme <Trading> Co.")
     tag = inst._company_tag()
     inner = tag.replace("<SVCURRENTCOMPANY>", "").replace("</SVCURRENTCOMPANY>", "")
@@ -85,12 +89,23 @@ def test_company_name_with_lt_gt_is_escaped(Cls):
     assert "<Trading>" not in inner
 
 
-def test_company_name_with_apostrophe_is_escaped(Cls):
+def test_company_name_with_apostrophe_kept_raw(Cls):
+    """Apostrophe is LEGAL inside XML element content (only attribute
+    values need escaping). Tally 7.0 doesn't decode `&apos;`, so we
+    leave it raw."""
     inst = _make(Cls, "O'Connor's Hardware")
     tag = inst._company_tag()
-    assert "&apos;" in tag
-    inner = tag.replace("<SVCURRENTCOMPANY>", "").replace("</SVCURRENTCOMPANY>", "")
-    assert "O&apos;Connor&apos;s" in inner
+    assert "&apos;" not in tag
+    assert "O'Connor's Hardware" in tag
+
+
+def test_company_name_with_double_quote_kept_raw(Cls):
+    """Same reasoning as apostrophe — legal in element content, not
+    decoded by Tally's matching layer."""
+    inst = _make(Cls, 'The "Best" Trading Co.')
+    tag = inst._company_tag()
+    assert "&quot;" not in tag
+    assert 'The "Best" Trading Co.' in tag
 
 
 def test_plain_company_name_unchanged(Cls):
@@ -107,34 +122,29 @@ def test_default_company_still_returns_empty(Cls):
         assert inst._company_tag() == ""
 
 
-def test_escape_round_trip_unescape_recovers_original(Cls):
-    """Sanity: the escaped value, when passed through an XML parser,
-    decodes back to the original string. Mimics how Tally consumes it."""
-    import xml.sax.saxutils as saxutils
-    original = "Krishna Sales Corporation (from 1-Apr-24)"
-    inst = _make(Cls, original)
+def test_xml_envelope_remains_wellformed_with_all_specials(Cls):
+    """Sanity: the SVCURRENTCOMPANY element must parse as valid XML
+    even for companies with `&`, `<`, `>` AND parens/quotes."""
+    import xml.etree.ElementTree as ET
+    inst = _make(Cls, "Patel & Sons <Pvt> Ltd. (from 1-Apr-24) \"Krishna's\"")
     tag = inst._company_tag()
-    inner = tag.replace("<SVCURRENTCOMPANY>", "").replace("</SVCURRENTCOMPANY>", "")
-    decoded = saxutils.unescape(inner, {"&apos;": "'", "&quot;": '"', "&#40;": "(", "&#41;": ")"})
-    assert decoded == original
+    # Should be parseable as XML.
+    root = ET.fromstring(tag)
+    assert root.tag == "SVCURRENTCOMPANY"
+    # Round-trip: text content matches the original.
+    assert root.text == "Patel & Sons <Pvt> Ltd. (from 1-Apr-24) \"Krishna's\""
 
 
-def test_all_xml_tag_emitters_inherit_the_fix(Cls):
-    """Spot-check that `_company_tag` is used in actual XML payload
-    construction (not bypassed). We look for `_company_tag()` calls in
-    the source so a regression that inlines the raw name is caught."""
+def test_only_one_svcurrentcompany_emitter_in_source(Cls):
+    """Spot-check that `_company_tag` is the ONLY place that constructs
+    `<SVCURRENTCOMPANY>` — so the escape policy is enforced everywhere."""
     import inspect
     mod = __import__("tally_sync_agent_v9")
     src = inspect.getsource(mod)
-    # Strip Python single-line comments before counting so a documentation
-    # mention of `<SVCURRENTCOMPANY>` doesn't fail the test.
     import re
     code_only = re.sub(r"#.*", "", src)
     occurrences = code_only.count("<SVCURRENTCOMPANY>")
-    # The helper has ONE literal (the return template). Anything more means
-    # a bypass.
     assert occurrences <= 1, (
         f"Found {occurrences} raw <SVCURRENTCOMPANY> occurrences in code "
-        "(comments stripped) — only the helper should embed it. Use "
-        "_company_tag() everywhere else."
+        "(comments stripped) — only _company_tag() should emit it."
     )

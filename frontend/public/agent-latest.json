@@ -1,9 +1,9 @@
 {
-  "version": "9.8.27",
+  "version": "9.8.28",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.27 — CRITICAL fix for company names containing parentheses, ampersands, or quotes. The previous build emitted SVCURRENTCOMPANY with the raw company name; Tally's TDL parser treats raw '(', ')', '&', '<', '>' as expression delimiters and rejects the company-switch with 'Could not set SVCurrentCompany'. Company names like 'Krishna Sales Corporation (from 1-Apr-24)' or 'M/s. Patel & Sons' now have their special characters HTML-escaped (parens become &#40;/&#41;, ampersand becomes &amp;, etc.) before being injected into the XML envelope. This unblocks 100% of sync queries for affected customers — every single Tally call (AlterID detection, sales, receipts, purchases, daybook, inventory) was failing silently because of this.",
-  "released_at": "2026-05-22T18:30:00+05:30",
+  "release_notes": "v9.8.28 — REVERT iter-107 paren/apostrophe/quote escaping in SVCURRENTCOMPANY. Field data from Krishna Sales Corporation confirms v9.8.25 (raw company name) worked on Tally Prime 7.0, while v9.8.27 (with `(` → `&#40;`, `)` → `&#41;`, `'` → `&apos;`, `\"` → `&quot;`) failed with `Could not set 'SVCurrentCompany'`. Diagnosis: Tally's TDL matching layer does NOT decode numeric character references or `&apos;`/`&quot;` back to literal chars when matching against the loaded-company catalog — so the escaped string is compared literally and never matches. v9.8.28 keeps only the three strictly XML-mandated escapes (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`) which every conformant XML parser (Tally included) DOES decode. Parens / single-quote / double-quote are sent raw — they are perfectly legal inside XML element content. Customer-side: rebuild .exe from current source, drop into frontend/public/FlowraTallyAgent.exe, update sha256+size_bytes here, push to droplet.",
+  "released_at": "2026-05-22T20:00:00+05:30",
   "sha256": "f0a2975284351c0d74b74534deb29d2135604639b482247b3b2efcfb4c7f21c7",
   "size_bytes": 27031673
 }
