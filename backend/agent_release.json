@@ -1,9 +1,9 @@
 {
-  "version": "9.8.26",
+  "version": "9.8.27",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.26 — CRITICAL fix for Tally Prime 7.0 AlterID detection (RCA done from a real customer's daybook XML export). (1) Tally Prime 7.0 lowercases every response tag — Path-3 regex is now case-insensitive. (2) Voucher collections in Tally Prime 7.0 return EMPTY without SVFROMDATE / SVTODATE — now included with a 2014-2099 wide range. (3) NEW Path-4 side-channel scrapes <alterid> directly from cached voucher / daybook XMLs as a last-resort. (4) Misleading 'AlterID unsupported' log on the first cycle after upgrade is now 'AlterID baseline captured (N). One-time LVD-gated sync this cycle.' so customers immediately understand the agent IS working. Each path prints which one fired so the agent log clearly shows: AlterID via Path-N (...) = N.",
-  "released_at": "2026-05-22T14:30:00+05:30",
-  "sha256": "d890e3c64cd26cbaefda19caa943220c5c15c88e2ba405d00840bf1f1a2ce32a",
-  "size_bytes": 27030187
+  "release_notes": "v9.8.27 — CRITICAL fix for company names containing parentheses, ampersands, or quotes. The previous build emitted SVCURRENTCOMPANY with the raw company name; Tally's TDL parser treats raw '(', ')', '&', '<', '>' as expression delimiters and rejects the company-switch with 'Could not set SVCurrentCompany'. Company names like 'Krishna Sales Corporation (from 1-Apr-24)' or 'M/s. Patel & Sons' now have their special characters HTML-escaped (parens become &#40;/&#41;, ampersand becomes &amp;, etc.) before being injected into the XML envelope. This unblocks 100% of sync queries for affected customers — every single Tally call (AlterID detection, sales, receipts, purchases, daybook, inventory) was failing silently because of this.",
+  "released_at": "2026-05-22T18:30:00+05:30",
+  "sha256": "PENDING_REBUILD",
+  "size_bytes": 0
 }

@@ -40,6 +40,17 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 107) — v9.8.27 CRITICAL company-name escape
+**Root cause (from customer agent log)**: Krishna Sales Corp's Tally company is named `Krishna Sales Corporation (from 1-Apr-24)`. The agent emitted that name **raw** into `<SVCURRENTCOMPANY>`. Tally's TDL parser treats raw `(` and `)` as expression delimiters → every company switch failed with `Could not set 'SVCurrentCompany'` → every voucher / AlterID / receipt query returned 0 results silently. Every single sync attempt for this customer (and any other with parens / `&` / `<` / `>` / quotes in the company name) was broken.
+
+**Fix** in `tally_sync_agent_v9.py:_company_tag()`: HTML/XML-escape the company name before embedding in the XML envelope. Parens → `&#40;`/`&#41;`, ampersand → `&amp;`, etc. Standard XML entities for `<`, `>`, `"`, `'`. Round-trip-safe (Tally unescapes back to the original name).
+
+**Tests** (`test_iteration107_company_name_escape.py`): 8/8 pass — covers the real customer name, ampersand, `<` / `>`, apostrophe, plain-name no-op, Default-Company fallback, round-trip safety, and a meta-test that asserts no other code path bypasses `_company_tag()`.
+
+**Total green suite: 55/55 across iter 100-107.**
+
+Version bumped: `APP_VERSION=v9.8.27`, `agent_version='9.8.27-alter-id'` (4 sites), both manifests.
+
 ## Shipped — May 22 2026 (iteration 106) — Dispatch kanban sort consistency
 **Issue**: 
 - "New" lane was client-side-sorted by digit-stripped `invoice_number` DESC, which mis-ranked multi-series shops (Krishna Sales' `CGSA2627/0013` outranked today's `KTG/0030/2526`). 

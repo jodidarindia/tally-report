@@ -408,11 +408,30 @@ class TallyCollectionClient:
             return None
 
     def _company_tag(self):
-        """Return SVCurrentCompany XML tag. Skip if company is unknown/Default — Tally will use the active company."""
+        """Return SVCurrentCompany XML tag for the active company.
+
+        v9.8.27 — HTML/XML-escape the company name. Tally's TDL parser
+        treats `(`, `)`, `&`, `<`, `>` as expression delimiters in
+        SVCurrentCompany. Names like 'Krishna Sales Corporation
+        (from 1-Apr-24)' fail with `Could not set 'SVCurrentCompany'
+        to '...'` unless the parens are escaped to `&#40;` / `&#41;`.
+
+        Also handles the ampersand case (e.g. 'M/s. Patel & Sons') and
+        the embedded-quotes case the user reported on the QA droplet.
+        """
         c = (self.company or '').strip()
-        if c and c.lower() not in ('default', '##default', '_active_') and 'default' not in c.lower():
-            return f"<SVCURRENTCOMPANY>{c}</SVCURRENTCOMPANY>"
-        return ""
+        if not c or c.lower() in ('default', '##default', '_active_') or 'default' in c.lower():
+            return ""
+        # Standard XML entity escape …
+        c = (c.replace('&', '&amp;')
+              .replace('<', '&lt;')
+              .replace('>', '&gt;')
+              .replace('"', '&quot;')
+              .replace("'", '&apos;'))
+        # … plus paren escape (Tally-specific: TDL treats raw `(`/`)` as
+        # expression grouping, even inside a quoted SVCurrentCompany).
+        c = c.replace('(', '&#40;').replace(')', '&#41;')
+        return f"<SVCURRENTCOMPANY>{c}</SVCURRENTCOMPANY>"
 
     def _ping_tally(self) -> bool:
         """Lightweight connection check — does NOT overwrite self.company.
@@ -3707,7 +3726,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.26-alter-id',
+                'agent_version': '9.8.27-alter-id',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3746,7 +3765,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.26-alter-id',
+                'agent_version': '9.8.27-alter-id',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3806,7 +3825,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.26-alter-id',
+                'agent_version': '9.8.27-alter-id',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4000,7 +4019,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.26-alter-id',
+                                'agent_version': '9.8.27-alter-id',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
