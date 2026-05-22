@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Bot, Filter, X, Calendar, DollarSign, Package, Users, TrendingUp, FileText } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  renderStructuredInsight,
+  renderStructuredRecommendation,
+  renderMetricValue,
+  renderDetailedAnalysis,
+} from '../components/AIInsightRenderers';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -265,15 +271,15 @@ const EnhancedAIReports = () => {
           {report.key_insights && report.key_insights.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-slate-900 mb-4">Key Insights</h3>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {report.key_insights.map((insight, idx) => (
-                  <li key={idx} className="flex items-start gap-3">
+                  <li key={idx} className="flex items-start gap-3" data-testid={`ai-insight-${idx}`}>
                     <div className="w-6 h-6 bg-[#E7F5F0] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                       <span className="text-xs font-semibold text-[#2563EB]">{idx + 1}</span>
                     </div>
-                    <span className="text-base text-slate-700">
-                      {typeof insight === 'object' ? JSON.stringify(insight) : insight}
-                    </span>
+                    <div className="text-base text-slate-700 flex-1">
+                      {renderStructuredInsight(insight)}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -283,14 +289,12 @@ const EnhancedAIReports = () => {
           {report.metrics && typeof report.metrics === 'object' && Object.keys(report.metrics).length > 0 && (
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-slate-900 mb-4">Metrics</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(report.metrics).map(([key, value]) => (
-                  <div key={key} className="p-4 bg-[#F0F4FF] rounded-lg">
-                    <div className="text-sm text-slate-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
-                    <div className="text-2xl font-semibold text-[#2563EB] whitespace-pre-wrap break-words">
-                      {typeof value === 'object' && value !== null 
-                        ? JSON.stringify(value, null, 2) 
-                        : String(value)}
+                  <div key={key} className="p-4 bg-[#F0F4FF] rounded-lg" data-testid={`ai-metric-${key}`}>
+                    <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-1.5">{key.replace(/_/g, ' ')}</div>
+                    <div className="text-slate-800">
+                      {renderMetricValue(value)}
                     </div>
                   </div>
                 ))}
@@ -301,13 +305,13 @@ const EnhancedAIReports = () => {
           {report.recommendations && report.recommendations.length > 0 && (
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-slate-900 mb-4">Recommendations</h3>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {report.recommendations.map((rec, idx) => (
-                  <li key={idx} className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-[#2563EB] rounded-full flex-shrink-0 mt-2" />
-                    <span className="text-base text-slate-700">
-                      {typeof rec === 'object' ? JSON.stringify(rec) : rec}
-                    </span>
+                  <li key={idx} className="flex items-start gap-3" data-testid={`ai-recommendation-${idx}`}>
+                    <div className="w-2 h-2 bg-[#2563EB] rounded-full flex-shrink-0 mt-2.5" />
+                    <div className="text-base text-slate-700 flex-1">
+                      {renderStructuredRecommendation(rec)}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -317,9 +321,9 @@ const EnhancedAIReports = () => {
           {report.detailed_analysis && (
             <div className="bg-white border border-slate-200 rounded-xl p-6">
               <h3 className="text-xl font-medium text-slate-900 mb-4">Detailed Analysis</h3>
-              <p className="text-base text-slate-700 leading-relaxed whitespace-pre-wrap">
-                {typeof report.detailed_analysis === 'object' ? JSON.stringify(report.detailed_analysis, null, 2) : report.detailed_analysis}
-              </p>
+              <div className="text-base text-slate-700 leading-relaxed">
+                {renderDetailedAnalysis(report.detailed_analysis)}
+              </div>
             </div>
           )}
         </div>

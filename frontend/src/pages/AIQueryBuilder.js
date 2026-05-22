@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Bot, Send, Sparkles } from 'lucide-react';
+import {
+  renderStructuredInsight,
+  renderStructuredRecommendation,
+  renderMetricValue,
+} from '../components/AIInsightRenderers';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -121,13 +126,13 @@ const AIQueryBuilder = () => {
               <h3 className="text-xl font-medium text-slate-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
                 Key Insights
               </h3>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {report.key_insights.map((insight, index) => (
                   <li key={index} className="flex items-start gap-3">
                     <div className="w-6 h-6 bg-[#E7F5F0] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                       <span className="text-xs font-semibold text-[#2563EB]">{index + 1}</span>
                     </div>
-                    <span className="text-base text-slate-700">{insight}</span>
+                    <div className="text-base text-slate-700 flex-1">{renderStructuredInsight(insight)}</div>
                   </li>
                 ))}
               </ul>
@@ -139,15 +144,11 @@ const AIQueryBuilder = () => {
               <h3 className="text-xl font-medium text-slate-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
                 Metrics
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Object.entries(report.metrics).map(([key, value]) => (
                   <div key={key} className="p-4 bg-[#F0F4FF] rounded-lg">
-                    <div className="text-sm text-slate-500 mb-1">{key.replace(/_/g, ' ').toUpperCase()}</div>
-                    <div className="text-2xl font-semibold text-[#2563EB]">
-                      {typeof value === 'object' && value !== null 
-                        ? JSON.stringify(value, null, 2) 
-                        : value}
-                    </div>
+                    <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-1.5">{key.replace(/_/g, ' ')}</div>
+                    <div className="text-slate-800">{renderMetricValue(value)}</div>
                   </div>
                 ))}
               </div>
@@ -159,11 +160,11 @@ const AIQueryBuilder = () => {
               <h3 className="text-xl font-medium text-slate-900 mb-4" style={{ fontFamily: 'Outfit, sans-serif' }}>
                 Recommendations
               </h3>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {report.recommendations.map((rec, index) => (
                   <li key={index} className="flex items-start gap-3">
-                    <div className="w-2 h-2 bg-[#2563EB] rounded-full flex-shrink-0 mt-2" />
-                    <span className="text-base text-slate-700">{rec}</span>
+                    <div className="w-2 h-2 bg-[#2563EB] rounded-full flex-shrink-0 mt-2.5" />
+                    <div className="text-base text-slate-700 flex-1">{renderStructuredRecommendation(rec)}</div>
                   </li>
                 ))}
               </ul>

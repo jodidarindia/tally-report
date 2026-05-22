@@ -40,6 +40,16 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - /api/agent/commands GET without token → 'sync_token is required'
 - /api/agent/latest-version returns v9.8.20 manifest
 
+## Shipped — May 22 2026 (iteration 108) — AI Insights renderer fix
+**Bug** (frontend-only): on the AI Insights page, asking "Show items with low stock that need immediate reordering" returned a perfectly correct LLM response, but the UI displayed each insight / recommendation as a raw JSON blob like `{"insight":"Zero immediate reorder triggers","detail":"Across all 35 inventory items...","risk":"..."}`. The LLM returns structured `{insight, detail, risk}` and `{priority, action, expected_impact}` objects inside the response arrays — the old code only handled string inputs and fell back to `JSON.stringify()`.
+
+**Fix**:
+- New shared module `frontend/src/components/AIInsightRenderers.jsx` exports `renderStructuredInsight`, `renderStructuredRecommendation`, `renderMetricValue`, `renderDetailedAnalysis`. Each gracefully handles strings, JSON-encoded strings, arrays of records, and the common LLM object shapes — emitting properly styled blocks (title + detail + risk pill, priority badge + action + impact, key-value tables for metric objects, nested sections for detailed_analysis).
+- Both `EnhancedAIReports.js` AND `AIQueryBuilder.js` now import these renderers — no surface still calls `JSON.stringify()` as a fallback.
+- Tests: `test_iteration108_ai_insights_render.py` — 6/6 pass (source-asserting tests that lock in the contract).
+
+**Total green suite: 61/61 across iter 100-108.**
+
 ## Shipped — May 22 2026 (iteration 107) — v9.8.27 CRITICAL company-name escape
 **Root cause (from customer agent log)**: Krishna Sales Corp's Tally company is named `Krishna Sales Corporation (from 1-Apr-24)`. The agent emitted that name **raw** into `<SVCURRENTCOMPANY>`. Tally's TDL parser treats raw `(` and `)` as expression delimiters → every company switch failed with `Could not set 'SVCurrentCompany'` → every voucher / AlterID / receipt query returned 0 results silently. Every single sync attempt for this customer (and any other with parens / `&` / `<` / `>` / quotes in the company name) was broken.
 
