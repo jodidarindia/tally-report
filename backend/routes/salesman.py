@@ -335,6 +335,180 @@ async def get_customer_ownership(request: Request, fy: Optional[str] = None, com
         return APIResponse(success=False, error=str(e))
 
 
+@router.post("/salesman/copy-from")
+async def copy_salesman_data(request: Request):
+    """Admin-only — copy customer mapping and/or beat plan from one
+    salesman to another. Used when a salesman leaves and is replaced.
+
+    Body: {
+      from_salesman: str,
+      to_salesman: str,
+      copy_customers: bool,
+      copy_beats: bool,
+      release_source: bool,   # if true, source loses these customers for the FY
+      fy: str (optional — defaults to current FY),
+      company_id: str (optional)
+    }
+
+    Tenant + company isolation: every read/write is filtered by ctx
+    (tenant_id from JWT, never from body). The destination salesman master
+    record is upserted but the *target* user account is NOT auto-created —
+    admin must create the user separately via Profile → Employees.
+    """
+    try:
+        denied = await _require_admin(request)
+        if denied: return denied
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        body = await request.json()
+
+        from_sm = (body.get("from_salesman") or "").strip()
+        to_sm = (body.get("to_salesman") or "").strip()
+        copy_customers = bool(body.get("copy_customers"))
+        copy_beats = bool(body.get("copy_beats"))
+        release_source = bool(body.get("release_source"))
+        fy = (body.get("fy") or get_current_fy()).strip()
+        company_id = body.get("company_id")
+
+        if not from_sm or not to_sm:
+            return APIResponse(success=False, error="from_salesman and to_salesman are required")
+        if from_sm.lower() == to_sm.lower():
+            return APIResponse(success=False, error="Source and target salesmen must differ")
+        if not (copy_customers or copy_beats):
+            return APIResponse(success=False, error="Select at least one of: copy_customers, copy_beats")
+
+        tq = _build_query(ctx, company_id)
+
+        # Load source — same tenant only.
+        src = await db.salesman_master.find_one({**tq, "salesman_name": from_sm}, {"_id": 0})
+        if not src:
+            return APIResponse(success=False, error=f"Source salesman '{from_sm}' not found in this organization")
+
+        dst = await db.salesman_master.find_one({**tq, "salesman_name": to_sm}, {"_id": 0})
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        summary = {
+            "customers_copied": 0,
+            "beats_copied": 0,
+            "source_released": False,
+            "fy": fy,
+        }
+
+        # ─── Copy customer mapping (per-FY) ─────────────────────────────
+        if copy_customers:
+            src_fy_map = src.get("fy_customers", {}) or {}
+            src_customers = list(src_fy_map.get(fy, []))
+            if not src_customers and not src_fy_map:
+                # Legacy fall-back: pre-FY salesman_master used `customers`.
+                src_customers = list(src.get("customers", []))
+
+            if not src_customers:
+                return APIResponse(
+                    success=False,
+                    error=f"Source salesman '{from_sm}' has no customers mapped for FY {fy}"
+                )
+
+            # Build destination record (preserve existing FYs).
+            dst_fy_map = (dst.get("fy_customers", {}) if dst else {}) or {}
+            # Merge: union with any existing customers on target for this FY
+            existing_dst = set(c.strip().lower() for c in dst_fy_map.get(fy, []))
+            merged = list({c.strip(): None for c in src_customers if c.strip()}.keys())
+            merged = [c for c in merged if c.strip().lower() not in existing_dst] + dst_fy_map.get(fy, [])
+            dst_fy_map[fy] = merged
+
+            if dst:
+                await db.salesman_master.update_one(
+                    {**tq, "salesman_name": to_sm},
+                    {"$set": {"fy_customers": dst_fy_map, "updated_at": now_iso}}
+                )
+            else:
+                # Create skeletal target master record. Admin can fill targets later.
+                new_doc = {
+                    "salesman_id": str(uuid.uuid4()),
+                    "salesman_name": to_sm,
+                    "phone": "",
+                    "email": "",
+                    "monthly_target": 0,
+                    "quarterly_target": 0,
+                    "customers": [],
+                    "fy_targets": {},
+                    "fy_customers": dst_fy_map,
+                    "created_at": now_iso,
+                }
+                if ctx and ctx.get("tenant_id"):
+                    new_doc["tenant_id"] = ctx["tenant_id"]
+                if company_id or (ctx and ctx.get("company_id")):
+                    new_doc["company_id"] = company_id or ctx.get("company_id")
+                await db.salesman_master.insert_one(new_doc)
+
+            summary["customers_copied"] = len(src_customers)
+
+            # ─── Release from source (clear that FY's mapping) ──────────
+            # IMPORTANT: this is the only way to satisfy the
+            # single-salesman-per-customer guard enforced in save_salesman.
+            if release_source:
+                src_fy_map = src.get("fy_customers", {}) or {}
+                src_fy_map[fy] = []
+                update_src = {"fy_customers": src_fy_map, "updated_at": now_iso}
+                # Also wipe legacy field if it was the de-facto source.
+                if src.get("customers") and not src.get("fy_customers", {}).get(fy):
+                    update_src["customers"] = []
+                await db.salesman_master.update_one(
+                    {**tq, "salesman_name": from_sm},
+                    {"$set": update_src}
+                )
+                summary["source_released"] = True
+
+        # ─── Copy beat plan (whole salesman_beats collection) ──────────
+        if copy_beats:
+            src_beats = await db.salesman_beats.find(
+                {**tq, "salesman": from_sm}, {"_id": 0}
+            ).to_list(1000)
+            if not src_beats:
+                if not copy_customers:
+                    return APIResponse(success=False, error=f"Source salesman '{from_sm}' has no beat plan")
+            else:
+                # Wipe target's existing beat plan, then re-create with fresh beat_ids
+                await db.salesman_beats.delete_many({**tq, "salesman": to_sm})
+                fresh_beats = []
+                for b in src_beats:
+                    fresh = {
+                        "beat_id": f"BT-{uuid.uuid4().hex[:6].upper()}",
+                        "salesman": to_sm,
+                        "customer_name": b.get("customer_name", ""),
+                        "day_of_week": b.get("day_of_week", ""),
+                        "frequency": b.get("frequency", "weekly"),
+                        "created_at": now_iso,
+                    }
+                    if ctx and ctx.get("tenant_id"):
+                        fresh["tenant_id"] = ctx["tenant_id"]
+                    if company_id or (ctx and ctx.get("company_id")):
+                        fresh["company_id"] = company_id or ctx.get("company_id")
+                    fresh_beats.append(fresh)
+                if fresh_beats:
+                    await db.salesman_beats.insert_many(fresh_beats)
+                summary["beats_copied"] = len(fresh_beats)
+
+        # Audit log
+        try:
+            from services.audit_service import log_audit
+            await log_audit(
+                "salesman_copy_data", user["username"],
+                tenant_id=ctx.get("tenant_id", "") if ctx else "",
+                target=to_sm,
+                details=(f"from={from_sm}, customers={summary['customers_copied']}, "
+                         f"beats={summary['beats_copied']}, released={summary['source_released']}, fy={fy}")
+            )
+        except Exception:
+            pass
+
+        return APIResponse(success=True, data=summary,
+                           message=f"Copied from '{from_sm}' to '{to_sm}' (FY {fy})")
+    except Exception as e:
+        logger.error(f"copy_salesman_data error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.delete("/salesman/master/{salesman_name}")
 async def delete_salesman(salesman_name: str, request: Request):
     try:

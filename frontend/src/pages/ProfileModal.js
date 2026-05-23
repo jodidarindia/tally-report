@@ -93,6 +93,23 @@ const ProfileModal = ({ user, token, onClose }) => {
     } catch { toast.error('Failed to remove employee'); }
   };
 
+  const handleToggleActive = async (emp) => {
+    const next = !(emp.active !== false);
+    const verb = next ? 'reactivate' : 'deactivate';
+    if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} '${emp.name || emp.username}'?${next ? '' : '\n\nThe employee will be unable to log in. Their email stays reserved so no new user can re-use it.'}`)) return;
+    try {
+      const res = await axios.put(`${API}/auth/users/${encodeURIComponent(emp.username)}/toggle-active`, {}, { headers });
+      if (res.data?.success) {
+        toast.success(res.data.message);
+        fetchEmployees();
+      } else {
+        toast.error(res.data?.error || 'Failed to update status');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update status');
+    }
+  };
+
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword) { toast.error('All fields are required'); return; }
     if (newPassword.length < 4) { toast.error('New password must be at least 4 characters'); return; }
@@ -314,26 +331,38 @@ const ProfileModal = ({ user, token, onClose }) => {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {employees.map(emp => (
-                    <div key={emp.username} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-3">
+                  {employees.map(emp => {
+                    const isActive = emp.active !== false;
+                    return (
+                    <div key={emp.username} className={`flex items-center justify-between bg-white border rounded-lg p-3 ${isActive ? 'border-slate-200' : 'border-slate-200 opacity-70'}`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-xs font-bold">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isActive ? 'bg-slate-100 text-slate-600' : 'bg-slate-200 text-slate-400'}`}>
                           {(emp.name || emp.username || 'E')[0].toUpperCase()}
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-slate-900">{emp.name || emp.username}</p>
+                          <p className={`text-sm font-medium ${isActive ? 'text-slate-900' : 'text-slate-500 line-through'}`}>{emp.name || emp.username}</p>
                           <p className="text-xs text-slate-500 flex items-center gap-1"><Mail size={10} /> {emp.username}</p>
                         </div>
                         {emp.role === 'dispatch' && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">DISPATCH</span>}
                         {emp.role === 'salesman' && <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">SALESMAN</span>}
+                        {!isActive && <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold ml-1" data-testid={`emp-deactivated-pill-${emp.username}`}>DEACTIVATED</span>}
                       </div>
-                      <button onClick={() => handleDeleteEmployee(emp.username)}
-                        className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg"
-                        data-testid={`delete-emp-${emp.username}`}>
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => handleToggleActive(emp)}
+                          title={isActive ? 'Deactivate (block login, reserve email)' : 'Reactivate (restore login)'}
+                          className={`text-[10px] font-semibold px-2 py-1 rounded-md ${isActive ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-green-50 text-green-700 hover:bg-green-100'}`}
+                          data-testid={`toggle-active-emp-${emp.username}`}>
+                          {isActive ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                        <button onClick={() => handleDeleteEmployee(emp.username)}
+                          className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg"
+                          data-testid={`delete-emp-${emp.username}`}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

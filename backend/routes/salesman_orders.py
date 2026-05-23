@@ -1047,6 +1047,7 @@ async def get_beat_run_today(request: Request, salesman: Optional[str] = None, r
         return APIResponse(success=True, data={
             "salesman": run["salesman"], "run_date": rd, "day_of_week": dow,
             "locked": locked,
+            "closed_at": run.get("closed_at"),
             "planned": run.get("planned", []),
             "unplanned": run.get("unplanned", []),
             "created_at": run.get("created_at"),
@@ -1059,7 +1060,12 @@ async def get_beat_run_today(request: Request, salesman: Optional[str] = None, r
 @router.post("/salesman-orders/beat-run/check-in")
 async def beat_run_check_in(request: Request):
     """Toggle visited status for a planned customer in TODAY's run only.
-    Body: { customer_name: str, visited: bool, notes?: str, company_id?: str }
+    Body: { customer_name: str, visited: bool, notes?: str,
+            order_collected?: bool, payment_collected?: bool, company_id?: str }
+
+    iter-110: order_collected and payment_collected are MANDATORY when
+    visited=True (the salesman must answer Yes/No on each visit). They
+    are nullable when visited=False (un-checking a visit resets them).
     """
     try:
         ctx = await get_tenant_context(request)
@@ -1070,8 +1076,16 @@ async def beat_run_check_in(request: Request):
         customer_name = (body.get("customer_name") or "").strip()
         visited = bool(body.get("visited"))
         notes = (body.get("notes") or "").strip()
+        order_collected = body.get("order_collected")
+        payment_collected = body.get("payment_collected")
         if not customer_name:
             return APIResponse(success=False, error="customer_name is required")
+        # Enforce mandatory yes/no when marking visited.
+        if visited:
+            if not isinstance(order_collected, bool):
+                return APIResponse(success=False, error="order_collected (true/false) is required when marking visited")
+            if not isinstance(payment_collected, bool):
+                return APIResponse(success=False, error="payment_collected (true/false) is required when marking visited")
 
         q = _q(ctx, body.get("company_id"))
         rd = _ist_today()  # check-ins ALWAYS apply to today (server-enforced)
@@ -1084,6 +1098,8 @@ async def beat_run_check_in(request: Request):
 
         # Ensure run document exists (auto-create from plan if missing)
         existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if existing and existing.get("closed_at"):
+            return APIResponse(success=False, error="Today's run is closed. Ask your admin to re-open if needed.")
         if not existing:
             day_match = list(DAY_VARIANTS.get(dow, {dow}))
             plan = await db.salesman_beats.find(
@@ -1096,8 +1112,10 @@ async def beat_run_check_in(request: Request):
                     "beat_id": b.get("beat_id", ""),
                     "frequency": b.get("frequency", "weekly"),
                     "visited_at": None, "notes": "",
+                    "order_collected": None, "payment_collected": None,
                 } for b in plan],
                 "unplanned": [],
+                "closed_at": None,
                 "created_at": now_iso,
                 "updated_at": now_iso,
             }
@@ -1111,6 +1129,9 @@ async def beat_run_check_in(request: Request):
                 p["visited_at"] = now_iso if visited else None
                 if notes:
                     p["notes"] = notes
+                # Persist or clear order/payment flags.
+                p["order_collected"] = order_collected if visited else None
+                p["payment_collected"] = payment_collected if visited else None
                 found = True
                 break
         if not found:
@@ -1119,6 +1140,8 @@ async def beat_run_check_in(request: Request):
                 "frequency": "ad-hoc",
                 "visited_at": now_iso if visited else None,
                 "notes": notes,
+                "order_collected": order_collected if visited else None,
+                "payment_collected": payment_collected if visited else None,
             })
 
         await db.beat_runs.update_one(
@@ -1133,9 +1156,13 @@ async def beat_run_check_in(request: Request):
 
 @router.post("/salesman-orders/beat-run/add-unplanned")
 async def beat_run_add_unplanned(request: Request):
-    """Add an unplanned visit (new prospect) to TODAY's run.
-    Body: { customer_name: str, details?: str, company_id?: str }
-    Marked with `is_new: true`. No CRM impact until the customer appears in Tally.
+    """Add an unplanned visit to TODAY's run.
+
+    Body: { customer_name: str, details?: str,
+            is_existing_customer?: bool,   # NEW iter-110 (default false → new prospect)
+            order_collected: bool,         # MANDATORY (iter-110)
+            payment_collected: bool,       # MANDATORY (iter-110)
+            company_id?: str }
     """
     try:
         ctx = await get_tenant_context(request)
@@ -1145,8 +1172,15 @@ async def beat_run_add_unplanned(request: Request):
         body = await request.json()
         cname = (body.get("customer_name") or "").strip()
         details = (body.get("details") or "").strip()
+        is_existing = bool(body.get("is_existing_customer", False))
+        order_collected = body.get("order_collected")
+        payment_collected = body.get("payment_collected")
         if not cname:
             return APIResponse(success=False, error="customer_name is required")
+        if not isinstance(order_collected, bool):
+            return APIResponse(success=False, error="order_collected (true/false) is required")
+        if not isinstance(payment_collected, bool):
+            return APIResponse(success=False, error="payment_collected (true/false) is required")
 
         q = _q(ctx, body.get("company_id"))
         rd = _ist_today()  # always today — past dates locked
@@ -1157,11 +1191,16 @@ async def beat_run_add_unplanned(request: Request):
             "visit_id": f"UV-{uuid.uuid4().hex[:8].upper()}",
             "customer_name": cname,
             "details": details,
-            "is_new": True,
+            "is_new": not is_existing,
+            "is_existing_customer": is_existing,
+            "order_collected": order_collected,
+            "payment_collected": payment_collected,
             "added_at": now_iso,
         }
 
         existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if existing and existing.get("closed_at"):
+            return APIResponse(success=False, error="Today's run is closed. Ask your admin to re-open if needed.")
         if not existing:
             day_match = list(DAY_VARIANTS.get(dow, {dow}))
             plan = await db.salesman_beats.find(
@@ -1174,8 +1213,10 @@ async def beat_run_add_unplanned(request: Request):
                     "beat_id": b.get("beat_id", ""),
                     "frequency": b.get("frequency", "weekly"),
                     "visited_at": None, "notes": "",
+                    "order_collected": None, "payment_collected": None,
                 } for b in plan],
                 "unplanned": [new_visit],
+                "closed_at": None,
                 "created_at": now_iso, "updated_at": now_iso,
             })
         else:
@@ -1186,6 +1227,292 @@ async def beat_run_add_unplanned(request: Request):
         return APIResponse(success=True, data={"visit": new_visit}, message="Unplanned visit added")
     except Exception as e:
         logger.error(f"beat-run/add-unplanned error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/salesman-orders/beat-run/close-day")
+async def beat_run_close_day(request: Request):
+    """Salesman closes today's run — locks the document so no further
+    check-ins or unplanned visits can be added. Admin can re-open via
+    /beat-run/reopen-day."""
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+        body = await request.json() if (await request.body()) else {}
+        q = _q(ctx, body.get("company_id"))
+        rd = _ist_today()
+        target = await _resolve_salesman_name(user, ctx)
+        if user.get("role") in ("admin", "super_admin") and body.get("salesman"):
+            target = body.get("salesman")
+
+        existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if not existing:
+            return APIResponse(success=False, error="No run to close for today")
+        if existing.get("closed_at"):
+            return APIResponse(success=False, error="Day already closed")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.beat_runs.update_one(
+            {**q, "salesman": target, "run_date": rd},
+            {"$set": {
+                "closed_at": now_iso,
+                "closed_by": user.get("username", ""),
+                "updated_at": now_iso,
+            }}
+        )
+        return APIResponse(success=True, message="Day closed", data={"closed_at": now_iso})
+    except Exception as e:
+        logger.error(f"beat-run/close-day error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/salesman-orders/beat-run/reopen-day")
+async def beat_run_reopen_day(request: Request):
+    """Admin-only — re-open a previously closed run (audit trail kept)."""
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user or user.get("role") not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+        body = await request.json()
+        q = _q(ctx, body.get("company_id"))
+        rd = (body.get("run_date") or _ist_today()).strip()
+        target = (body.get("salesman") or "").strip()
+        if not target:
+            return APIResponse(success=False, error="salesman is required")
+
+        existing = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        if not existing:
+            return APIResponse(success=False, error="Run not found")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.beat_runs.update_one(
+            {**q, "salesman": target, "run_date": rd},
+            {"$set": {
+                "closed_at": None,
+                "reopened_by": user.get("username", ""),
+                "reopened_at": now_iso,
+                "updated_at": now_iso,
+            }}
+        )
+        try:
+            from services.audit_service import log_audit
+            await log_audit(
+                "beat_run_reopen", user["username"],
+                tenant_id=ctx.get("tenant_id", "") if ctx else "",
+                target=f"{target}@{rd}",
+                details="Day re-opened by admin",
+            )
+        except Exception:
+            pass
+        return APIResponse(success=True, message="Day re-opened")
+    except Exception as e:
+        logger.error(f"beat-run/reopen-day error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/salesman-orders/beat-run/day-report/export")
+async def beat_run_day_report_export(
+    request: Request,
+    run_date: Optional[str] = None,
+    salesman: Optional[str] = None,
+    company_id: Optional[str] = None,
+    format: str = "pdf",
+):
+    """Per-day beat-run report — PDF or Excel.
+
+    Salesman → restricted to OWN runs (any date, server-enforced).
+    Admin    → can pass `salesman` to download any salesman's run.
+
+    Columns: Party Name · Visit Time · Order Collected (Yes/No) ·
+             Payment Collected (Yes/No) · Type (Planned/Unplanned).
+
+    PDF header carries FLOWRA Insights branding + the admin's company
+    name (tenant master row).
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    try:
+        ctx = await get_tenant_context(request)
+        user = await get_current_user(request, db)
+        if not user:
+            return APIResponse(success=False, error="Authentication required")
+
+        q = _q(ctx, company_id)
+        rd = (run_date or _ist_today()).strip()
+        try:
+            datetime.strptime(rd, "%Y-%m-%d")
+        except ValueError:
+            return APIResponse(success=False, error="run_date must be YYYY-MM-DD")
+
+        # Resolve salesman — salesmen can only export their own.
+        if user.get("role") in ("admin", "super_admin"):
+            target = (salesman or "").strip() or await _resolve_salesman_name(user, ctx)
+        else:
+            target = await _resolve_salesman_name(user, ctx)
+        if not target:
+            return APIResponse(success=False, error="No salesman context")
+
+        run = await db.beat_runs.find_one({**q, "salesman": target, "run_date": rd}, {"_id": 0})
+        rows = []
+        if run:
+            for p in (run.get("planned") or []):
+                if not p.get("visited_at"):
+                    continue  # Skip unvisited planned customers — report only what happened
+                vt = (p.get("visited_at") or "")
+                # Convert to IST HH:MM for display
+                try:
+                    dt = datetime.fromisoformat(vt.replace("Z", "+00:00"))
+                    from datetime import timedelta as _td
+                    dt_ist = dt + _td(hours=5, minutes=30) if dt.tzinfo is None else dt.astimezone(timezone.utc) + _td(hours=5, minutes=30)
+                    visit_time = dt_ist.strftime("%H:%M")
+                except Exception:
+                    visit_time = (vt[11:16] if len(vt) >= 16 else "")
+                rows.append({
+                    "Party Name": p.get("customer_name", ""),
+                    "Visit Time": visit_time,
+                    "Order Collected": "Yes" if p.get("order_collected") else ("No" if p.get("order_collected") is False else "—"),
+                    "Payment Collected": "Yes" if p.get("payment_collected") else ("No" if p.get("payment_collected") is False else "—"),
+                    "Type": "Planned",
+                })
+            for u in (run.get("unplanned") or []):
+                vt = (u.get("added_at") or "")
+                try:
+                    dt = datetime.fromisoformat(vt.replace("Z", "+00:00"))
+                    from datetime import timedelta as _td
+                    dt_ist = dt + _td(hours=5, minutes=30) if dt.tzinfo is None else dt.astimezone(timezone.utc) + _td(hours=5, minutes=30)
+                    visit_time = dt_ist.strftime("%H:%M")
+                except Exception:
+                    visit_time = (vt[11:16] if len(vt) >= 16 else "")
+                rows.append({
+                    "Party Name": u.get("customer_name", ""),
+                    "Visit Time": visit_time,
+                    "Order Collected": "Yes" if u.get("order_collected") else ("No" if u.get("order_collected") is False else "—"),
+                    "Payment Collected": "Yes" if u.get("payment_collected") else ("No" if u.get("payment_collected") is False else "—"),
+                    "Type": "Unplanned" + (" (Existing)" if u.get("is_existing_customer") else " (New)"),
+                })
+        rows.sort(key=lambda r: r["Visit Time"])
+
+        # Resolve admin's company name for PDF/Excel header.
+        admin_doc = None
+        if ctx and ctx.get("tenant_id"):
+            admin_doc = await db.users.find_one(
+                {"tenant_id": ctx["tenant_id"], "role": "admin"},
+                {"_id": 0, "name": 1, "company_name": 1, "username": 1}
+            )
+        company_header = ""
+        if admin_doc:
+            company_header = admin_doc.get("company_name") or admin_doc.get("name") or admin_doc.get("username", "")
+
+        fname_stem = f"flowra-beat-run-{rd}-{target.replace(' ', '_')}"
+
+        if format.lower() == "excel":
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment, PatternFill
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Day Report"
+            header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF", size=11)
+            title_font = Font(bold=True, color="0F1B4C", size=14)
+            sub_font = Font(italic=True, color="64748B", size=10)
+            ws.cell(row=1, column=1, value=f"{company_header}").font = title_font
+            ws.cell(row=2, column=1, value=f"FLOWRA Insights · Beat Run · {rd} · {target}").font = sub_font
+            headers = ["Party Name", "Visit Time", "Order Collected", "Payment Collected", "Type"]
+            for ci, h in enumerate(headers, start=1):
+                c = ws.cell(row=4, column=ci, value=h)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center")
+            for ri, r in enumerate(rows, start=5):
+                for ci, h in enumerate(headers, start=1):
+                    ws.cell(row=ri, column=ci, value=r.get(h, ""))
+            if not rows:
+                ws.cell(row=5, column=1, value="No visits recorded for this day.").font = sub_font
+            for col_cells in ws.columns:
+                try:
+                    length = max(len(str(cell.value)) for cell in col_cells if cell.value is not None)
+                    ws.column_dimensions[col_cells[0].column_letter].width = min(length + 2, 50)
+                except ValueError:
+                    pass
+            out = io.BytesIO()
+            wb.save(out)
+            out.seek(0)
+            return StreamingResponse(
+                out,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={fname_stem}.xlsx"},
+            )
+
+        # PDF (reportlab)
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import (
+            SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        )
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            leftMargin=15 * mm, rightMargin=15 * mm,
+            topMargin=15 * mm, bottomMargin=15 * mm,
+            title=f"Beat Run {rd} — {target}",
+        )
+        styles = getSampleStyleSheet()
+        h1_style = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#0F1B4C"), fontSize=16, spaceAfter=2)
+        sub_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=colors.HexColor("#2563EB"), fontSize=11, spaceAfter=2)
+        meta_style = ParagraphStyle("meta", parent=styles["Normal"], textColor=colors.HexColor("#64748B"), fontSize=9, spaceAfter=10)
+
+        story = []
+        story.append(Paragraph(company_header or "FLOWRA Customer", h1_style))
+        story.append(Paragraph("FLOWRA INSIGHTS · Beat Run Report", sub_style))
+        story.append(Paragraph(f"Date: {rd} &nbsp;·&nbsp; Salesman: {target} &nbsp;·&nbsp; Total Visits: {len(rows)}", meta_style))
+        story.append(Spacer(1, 4 * mm))
+
+        if rows:
+            data = [["Party Name", "Visit Time", "Order", "Payment", "Type"]]
+            for r in rows:
+                data.append([
+                    r["Party Name"], r["Visit Time"],
+                    r["Order Collected"], r["Payment Collected"], r["Type"],
+                ])
+            tbl = Table(data, colWidths=[70 * mm, 22 * mm, 22 * mm, 28 * mm, 38 * mm], repeatRows=1)
+            tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 10),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 1), (-1, -1), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F0F4FF")]),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.append(tbl)
+        else:
+            story.append(Paragraph("No visits recorded for this day.", meta_style))
+
+        story.append(Spacer(1, 8 * mm))
+        story.append(Paragraph(
+            f"Generated by FLOWRA Insights on {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')}.",
+            meta_style
+        ))
+        doc.build(story)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={fname_stem}.pdf"},
+        )
+    except Exception as e:
+        logger.error(f"beat-run/day-report/export error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
@@ -1266,7 +1593,8 @@ def _prev_month(month: str) -> str:
 
 
 def _summarize_runs(runs: list) -> dict:
-    """Aggregate a list of beat_runs docs → totals (planned, visited, unplanned, coverage_pct)."""
+    """Aggregate a list of beat_runs docs → totals (planned, visited, unplanned, coverage_pct,
+    orders_collected, payments_collected, order_pct, payment_pct)."""
     planned = sum(len(r.get("planned", []) or []) for r in runs)
     visited = sum(
         sum(1 for p in (r.get("planned") or []) if p.get("visited_at"))
@@ -1274,12 +1602,36 @@ def _summarize_runs(runs: list) -> dict:
     )
     unplanned = sum(len(r.get("unplanned", []) or []) for r in runs)
     coverage_pct = round((visited / planned * 100), 1) if planned else 0.0
+    # iter-110: order / payment yes-no aggregation across planned AND unplanned visits.
+    orders = 0
+    payments = 0
+    completed_visits = 0
+    for r in runs:
+        for p in (r.get("planned") or []):
+            if p.get("visited_at"):
+                completed_visits += 1
+                if p.get("order_collected"):
+                    orders += 1
+                if p.get("payment_collected"):
+                    payments += 1
+        for u in (r.get("unplanned") or []):
+            completed_visits += 1
+            if u.get("order_collected"):
+                orders += 1
+            if u.get("payment_collected"):
+                payments += 1
+    order_pct = round(orders / completed_visits * 100, 1) if completed_visits else 0.0
+    payment_pct = round(payments / completed_visits * 100, 1) if completed_visits else 0.0
     return {
         "planned": planned,
         "visited": visited,
         "unplanned": unplanned,
         "coverage_pct": coverage_pct,
         "run_days": len(runs),
+        "orders_collected": orders,
+        "payments_collected": payments,
+        "order_pct": order_pct,
+        "payment_pct": payment_pct,
     }
 
 
@@ -1478,6 +1830,10 @@ async def beat_run_monthly_report_export(
                     "Type": "Planned",
                     "Visited": "Yes" if p.get("visited_at") else "No",
                     "Visited At (IST)": (p.get("visited_at") or "")[:19].replace("T", " "),
+                    "Order Collected": ("Yes" if p.get("order_collected")
+                                        else ("No" if p.get("order_collected") is False else "—")),
+                    "Payment Collected": ("Yes" if p.get("payment_collected")
+                                          else ("No" if p.get("payment_collected") is False else "—")),
                     "Notes": p.get("notes", ""),
                     "Frequency": p.get("frequency", ""),
                 })
@@ -1487,9 +1843,13 @@ async def beat_run_monthly_report_export(
                     "Day": dow,
                     "Salesman": sm,
                     "Customer": u.get("customer_name", ""),
-                    "Type": "Unplanned",
+                    "Type": "Unplanned (Existing)" if u.get("is_existing_customer") else "Unplanned (New)",
                     "Visited": "Yes",
                     "Visited At (IST)": (u.get("added_at") or "")[:19].replace("T", " "),
+                    "Order Collected": ("Yes" if u.get("order_collected")
+                                        else ("No" if u.get("order_collected") is False else "—")),
+                    "Payment Collected": ("Yes" if u.get("payment_collected")
+                                          else ("No" if u.get("payment_collected") is False else "—")),
                     "Notes": u.get("details", ""),
                     "Frequency": "—",
                 })
@@ -1562,6 +1922,10 @@ async def beat_run_monthly_report_export(
                 "Visited": s["visited"],
                 "Unplanned": s["unplanned"],
                 "Coverage %": s["coverage_pct"],
+                "Orders Collected": s["orders_collected"],
+                "Payments Collected": s["payments_collected"],
+                "Order Conv %": s["order_pct"],
+                "Payment Conv %": s["payment_pct"],
             })
         per_salesman_rows.sort(key=lambda x: (-x["Coverage %"], -x["Visited"]))
 
@@ -1615,11 +1979,16 @@ async def beat_run_monthly_report_export(
             {"Metric": "Visited", "Value": summary["visited"]},
             {"Metric": "Unplanned Visits", "Value": summary["unplanned"]},
             {"Metric": "Coverage %", "Value": summary["coverage_pct"]},
+            {"Metric": "Orders Collected", "Value": summary.get("orders_collected", 0)},
+            {"Metric": "Payments Collected", "Value": summary.get("payments_collected", 0)},
+            {"Metric": "Order Conversion %", "Value": summary.get("order_pct", 0.0)},
+            {"Metric": "Payment Conversion %", "Value": summary.get("payment_pct", 0.0)},
         ])
 
         ws2 = wb.create_sheet("By Salesman")
         _write_sheet(ws2, "Per-Salesman Roll-up",
-                     ["Salesman", "Run Days", "Planned", "Visited", "Unplanned", "Coverage %"],
+                     ["Salesman", "Run Days", "Planned", "Visited", "Unplanned", "Coverage %",
+                      "Orders Collected", "Payments Collected", "Order Conv %", "Payment Conv %"],
                      per_salesman_rows)
 
         ws3 = wb.create_sheet("By Customer")

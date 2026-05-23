@@ -1,0 +1,45 @@
+{
+  "summary": "Iter-110 backend integration + source contracts validated. 31/31 backend tests pass (15 source-asserting + 16 live integration against public REACT_APP_BACKEND_URL). Validated: Employee toggle-active (admin-only, self/cross-tenant blocked, deactivated login returns 'deactivated', email reserved on re-create, re-activate restores login), Salesman /copy-from validations (same src/dest, no-action, source-not-found, non-admin blocked), Beat-Run mandatory Yes/No on visited check-in + add-unplanned, reopen-day admin-only, /my-customers list endpoint, day-report PDF (%PDF magic) + Excel (PK magic) exports, monthly-report Excel with new columns 'Orders Collected', 'Payments Collected', 'Order Conv %', 'Payment Conv %' (introspected via openpyxl). Frontend UI walkthrough BLOCKED — preview pod login form fails to submit due to reCAPTCHA token (Protected by reCAPTCHA shown; no /api/auth/login network call fires after Sign In click). The iter-110 testid contract on ProfileModal / SalesmanPerformance / SalesmanOrderApp could not be visually exercised, but the login-page testids ARE present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Login (preview env)",
+        "issue": "Sign-In button click on /login form does not fire /api/auth/login. 'Protected by reCAPTCHA' badge shown; reCAPTCHA v3 token likely missing/blocked in preview pod. Backend login works via direct curl/requests. Blocks all post-login UI verification (Profile→Employees toggle pills, SalesmanPerformance copy modal, SalesmanOrderApp BeatRunView Yes/No buttons + close-day + history exports).",
+        "affected_selectors": ["[data-testid=\"login-button\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration110_integration.py",
+    "/app/backend/tests/test_iteration110_employee_salesman_beatrun.py",
+    "/app/test_reports/pytest/iteration110_integration.xml",
+    "/app/test_reports/pytest/iteration110_combined.xml"
+  ],
+  "action_items": [
+    "Frontend reCAPTCHA gate: confirm reCAPTCHA v3 site-key is configured for preview env, OR add a dev bypass when REACT_APP_BACKEND_URL contains 'preview.emergentagent.com'. Currently no automated UI test agent (or human in preview) can log in. — backend works fine via API.",
+    "Consider exposing /api/health (200 OK, no auth) — current public-URL warm-up takes ~30s on cold-hit; first login call timed out at 20s before raising timeout to 60s."
+  ],
+  "critical_code_review_comments": [
+    "salesman_orders.beat_run_check_in: when 'visited' flips from False→True via the same endpoint twice, only the second call's order/payment values persist — that is correct, but the audit-log on each Yes/No change is NOT recorded. Consider an audit entry per visit for compliance.",
+    "salesman_orders.beat_run_close_day: NO confirmation prompt on backend side (frontend uses window.confirm only). If a salesman accidentally calls the endpoint via curl/Postman, they need admin to reopen. Acceptable, but worth a UX double-check.",
+    "salesman.copy_salesman_data: when copy_beats=True succeeds and copy_customers=False fails inside the same call, returned summary still shows beats_copied>0. Endpoint is not fully transactional. Acceptable for now (independent collections), but document this.",
+    "auth.toggle_user_active and create_user: 'email already registered' check must also cover deactivated accounts — VERIFIED working via integration test.",
+    "Frontend login flow has hard reCAPTCHA dependency without a fallback for preview/E2E test environments — request E1 to add a Cypress/Playwright-friendly mode (e.g., NEXT_PUBLIC_RECAPTCHA_DISABLED for non-prod hosts)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration110_integration.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "0% (login blocker — could not enter app)"},
+  "test_credentials": "admin/admin123, ravi@test.com/ravi1234 — both verified via direct backend API.",
+  "seed_data_creation": "Test employee created and DELETED in TestEmployeeToggle.test_toggle_creates_then_blocks_login. Cleanup is best-effort; if backend lacks DELETE /api/auth/users/{u} or /api/employees/{u}, deactivated TEST_EMP_<hex>@example.com rows may remain — please verify in MongoDB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend integration covered end-to-end. Frontend UI verification is the remaining gap; if reCAPTCHA gate is bypassed (or you have a way to mint a JWT cookie directly), the test plan in review_request can be exercised verbatim. All iter-110 endpoints respond correctly under public URL. Use timeout>=60s on first call (cold-start).",
+  "rca of the issue": "Frontend UI verification blocker — Preview pod's reCAPTCHA v3 token fetch likely fails (no /api/auth/login network call observed in console after clicking [data-testid=login-button]; form state persists with values intact). Reproduction: navigate to https://tally-report-ai.preview.emergentagent.com/, click 'Login', fill admin/admin123, click 'Sign In' — page stays put. Mitigation: add an env-flag bypass for reCAPTCHA on non-prod hosts (e.g., REACT_APP_RECAPTCHA_SITE_KEY blank → skip token), OR document a programmatic-login route for E2E. Backend is healthy; this is purely an auth-UI integration gap."
+}

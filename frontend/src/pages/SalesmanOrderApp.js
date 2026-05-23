@@ -791,7 +791,14 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
   const [loading, setLoading] = useState(true);
   const [unName, setUnName] = useState('');
   const [unDetails, setUnDetails] = useState('');
+  const [unIsExisting, setUnIsExisting] = useState(false);
+  const [unOrder, setUnOrder] = useState(null);   // bool|null
+  const [unPayment, setUnPayment] = useState(null);
+  const [myCustomers, setMyCustomers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [closing, setClosing] = useState(false);
+  // checkInForm[customer_name] = { open: bool, order: bool|null, payment: bool|null, notes: '' }
+  const [checkInForm, setCheckInForm] = useState({});
 
   const fetchRun = useCallback(async () => {
     setLoading(true);
@@ -805,39 +812,115 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
 
   useEffect(() => { fetchRun(); }, [fetchRun]);
 
-  const checkIn = async (customer_name, visited) => {
-    if (!canCheckIn || run?.locked) return;
+  // Fetch mapped customers ONCE — used for the unplanned-existing combobox.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/api/salesman-orders/my-customers?company_id=${companyId||''}`, { headers: hdr() });
+        if (!cancelled && r.data?.success) {
+          setMyCustomers((r.data.data?.customers || []).map(c => c.customer_name));
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, hdr]);
+
+  const openCheckIn = (customer_name) => {
+    setCheckInForm(prev => ({
+      ...prev,
+      [customer_name]: prev[customer_name]?.open
+        ? { ...prev[customer_name], open: false }
+        : { open: true, order: null, payment: null, notes: '' },
+    }));
+  };
+
+  const submitCheckIn = async (customer_name, alreadyVisited) => {
+    if (!canCheckIn || run?.locked || run?.closed_at) return;
+    // Un-checking a visit — no Yes/No needed.
+    if (alreadyVisited) {
+      try {
+        await axios.post(`${API}/api/salesman-orders/beat-run/check-in`,
+          { customer_name, visited: false, company_id: companyId || '', salesman: salesman || undefined },
+          { headers: hdr() });
+        setCheckInForm(prev => ({ ...prev, [customer_name]: { open: false, order: null, payment: null, notes: '' } }));
+        fetchRun();
+      } catch { toast.error('Check-in failed'); }
+      return;
+    }
+
+    // Marking visited — REQUIRE order + payment Yes/No.
+    const f = checkInForm[customer_name] || {};
+    if (f.order !== true && f.order !== false) { toast.error('Select Order Collected (Yes/No)'); return; }
+    if (f.payment !== true && f.payment !== false) { toast.error('Select Payment Collected (Yes/No)'); return; }
     try {
       await axios.post(`${API}/api/salesman-orders/beat-run/check-in`,
-        { customer_name, visited, company_id: companyId || '', salesman: salesman || undefined },
+        {
+          customer_name, visited: true,
+          order_collected: f.order, payment_collected: f.payment,
+          notes: f.notes || '',
+          company_id: companyId || '', salesman: salesman || undefined,
+        },
         { headers: hdr() });
+      setCheckInForm(prev => ({ ...prev, [customer_name]: { open: false, order: null, payment: null, notes: '' } }));
       fetchRun();
-    } catch { toast.error('Check-in failed'); }
+    } catch (e) { toast.error(e.response?.data?.error || 'Check-in failed'); }
   };
 
   const addUnplanned = async () => {
-    if (!unName.trim()) { toast.error('Enter customer name'); return; }
-    if (run?.locked) return;
+    if (!unName.trim()) { toast.error('Pick or enter customer name'); return; }
+    if (run?.locked || run?.closed_at) return;
+    if (unOrder !== true && unOrder !== false) { toast.error('Select Order Collected (Yes/No)'); return; }
+    if (unPayment !== true && unPayment !== false) { toast.error('Select Payment Collected (Yes/No)'); return; }
     setSubmitting(true);
     try {
       const r = await axios.post(`${API}/api/salesman-orders/beat-run/add-unplanned`,
-        { customer_name: unName.trim(), details: unDetails.trim(), company_id: companyId || '' },
+        {
+          customer_name: unName.trim(),
+          details: unDetails.trim(),
+          is_existing_customer: unIsExisting,
+          order_collected: unOrder,
+          payment_collected: unPayment,
+          company_id: companyId || '',
+        },
         { headers: hdr() });
       if (r.data?.success) {
         toast.success('Unplanned visit added');
-        setUnName(''); setUnDetails('');
+        setUnName(''); setUnDetails(''); setUnIsExisting(false); setUnOrder(null); setUnPayment(null);
         fetchRun();
       } else toast.error(r.data?.error || 'Failed');
-    } catch { toast.error('Failed'); }
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
     setSubmitting(false);
+  };
+
+  const closeDay = async () => {
+    if (run?.closed_at) return;
+    if (!window.confirm('Close today\'s beat run? Once closed no further visits can be added. Your admin can re-open if needed.')) return;
+    setClosing(true);
+    try {
+      const r = await axios.post(`${API}/api/salesman-orders/beat-run/close-day`,
+        { company_id: companyId || '', salesman: salesman || undefined },
+        { headers: hdr() });
+      if (r.data?.success) {
+        toast.success('Day closed');
+        fetchRun();
+      } else toast.error(r.data?.error || 'Failed');
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
+    setClosing(false);
   };
 
   if (loading) return <Loader/>;
   if (!run) return <p className="text-center text-xs text-slate-400 py-6">No data.</p>;
 
+  const isClosed = !!run.closed_at;
   const visitedCount = (run.planned||[]).filter(p => p.visited_at).length;
   const total = (run.planned||[]).length;
   const dateLabel = (() => { try { return new Date(run.run_date).toLocaleDateString('en-IN', {weekday:'long', day:'2-digit', month:'short', year:'numeric'}); } catch { return run.run_date; } })();
+
+  // Existing customers NOT already planned for today — these are the
+  // candidates for "Unplanned (Existing)" — pure UI filter for relevance.
+  const plannedNames = new Set((run.planned||[]).map(p => (p.customer_name||'').toLowerCase()));
+  const existingChoices = (myCustomers || []).filter(c => !plannedNames.has((c||'').toLowerCase()));
 
   return (
     <div className="space-y-3" data-testid="beat-run-view">
@@ -847,6 +930,7 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
           <div className="flex items-center gap-2 mb-0.5">
             <h3 className="text-sm font-semibold text-slate-800">{dateLabel}</h3>
             {run.locked && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center gap-1" data-testid="locked-badge"><Lock size={10}/>LOCKED</span>}
+            {isClosed && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-bold" data-testid="closed-badge">CLOSED</span>}
           </div>
           <p className="text-[11px] text-slate-500">{run.salesman} · {run.day_of_week}</p>
         </div>
@@ -862,19 +946,66 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
         {total === 0 && <p className="text-center text-xs text-slate-400 py-6 italic">No customers scheduled for {run.day_of_week}.</p>}
         {(run.planned||[]).map((p, i) => {
           const done = !!p.visited_at;
+          const formState = checkInForm[p.customer_name] || {};
           return (
-            <button key={i} onClick={() => checkIn(p.customer_name, !done)}
-              disabled={!canCheckIn || run.locked}
-              className={`w-full text-left px-3 py-2.5 border-b border-slate-50 last:border-0 flex items-center gap-2.5 transition ${done?'bg-green-50':'hover:bg-slate-50'} ${(!canCheckIn || run.locked)?'cursor-not-allowed opacity-90':'cursor-pointer'}`}
-              data-testid={`planned-${i}`}>
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition ${done?'bg-green-500 text-white':'border-2 border-slate-300'}`}>
-                {done && <Check size={12}/>}
+            <div key={i} className={`border-b border-slate-50 last:border-0 ${done?'bg-green-50':''}`} data-testid={`planned-${i}`}>
+              <div className="px-3 py-2.5 flex items-center gap-2.5">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition ${done?'bg-green-500 text-white':'border-2 border-slate-300'}`}>
+                  {done && <Check size={12}/>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-xs sm:text-sm ${done?'font-medium text-green-800':'font-medium text-slate-800'} truncate`}>{p.customer_name}</div>
+                  <div className="text-[10px] text-slate-500">
+                    {p.frequency}
+                    {p.visited_at && ` · visited ${new Date(p.visited_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}`}
+                    {p.visited_at && ` · Order: ${p.order_collected===true?'Yes':p.order_collected===false?'No':'—'}`}
+                    {p.visited_at && ` · Payment: ${p.payment_collected===true?'Yes':p.payment_collected===false?'No':'—'}`}
+                  </div>
+                </div>
+                {canCheckIn && !run.locked && !isClosed && (
+                  done
+                    ? <button onClick={() => submitCheckIn(p.customer_name, true)} className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-700 hover:bg-red-100 font-semibold" data-testid={`unvisit-${i}`}>Un-visit</button>
+                    : <button onClick={() => openCheckIn(p.customer_name)} className="text-[10px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 font-semibold" data-testid={`open-checkin-${i}`}>{formState.open ? 'Cancel' : 'Mark Visited'}</button>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className={`text-xs sm:text-sm ${done?'font-medium text-green-800 line-through':'font-medium text-slate-800'} truncate`}>{p.customer_name}</div>
-                <div className="text-[10px] text-slate-500">{p.frequency}{p.visited_at ? ` · visited ${new Date(p.visited_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}` : ''}</div>
-              </div>
-            </button>
+              {/* Mandatory yes/no card */}
+              {!done && formState.open && (
+                <div className="px-3 pb-3 pt-1 bg-blue-50/40 border-t border-blue-100" data-testid={`checkin-form-${i}`}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-600 mb-1">Order Collected? <span className="text-red-500">*</span></p>
+                      <div className="flex gap-1">
+                        <button onClick={() => setCheckInForm(prev => ({ ...prev, [p.customer_name]: { ...prev[p.customer_name], order: true } }))}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded ${formState.order===true?'bg-green-600 text-white':'bg-white border border-slate-300 text-slate-700'}`}
+                          data-testid={`order-yes-${i}`}>Yes</button>
+                        <button onClick={() => setCheckInForm(prev => ({ ...prev, [p.customer_name]: { ...prev[p.customer_name], order: false } }))}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded ${formState.order===false?'bg-red-600 text-white':'bg-white border border-slate-300 text-slate-700'}`}
+                          data-testid={`order-no-${i}`}>No</button>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-600 mb-1">Payment Collected? <span className="text-red-500">*</span></p>
+                      <div className="flex gap-1">
+                        <button onClick={() => setCheckInForm(prev => ({ ...prev, [p.customer_name]: { ...prev[p.customer_name], payment: true } }))}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded ${formState.payment===true?'bg-green-600 text-white':'bg-white border border-slate-300 text-slate-700'}`}
+                          data-testid={`payment-yes-${i}`}>Yes</button>
+                        <button onClick={() => setCheckInForm(prev => ({ ...prev, [p.customer_name]: { ...prev[p.customer_name], payment: false } }))}
+                          className={`flex-1 py-1.5 text-xs font-semibold rounded ${formState.payment===false?'bg-red-600 text-white':'bg-white border border-slate-300 text-slate-700'}`}
+                          data-testid={`payment-no-${i}`}>No</button>
+                      </div>
+                    </div>
+                  </div>
+                  <input value={formState.notes || ''} onChange={(e) => setCheckInForm(prev => ({ ...prev, [p.customer_name]: { ...prev[p.customer_name], notes: e.target.value } }))}
+                    placeholder="Notes (optional)" className="mt-2 w-full px-2 py-1.5 text-xs border border-slate-200 rounded"
+                    data-testid={`checkin-notes-${i}`}/>
+                  <button onClick={() => submitCheckIn(p.customer_name, false)}
+                    className="mt-2 w-full py-1.5 text-xs font-semibold bg-blue-600 text-white rounded hover:bg-blue-700"
+                    data-testid={`confirm-checkin-${i}`}>
+                    Confirm Visit
+                  </button>
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
@@ -891,21 +1022,67 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-medium text-slate-800 truncate">{u.customer_name}</span>
-                  <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold" data-testid="new-tag">NEW</span>
+                  {u.is_existing_customer
+                    ? <span className="text-[8px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">EXISTING</span>
+                    : <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold" data-testid="new-tag">NEW</span>
+                  }
                 </div>
                 {u.details && <p className="text-[10px] text-slate-500 mt-0.5">{u.details}</p>}
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Order: {u.order_collected===true?'Yes':u.order_collected===false?'No':'—'} ·
+                  Payment: {u.payment_collected===true?'Yes':u.payment_collected===false?'No':'—'}
+                </p>
               </div>
               <span className="text-[9px] text-slate-400 flex-shrink-0">{new Date(u.added_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}</span>
             </div>
           </div>
         ))}
-        {canCheckIn && !run.locked && (
+        {canCheckIn && !run.locked && !isClosed && (
           <div className="px-3 py-2.5 bg-slate-50 border-t border-slate-100">
-            <p className="text-[10px] text-slate-500 mb-1.5">Met someone outside the plan? Add quickly — tagged NEW until they appear in Tally.</p>
-            <input value={unName} onChange={e=>setUnName(e.target.value)} placeholder="Customer name *"
-              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5" data-testid="unplanned-name"/>
-            <input value={unDetails} onChange={e=>setUnDetails(e.target.value)} placeholder="Details (phone / location / what they need)"
-              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5" data-testid="unplanned-details"/>
+            <p className="text-[10px] text-slate-500 mb-1.5">Met someone outside the plan? Pick from your mapped customers (existing) or type a new prospect.</p>
+            {/* Mode toggle */}
+            <div className="flex gap-1 mb-2">
+              <button onClick={() => { setUnIsExisting(false); setUnName(''); }}
+                className={`flex-1 px-2 py-1.5 text-[11px] font-semibold rounded ${!unIsExisting?'bg-amber-100 text-amber-800 border border-amber-300':'bg-white border border-slate-200 text-slate-600'}`}
+                data-testid="unplanned-mode-new">New prospect</button>
+              <button onClick={() => { setUnIsExisting(true); setUnName(''); }}
+                className={`flex-1 px-2 py-1.5 text-[11px] font-semibold rounded ${unIsExisting?'bg-blue-100 text-blue-800 border border-blue-300':'bg-white border border-slate-200 text-slate-600'}`}
+                data-testid="unplanned-mode-existing">Existing customer</button>
+            </div>
+            {unIsExisting ? (
+              <>
+                <input list="unplanned-existing-list" value={unName} onChange={(e) => setUnName(e.target.value)}
+                  placeholder={existingChoices.length ? "Pick from your mapped customers" : "No off-plan mapped customers"}
+                  className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5"
+                  data-testid="unplanned-existing-input"/>
+                <datalist id="unplanned-existing-list">
+                  {existingChoices.map(c => <option key={c} value={c}/>)}
+                </datalist>
+              </>
+            ) : (
+              <input value={unName} onChange={(e) => setUnName(e.target.value)} placeholder="Customer name *"
+                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-1.5" data-testid="unplanned-name"/>
+            )}
+            <input value={unDetails} onChange={(e) => setUnDetails(e.target.value)}
+              placeholder={unIsExisting ? "Notes (optional)" : "Details (phone / location / what they need)"}
+              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded mb-2" data-testid="unplanned-details"/>
+            {/* Mandatory Yes/No */}
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <p className="text-[10px] font-semibold text-slate-600 mb-1">Order Collected? <span className="text-red-500">*</span></p>
+                <div className="flex gap-1">
+                  <button onClick={() => setUnOrder(true)} className={`flex-1 py-1.5 text-xs font-semibold rounded ${unOrder===true?'bg-green-600 text-white':'bg-white border border-slate-300 text-slate-700'}`} data-testid="unplanned-order-yes">Yes</button>
+                  <button onClick={() => setUnOrder(false)} className={`flex-1 py-1.5 text-xs font-semibold rounded ${unOrder===false?'bg-red-600 text-white':'bg-white border border-slate-300 text-slate-700'}`} data-testid="unplanned-order-no">No</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-600 mb-1">Payment Collected? <span className="text-red-500">*</span></p>
+                <div className="flex gap-1">
+                  <button onClick={() => setUnPayment(true)} className={`flex-1 py-1.5 text-xs font-semibold rounded ${unPayment===true?'bg-green-600 text-white':'bg-white border border-slate-300 text-slate-700'}`} data-testid="unplanned-payment-yes">Yes</button>
+                  <button onClick={() => setUnPayment(false)} className={`flex-1 py-1.5 text-xs font-semibold rounded ${unPayment===false?'bg-red-600 text-white':'bg-white border border-slate-300 text-slate-700'}`} data-testid="unplanned-payment-no">No</button>
+                </div>
+              </div>
+            </div>
             <button onClick={addUnplanned} disabled={submitting || !unName.trim()}
               className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded font-medium disabled:opacity-50" data-testid="add-unplanned-btn">
               {submitting?'Adding...':'Add Unplanned Visit'}
@@ -913,6 +1090,20 @@ function BeatRunView({ companyId, hdr, runDate = null, salesman = null, canCheck
           </div>
         )}
       </div>
+
+      {/* Close-of-Day button */}
+      {canCheckIn && !run.locked && !isClosed && (
+        <button onClick={closeDay} disabled={closing}
+          className="w-full py-3 text-sm font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 shadow"
+          data-testid="close-day-btn">
+          {closing ? 'Closing…' : 'Close Day'}
+        </button>
+      )}
+      {isClosed && (
+        <p className="text-center text-[11px] text-slate-500 italic">
+          Day closed at {new Date(run.closed_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'})}.
+        </p>
+      )}
     </div>
   );
 }
@@ -922,46 +1113,112 @@ function BeatHistoryView({ companyId, hdr, salesman = null }) {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selRun, setSelRun] = useState(null);
+  // iter-110: date filter + day-report downloads.
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [downloading, setDownloading] = useState(null);
 
   useEffect(() => {
     setLoading(true);
-    const url = `${API}/api/salesman-orders/beat-run/history?company_id=${companyId||''}${salesman?`&salesman=${encodeURIComponent(salesman)}`:''}&limit=60`;
+    let url = `${API}/api/salesman-orders/beat-run/history?company_id=${companyId||''}${salesman?`&salesman=${encodeURIComponent(salesman)}`:''}&limit=180`;
+    if (filterFrom) url += `&from_date=${filterFrom}`;
+    if (filterTo) url += `&to_date=${filterTo}`;
     axios.get(url, { headers: hdr() })
       .then(r => { if (r.data?.success) setRuns(r.data.data.runs||[]); })
       .finally(() => setLoading(false));
-  }, [companyId, hdr, salesman]);
+  }, [companyId, hdr, salesman, filterFrom, filterTo]);
+
+  const downloadDayReport = async (r, fmt) => {
+    setDownloading(`${r.run_date}-${fmt}`);
+    try {
+      const url = `${API}/api/salesman-orders/beat-run/day-report/export?run_date=${r.run_date}&company_id=${companyId||''}${r.salesman?`&salesman=${encodeURIComponent(r.salesman)}`:''}&format=${fmt}`;
+      const res = await axios.get(url, { headers: hdr(), responseType: 'blob' });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const ext = fmt === 'pdf' ? 'pdf' : 'xlsx';
+      link.setAttribute('download', `flowra-beat-run-${r.run_date}-${(r.salesman||'me').replace(/\s+/g, '_')}.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success(`${fmt.toUpperCase()} downloaded`);
+    } catch { toast.error('Download failed'); }
+    setDownloading(null);
+  };
 
   if (loading) return <Loader/>;
   if (selRun) return (
     <div data-testid="history-detail">
       <button onClick={()=>setSelRun(null)} className="text-xs text-blue-600 mb-2 flex items-center gap-1" data-testid="back-to-history"><ChevronLeft size={14}/>Back to history</button>
+      <div className="flex gap-2 mb-2">
+        <button onClick={() => downloadDayReport(selRun, 'pdf')} disabled={downloading===`${selRun.run_date}-pdf`}
+          className="px-3 py-1.5 text-[11px] font-semibold bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50"
+          data-testid="download-day-pdf">
+          {downloading===`${selRun.run_date}-pdf`?'…':'Download PDF'}
+        </button>
+        <button onClick={() => downloadDayReport(selRun, 'excel')} disabled={downloading===`${selRun.run_date}-excel`}
+          className="px-3 py-1.5 text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 disabled:opacity-50"
+          data-testid="download-day-excel">
+          {downloading===`${selRun.run_date}-excel`?'…':'Download Excel'}
+        </button>
+      </div>
       <BeatRunView companyId={companyId} hdr={hdr} runDate={selRun.run_date} salesman={selRun.salesman} canCheckIn={false}/>
     </div>
   );
 
   return (
     <div className="space-y-2" data-testid="beat-history-view">
-      {runs.length === 0 && <p className="text-center text-xs text-slate-400 py-8 italic">No past beat runs yet.</p>}
+      {/* Date filter */}
+      <div className="bg-white rounded-lg border border-slate-200 p-2.5 flex flex-wrap items-end gap-2" data-testid="history-date-filter">
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">From</label>
+          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
+            className="px-2 py-1 text-xs border border-slate-200 rounded" data-testid="history-from-date"/>
+        </div>
+        <div>
+          <label className="block text-[10px] text-slate-500 mb-0.5">To</label>
+          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
+            className="px-2 py-1 text-xs border border-slate-200 rounded" data-testid="history-to-date"/>
+        </div>
+        {(filterFrom || filterTo) && (
+          <button onClick={() => { setFilterFrom(''); setFilterTo(''); }}
+            className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-700"
+            data-testid="history-clear-filter">Clear</button>
+        )}
+      </div>
+      {runs.length === 0 && <p className="text-center text-xs text-slate-400 py-8 italic">No past beat runs in this range.</p>}
       {runs.map((r, i) => {
         const date = (() => { try { return new Date(r.run_date).toLocaleDateString('en-IN', {weekday:'short', day:'2-digit', month:'short', year:'numeric'}); } catch { return r.run_date; } })();
         const pct = r.planned_count ? Math.round(r.visited_count / r.planned_count * 100) : 0;
         return (
-          <button key={i} onClick={()=>setSelRun(r)} className="w-full text-left bg-white rounded-lg border border-slate-200 p-3 hover:border-blue-300 transition" data-testid={`history-row-${i}`}>
+          <div key={i} className="bg-white rounded-lg border border-slate-200 p-3 hover:border-blue-300 transition" data-testid={`history-row-${i}`}>
             <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
+              <button onClick={()=>setSelRun(r)} className="flex-1 text-left min-w-0">
                 <div className="flex items-center gap-1.5 mb-0.5">
                   <span className="text-xs font-semibold text-slate-800">{date}</span>
                   {r.locked && <span className="text-[8px] px-1 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold flex items-center gap-0.5"><Lock size={9}/>LOCKED</span>}
+                  {r.closed_at && <span className="text-[8px] px-1 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">CLOSED</span>}
                 </div>
                 {salesman === null && <p className="text-[10px] text-slate-500">{r.salesman}</p>}
                 <p className="text-[10px] text-slate-500">{r.visited_count}/{r.planned_count} planned · {r.unplanned_count} unplanned</p>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <div className={`text-base font-bold ${pct>=80?'text-green-600':pct>=50?'text-blue-600':pct>=20?'text-amber-600':'text-slate-400'}`}>{pct}%</div>
-                <div className="text-[9px] text-slate-400">coverage</div>
+              </button>
+              <div className="text-right flex-shrink-0 flex items-center gap-2">
+                <div>
+                  <div className={`text-base font-bold ${pct>=80?'text-green-600':pct>=50?'text-blue-600':pct>=20?'text-amber-600':'text-slate-400'}`}>{pct}%</div>
+                  <div className="text-[9px] text-slate-400">coverage</div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); downloadDayReport(r, 'pdf'); }} disabled={downloading===`${r.run_date}-pdf`}
+                    className="px-2 py-0.5 text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50"
+                    data-testid={`history-pdf-${i}`}>PDF</button>
+                  <button onClick={(e) => { e.stopPropagation(); downloadDayReport(r, 'excel'); }} disabled={downloading===`${r.run_date}-excel`}
+                    className="px-2 py-0.5 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 disabled:opacity-50"
+                    data-testid={`history-excel-${i}`}>Excel</button>
+                </div>
               </div>
             </div>
-          </button>
+          </div>
         );
       })}
     </div>

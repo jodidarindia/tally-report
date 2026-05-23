@@ -46,10 +46,13 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         # Check if admin is active
         if user.get("role") == "admin" and not user.get("active", True):
             return APIResponse(success=False, error="Your account has been deactivated. Contact FLOWRA admin.")
+        # NEW (iter-110): block deactivated employees / salesmen / dispatch.
+        if user.get("role") in ("employee", "dispatch", "salesman") and not user.get("active", True):
+            return APIResponse(success=False, error="Your account has been deactivated. Contact your admin.")
         if user.get("role") in ("employee", "dispatch", "salesman"):
             admin = await db.users.find_one(
                 {"tenant_id": user.get("tenant_id"), "role": "admin"},
-                {"_id": 0, "active": 1, "subscription_start": 1, "subscription_months": 1}
+                {"_id": 0, "active": 1, "subscription_start": 1, "subscription_months": 1, "username": 1, "name": 1}
             )
             if admin and not admin.get("active", True):
                 return APIResponse(success=False, error="Your organization's account has been deactivated.")
@@ -76,7 +79,35 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
             sub_expires_iso = subscription_expires_at(sub_start, sub_months)
 
         if sub_expired and user.get("role") != "super_admin":
-            return APIResponse(success=False, error="Your subscription has expired. Please renew to continue using FLOWRA. Contact support@flowra.in")
+            # iter-110: friendlier message for employees vs admin.
+            if user.get("role") == "admin":
+                exp_disp = ""
+                try:
+                    if sub_expires_iso:
+                        exp_disp = datetime.fromisoformat(sub_expires_iso.replace("Z", "+00:00")).strftime("%d %b %Y")
+                except Exception:
+                    exp_disp = ""
+                msg = (
+                    f"Your subscription has expired{f' on {exp_disp}' if exp_disp else ''}. "
+                    f"Renew from Profile → Subscription, or write to support@flowralive.in. "
+                    f"Your team's access will resume immediately on renewal."
+                )
+            else:
+                # Employee / salesman / dispatch — point them at THEIR admin.
+                admin_for_msg = await db.users.find_one(
+                    {"tenant_id": tenant_id, "role": "admin"},
+                    {"_id": 0, "username": 1, "name": 1, "company_name": 1}
+                ) if tenant_id else None
+                admin_label = ""
+                if admin_for_msg:
+                    admin_label = admin_for_msg.get("name") or admin_for_msg.get("username") or ""
+                msg = (
+                    "Your organization's FLOWRA subscription has expired. "
+                    + (f"Please ask your admin ({admin_label}) to renew. " if admin_label
+                       else "Please ask your admin to renew. ")
+                    + "Access will resume automatically once renewed."
+                )
+            return APIResponse(success=False, error=msg)
 
         token = create_access_token(user["username"], user["username"], user["role"], tenant_id)
         response.set_cookie(
@@ -322,6 +353,7 @@ async def create_user(req: CreateUserRequest, request: Request):
             "name": req.name,
             "role": req.role if req.role in ("employee", "dispatch", "salesman") else "employee",
             "tenant_id": tenant_id,
+            "active": True,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(new_user)
@@ -410,6 +442,56 @@ async def delete_user(username: str, request: Request):
 
         return APIResponse(success=True, message=f"User '{username}' removed. Record archived for audit.")
     except Exception as e:
+        return APIResponse(success=False, error=str(e))
+
+
+@router.put("/auth/users/{username}/toggle-active")
+async def toggle_user_active(username: str, request: Request):
+    """Admin toggles an employee/salesman/dispatch user's active flag.
+    Deactivated users cannot log in; their email stays reserved so no
+    new user with the same email can be created."""
+    try:
+        user = await get_current_user(request, db)
+        if not user or user["role"] not in ("admin", "super_admin"):
+            return APIResponse(success=False, error="Admin access required")
+        if username.lower() == (user.get("username") or "").lower():
+            return APIResponse(success=False, error="Cannot toggle your own account")
+
+        target = await db.users.find_one({"username": username}, {"_id": 0})
+        if not target:
+            return APIResponse(success=False, error="User not found")
+
+        # Tenant isolation — admin cannot touch users outside their tenant.
+        if user["role"] == "admin" and target.get("tenant_id") != user.get("tenant_id"):
+            return APIResponse(success=False, error="Cannot modify users outside your organization")
+        # Don't let admins toggle other admins / super-admins.
+        if target.get("role") in ("admin", "super_admin") and user["role"] != "super_admin":
+            return APIResponse(success=False, error="Cannot toggle this account type")
+
+        new_active = not target.get("active", True)
+        await db.users.update_one(
+            {"username": username},
+            {"$set": {
+                "active": new_active,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "active_changed_by": user["username"],
+                "active_changed_at": datetime.now(timezone.utc).isoformat(),
+            }}
+        )
+        await log_audit(
+            "employee_toggle_active", user["username"],
+            tenant_id=user.get("tenant_id", ""),
+            target=username,
+            details=f"active={new_active}, role={target.get('role')}",
+            ip_address=get_client_ip(request)
+        )
+        return APIResponse(
+            success=True,
+            message=f"User '{username}' {'activated' if new_active else 'deactivated'}",
+            data={"username": username, "active": new_active}
+        )
+    except Exception as e:
+        logger.error(f"toggle_user_active error: {e}")
         return APIResponse(success=False, error=str(e))
 
 

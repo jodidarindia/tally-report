@@ -38,6 +38,13 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
   const [currentFy, setCurrentFy] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [exporting, setExporting] = useState(null);
+  // iter-110: Copy-from-another-salesman modal state.
+  const [copyModal, setCopyModal] = useState(null); // { to_salesman }
+  const [copyFrom, setCopyFrom] = useState('');
+  const [copyCustomers, setCopyCustomers] = useState(true);
+  const [copyBeats, setCopyBeats] = useState(true);
+  const [copyReleaseSource, setCopyReleaseSource] = useState(true);
+  const [copyBusy, setCopyBusy] = useState(false);
   // ownership[customer_lower] = owner_salesman_name (FY-scoped)
   const [ownership, setOwnership] = useState({});
 
@@ -168,6 +175,42 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
 
   const resetForm = () => {
     setFormData({ salesman_name: '', phone: '', email: '', monthly_target: '', quarterly_target: '', customers: [], isEdit: false });
+  };
+
+  const openCopyModal = (toSalesman) => {
+    setCopyFrom('');
+    setCopyCustomers(true);
+    setCopyBeats(true);
+    setCopyReleaseSource(true);
+    setCopyModal({ to_salesman: toSalesman });
+  };
+
+  const handleCopySalesmanData = async () => {
+    if (!copyFrom) { toast.error('Pick a source salesman'); return; }
+    if (!copyCustomers && !copyBeats) { toast.error('Tick at least one item to copy'); return; }
+    setCopyBusy(true);
+    try {
+      const res = await axios.post(`${API}/salesman/copy-from`, {
+        from_salesman: copyFrom,
+        to_salesman: copyModal.to_salesman,
+        copy_customers: copyCustomers,
+        copy_beats: copyBeats,
+        release_source: copyReleaseSource,
+        fy: selectedFY || currentFy,
+      });
+      if (res.data?.success) {
+        const d = res.data.data || {};
+        toast.success(`Copied: ${d.customers_copied || 0} customers, ${d.beats_copied || 0} beats${d.source_released ? ' · source released' : ''}`);
+        setCopyModal(null);
+        fetchData();
+      } else {
+        toast.error(res.data?.error || 'Copy failed');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Copy failed');
+    } finally {
+      setCopyBusy(false);
+    }
   };
 
   const topPerformer = performance.length > 0
@@ -529,6 +572,14 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                   </div>
                   <div className="flex gap-2">
                     <button
+                      onClick={() => openCopyModal(person.salesman_name)}
+                      className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-lg hover:bg-blue-50 hover:text-blue-700 text-slate-700 transition-colors"
+                      title="Copy customer mapping and/or beat plan from another salesman"
+                      data-testid={`copy-from-${idx}`}
+                    >
+                      Copy from…
+                    </button>
+                    <button
                       onClick={() => handleEditSalesman(person)}
                       className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 transition-colors"
                       data-testid={`edit-salesman-${idx}`}
@@ -547,6 +598,61 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* ========== COPY-FROM MODAL ========== */}
+      {copyModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => !copyBusy && setCopyModal(null)} data-testid="copy-from-modal">
+          <div className="bg-white rounded-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-slate-200 p-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Copy data to: {copyModal.to_salesman}</h2>
+                <p className="text-xs text-slate-500 mt-0.5">FY {selectedFY || currentFy}</p>
+              </div>
+              <button onClick={() => setCopyModal(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Source salesman (leaving / replaced)</label>
+                <select
+                  value={copyFrom}
+                  onChange={(e) => setCopyFrom(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                  data-testid="copy-from-source-select"
+                >
+                  <option value="">— pick a source salesman —</option>
+                  {masterList.filter(m => m.salesman_name !== copyModal.to_salesman).map(m => (
+                    <option key={m.salesman_name} value={m.salesman_name}>{m.salesman_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={copyCustomers} onChange={(e) => setCopyCustomers(e.target.checked)} data-testid="copy-customers-checkbox" />
+                  <span>Copy customer mapping for this FY</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={copyBeats} onChange={(e) => setCopyBeats(e.target.checked)} data-testid="copy-beats-checkbox" />
+                  <span>Copy beat plan (weekly schedule)</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer pt-2 border-t border-slate-100">
+                  <input type="checkbox" checked={copyReleaseSource} onChange={(e) => setCopyReleaseSource(e.target.checked)} data-testid="copy-release-source-checkbox" />
+                  <span className="text-amber-700">Release customers from source salesman</span>
+                </label>
+                <p className="text-[11px] text-slate-500 pl-6">
+                  Recommended ON when the source salesman has left.
+                  A customer can only belong to one salesman per FY.
+                </p>
+              </div>
+            </div>
+            <div className="border-t border-slate-200 p-4 flex justify-end gap-2">
+              <button onClick={() => setCopyModal(null)} disabled={copyBusy} className="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+              <button onClick={handleCopySalesmanData} disabled={copyBusy} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg hover:bg-[#1D4ED8] disabled:opacity-50" data-testid="copy-from-confirm">
+                {copyBusy ? 'Copying…' : 'Copy'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
