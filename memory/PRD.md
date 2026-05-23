@@ -9,7 +9,42 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — May 23 2026 (iteration 110) — Employee toggle + Salesman copy + Beat-Run order/payment + Close-Day + Day report
+Five new user-facing features:
+
+### Feature 1 — Employee Activate/Deactivate toggle
+- `PUT /api/auth/users/{username}/toggle-active` (admin-scoped, tenant-isolated, blocks self-toggle, blocks toggling admins).
+- Deactivated employees / salesmen / dispatch are blocked from logging in with *"Your account has been deactivated. Contact your admin."*. Their email stays reserved in `users` collection so admin cannot recreate the same email.
+- ProfileModal → Employees tab: per-row Deactivate/Reactivate button + DEACTIVATED pill on inactive rows.
+- BONUS: when admin's subscription expires, employees now see *"Your organization's FLOWRA subscription has expired. Please ask your admin (NAME) to renew. Access will resume automatically once renewed."* instead of the old generic "Please renew" message intended for admins.
+
+### Feature 2 — Salesman Copy-from-another
+- `POST /api/salesman/copy-from` — admin can copy customer mapping (per FY) and/or beat plan from one salesman to another with optional `release_source` flag (clears the FY mapping on the source — used when a salesman leaves).
+- Single-salesman-per-customer invariant is preserved by the `release_source` flag (avoids the conflict guard in `save_salesman`).
+- UI: "Copy from…" button on every Manage Salesmen row → modal with source dropdown + 3 checkboxes (Customers / Beats / Release source) + FY selector.
+
+### Feature 3 — Beat Run order/payment + Close Day
+- Each `beat_runs.planned[]` and `unplanned[]` entry now carries `order_collected: bool|null` and `payment_collected: bool|null`. Run docs carry `closed_at` and `closed_by`.
+- `POST /beat-run/check-in` and `/beat-run/add-unplanned` REJECT (with structured error) any visited check-in that doesn't include both booleans.
+- New `POST /beat-run/close-day` — salesman locks today's run (server-enforced). New `POST /beat-run/reopen-day` (admin-only with audit log) — admin can undo a premature close.
+- UI rewrite of BeatRunView: per-row "Mark Visited" expands an inline form with Order/Payment Yes-No buttons + optional notes + Confirm Visit. Sticky red "Close Day" button at the bottom.
+
+### Feature 4 — Unplanned visit with existing-customer dropdown
+- BeatRunView Unplanned section now has TWO modes — "New prospect" (free-text) and "Existing customer" (HTML5 `<datalist>` combobox populated from `/api/salesman-orders/my-customers`, scoped to the salesman's mapped customers for the current FY).
+- Unplanned visits carry `is_existing_customer: bool` flag so the reports can distinguish EXISTING from NEW prospects.
+
+### Feature 5 — Per-day PDF/Excel report + Monthly export new columns
+- New `GET /beat-run/day-report/export?run_date=YYYY-MM-DD&format=pdf|excel` — PDF uses FLOWRA Insights branding + tenant admin's company name as title. Columns: Party Name · Visit Time · Order Collected · Payment Collected · Type.
+- Salesman BeatHistoryView: date-range filter + per-row PDF + Excel buttons + same buttons in the run-detail view.
+- Existing `/beat-run/monthly-report/export` Excel extended: Raw Runs sheet gains 2 columns (Order Collected, Payment Collected); By-Salesman sheet gains 4 columns (Orders Collected, Payments Collected, Order Conv %, Payment Conv %); Summary sheet gains 4 new metrics. `_summarize_runs()` helper now computes the order/payment conversion rates.
+
+### Tests
+- `test_iteration110_employee_salesman_beatrun.py` — 15 source-asserting tests, all pass.
+- Testing agent ran 16 live integration tests against the public preview backend: **31/31 pass, zero bugs found**. Tenant isolation verified end-to-end. Frontend UI walkthrough was blocked only by the preview-pod reCAPTCHA (not a code issue); all data-testids present in the rendered DOM.
+- **Total green suite: 77/77 across iter-100..110.**
+
 ## Shipped — May 22 2026 (iteration 109) — v9.8.28 REVERT iter-107 over-escape (P0 regression)
+
 **Field report** (Krishna Sales Corporation, live customer): agent log on v9.8.27 showed every Tally call failing with `Tally error: Could not set 'SVCurrentCompany' to 'Krishna Sales Corporation (from 1-Apr-24)'`. User explicitly noted: "the agent was getting correct company till version 9.8.25, why this error has started?".
 
 **Root cause** (from comparing iter-105 → iter-107 diffs): iter-107 (v9.8.27) escaped `(` → `&#40;`, `)` → `&#41;`, `'` → `&apos;`, `"` → `&quot;` in `_company_tag()` on the assumption that Tally's TDL parser treated them as expression delimiters. Wrong direction. The reality is that Tally Prime 7.0's XML/TDL layer does NOT decode numeric character references (`&#40;`) or `&apos;`/`&quot;` back to literal chars when matching SVCURRENTCOMPANY against the loaded-company catalog. So `Krishna Sales Corporation &#40;from 1-Apr-24&#41;` was being compared LITERALLY against the actual company name `Krishna Sales Corporation (from 1-Apr-24)` and failing. v9.8.25 worked precisely because it sent raw parens (which are legal in XML element content).
