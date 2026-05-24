@@ -206,15 +206,6 @@ const TallySetup = ({ companyId }) => {
                 >
                   <Download size={14} /> Download FLOWRA Tally Sync Agent (.exe)
                 </button>
-                <a
-                  href="/docs/FLOWRA_COMPLETE_DOCUMENTATION.pdf"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-800"
-                  data-testid="agent-docs-link"
-                >
-                  View full setup guide →
-                </a>
               </div>
               <p className="text-[11px] text-slate-500 mt-3">
                 Single-file installer for Windows 10/11. No Python or other
