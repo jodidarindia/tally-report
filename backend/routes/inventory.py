@@ -375,7 +375,13 @@ async def get_inventory_items(
         if category and category != 'all':
             extra["category"] = category
         if stock_group and stock_group != 'all':
-            extra["stock_group"] = stock_group
+            # iter-111: accept a CSV list ('Group A,Group B') for multi-select.
+            # Single-value calls keep their original behaviour (back-compat).
+            groups = [g.strip() for g in stock_group.split(',') if g.strip()]
+            if len(groups) == 1:
+                extra["stock_group"] = groups[0]
+            elif len(groups) > 1:
+                extra["stock_group"] = {"$in": groups}
         if root_stock_group and root_stock_group != 'all':
             # v9.8.6 — Primary (root) Tally stock-group filter. Falls back to
             # exact-match on stock_group if no items have root_stock_group

@@ -9,6 +9,36 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — May 31 2026 (iteration 111-A) — Inventory export 3-bug pack
+
+Three field-reported bugs on the Inventory page, all root-caused and shipped together. Plus a small UX enhancement (exports now respect the active filter).
+
+**Bug 1 — Multi-group filter did nothing for >1 group.**
+`Inventory.js:46` was sending only `selectedGroups[0]` to `/inventory/items` despite the multi-select checkboxes. Backend `/inventory/items` accepted a single `stock_group` string only.
+- Backend: `stock_group` query param now accepts a CSV (`stock_group=A,B,C`) → built as `{"$in": [...]}` when 2+ groups. Single-value behaviour preserved.
+- Frontend: `selectedGroups.join(',')`.
+
+**Bug 2 — CSV export returned an empty file.**
+`services/export_service.export_to_csv()` wrapped a `BytesIO` in `TextIOWrapper`. On function return, GC closed the underlying `BytesIO` before FastAPI could stream the bytes. Wrote a deterministic version: build the CSV as a `StringIO`, then `getvalue().encode('utf-8-sig')` into a fresh `BytesIO`. The BOM also helps Excel auto-detect UTF-8.
+
+**Bug 3 — Excel button saved file with `.excel` extension.**
+`Inventory.js` was using `inventory_report.${format}` — `format='excel'` produced `inventory_report.excel`. Also surfaced a latent backend crash: `openpyxl` rejected the `aliases` field (a list) with *"Cannot convert [] to Excel"*, so the XLSX byte stream was actually the JSON error blob renamed.
+- Frontend: `extMap = { csv: 'csv', excel: 'xlsx', pdf: 'pdf' }` → correct file extension on save.
+- Backend: `export_to_excel` now coerces lists/tuples → comma-joined strings, dicts → `str(value)`. Numeric alignment preserved.
+
+**Enhancement — exports honour the current filter.**
+`/reports/export` now accepts a `filters` body block with `category / stock_group (CSV) / root_stock_group / abc / search`. The same Mongo query that drives the on-screen list is applied to the export. Filename no longer claims `_FY` since the rolling-window work hasn't landed yet, but the data shown ⇆ data exported invariant now holds.
+
+**End-to-end smoke** (live preview backend, demo tenant):
+- `/api/inventory/items?stock_group=Belts` → 1 item, group=Belts ✓
+- `?stock_group=Belts,Batteries` → 3 items, groups={Belts,Batteries} ✓
+- `?stock_group=Belts,Batteries,Bearings` → 4 items, 3 distinct groups ✓
+- `/reports/export?format=excel` filtered → 3-row XLSX, header row + 2 group values ✓
+- `/reports/export?format=csv` filtered → 1-row CSV with BOM ✓
+- `/reports/export?format=pdf` → 93 KB, starts with `%PDF` ✓
+
+**Tests**: `test_iteration111_inventory_export.py` — 8 source + integration tests, all pass. Total green suite: **101/101 across iter-100..111**.
+
 ## Shipped — May 23 2026 (iteration 110) — Employee toggle + Salesman copy + Beat-Run order/payment + Close-Day + Day report
 Five new user-facing features:
 

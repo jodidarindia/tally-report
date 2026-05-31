@@ -24,18 +24,24 @@ class ExportService:
 
     @staticmethod
     def export_to_csv(data: List[Dict[str, Any]], filename: str = "report.csv") -> io.BytesIO:
-        output = io.BytesIO()
-        output_wrapper = io.TextIOWrapper(output, encoding='utf-8', newline='')
+        # iter-111: previously used io.TextIOWrapper(BytesIO()) — that pattern is
+        # unreliable across Python versions because the wrapper is GC'd on
+        # return and may close its underlying BytesIO before FastAPI streams it,
+        # producing an empty download. The deterministic fix is to build the
+        # CSV as a text string first, then return its UTF-8-encoded bytes.
+        text_buf = io.StringIO(newline='')
         if not data:
-            return output
+            return io.BytesIO(b"")
         fieldnames = list(data[0].keys())
-        writer = csv.DictWriter(output_wrapper, fieldnames=fieldnames)
+        writer = csv.DictWriter(text_buf, fieldnames=fieldnames)
         writer.writeheader()
         for row in data:
-            writer.writerow(row)
-        output_wrapper.flush()
-        output.seek(0)
-        return output
+            # csv.DictWriter expects scalars — coerce dict / list values to str.
+            safe_row = {k: (v if isinstance(v, (str, int, float, bool)) or v is None else str(v))
+                        for k, v in row.items()}
+            writer.writerow(safe_row)
+        encoded = text_buf.getvalue().encode('utf-8-sig')  # BOM helps Excel auto-detect UTF-8
+        return io.BytesIO(encoded)
 
     @staticmethod
     def export_to_excel(data: List[Dict[str, Any]], report_type: str = "Report") -> io.BytesIO:
@@ -64,8 +70,20 @@ class ExportService:
         for row_idx, row_data in enumerate(data, start=2):
             for col_idx, header in enumerate(headers, start=1):
                 value = row_data.get(header, "")
-                cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                if isinstance(value, (int, float)):
+                # iter-111: openpyxl rejects list/dict cell values with
+                # "Cannot convert [] to Excel". Coerce non-scalars to a
+                # readable string so the export never bombs on aliases /
+                # nested objects.
+                if value is None:
+                    safe_value = ""
+                elif isinstance(value, (str, int, float, bool)):
+                    safe_value = value
+                elif isinstance(value, (list, tuple)):
+                    safe_value = ", ".join(str(v) for v in value)
+                else:
+                    safe_value = str(value)
+                cell = ws.cell(row=row_idx, column=col_idx, value=safe_value)
+                if isinstance(safe_value, (int, float)):
                     cell.alignment = Alignment(horizontal="right")
                 # Alternating stripe
                 if row_idx % 2 == 0:

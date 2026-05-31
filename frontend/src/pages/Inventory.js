@@ -43,7 +43,7 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
     setLoading(true);
     try {
       const params = {};
-      if (selectedGroups.length > 0) params.stock_group = selectedGroups[0];
+      if (selectedGroups.length > 0) params.stock_group = selectedGroups.join(',');
       if (selectedRootGroup && selectedRootGroup !== 'all') params.root_stock_group = selectedRootGroup;
       if (selectedFY) params.fy = selectedFY;
       const response = await axios.get(`${API}/inventory/items`, { params });
@@ -67,21 +67,35 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
 
   const exportData = async (format) => {
     try {
+      // iter-111: pass current UI filters so the file matches what the user sees,
+      // and map format → real file extension (csv|xlsx|pdf) so the browser
+      // saves with the correct suffix (Excel was being saved as ".excel").
+      const filters = {
+        category: selectedCategory !== 'all' ? selectedCategory : undefined,
+        stock_group: selectedGroups.length > 0 ? selectedGroups.join(',') : undefined,
+        root_stock_group: selectedRootGroup !== 'all' ? selectedRootGroup : undefined,
+        abc: abcFilter !== 'all' ? abcFilter : undefined,
+        search: (searchTerm || '').trim() || undefined,
+      };
       const response = await axios.post(
         `${API}/reports/export`,
-        { report_type: 'inventory', format },
+        { report_type: 'inventory', format, filters },
         { responseType: 'blob' }
       );
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `inventory_report.${format}`);
+      const extMap = { csv: 'csv', excel: 'xlsx', pdf: 'pdf' };
+      const ext = extMap[format] || format;
+      link.setAttribute('download', `inventory_report.${ext}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error exporting data:', error);
+      toast.error('Export failed');
     }
   };
 

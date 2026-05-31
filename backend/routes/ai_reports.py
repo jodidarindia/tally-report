@@ -126,8 +126,52 @@ async def export_report(request: Request):
         report_type = body.get("report_type", "")
         export_format = body.get("format", "pdf")
 
+        # iter-111: apply the same UI filters as /inventory/items so the
+        # downloaded file matches what the user sees on screen.
+        filters = body.get("filters") or {}
+
         if report_type == "inventory":
-            data = await db.inventory_items.find(q, {"_id": 0}).to_list(1000)
+            extra = dict(q)
+            cat = (filters.get("category") or "").strip()
+            if cat and cat != "all":
+                extra["category"] = cat
+
+            # stock_group can be a CSV string (multi-select) or a single string.
+            sg = filters.get("stock_group")
+            if isinstance(sg, list):
+                groups = [str(g).strip() for g in sg if str(g).strip()]
+            elif isinstance(sg, str) and sg.strip() and sg.strip() != "all":
+                groups = [g.strip() for g in sg.split(",") if g.strip()]
+            else:
+                groups = []
+            if len(groups) == 1:
+                extra["stock_group"] = groups[0]
+            elif len(groups) > 1:
+                extra["stock_group"] = {"$in": groups}
+
+            rsg = (filters.get("root_stock_group") or "").strip()
+            if rsg and rsg != "all":
+                extra["root_stock_group"] = rsg.lower()
+
+            abc = (filters.get("abc") or "").strip().upper()
+            if abc in ("A", "B", "C", "D"):
+                extra["abc_category"] = abc
+
+            search = (filters.get("search") or "").strip()
+            if search:
+                try:
+                    from utils import build_fuzzy_regex
+                    fuzzy = build_fuzzy_regex(search)
+                except Exception:
+                    fuzzy = None
+                if fuzzy:
+                    extra["$or"] = [
+                        {"item_name": {"$regex": fuzzy, "$options": "i"}},
+                        {"part_number": {"$regex": fuzzy, "$options": "i"}},
+                        {"aliases": {"$regex": fuzzy, "$options": "i"}},
+                    ]
+
+            data = await db.inventory_items.find(extra, {"_id": 0}).to_list(10000)
             report_title = "Inventory Report"
         elif report_type == "sales":
             data = await db.sales_vouchers.find(q, {"_id": 0}).to_list(1000)
