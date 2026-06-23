@@ -2,7 +2,7 @@
 
 Outputs (saved to /app/frontend/public/cards/):
   flowra_card_front.png   — Ankit Sarawgi side, print-ready 300 DPI + bleed
-  flowra_card_back.png    — Brand panel side
+  flowra_card_back.png    — Brand panel with WEBSITE + WHATSAPP QR codes
   flowra_card_combined.png — Side-by-side preview for screen viewing
   flowra_card_print.pdf   — Both sides on a single A4, ready for printer
 
@@ -10,9 +10,15 @@ Card spec (Indian standard):
   Trim size: 90 × 54 mm  (1063 × 638 px @ 300 DPI)
   Bleed:     3 mm all sides → canvas 96 × 60 mm (1134 × 709 px)
   Safe area: 3 mm inside trim (so content stays ≥6 mm from canvas edge)
+
+QR targets:
+  Website:  https://flowralive.in
+  WhatsApp: https://wa.me/918120470018?text=Hi%20FLOWRA%20team
 """
 from pathlib import Path
 
+import qrcode
+from qrcode.constants import ERROR_CORRECT_M
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -217,66 +223,130 @@ def render_front(path):
     img.save(path, dpi=(DPI, DPI), quality=95)
 
 
-# ───── BACK SIDE — Brand panel ────────────────────────────────────────────
+# ───── QR helper ──────────────────────────────────────────────────────────
+def make_qr(data, *, box_px, fill=(15, 27, 76), bg=(255, 255, 255), border=2):
+    """Build a high-contrast QR at exactly `box_px` square."""
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=ERROR_CORRECT_M,
+        box_size=10,
+        border=border,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color=fill, back_color=bg).convert("RGB")
+    return img.resize((box_px, box_px), Image.NEAREST)
+
+
+# ───── BACK SIDE — Brand panel with QR codes ──────────────────────────────
 def render_back(path):
     img = Image.new("RGB", (CANVAS_W, CANVAS_H), NAVY)
     d = ImageDraw.Draw(img)
 
-    # Diagonal blue strip (subtle)
-    d.polygon([(0, CANVAS_H * 0.55),
-               (CANVAS_W, CANVAS_H * 0.30),
-               (CANVAS_W, CANVAS_H * 0.42),
-               (0, CANVAS_H * 0.67)],
-              fill=(25, 50, 115))
-
-    # Dotted texture (sparse)
+    # Subtle dotted texture
+    texture = Image.new("RGBA", (CANVAS_W, CANVAS_H), (15, 27, 76, 0))
+    td = ImageDraw.Draw(texture)
     for gy in range(BLEED + int(6 * MM), CANVAS_H - BLEED, int(7 * MM)):
         for gx in range(BLEED + int(6 * MM), CANVAS_W - BLEED, int(7 * MM)):
-            d.ellipse((gx, gy, gx + 2, gy + 2),
-                      fill=(255, 255, 255))
-    # Slight darkening overlay
-    overlay = Image.new("RGBA", img.size, (15, 27, 76, 215))
-    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+            td.ellipse((gx, gy, gx + 2, gy + 2), fill=(255, 255, 255, 40))
+    img = Image.alpha_composite(img.convert("RGBA"), texture).convert("RGB")
     d = ImageDraw.Draw(img)
 
-    # Central FLOWRA wordmark
+    # ─── Top: FLOWRA wordmark ───────────────────────────────────────────
     word = "FLOWRA"
-    wm_size = int(CANVAS_W * 0.11)
+    wm_size = int(CANVAS_W * 0.072)
     f = font(wm_size, "bold")
     spacing = int(wm_size * 0.08)
     total_w = sum(text_width(ch, f) + spacing for ch in word) + int(wm_size * 0.4)
-    cx = (CANVAS_W - total_w) // 2
-    cy = int(CANVAS_H * 0.32)
+    cx0 = (CANVAS_W - total_w) // 2
+    cy0 = BLEED + int(3.5 * MM)
+    cx = cx0
     for ch in word:
-        text(d, (cx, cy), ch, fnt=f, color=PAPER)
+        text(d, (cx, cy0), ch, fnt=f, color=PAPER)
         cx += text_width(ch, f) + spacing
     dot_r = int(wm_size * 0.10)
-    d.ellipse((cx + spacing, cy + int(wm_size * 0.78) - dot_r,
-               cx + spacing + dot_r * 2, cy + int(wm_size * 0.78) + dot_r),
+    d.ellipse((cx + spacing, cy0 + int(wm_size * 0.78) - dot_r,
+               cx + spacing + dot_r * 2, cy0 + int(wm_size * 0.78) + dot_r),
               fill=AMBER)
 
-    # INSIGHTS sub-word
-    sub_font = font(int(wm_size * 0.38), "bold")
+    # INSIGHTS sub
+    sub_font = font(int(wm_size * 0.42), "bold")
     sub = "INSIGHTS"
     sub_w = text_width(sub, sub_font)
-    text(d, ((CANVAS_W - sub_w) // 2, cy + int(wm_size * 1.1)),
+    text(d, ((CANVAS_W - sub_w) // 2, cy0 + int(wm_size * 1.12)),
          sub, fnt=sub_font, color=(180, 200, 255))
 
-    # Tagline
-    tag = "Organize. Automate. Accelerate."
-    tagf = font(int(CANVAS_W * 0.038), "italic")
-    tw = text_width(tag, tagf)
-    text(d, ((CANVAS_W - tw) // 2, cy + int(wm_size * 1.85)),
-         tag, fnt=tagf, color=(200, 215, 255))
+    # Slim divider
+    div_y = cy0 + int(wm_size * 1.85)
+    d.rectangle(((CANVAS_W - int(28 * MM)) // 2, div_y,
+                 (CANVAS_W + int(28 * MM)) // 2, div_y + 2), fill=AMBER)
 
-    # Bottom amber strip
-    strip_h = int(7 * MM)
+    # ─── Two QR codes side by side ───────────────────────────────────────
+    qr_box_mm = 16.0          # 16 mm square per QR — comfortable scan size, fits vertically
+    qr_box_px = int(qr_box_mm * MM)
+    gap_between = int(10 * MM)
+
+    qr_y_top = div_y + int(4.0 * MM)
+    total_qrs_w = qr_box_px * 2 + gap_between
+    qr_x_left = (CANVAS_W - total_qrs_w) // 2
+    qr_x_right = qr_x_left + qr_box_px + gap_between
+
+    # Label heights (so the pill includes the label area + breathing room)
+    lbl_main_size = int(CANVAS_W * 0.027)
+    lbl_sub_size = int(CANVAS_W * 0.024)
+    label_block_h = lbl_main_size + lbl_sub_size + int(2.5 * MM)
+    pad = int(1.5 * MM)
+
+    # White rounded pill behind each QR + label for max scan contrast
+    for qx in (qr_x_left, qr_x_right):
+        d.rounded_rectangle(
+            (qx - pad, qr_y_top - pad,
+             qx + qr_box_px + pad,
+             qr_y_top + qr_box_px + pad + label_block_h),
+            radius=int(2 * MM),
+            fill=PAPER,
+        )
+
+    # Website QR
+    web_qr = make_qr("https://flowralive.in", box_px=qr_box_px,
+                     fill=(15, 27, 76), bg=(255, 255, 255), border=1)
+    img.paste(web_qr, (qr_x_left, qr_y_top))
+
+    # WhatsApp QR (deep link to chat with pre-filled message)
+    wa_qr = make_qr(
+        "https://wa.me/918120470018?text=Hi%20FLOWRA%20team",
+        box_px=qr_box_px,
+        fill=(15, 27, 76), bg=(255, 255, 255), border=1,
+    )
+    img.paste(wa_qr, (qr_x_right, qr_y_top))
+
+    # Labels under each QR
+    d = ImageDraw.Draw(img)
+    lbl_font = font(lbl_main_size, "bold")
+    lbl_sub_font = font(lbl_sub_size, "regular")
+
+    def _label(qx, line1, line2):
+        l1w = text_width(line1, lbl_font)
+        text(d, (qx + (qr_box_px - l1w) // 2,
+                 qr_y_top + qr_box_px + int(0.6 * MM)),
+             line1, fnt=lbl_font, color=NAVY)
+        l2w = text_width(line2, lbl_sub_font)
+        text(d, (qx + (qr_box_px - l2w) // 2,
+                 qr_y_top + qr_box_px + int(0.6 * MM) + lbl_main_size + int(0.4 * MM)),
+             line2, fnt=lbl_sub_font, color=GREY)
+
+    _label(qr_x_left, "WEBSITE", "flowralive.in")
+    _label(qr_x_right, "WHATSAPP", "+91 81204 70018")
+
+    # ─── Bottom: amber strip ────────────────────────────────────────────
+    strip_h = int(6 * MM)
     d.rectangle((0, CANVAS_H - BLEED - strip_h, CANVAS_W, CANVAS_H - BLEED),
                 fill=AMBER)
-    foot_font = font(int(CANVAS_W * 0.034), "bold")
-    foot = "Built for Indian SMEs  ·  flowralive.in"
+    foot_font = font(int(CANVAS_W * 0.026), "bold")
+    foot = "Organize. Automate. Accelerate.  ·  Built for Indian SMEs"
     fw = text_width(foot, foot_font)
-    text(d, ((CANVAS_W - fw) // 2, CANVAS_H - BLEED - strip_h + int(1.8 * MM)),
+    text(d, ((CANVAS_W - fw) // 2,
+             CANVAS_H - BLEED - strip_h + int(1.5 * MM)),
          foot, fnt=foot_font, color=NAVY)
 
     img.save(path, dpi=(DPI, DPI), quality=95)
