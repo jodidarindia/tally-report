@@ -163,9 +163,10 @@ def render_front(path):
                wm_y + int(wm_size * 0.78) + dot_r),
               fill=AMBER)
 
-    # "INSIGHTS" tagword
-    text(d, (wm_x, wm_y + wm_size + int(2 * MM)), "INSIGHTS",
-         fnt=font(int(wm_size * 0.36), "bold"), color=(180, 200, 255))
+    # "INSIGHTS · TASKS · LOYALTY" tagword
+    text(d, (wm_x, wm_y + wm_size + int(2 * MM)),
+         "INSIGHTS · TASKS · LOYALTY",
+         fnt=font(int(wm_size * 0.27), "bold"), color=(180, 200, 255))
 
     # Vertical brand tagline at the bottom of the navy panel
     tag = "Organize. Automate."
@@ -194,10 +195,15 @@ def render_front(path):
     d.rectangle((cx, cy, cx + int(20 * MM), cy + 2), fill=AMBER)
     cy += int(4 * MM)
 
-    # Core team line (small italic)
-    text(d, (cx, cy), "Core Team: Punit · Kritika",
-         fnt=font(int(panel_w * 0.05), "italic"), color=GREY)
-    cy += int(panel_w * 0.075)
+    # Core team line — highlighted (Punit & Kritika in bold navy with amber pill prefix)
+    ct_label_font = font(int(panel_w * 0.046), "bold")
+    ct_name_font = font(int(panel_w * 0.058), "bold")
+    text(d, (cx, cy), "CORE TEAM",
+         fnt=ct_label_font, color=BLUE)
+    cy += int(panel_w * 0.058)
+    text(d, (cx, cy), "Punit  ·  Kritika",
+         fnt=ct_name_font, color=NAVY)
+    cy += int(panel_w * 0.10)
 
     # Company line
     text(d, (cx, cy), "Jodidar India  ·  Raipur",
@@ -212,7 +218,7 @@ def render_front(path):
     rows = [
         (icon_phone, "+91 81204 70018"),
         (icon_email, "support@flowralive.in"),
-        (icon_web, "www.flowralive.in"),
+        (icon_web, "flowralive.in"),
     ]
     for icn, val in rows:
         icn(d, cx, cy, size=icon_size, color=BLUE)
@@ -269,9 +275,9 @@ def render_back(path):
                cx + spacing + dot_r * 2, cy0 + int(wm_size * 0.78) + dot_r),
               fill=AMBER)
 
-    # INSIGHTS sub
-    sub_font = font(int(wm_size * 0.42), "bold")
-    sub = "INSIGHTS"
+    # INSIGHTS · TASKS · LOYALTY sub
+    sub_font = font(int(wm_size * 0.32), "bold")
+    sub = "INSIGHTS  ·  TASKS  ·  LOYALTY"
     sub_w = text_width(sub, sub_font)
     text(d, ((CANVAS_W - sub_w) // 2, cy0 + int(wm_size * 1.12)),
          sub, fnt=sub_font, color=(180, 200, 255))
