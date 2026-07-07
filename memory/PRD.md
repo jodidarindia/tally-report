@@ -9,6 +9,35 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Jul 7 2026 (iteration 112) — Agent v9.8.29 LVD persistence + Full-sync short-circuit
+
+Field report from Ankit Sarawgi's 07-Jul-2026 agent log surfaced two pending issues:
+1. `Last voucher date: not detected via $$LastVoucherDate or Day-Book scan — defaulting to today` — repeated on both Krishna Sales Corp and ASA Autotech.
+2. Full sync repeats on every agent restart — no AlterID short-circuit on the full-sync path.
+
+**Root cause of Issue 1**: LVD regex only matched `<DATE>` tags, but Tally Prime 7.0 Day Book *report* export emits `<VCHDATE>` / `<VOUCHERDATE>`. Regex scanned the 1+ MB Day Book XML and found 0 candidates → returned `None` → fell to `date.today()`. All diagnostic logs were at DEBUG level so the user could never see WHY it failed.
+
+**Root cause of Issue 2**: `run_sales_quick_sync()` had an AlterID short-circuit; `run_full_sync()` did not. Every startup ran a full 16-month scan regardless of Tally state.
+
+**Fix bundle (5 parts) — shipped to a NEW folder `desktop-agent/build-kit-2/` to keep the v9.8.28 build folder pristine**:
+1. LVD regex now matches `VCHDATE | VOUCHERDATE | VOUCHDATE | DATE` (case-insensitive) and accepts 6 date formats (`%Y%m%d`, `%d-%m-%Y`, `%d-%b-%Y`, `%Y-%m-%d`, `%d.%m.%Y`, `%d/%m/%Y`).
+2. LVD diagnostic logs promoted from `debug` → `info`. Success line reads `Day-Book scan: 42 voucher dates parsed · tag hits: {'VCHDATE': 42} · latest = 07-Jul-2026`. Failure line surfaces the tag histogram so the NEXT log the user shares tells us the exact tag Tally is emitting.
+3. New sync-state banner at the top of every full-sync cycle:
+   `Sync state: AlterID=628,980 · LVD=07-Jul-2026 · Last full sync = 6.2 h ago`
+4. AlterID short-circuit on `run_full_sync()` — when `stored_alter_id == current_alter_id` AND `last_full_sync < 7 days`, log `[FULL-SKIP] Krishna Sales Corp: AlterID unchanged (628980). Skipping full sync — quick-sync will handle deltas.` and heartbeat the cloud. Zero Tally over-fetch on unchanged data.
+5. Persist `alter_id::{company}`, `lvd::{company}`, `last_full_sync::{company}` in `sync_state_v9.json` at end of every successful full sync. Live-LVD-None now falls back to the cached LVD from sync_state, then `today` only as the last resort.
+
+**Version**: `v9.8.29-lvd-persist` — bumped in `APP_VERSION`, banners, and all 5 agent_version tags. `flowra_gui.py` shows `v9.8.29`. Manifests (`backend/agent_release.json`, `frontend/public/agent-latest.json`) are DELIBERATELY LEFT AT v9.8.28 — user must PyInstaller-rebuild the .exe from `build-kit-2/` first, compute new sha256 + size, THEN bump the manifests.
+
+**Isolation guarantee**: `desktop-agent/build-kit/` (v9.8.28) is byte-identical to production. New test `test_build_kit_v9_8_28_untouched` fails CI if anyone edits the old folder.
+
+**Tests**: `test_iteration112_agent_lvd_persist.py` — 11 tests covering all 5 fixes + build-kit isolation guard + v9.8.28 SVCURRENTCOMPANY raw-parens contract still upheld in v9.8.29. Total green suite: **112/112 across iter-100..112**.
+
+**Expected impact**:
+- Cold restart, unchanged Tally → previously ~10 min / 200 MB XML per company. **Now ~5 s (one AlterID query, skip).**
+- Restart with 3 new vouchers today → **~30 s** (only current month fetched using cached LVD as window start).
+- First-run / no cached state → full sync as before (unchanged behaviour).
+
 ## Shipped — May 31 2026 (iteration 111-A) — Inventory export 3-bug pack
 
 Three field-reported bugs on the Inventory page, all root-caused and shipped together. Plus a small UX enhancement (exports now respect the active filter).

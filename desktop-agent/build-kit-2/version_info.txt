@@ -1,0 +1,39 @@
+# UTF-8
+#
+# Windows file metadata for FlowraTallyAgent.exe
+# Read by PyInstaller and embedded into the binary so Windows shows
+# a proper publisher / version in Properties → Details and in the
+# Add/Remove Programs entry.
+#
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(9, 8, 18, 0),
+    prodvers=(9, 8, 18, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          u'040904B0',
+          [
+            StringStruct(u'CompanyName',      u'JODIDAR INDIA'),
+            StringStruct(u'FileDescription',  u'FLOWRA Tally Sync Agent'),
+            StringStruct(u'FileVersion',      u'9.8.18.0'),
+            StringStruct(u'InternalName',     u'FlowraTallyAgent'),
+            StringStruct(u'LegalCopyright',   u'© 2026 JODIDAR INDIA. FLOWRA is a brand owned by JODIDAR INDIA.'),
+            StringStruct(u'OriginalFilename', u'FlowraTallyAgent.exe'),
+            StringStruct(u'ProductName',      u'FLOWRA Tally Sync Agent'),
+            StringStruct(u'ProductVersion',   u'9.8.18.0'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
