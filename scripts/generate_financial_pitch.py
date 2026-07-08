@@ -1692,13 +1692,493 @@ def build_xlsx():
 # ═══════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════
+if __name__ == "__main__":  # noqa: (defined below)
+    pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PART 3 — 10-PAGE TEASER DECK (cold-email opener)
+# ═══════════════════════════════════════════════════════════════════════════
+
+TEASER_PATH = OUT_DIR / "financial_teaser_flowra.pdf"
+TEASER_TOTAL = [10]  # mutable so header shows N/10
+
+def _teaser_frame(canv, doc):
+    """Header/footer for teaser — same brand but with N/10 counter."""
+    global _TEASER_PAGE
+    try:
+        _TEASER_PAGE += 1
+    except NameError:
+        globals()['_TEASER_PAGE'] = 1
+    n = globals()['_TEASER_PAGE']
+
+    canv.setFillColor(NAVY)
+    canv.rect(0, PAGE_H - 22 * mm, PAGE_W, 22 * mm, fill=1, stroke=0)
+    canv.setFillColor(AMBER)
+    canv.circle(20 * mm, PAGE_H - 11 * mm, 5 * mm, fill=1, stroke=0)
+    canv.setFillColor(NAVY)
+    canv.setFont(FONT_BOLD, 13)
+    canv.drawCentredString(20 * mm, PAGE_H - 12.6 * mm, "F")
+
+    canv.setFillColor(PAPER)
+    canv.setFont(FONT_BOLD, 12)
+    canv.drawString(30 * mm, PAGE_H - 10 * mm, "FLOWRA · Teaser")
+    canv.setFont(FONT_NORMAL, 8)
+    canv.setFillColor(rc.HexColor("#94A3B8"))
+    canv.drawString(30 * mm, PAGE_H - 14.5 * mm, f"{COMPANY} · {DATED} · CONFIDENTIAL")
+
+    canv.setFont(FONT_NORMAL, 9)
+    canv.setFillColor(PAPER)
+    canv.drawRightString(PAGE_W - 15 * mm, PAGE_H - 12 * mm, f"{n} / 10")
+
+    canv.setStrokeColor(rc.HexColor("#E2E8F0"))
+    canv.setLineWidth(0.4)
+    canv.line(15 * mm, 12 * mm, PAGE_W - 15 * mm, 12 * mm)
+    canv.setFont(FONT_NORMAL, 8)
+    canv.setFillColor(GREY)
+    canv.drawString(15 * mm, 7 * mm,
+                     f"{COMPANY}  ·  Full 16-page pitch available on request")
+    canv.drawRightString(PAGE_W - 15 * mm, 7 * mm, TAG)
+
+
+def _teaser_hero_kpi(number, label, color=NAVY):
+    """Oversized single-KPI card for the teaser. Auto-shrinks font when the
+    number string is long (v9.8.30, ₹1.5 Cr, etc.) so it never wraps."""
+    n = str(number)
+    if len(n) <= 4:
+        font_sz = 38
+    elif len(n) <= 7:
+        font_sz = 30
+    else:
+        font_sz = 24
+    return Table(
+        [[Paragraph(number, ParagraphStyle(
+            name="thn", fontName=FONT_BOLD, fontSize=font_sz, textColor=color,
+            leading=font_sz + 4, alignment=TA_CENTER))],
+         [Paragraph(label, ParagraphStyle(
+            name="thl", fontName=FONT_NORMAL, fontSize=10, textColor=GREY,
+            leading=12, alignment=TA_CENTER))]],
+        colWidths=[52 * mm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SOFT),
+            ("BOX", (0, 0), (-1, -1), 0.6, BLUE),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ]))
+
+
+# ── Teaser page builders ────────────────────────────────────────────────
+
+def t_cover(story, s, proj):
+    story.append(Spacer(1, 40 * mm))
+    story.append(Paragraph("FLOWRA", ParagraphStyle(
+        name="tcover", fontName=FONT_BOLD, fontSize=64, textColor=NAVY,
+        leading=68, alignment=TA_CENTER)))
+    story.append(Paragraph(TAG, ParagraphStyle(
+        name="tctag", fontName=FONT_ITALIC, fontSize=15, textColor=BLUE,
+        leading=20, alignment=TA_CENTER, spaceAfter=8)))
+    story.append(Paragraph("Cloud + AI for India’s 3 million Tally &amp; Busy SMEs.",
+                            ParagraphStyle(
+        name="tcline", fontName=FONT_NORMAL, fontSize=13, textColor=GREY,
+        leading=18, alignment=TA_CENTER, spaceAfter=30)))
+    hero = Table([[
+        _teaser_hero_kpi(f"₹{ASSUMPTIONS['seed_amount_cr']} Cr", "Seed round · open now"),
+        _teaser_hero_kpi(f"₹{proj[4]['arr_end_cr']:.1f} Cr", "Y5 target ARR"),
+        _teaser_hero_kpi("11×", "LTV : CAC ratio"),
+    ]], colWidths=[62 * mm, 62 * mm, 62 * mm])
+    hero.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(hero)
+    story.append(Spacer(1, 25 * mm))
+    story.append(Paragraph(f"{COMPANY} · {CITY} · {DATED}",
+                            ParagraphStyle(name="tccnt", fontName=FONT_BOLD,
+                                            fontSize=11, textColor=NAVY,
+                                            alignment=TA_CENTER, leading=15)))
+    story.append(PageBreak())
+
+
+def t_problem(story, s):
+    story += title_block(
+        "The Problem",
+        "10 million SMEs are locked inside 30-year-old desktop accounting.",
+        s)
+    story.append(Spacer(1, 6 * mm))
+    lines = [
+        ("₹0 spent on cloud",     "Tally &amp; Busy have no native mobile, no dashboards, no AI."),
+        ("Owner is blind",         "Cannot see today’s sales, dues, or dispatch from their phone."),
+        ("Salesman is deaf",       "Zero real-time price · stock · dues on the field."),
+        ("Data leaks via screenshot", "SME operators email or WhatsApp Tally screenshots."),
+    ]
+    rows = [[
+        Paragraph(f"<b>{t}</b>", ParagraphStyle(name=f"tp{i}", fontName=FONT_BOLD,
+                                                  fontSize=13, textColor=BLUE,
+                                                  leading=17)),
+        Paragraph(desc, ParagraphStyle(name=f"tpd{i}", fontName=FONT_NORMAL,
+                                        fontSize=11, textColor=INK, leading=15))
+    ] for i, (t, desc) in enumerate(lines)]
+    tbl = Table(rows, colWidths=[55 * mm, 115 * mm])
+    tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (0, -1), SOFT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BOX", (0, 0), (-1, -1), 0.4, rc.HexColor("#CBD5E1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, rc.HexColor("#E2E8F0")),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 10 * mm))
+    story.append(Paragraph(
+        "Migration off Tally is a non-starter — the CA firm won’t sign off.<br/>"
+        "So how do you fix a market that refuses to switch?",
+        ParagraphStyle(name="tpq", fontName=FONT_ITALIC, fontSize=13,
+                        textColor=AMBER, leading=18, alignment=TA_CENTER,
+                        spaceAfter=6)))
+    story.append(PageBreak())
+
+
+def t_solution(story, s):
+    story += title_block(
+        "Our Solution",
+        "Don’t replace Tally. Bolt onto it.",
+        s)
+    story.append(Spacer(1, 5 * mm))
+    story.append(Paragraph(
+        "<b>Step 1</b> — Customer installs our desktop agent (5 minutes, "
+        "one-time).<br/>"
+        "<b>Step 2</b> — Agent pushes data to our cloud every 5 minutes. "
+        "Read-only. Delta-sync. Zero writeback risk.<br/>"
+        "<b>Step 3</b> — Owner, salesman, CA, dispatcher get their own login. "
+        "Mobile-first PWA + AI insights.",
+        s["body"]))
+    story.append(Spacer(1, 6 * mm))
+    box = Table([[Paragraph(
+        "<b>Result:</b> A cloud + AI operating system for the customer's "
+        "existing Tally / Busy install — with zero switching cost, zero data "
+        "risk, and zero training.",
+        ParagraphStyle(name="ts", fontName=FONT_NORMAL, fontSize=12,
+                        textColor=INK, leading=17, alignment=TA_LEFT))]],
+        colWidths=[170 * mm])
+    box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rc.HexColor("#FEF3C7")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+        ("BOX", (0, 0), (-1, -1), 1, AMBER),
+    ]))
+    story.append(box)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("<b>What ships today</b>", s["h3"]))
+    for b in [
+        "Tally Sync Agent v9.8.30 · Busy Sync Agent v1.2 (both live)",
+        "Cloud dashboards · Dispatch Kanban · Salesman Beat PWA · CA Corner",
+        "AI narrative insights via Emergent LLM key (GPT-5)",
+        "1 paying Enterprise customer (Krishna Sales Corp) live since Q4 2025",
+    ]:
+        story.append(bullet(b, s))
+    story.append(PageBreak())
+
+
+def t_traction(story, s, ue):
+    story += title_block(
+        "Traction",
+        "Product live · paying customer live · shipping fortnightly.",
+        s)
+    story.append(Spacer(1, 4 * mm))
+    kpis = Table([[
+        _teaser_hero_kpi("1", "Paying customer (Enterprise)"),
+        _teaser_hero_kpi("v9.8.30", "Agent version shipped"),
+        _teaser_hero_kpi("₹40 Cr", "Customer’s annual turnover"),
+    ]], colWidths=[62 * mm, 62 * mm, 62 * mm])
+    kpis.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(kpis)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("<b>Verbal LOIs — closing post-Seed</b>", s["h3"]))
+    for b in [
+        "Distributor · Raipur — <b>Enterprise</b> (₹38 K ARR)",
+        "Wholesaler · Bhilai — <b>Professional</b> (₹25 K ARR)",
+        "Retail chain · Nagpur — <b>Enterprise</b>",
+        "Manufacturer · Indore — <b>Professional</b>",
+        "CA firm · Raipur — <b>White-label</b> (unlocks 12 downstream clients)",
+    ]:
+        story.append(bullet(b, s))
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        "<b>Channel unlock:</b> One CA firm brings 8–15 SME clients. "
+        "First channel partner signs Q1 FY26-27.", s["amber_hl"]))
+    story.append(PageBreak())
+
+
+def t_market(story, s):
+    story += title_block(
+        "Market",
+        "A ₹14,000 Cr TAM sitting on 30-year-old software.",
+        s)
+    story.append(Spacer(1, 6 * mm))
+    tam_rows = [
+        ["TAM · Total addressable", "14 M SMEs",  "₹14,000 Cr"],
+        ["SAM · Tally + Busy users",   "3 M SMEs",   "₹3,000 Cr"],
+        ["SOM · 5-year target (5%)",  "150 K SMEs", "₹150 Cr"],
+    ]
+    story.append(numeric_table(
+        ["Segment", "Customers", "Market ₹ (yr)"], tam_rows,
+        col_widths=[65 * mm, 45 * mm, 60 * mm]))
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("<b>Why now</b>", s["h3"]))
+    for b in [
+        "GST e-invoicing has expanded to all ₹5 Cr+ SMEs — cloud data is no longer optional",
+        "Mobile-first workforce: 80% of SME salesmen use WhatsApp today — FLOWRA is the structured replacement",
+        "AI expectations from SME owners are now shaped by ChatGPT, not by Tally",
+        "Our Y5 target of ₹5 Cr ARR = <b>0.03%</b> market share. This is a 1-in-1000 penetration play.",
+    ]:
+        story.append(bullet(b, s))
+    story.append(PageBreak())
+
+
+def t_business_model(story, s):
+    ap = ASSUMPTIONS["prices"]
+    story += title_block(
+        "Business Model",
+        "Simple SaaS · monthly billing · self-serve upgrades.",
+        s)
+    story.append(Spacer(1, 4 * mm))
+
+    def _plan_card(name, price, tag, color=BLUE):
+        return Table(
+            [[Paragraph(name, ParagraphStyle(name="pn", fontName=FONT_BOLD,
+                                              fontSize=14, textColor=color,
+                                              leading=18, alignment=TA_CENTER))],
+             [Paragraph(price, ParagraphStyle(name="pp", fontName=FONT_BOLD,
+                                                fontSize=22, textColor=NAVY,
+                                                leading=24, alignment=TA_CENTER))],
+             [Paragraph(tag, ParagraphStyle(name="pt", fontName=FONT_NORMAL,
+                                              fontSize=9, textColor=GREY,
+                                              leading=12, alignment=TA_CENTER))]],
+            colWidths=[40 * mm],
+            style=TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), SOFT),
+                ("BOX", (0, 0), (-1, -1), 1, color),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]))
+
+    cards = Table([[
+        _plan_card("Free",         "₹0",                     "Top of funnel", GREY),
+        _plan_card("Starter",      f"₹{ap['starter']:,}",     "per company / mo", BLUE),
+        _plan_card("Professional", f"₹{ap['professional']:,}", "per company / mo", GREEN),
+        _plan_card("Enterprise",   f"₹{ap['enterprise']:,}", "per company / mo", AMBER),
+    ]], colWidths=[42 * mm, 42 * mm, 42 * mm, 42 * mm])
+    cards.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 1),
+                                 ("RIGHTPADDING", (0, 0), (-1, -1), 1)]))
+    story.append(cards)
+    story.append(Spacer(1, 10 * mm))
+    story.append(Paragraph("<b>Highlights</b>", s["h3"]))
+    for b in [
+        "Blended paid ARPU ~₹1,700/mo — below Zoho One’s cheapest tier",
+        "Zero setup fee · cancel anytime · monthly invoice via Resend",
+        "10% annual-prepay discount → targets 40% cash-flow lift by Y3",
+    ]:
+        story.append(bullet(b, s))
+    story.append(PageBreak())
+
+
+def t_unit_economics(story, s, ue):
+    story += title_block(
+        "Unit Economics",
+        "Best-in-class SaaS · every dial in the green.",
+        s)
+    story.append(Spacer(1, 6 * mm))
+    row1 = Table([[
+        _teaser_hero_kpi("82%", "Gross margin"),
+        _teaser_hero_kpi(f"{ue['ltv_to_cac']}×", "LTV : CAC"),
+        _teaser_hero_kpi(f"{ue['payback_months']}", "Payback (months)"),
+    ]], colWidths=[62 * mm, 62 * mm, 62 * mm])
+    row1.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(row1)
+    story.append(Spacer(1, 6 * mm))
+    row2 = Table([[
+        _teaser_hero_kpi(f"₹{ue['ltv_r']:,}", "Lifetime value / customer"),
+        _teaser_hero_kpi(f"₹{ue['cac_r']:,}", "CAC (blended Y3)"),
+        _teaser_hero_kpi(f"{ue['customer_life_months']:.0f}", "Customer life (months)"),
+    ]], colWidths=[62 * mm, 62 * mm, 62 * mm])
+    row2.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(row2)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph(
+        "<b>Benchmarks:</b> Indian SaaS median is LTV:CAC 3× · payback 15–24 mo. "
+        "We ship <b>{}× · {} mo</b>. Every rupee spent on sales returns in "
+        "under a quarter.".format(ue["ltv_to_cac"], ue["payback_months"]),
+        s["amber_hl"]))
+    story.append(PageBreak())
+
+
+def t_trajectory(story, s, proj):
+    story += title_block(
+        "5-Year Trajectory",
+        "Base case · locked to founder inputs · path to profitability by Y5.",
+        s)
+    story.append(Spacer(1, 4 * mm))
+    # Compact 3-line summary
+    rows = [
+        ["Paying customers",   "100",           "400",       "900",       "1,500",     "2,000"],
+        ["ARR (₹ Cr, end)",    f"{proj[0]['arr_end_cr']:.2f}",
+                                 f"{proj[1]['arr_end_cr']:.2f}",
+                                 f"{proj[2]['arr_end_cr']:.2f}",
+                                 f"{proj[3]['arr_end_cr']:.2f}",
+                                 f"{proj[4]['arr_end_cr']:.2f}"],
+        ["EBITDA (₹ Cr)",       f"{proj[0]['ebitda_cr']:+.2f}",
+                                 f"{proj[1]['ebitda_cr']:+.2f}",
+                                 f"{proj[2]['ebitda_cr']:+.2f}",
+                                 f"{proj[3]['ebitda_cr']:+.2f}",
+                                 f"{proj[4]['ebitda_cr']:+.2f}"],
+    ]
+    story.append(numeric_table(
+        ["Metric", "FY26-27", "FY27-28", "FY28-29", "FY29-30", "FY30-31"],
+        rows,
+        col_widths=[38 * mm, 26 * mm, 26 * mm, 26 * mm, 26 * mm, 28 * mm]))
+    story.append(Spacer(1, 6 * mm))
+    story.append(bar_chart_arr_ebitda(proj[:5], w=170 * mm, h=70 * mm))
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        f"<b>Milestone:</b> ARR crosses ₹1 Cr in Y2 (400 customers · "
+        f"triggers Series A on strong metrics). EBITDA flips positive in Y5. "
+        f"Cumulative Y1-Y5 burn ≈ <b>₹4.2 Cr</b> — covered by the full "
+        f"₹8.5 Cr two-tranche raise with ₹4+ Cr safety buffer.",
+        s["body"]))
+    story.append(PageBreak())
+
+
+def t_ask(story, s):
+    story += title_block(
+        "The Ask",
+        "Two-tranche raise · low dilution · big valuation step-up.",
+        s)
+    story.append(Spacer(1, 6 * mm))
+    hero = Table([[
+        _teaser_hero_kpi(f"₹{ASSUMPTIONS['seed_amount_cr']} Cr",
+                          "Seed · today · 18% dilution", AMBER),
+        _teaser_hero_kpi(f"₹{ASSUMPTIONS['series_a_amount_cr']} Cr",
+                          "Series A · Feb 2028 · 18% dilution", BLUE),
+    ]], colWidths=[85 * mm, 85 * mm])
+    hero.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(hero)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("<b>Use of Seed ₹2.5 Cr (24-month runway)</b>", s["h3"]))
+    for b in [
+        "<b>44%</b> Product &amp; engineering (5 hires)",
+        "<b>24%</b> Sales &amp; channel partners (3 hires)",
+        "<b>14%</b> Marketing (Google Ads · YouTube · SME events)",
+        "<b>8%</b> Infrastructure (MongoDB Atlas · LLM · WhatsApp API)",
+        "<b>10%</b> Working capital · legal · buffer",
+    ]:
+        story.append(bullet(b, s))
+    story.append(Spacer(1, 5 * mm))
+    story.append(Paragraph(
+        "<b>Milestone by Series A (Month 24):</b> 400 paying customers · "
+        "₹1 Cr ARR. Series A investor sees ₹1 Cr → ₹5 Cr trajectory. "
+        "Founders retain ~65% post both rounds.", s["amber_hl"]))
+    story.append(PageBreak())
+
+
+def t_team_contact(story, s, proj):
+    story += title_block(
+        "Team & Contact",
+        "3 founders · 1 senior engineer · shipping since 2024.",
+        s)
+    people = [
+        [f"<b>{FOUNDER}</b> · CEO",
+         "Founder-market fit — runs Krishna Sales (₹40 Cr distributor)"],
+        ["<b>Punit</b> · Head of Engineering",
+         "Owns desktop agents, backend, MongoDB architecture · 8 yr full-stack"],
+        ["<b>Kritika</b> · Head of Design",
+         "Owns React PWA, dashboards, mobile flows"],
+    ]
+    rows = [[Paragraph(t, ParagraphStyle(name=f"tm{i}", fontName=FONT_NORMAL,
+                                            fontSize=11, textColor=NAVY,
+                                            leading=15)),
+             Paragraph(d, ParagraphStyle(name=f"td{i}", fontName=FONT_NORMAL,
+                                          fontSize=10, textColor=INK,
+                                          leading=14))]
+            for i, (t, d) in enumerate(people)]
+    tbl = Table(rows, colWidths=[55 * mm, 115 * mm])
+    tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (0, -1), SOFT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.4, rc.HexColor("#CBD5E1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, rc.HexColor("#E2E8F0")),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 14 * mm))
+    story.append(Paragraph("<b>Interested?</b>", ParagraphStyle(
+        name="tcxi", fontName=FONT_BOLD, fontSize=18, textColor=NAVY,
+        alignment=TA_CENTER, leading=22)))
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        f"Reply to this email or drop us a line — we’ll share the full "
+        f"<b>16-page pitch</b> and the <b>editable financial model</b> the "
+        f"same day.<br/><br/>"
+        f"<b>{FOUNDER}</b> · Founder &amp; CEO<br/>"
+        f"{COMPANY} · {CITY}<br/>"
+        f"Web: <a href='https://insights.flowralive.in' color='#2563EB'>"
+        f"insights.flowralive.in</a> · "
+        f"Email: <a href='mailto:founders@flowra.in' color='#2563EB'>"
+        f"founders@flowra.in</a>",
+        ParagraphStyle(name="tcxc", fontName=FONT_NORMAL, fontSize=12,
+                        textColor=INK, alignment=TA_CENTER, leading=20)))
+
+
+def build_teaser_pdf():
+    proj = compute_projections()
+    ue = compute_unit_economics()
+    s = styles()
+    globals()['_TEASER_PAGE'] = 0
+    doc = SimpleDocTemplate(
+        str(TEASER_PATH), pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=28 * mm, bottomMargin=15 * mm,
+        title=f"{PRODUCT} · Investor Teaser · {DATED}",
+        author=COMPANY,
+    )
+    story = []
+    t_cover(story, s, proj)
+    t_problem(story, s)
+    t_solution(story, s)
+    t_traction(story, s, ue)
+    t_market(story, s)
+    t_business_model(story, s)
+    t_unit_economics(story, s, ue)
+    t_trajectory(story, s, proj)
+    t_ask(story, s)
+    t_team_contact(story, s, proj)
+    doc.build(story, onFirstPage=_teaser_frame, onLaterPages=_teaser_frame)
+    print(f"✓ Wrote {TEASER_PATH}  ({TEASER_PATH.stat().st_size / 1024:.0f} KB)")
+
+
+# Hook into __main__ block
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ENTRY POINT (real, after all builders are defined)
+# ═══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     print("Generating FLOWRA financial pitch documents…")
     build_pdf()
     build_xlsx()
+    build_teaser_pdf()
     print("\nDone. Files:")
-    for f in (PDF_PATH, XLSX_PATH):
+    for f in (PDF_PATH, XLSX_PATH, TEASER_PATH):
         print(f"  {f}   ({f.stat().st_size / 1024:.0f} KB)")
-    print(f"\nPublic download URLs:")
-    print(f"  https://insights.flowralive.in/pitch/financial_pitch_flowra.pdf")
-    print(f"  https://insights.flowralive.in/pitch/financial_projections_flowra.xlsx")
+    print("\nPublic download URLs:")
+    print("  <preview>/pitch/financial_pitch_flowra.pdf         (16-page full deck)")
+    print("  <preview>/pitch/financial_teaser_flowra.pdf        (10-page cold-email teaser)")
+    print("  <preview>/pitch/financial_projections_flowra.xlsx  (editable model)")

@@ -30,7 +30,9 @@ Read Me · Assumptions · P&L Summary (with bar chart) · Revenue Build · Cash 
 
 **Tests (9/9 green)**: `backend/tests/test_iteration116_financial_pitch.py` — locks pricing, customers, EBITDA flip, cumulative burn ≤ raise, LTV/CAC ≥ 3×, payback ≤ 18 mo, gross margin 78–85%, both files exist + nonzero, XLSX has 8 sheets.
 
-Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf` and `<preview>/pitch/financial_projections_flowra.xlsx`.
+Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf`, `<preview>/pitch/financial_teaser_flowra.pdf`, and `<preview>/pitch/financial_projections_flowra.xlsx`.
+
+**Teaser PDF (v1.1, added Feb 8 2026 same day)** — 10-page 86 KB cold-outreach opener: Cover · Problem · Solution · Traction (Krishna Sales) · Market · Business Model (4-plan price cards) · Unit Economics (6 hero KPIs) · 5-Year Trajectory (compact table + chart) · The Ask (Seed + Series A cards + Use of Funds) · Team + Contact CTA. Same DejaVuSans font, auto-shrinking hero KPI cards, reuses the exact projection numbers from the full pitch so the two documents can never drift.
 
 
 ## Shipped — Jul 8 2026 (iteration 114) — Busy Sync Agent v1.2 · full Tally clone
