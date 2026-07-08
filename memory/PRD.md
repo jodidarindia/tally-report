@@ -10,7 +10,31 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Jul 8 2026 (iteration 116) — FLOWRA Financial Pitch (Feb 2026 raise)
+
+Founder locked pricing (Starter ₹833 / Professional ₹2,083 / Enterprise ₹3,166 per company/mo), 1 current paid customer, Y5 ARR target ₹5 Cr, team plan 12→25 by Y5, two-tranche fundraise. Built two deliverables in `/app/scripts/generate_financial_pitch.py`:
+
+**`/pitch/financial_pitch_flowra.pdf`** (128 KB, 16 pages, DejaVuSans for ₹ glyph support):
+Cover · Executive Summary · Problem · Solution · Product Snapshot · Market (TAM ₹14,000 Cr) · Traction (Krishna Sales case) · Business Model · Competitive Moat · Unit Economics · 5-Year Projections + chart · Product Roadmap (Q1 FY26 → Q4 FY27) · Team · Investment Ask + Use of Funds · Risks & Mitigations · Exit Scenarios + Contact.
+
+**`/pitch/financial_projections_flowra.xlsx`** (16 KB, 8 sheets, all yellow cells editable):
+Read Me · Assumptions · P&L Summary (with bar chart) · Revenue Build · Cash Flow & Fundraise · Unit Economics · Cap Table (Founders/ESOP/Seed/Series A dilution) · Exit & Returns (3 scenarios × money-multiples).
+
+**Key numbers locked**:
+- Base case ARR: Y1 ₹20 L → Y5 ₹5.10 Cr → Y6 ₹7.30 Cr
+- EBITDA flips positive Y5 (₹0.26 Cr) · positive Y6 (₹1.15 Cr)
+- Cumulative Y1-Y5 burn: ₹4.19 Cr (comfortably inside ₹8.5 Cr total raise)
+- Blended ARPU ₹1,683/mo · LTV/CAC 7.9× · Payback 5.1 mo · Gross margin 82%
+- Seed ₹2.5 Cr @ ₹11.4 Cr pre-money · Series A ₹6.0 Cr @ ₹27 Cr pre-money
+- Founder equity after both rounds: 60.5%
+
+**Tests (9/9 green)**: `backend/tests/test_iteration116_financial_pitch.py` — locks pricing, customers, EBITDA flip, cumulative burn ≤ raise, LTV/CAC ≥ 3×, payback ≤ 18 mo, gross margin 78–85%, both files exist + nonzero, XLSX has 8 sheets.
+
+Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf` and `<preview>/pitch/financial_projections_flowra.xlsx`.
+
+
 ## Shipped — Jul 8 2026 (iteration 114) — Busy Sync Agent v1.2 · full Tally clone
+
 
 Rebuilt `/app/desktop-agent/build-kit-busy/flowra_busy_gui.py` as a 1:1 clone of the Tally Sync Agent GUI (v9.8.29):
 Tabs: Status · Settings · Logs · About; 4 connectivity cards; Sync Status panel with progress bar; Subscription card with Request Renewal button; login lock/unlock; auto-detect companies + FYs on folder pick; daemon mode with `flowra_busy_agent.py --daemon`; build kit (build.bat, agent.spec, version_info.txt, requirements.txt, README.txt, flowra.ico, flowra_logo.png). 14+6 regression tests green.
