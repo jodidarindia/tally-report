@@ -12,6 +12,47 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 
 ## Shipped — Jul 8 2026 (iteration 114) — Busy Sync Agent v1.2 · full Tally clone
 
+Rebuilt `/app/desktop-agent/build-kit-busy/flowra_busy_gui.py` as a 1:1 clone of the Tally Sync Agent GUI (v9.8.29):
+Tabs: Status · Settings · Logs · About; 4 connectivity cards; Sync Status panel with progress bar; Subscription card with Request Renewal button; login lock/unlock; auto-detect companies + FYs on folder pick; daemon mode with `flowra_busy_agent.py --daemon`; build kit (build.bat, agent.spec, version_info.txt, requirements.txt, README.txt, flowra.ico, flowra_logo.png). 14+6 regression tests green.
+
+
+## Shipped — Jul 8 2026 (iteration 115) — Tally Sync Agent v9.8.30 · Forward-dated voucher fix
+
+User reported: LVD captured on 08-Jul → added invoice dated 10-Jul → no sync → moved the same invoice back to 08-Jul → synced. Diagnosed 3 issues in `/app/desktop-agent/build-kit-2/tally_sync_agent_v9.py` from the customer log dump. All 3 fixed and locked with 10 regression tests.
+
+**a) Quick-sync date window now extends to today, not stops at LVD**
+
+Old: `for m_start, m_end in months_in_fy(fy, cap_date=lvd):` — capped SVTODATE at the stored LVD, so any voucher dated *after* LVD was outside the query window and Tally never returned it. Even though AlterID correctly detected a change (628983 → 628984), the delta-sweep missed the new voucher.
+
+New: computes `window_end = max(lvd, date.today())` per cycle and passes that as `cap_date`. Also injects today's month + window_end's month into `affected_months`. A voucher dated 10-Jul now falls inside SVTODATE=10-Jul and comes back in the XML.
+
+**b) Reconcile is now scoped to the fetched voucher_date window**
+
+`FlowraSyncAgent.reconcile_with_backend(..., window_start=None, window_end=None)` — quick-sync callers pass ISO dates and the backend `/api/agent/reconcile` adds `{voucher_date: {$gte: window_start, $lte: window_end}}` to the delete filter. Fixes the destructive "5229 orphan records removed" line in the customer log — quick-sync was previously sending a manifest containing only the ~500 vouchers from its narrow window and the backend was deleting every FY voucher not in that list. Unscoped legacy calls (from the full-sync path) still delete everything, so backwards-compat is preserved.
+
+**c) Day-Book LVD fallback no longer crashes on dict input**
+
+`_fetch_last_voucher_date_via_daybook()` was calling `re.finditer(pattern, data)` where `data` came from `_post()`, which has returned the parsed-dict shape (with a `__raw_xml__` sidecar) since v9.8.x. This raised `TypeError: expected string or bytes-like object, got 'dict'` on every cycle, killing the LVD auto-detect and forcing the default-to-today branch. Now we `data.get('__raw_xml__') or ''` before regex.
+
+**Version bumped**: `v9.8.29-lvd-persist` → `v9.8.30-window-scoped-reconcile`, GUI title `v9.8.30`, banner subtitle "AlterID Prime 7.0 + Window-Scoped Reconcile + Forward-Dated Voucher Fix".
+
+**Tests (10/10 green)**:
+- `backend/tests/test_iteration115_tally_v9830_forward_dated_fix.py` — 8 unit tests:
+  - `months_in_fy` cap semantics under old (buggy) LVD-cap AND new max(lvd, today) cap
+  - reconcile signature accepts `window_start`/`window_end` kwargs
+  - Day-Book fallback survives dict from `_post`, None input, dict-without-raw input
+  - agent_version string bumped
+  - GUI `APP_VERSION` bumped
+- `backend/tests/test_iteration115_reconcile_window_e2e.py` — 2 integration tests (live Mongo + FastAPI):
+  - **window_scoped**: seeds 3 vouchers (Jun/Jul/Aug), reconcile with window=Jul + manifest=[], verifies only the Jul voucher is deleted and the Jun/Aug survive (this is what would have saved the customer's 5229 vouchers)
+  - **unscoped_backwards_compat**: reconcile without window kwargs still deletes all — full-sync path unchanged
+
+**Backend routes touched**: `/app/backend/routes/sync.py` — `POST /api/agent/reconcile` accepts `window_start` + `window_end`, filters `voucher_date` when both present, adds `window=…` scope tag to the info log.
+
+**Next**: User rebuilds `FlowraTallyAgent_v9.8.30.exe` via `build.bat`, updates sha256 + size_bytes in `backend/agent_release.json` + `frontend/public/agent-latest.json` (tally channel), then ships.
+
+
+
 User feedback on the v1.1 build flagged 8 bugs against the Tally reference screenshots. All 8 fixed by rebuilding the GUI as a 1:1 clone of `flowra_gui.py` (Tally v9.8.29):
 
 1. **Tab order** now matches Tally exactly: `Status · Settings · Logs · About` (was Dashboard · Sync · Logs · Settings).

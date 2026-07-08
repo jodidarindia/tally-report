@@ -736,6 +736,12 @@ async def reconcile_deleted_records(request: dict):
         req_company_id = request.get("company_id", "")
         financial_year = request.get("financial_year", "")
         sync_token = request.get("sync_token", "")
+        # v9.8.30 — optional voucher_date window. When present, we only
+        # delete rows whose voucher_date is INSIDE the window AND missing
+        # from manifest_ids. Prevents the quick-sync from nuking vouchers
+        # outside the (usually narrow) delta it just fetched.
+        window_start = (request.get("window_start") or "").strip()
+        window_end   = (request.get("window_end") or "").strip()
 
         if not data_type or not req_tenant_id:
             return APIResponse(success=False, error="data_type and tenant_id required")
@@ -767,6 +773,13 @@ async def reconcile_deleted_records(request: dict):
         delete_filter = {"tenant_id": req_tenant_id}
         if req_company_id:
             delete_filter["company_id"] = req_company_id
+        # v9.8.30 — scope by voucher_date window when provided.
+        # voucher_date is stored as ISO 'YYYY-MM-DD' string so lexical
+        # $gte/$lte works. Only applied to voucher-shaped collections.
+        window_applied = False
+        if window_start and window_end and key_field == "voucher_id":
+            delete_filter["voucher_date"] = {"$gte": window_start, "$lte": window_end}
+            window_applied = True
 
         if not manifest_ids:
             # Empty manifest means Tally* has zero records for this type
@@ -780,8 +793,11 @@ async def reconcile_deleted_records(request: dict):
             deleted = result.deleted_count
 
         if deleted > 0:
+            scope = (f" · window={window_start}..{window_end}"
+                     if window_applied else " · unscoped")
             logger.info(f"Reconcile {data_type}: removed {deleted} orphan records "
-                        f"[tenant={req_tenant_id}, company={req_company_id}, fy={financial_year}]")
+                        f"[tenant={req_tenant_id}, company={req_company_id}, "
+                        f"fy={financial_year}{scope}]")
 
             # Log the reconciliation event
             await db.sync_history.insert_one({

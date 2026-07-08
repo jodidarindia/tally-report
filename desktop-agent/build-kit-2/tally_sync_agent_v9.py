@@ -2075,6 +2075,18 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             logger.debug("  Day-Book fallback: no data returned")
             return None
 
+        # v9.8.30 — `_post()` now returns the parsed XML dict; the cleaned
+        # raw text is carried on the `__raw_xml__` key. Historical builds
+        # returned a bytes-like string here directly. Handle both shapes so
+        # regex.finditer() gets a string and never crashes with
+        # "expected string or bytes-like object, got 'dict'".
+        if isinstance(data, dict):
+            data = data.get('__raw_xml__') or ''
+        if not isinstance(data, (str, bytes)):
+            logger.info("  Day-Book fallback: unexpected response type "
+                        f"{type(data).__name__} — skipping.")
+            return None
+
         # Tally Day Book exports vouchers with the date field named
         # differently across builds:
         #   • Tally ERP 9 / Prime early builds → <DATE>YYYYMMDD</DATE>
@@ -3377,8 +3389,8 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.29-lvd-persist")
-        logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.30-window-scoped-reconcile")
+        logger.info("  AlterID Prime 7.0 + Window-Scoped Reconcile + Forward-Dated Voucher Fix")
         logger.info("=" * 60)
 
         # --- LOGIN-BASED AUTH ---
@@ -3760,7 +3772,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.29-lvd-persist',
+                'agent_version': '9.8.30-window-scoped-reconcile',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3799,7 +3811,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.29-lvd-persist',
+                'agent_version': '9.8.30-window-scoped-reconcile',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3842,9 +3854,18 @@ class FlowraSyncAgent:
             self._mark_phase_failed(data_type, str(e))
             return False
 
-    def reconcile_with_backend(self, data_type, manifest_ids, id_key='voucher_id'):
-        """Send manifest of all IDs to backend for orphan deletion (Option B reconciliation).
-        Backend deletes any records for this data_type+tenant+company that are NOT in the manifest."""
+    def reconcile_with_backend(self, data_type, manifest_ids, id_key='voucher_id',
+                                window_start: Optional[str] = None,
+                                window_end: Optional[str] = None):
+        """Send manifest of all IDs to backend for orphan deletion.
+
+        v9.8.30 — the optional (window_start, window_end) date pair scopes
+        the reconcile to a specific voucher_date window. When present, the
+        backend deletes only records whose voucher_date is INSIDE the window
+        AND missing from the manifest. When both are None the old behaviour
+        (delete every FY row not in manifest) is preserved for full syncs.
+
+        The date strings are ISO 'YYYY-MM-DD'."""
         try:
             company = self._active_company or self.tally.company or ''
             if company in ('_active_', 'Default', '##Default'):
@@ -3859,8 +3880,12 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.29-lvd-persist',
+                'agent_version': '9.8.30-window-scoped-reconcile',
             }
+            if window_start:
+                payload['window_start'] = window_start
+            if window_end:
+                payload['window_end'] = window_end
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
                 json=payload,
@@ -4053,7 +4078,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.29-lvd-persist',
+                                'agent_version': '9.8.30-window-scoped-reconcile',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4142,6 +4167,17 @@ class FlowraSyncAgent:
                         )
 
                 all_quick_sales = []
+                # v9.8.30 — ALWAYS extend the query window up to today so a
+                # forward-dated voucher (e.g. entered today with date=10-Jul
+                # while system date=08-Jul) is inside SVFROMDATE/SVTODATE
+                # and comes back in Tally's response.
+                _today = date.today()
+                window_end = max(lvd, _today) if lvd else _today
+                # v9.8.30 — also always include today's month in affected_months
+                # so a fresh forward-dated entry can't fall outside the loop.
+                if affected_months is not None:
+                    affected_months.add((_today.year, _today.month))
+                    affected_months.add((window_end.year, window_end.month))
                 for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
@@ -4157,7 +4193,7 @@ class FlowraSyncAgent:
                             prev_lvd = None
                     else:
                         prev_lvd = None
-                    for m_start, m_end in months_in_fy(fy, cap_date=lvd):
+                    for m_start, m_end in months_in_fy(fy, cap_date=window_end):
                         # v9.8.23: if AlterID told us exactly which months
                         # were affected, ONLY fetch those — ignore LVD.
                         if affected_months is not None:
@@ -4175,8 +4211,27 @@ class FlowraSyncAgent:
                     all_quick_sales.extend(fy_sales)
                     logger.info(f"  [QUICK] FY {fy}: {len(fy_sales)} sales vouchers synced")
 
-                # Reconcile AFTER all FYs
-                self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')])
+                # v9.8.30 — SCOPE the reconcile to the fetched date window.
+                # Previously we sent an unscoped manifest which caused the
+                # backend to delete every voucher for the FY that wasn't in
+                # our narrow partial fetch (this nuked 5229 records in one
+                # cycle for a customer on 08-Jul-2026). Now the backend only
+                # deletes rows whose voucher_date falls inside the window we
+                # actually queried.
+                window_start_iso = None
+                window_end_iso = window_end.strftime("%Y-%m-%d")
+                if affected_months is not None and affected_months:
+                    years_months = sorted(affected_months)
+                    y0, m0 = years_months[0]
+                    window_start_iso = f"{y0:04d}-{m0:02d}-01"
+                elif prev_lvd_str:
+                    window_start_iso = prev_lvd_str
+                self.reconcile_with_backend(
+                    'sales',
+                    [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')],
+                    window_start=window_start_iso,
+                    window_end=window_end_iso,
+                )
 
                 # Persist BOTH alter_id and LVD so the next cycle can
                 # short-circuit even faster.
@@ -4330,7 +4385,7 @@ class FlowraSyncAgent:
                                         'tenant_id': self.tenant_id,
                                         'company_id': self.company_id,
                                         'sync_token': self.sync_token,
-                                        'agent_version': '9.8.29-lvd-persist',
+                                        'agent_version': '9.8.30-window-scoped-reconcile',
                                         'stage': 'full_skip_alter_unchanged',
                                     },
                                     headers={'Authorization': f'Bearer {self.auth_token}'} if self.auth_token else {},
@@ -4875,7 +4930,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.29-lvd-persist")
+        print("FLOWRA Tally Sync Agent v9.8.30-window-scoped-reconcile")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag
