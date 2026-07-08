@@ -594,12 +594,14 @@ class BusyGUI:
         if not cname or not fy:
             self._on_status("Pick a company and FY first")
             return
-        # Resolve company_id from detected list
-        cid = None
-        for c in getattr(self.agent, "detected_companies", []) or []:
-            if c.get("name") == cname:
-                cid = c.get("id") or c.get("name")
-                break
+        # Resolve company_id from the map built by _refresh_dashboard
+        cid = getattr(self, "_company_id_map", {}).get(cname)
+        if not cid:
+            # Fallback — check agent's authoritative company list
+            for c in self.agent.get_companies():
+                if c.get("company_name") == cname or c.get("company_id") == cname:
+                    cid = c.get("company_id")
+                    break
         if not cid:
             self._on_status(f"Company id not resolved for {cname!r}")
             return

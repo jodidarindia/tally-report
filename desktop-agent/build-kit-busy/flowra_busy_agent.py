@@ -821,18 +821,43 @@ class FlowraAPIClient:
 class FlowraBusySyncAgent:
     """Main agent: login, detect Busy data, sync in phases."""
 
-    def __init__(self):
+    def __init__(self, status_callback=None):
         self.config = load_config()
         self.state = load_sync_state()
         self.api = None
         self.extractor = None
         self.running = False
-        self.status_callback = None  # GUI callback
+        self.status_callback = status_callback  # GUI callback
 
     def set_status(self, msg: str):
         logger.info(msg)
         if self.status_callback:
             self.status_callback(msg)
+
+    # ── v1.1 helpers exposed to the new GUI ─────────────────────────────
+    def save_config(self):
+        """Persist self.config to disk. Called after edits from the UI."""
+        save_config(self.config)
+
+    def logout(self):
+        """Clear the current session (token + api client)."""
+        self.api = None
+
+    def detect_databases(self):
+        """Re-initialise the extractor against the currently configured
+        Busy data folder. Safe to call multiple times."""
+        folder = self.config.get("busy_folder", "")
+        if folder:
+            self.extractor = BusyDataExtractor(folder)
+
+    @property
+    def detected_companies(self):
+        """Compatibility alias — GUI code iterates over this to resolve
+        company_id from a friendly company_name."""
+        return [
+            {"id": c["company_id"], "name": c["company_name"]}
+            for c in self.get_companies()
+        ]
 
     def report_progress(self, event_type: str, company_id: str = "", company_name: str = "",
                         financial_year: str = "", **kwargs):
@@ -864,11 +889,26 @@ class FlowraBusySyncAgent:
         except Exception:
             pass  # Non-blocking — progress is best-effort
 
-    def login(self, backend_url: str, username: str, password: str) -> bool:
+    def login(self, *args) -> bool:
+        """Sign in to FLOWRA.
+
+        Two supported signatures for backward compatibility:
+        - login(email, password)          — new GUI (uses saved backend_url)
+        - login(backend_url, email, pwd)  — legacy shell / CLI callers
+        """
+        if len(args) == 2:
+            email, password = args
+            backend_url = self.config.get("backend_url", DEFAULT_BACKEND_URL)
+        elif len(args) == 3:
+            backend_url, email, password = args
+        else:
+            raise TypeError(
+                "login() expects (email, password) or (backend_url, email, password)"
+            )
         self.api = FlowraAPIClient(backend_url)
-        if self.api.login(username, password):
+        if self.api.login(email, password):
             self.config["backend_url"] = backend_url
-            self.config["username"] = username
+            self.config["username"] = email
             save_config(self.config)
             return True
         return False
@@ -1314,5 +1354,14 @@ if __name__ == "__main__":
         # CLI mode for testing
         agent = FlowraBusySyncAgent()
         logger.info("Running in headless mode. Use --gui for graphical interface.")
-    else:
+    elif "--legacy-gui" in sys.argv:
+        # Old minimal shell — kept as a safety net
         run_gui()
+    else:
+        # v1.1 — launch the new navy/amber themed GUI
+        try:
+            from flowra_busy_gui import main as _gui_main
+            _gui_main()
+        except Exception as e:
+            logger.warning(f"New GUI unavailable ({e}); falling back to legacy shell")
+            run_gui()

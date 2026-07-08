@@ -9,6 +9,31 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+
+## Shipped — Jul 8 2026 (iteration 113) — Busy Sync Agent v1.1 parity with Tally v9.8.29
+
+Ported the visual language + delta-sync UX from the Tally Agent to the Busy Agent so both desktop clients share one navy/amber theme, one logo, one login pill, and one 7-day full-sync skip gate.
+
+**What changed** (in `/app/desktop-agent/build-kit-busy/`):
+- `flowra_busy_gui.py` (new) — navy header + Flowra logo + amber accent, "signed-in as" pill, 4-tab notebook (Dashboard · Sync · Logs · Settings), metric cards, companies tree, amber CTAs, live log tail widget, IST clock footer. Mirrors `build-kit-2/flowra_gui.py` (Tally) styles.
+- `flowra_busy_agent.py` — parity API surface:
+  - `FlowraBusySyncAgent(status_callback=...)` — accepts GUI callback.
+  - `save_config()`, `logout()`, `detect_databases()` — instance methods used by the GUI.
+  - `detected_companies` — compatibility property.
+  - `login(email, password)` (new 2-arg signature) AND legacy `login(url, email, pwd)`.
+  - `run_full_sync(..., force=False)` — 7-day skip window mirroring Tally AlterID gate. Uses `sync_state_busy.json` for persistence.
+  - `FULL_SKIP_WINDOW_DAYS = 7`.
+  - `__main__` now launches the new `BusyGUI` (falls back to legacy shell via `--legacy-gui`).
+- Version bumped to `v1.1`, agent_version tag `busy-1.1-parity`.
+- Default backend URL now `https://insights.flowralive.in`.
+
+**Tests**: `backend/tests/test_iteration113_busy_agent_parity.py` — 6 parity contracts (all green): status_callback wiring, GUI-facing method surface, login variadic signature, force kwarg, 7-day window constant, version tag.
+
+**Smoke-boot**: verified via `Xvfb :99` — GUI constructs all 4 tabs, pill shows "Not signed in", `_sync_worker`/`_on_signout` handle empty state gracefully. Screenshot captured.
+
+**Next**: user needs to PyInstaller-rebuild `FlowraBusyAgent.exe` from `build-kit-busy/` on their Windows box, update `sha256`/`size_bytes` in `backend/agent_release.json` + `frontend/public/agent-latest.json` (busy channel), and ship.
+
+
 ## Shipped — Jul 7 2026 (iteration 112) — Agent v9.8.29 LVD persistence + Full-sync short-circuit
 
 Field report from Ankit Sarawgi's 07-Jul-2026 agent log surfaced two pending issues:
