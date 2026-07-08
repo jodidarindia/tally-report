@@ -10,28 +10,33 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
-## Shipped — Jul 8 2026 (iteration 113) — Busy Sync Agent v1.1 parity with Tally v9.8.29
+## Shipped — Jul 8 2026 (iteration 114) — Busy Sync Agent v1.2 · full Tally clone
 
-Ported the visual language + delta-sync UX from the Tally Agent to the Busy Agent so both desktop clients share one navy/amber theme, one logo, one login pill, and one 7-day full-sync skip gate.
+User feedback on the v1.1 build flagged 8 bugs against the Tally reference screenshots. All 8 fixed by rebuilding the GUI as a 1:1 clone of `flowra_gui.py` (Tally v9.8.29):
 
-**What changed** (in `/app/desktop-agent/build-kit-busy/`):
-- `flowra_busy_gui.py` (new) — navy header + Flowra logo + amber accent, "signed-in as" pill, 4-tab notebook (Dashboard · Sync · Logs · Settings), metric cards, companies tree, amber CTAs, live log tail widget, IST clock footer. Mirrors `build-kit-2/flowra_gui.py` (Tally) styles.
-- `flowra_busy_agent.py` — parity API surface:
-  - `FlowraBusySyncAgent(status_callback=...)` — accepts GUI callback.
-  - `save_config()`, `logout()`, `detect_databases()` — instance methods used by the GUI.
-  - `detected_companies` — compatibility property.
-  - `login(email, password)` (new 2-arg signature) AND legacy `login(url, email, pwd)`.
-  - `run_full_sync(..., force=False)` — 7-day skip window mirroring Tally AlterID gate. Uses `sync_state_busy.json` for persistence.
-  - `FULL_SKIP_WINDOW_DAYS = 7`.
-  - `__main__` now launches the new `BusyGUI` (falls back to legacy shell via `--legacy-gui`).
-- Version bumped to `v1.1`, agent_version tag `busy-1.1-parity`.
-- Default backend URL now `https://insights.flowralive.in`.
+1. **Tab order** now matches Tally exactly: `Status · Settings · Logs · About` (was Dashboard · Sync · Logs · Settings).
+2. **Status tab** now shows 4 connectivity cards (Internet · Busy Data · FLOWRA Cloud · Sync Service) with coloured dots, plus a live Sync Status panel with progress bar and last-sync timestamp.
+3. **Subscription card** with Plan · Account · Expires on · Days remaining fields, `🔄 Refresh` and `📨 Request Renewal` buttons — hits `POST /api/auth/request-renewal` just like the Tally agent.
+4. **Data folder → auto-detect**: entering a folder path (or clicking Browse) auto-detects companies AND FYs in the same background thread. No manual chaining.
+5. **FY chip picker** driven by scanning `db{year}.bds` filenames, with the current FY badge-highlighted.
+6. **Login success**: shows a "welcome, {email}" banner + locks `email` + `password` entries (`instate=['disabled']`). Fields re-enable on Sign-out only.
+7. **Build kit files added**: `build.bat`, `agent.spec`, `version_info.txt`, `requirements.txt`, `README.txt`, plus `flowra.ico` and `flowra_logo.png` copied from Tally kit. `build.bat` produces `FlowraBusyAgent_v1.2.exe` ready to upload.
+8. **Auto-sync**: after Save & Start Sync (or after settings load), the GUI spawns `flowra_busy_agent.py --daemon` which reads env vars (`BACKEND_URL`, `FLOWRA_EMAIL`, `FLOWRA_PASSWORD`, `BUSY_DATA_FOLDER`, `BUSY_COMPANY`, `BUSY_STARTING_FY`, `SYNC_INTERVAL_MINUTES`) and runs a full/quick sync loop every 5 min / N min. No manual trigger needed.
 
-**Tests**: `backend/tests/test_iteration113_busy_agent_parity.py` — 6 parity contracts (all green): status_callback wiring, GUI-facing method surface, login variadic signature, force kwarg, 7-day window constant, version tag.
+**Also matches Tally:**
+- Navy header with FLOWRA logo, versioned subtitle, "● Running/Stopped" pill, logged-in user email + Logout button (top right).
+- Bottom bar with blue "▶ Start Sync Service", "■ Stop", "✕ Hide to Tray", "📁 Open Logs Folder".
+- System tray icon with Show / Sync Now / Open Logs / Auto-start / Quit menu.
+- Windows autostart via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\FlowraBusyAgent`.
+- Single-instance guard on port 38766 (Tally uses 38765).
+- Start Menu + Desktop shortcut installer (first launch of the frozen .exe).
 
-**Smoke-boot**: verified via `Xvfb :99` — GUI constructs all 4 tabs, pill shows "Not signed in", `_sync_worker`/`_on_signout` handle empty state gracefully. Screenshot captured.
+**Tests**: `backend/tests/test_iteration114_busy_agent_tally_parity.py` — 14 contracts (all green): build kit inventory, versioning, backend URL default, folder/company/FY detection helpers, daemon entry point, registry key naming, distinct single-instance port. Plus iteration 113 tests (6) still passing.
 
-**Next**: user needs to PyInstaller-rebuild `FlowraBusyAgent.exe` from `build-kit-busy/` on their Windows box, update `sha256`/`size_bytes` in `backend/agent_release.json` + `frontend/public/agent-latest.json` (busy channel), and ship.
+**Smoke boot**: Xvfb-verified. Status + Settings screenshots captured — visually identical to the Tally reference the user shared.
+
+**Next**: User needs to PyInstaller-build `FlowraBusyAgent_v1.2.exe` on Windows (`build.bat` handles everything), then update `sha256` + `size_bytes` in `backend/agent_release.json` + `frontend/public/agent-latest.json` under the busy channel.
+
 
 
 ## Shipped — Jul 7 2026 (iteration 112) — Agent v9.8.29 LVD persistence + Full-sync short-circuit

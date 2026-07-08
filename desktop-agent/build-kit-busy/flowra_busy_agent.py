@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.1"
-AGENT_TAG = "busy-1.1-parity"
+VERSION = "1.2"
+AGENT_TAG = "busy-1.2-tally-parity"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -1343,6 +1343,68 @@ def run_gui():
     root.mainloop()
 
 
+def run_daemon() -> int:
+    """Headless daemon mode. Reads env vars set by the GUI subprocess and
+    runs the sync loop on the configured interval until killed.
+
+    Required env vars:
+      BACKEND_URL, FLOWRA_EMAIL, FLOWRA_PASSWORD,
+      BUSY_DATA_FOLDER, BUSY_COMPANY, BUSY_STARTING_FY,
+      SYNC_INTERVAL_MINUTES  (default: 20)
+    """
+    import time as _time
+
+    backend  = os.environ.get("BACKEND_URL", DEFAULT_BACKEND_URL)
+    email    = os.environ.get("FLOWRA_EMAIL", "")
+    password = os.environ.get("FLOWRA_PASSWORD", "")
+    folder   = os.environ.get("BUSY_DATA_FOLDER", "")
+    company  = os.environ.get("BUSY_COMPANY", "")
+    start_fy = os.environ.get("BUSY_STARTING_FY", "")
+    try:
+        interval_min = max(1, int(os.environ.get("SYNC_INTERVAL_MINUTES", "20")))
+    except Exception:
+        interval_min = 20
+
+    logger.info(f"[daemon] boot. backend={backend} email={email} "
+                f"folder={folder} company={company} start_fy={start_fy} "
+                f"interval={interval_min}min")
+
+    if not (email and password and folder and company and start_fy):
+        logger.error("[daemon] Missing required env vars — cannot start.")
+        return 1
+
+    agent = FlowraBusySyncAgent(status_callback=lambda m: logger.info(f"[daemon] {m}"))
+    agent.config["backend_url"] = backend
+    agent.config["busy_folder"] = folder
+    agent.set_busy_folder(folder)
+
+    if not agent.login(email, password):
+        logger.error("[daemon] Login failed. Retrying every 5 minutes…")
+        # Retry indefinitely — user may be offline temporarily.
+        while True:
+            _time.sleep(300)
+            if agent.login(email, password):
+                break
+
+    logger.info(f"[daemon] logged in as {email}. Entering sync loop.")
+
+    quick_every_min = 5   # sales delta
+    tick = 0
+    while True:
+        try:
+            # Full sync every `interval_min` minutes; quick sync every 5 min.
+            if tick % (interval_min // quick_every_min or 1) == 0:
+                logger.info(f"[daemon] Starting full sync for {company} | FY {start_fy}")
+                agent.run_full_sync(company, company, start_fy, force=False)
+            else:
+                logger.info(f"[daemon] Quick sales sync {company}")
+                agent.run_quick_sales_sync(company, company, start_fy)
+        except Exception as e:
+            logger.exception(f"[daemon] sync tick failed: {e}")
+        tick += 1
+        _time.sleep(quick_every_min * 60)
+
+
 # ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
@@ -1350,15 +1412,17 @@ if __name__ == "__main__":
     print(f"\n  {APP_NAME} v{VERSION}")
     print("  All times in IST (Asia/Kolkata)\n")
 
-    if "--headless" in sys.argv:
-        # CLI mode for testing
+    if "--daemon" in sys.argv:
+        # Headless scheduled loop driven by env vars (launched by the GUI
+        # or by the frozen .exe with --run-agent).
+        raise SystemExit(run_daemon())
+    elif "--headless" in sys.argv:
         agent = FlowraBusySyncAgent()
         logger.info("Running in headless mode. Use --gui for graphical interface.")
     elif "--legacy-gui" in sys.argv:
-        # Old minimal shell — kept as a safety net
         run_gui()
     else:
-        # v1.1 — launch the new navy/amber themed GUI
+        # v1.2 — launch the new Tally-parity GUI (Status/Settings/Logs/About)
         try:
             from flowra_busy_gui import main as _gui_main
             _gui_main()
