@@ -27,6 +27,10 @@ a = Analysis(
         'cryptography.fernet',
         'cryptography.hazmat.primitives.kdf.pbkdf2',
         'flowra_busy_agent',
+        # Busy database access — pyodbc is imported LAZILY inside
+        # _get_connection(), so PyInstaller's static analyzer misses it.
+        # Declare it explicitly so the bundle contains the binary wheel.
+        'pyodbc',
         # GUI tray + icon generation
         'pystray',
         'pystray._win32',

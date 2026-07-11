@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.2"
-AGENT_TAG = "busy-1.2-tally-parity"
+VERSION = "1.3"
+AGENT_TAG = "busy-1.3-pyodbc-bundled"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -154,14 +154,30 @@ class BusyDBReader:
     def _get_connection(self):
         """Lazy connection — only open when needed."""
         if self.is_windows:
-            import pyodbc
+            try:
+                import pyodbc
+            except ImportError as e:
+                raise RuntimeError(
+                    "pyodbc is not bundled in this build. Please rebuild "
+                    "FlowraBusyAgent.exe with build.bat — the fresh build "
+                    "includes pyodbc automatically. If you already rebuilt, "
+                    "reinstall the .exe (delete %LOCALAPPDATA%\\Flowra "
+                    "cache first).") from e
             if not self._conn:
                 conn_str = (
                     r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
                     f"Dbq={self.bds_path};"
                     "ReadOnly=1;"
                 )
-                self._conn = pyodbc.connect(conn_str)
+                try:
+                    self._conn = pyodbc.connect(conn_str)
+                except pyodbc.InterfaceError as e:
+                    raise RuntimeError(
+                        "Could not open the Busy database. The "
+                        "'Microsoft Access Database Engine' ODBC driver is "
+                        "missing on this PC. Install the free 64-bit driver "
+                        "from https://www.microsoft.com/en-us/download/details.aspx?id=54920 "
+                        "then restart the agent.") from e
             return self._conn
         return None
 

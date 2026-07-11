@@ -35,7 +35,31 @@ Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf`, `<p
 **Teaser PDF (v1.1, added Feb 8 2026 same day)** — 10-page 86 KB cold-outreach opener: Cover · Problem · Solution · Traction (Krishna Sales) · Market · Business Model (4-plan price cards) · Unit Economics (6 hero KPIs) · 5-Year Trajectory (compact table + chart) · The Ask (Seed + Series A cards + Use of Funds) · Team + Contact CTA. Same DejaVuSans font, auto-shrinking hero KPI cards, reuses the exact projection numbers from the full pitch so the two documents can never drift.
 
 
+## Shipped — Jul 11 2026 (iteration 117) — Busy Sync Agent v1.3 · pyodbc bundling fix
+
+Customer log (`busy_agent_20260711.log`) crashed at Phase 1 (Customers):
+```
+ModuleNotFoundError: No module named 'pyodbc'
+  File "flowra_busy_agent.py", line 157, in _get_connection
+    import pyodbc
+```
+
+Root cause: `pyodbc` is imported LAZILY inside `_get_connection()`. PyInstaller's static-import scanner missed it in the v1.2 build, so the .exe shipped without the pyodbc wheel bundled. Everything else worked — login, folder detection, FY scan — until the first .bds read attempt.
+
+**Fixes (in `/app/desktop-agent/build-kit-busy/`)**:
+- `requirements.txt` — added `pyodbc>=5.1.0` so `build.bat`'s venv has it → PyInstaller sees it.
+- `agent.spec` — added `'pyodbc'` to `hiddenimports` (belt & braces).
+- `flowra_busy_agent.py::_get_connection()` — wrapped `import pyodbc` and `pyodbc.connect(...)` with friendly `RuntimeError`s that tell the customer either "rebuild via build.bat" (ImportError) or "install the Microsoft Access ODBC driver" (InterfaceError) with a direct download link.
+- Version bumped: agent `1.2 → 1.3`, GUI `v1.2 → v1.3`, `version_info.txt` file/prod version `(1,3,0,0)`, agent_tag `busy-1.3-pyodbc-bundled`.
+- `README.txt` — new "What changed in v1.3" section.
+
+**Tests (24/24 green)**: new `test_iteration117_busy_agent_v13_pyodbc.py` (5 tests) covers: pyodbc in requirements, pyodbc in agent.spec hiddenimports, friendly-error wrapper present, version bumped in all 3 files, no stale v1.2 leftovers. Existing iteration 113/114 tests updated to expect v1.3 and pass.
+
+**Next**: User rebuilds `FlowraBusyAgent_v1.3.exe` via `build.bat` on Windows (build.bat auto-detects the new pyodbc line in requirements.txt), then re-installs on the customer machine. First-time customers may also need the Microsoft Access Database Engine 2016 Redistributable — the new friendly error message links straight to the download page.
+
+
 ## Shipped — Jul 8 2026 (iteration 114) — Busy Sync Agent v1.2 · full Tally clone
+
 
 
 Rebuilt `/app/desktop-agent/build-kit-busy/flowra_busy_gui.py` as a 1:1 clone of the Tally Sync Agent GUI (v9.8.29):

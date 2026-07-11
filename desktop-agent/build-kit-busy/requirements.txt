@@ -13,3 +13,8 @@ requests>=2.32.3
 schedule>=1.2.2
 python-dotenv>=1.0.1
 cryptography>=44.0.0
+
+# Busy database access — pyodbc talks to Busy's Btrieve/Pervasive ODBC driver
+# to read the customer's local .bds files. The driver itself is installed on
+# every Busy Windows install; we only ship the Python bindings.
+pyodbc>=5.1.0

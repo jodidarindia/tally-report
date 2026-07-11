@@ -1,10 +1,20 @@
-FLOWRA Busy Sync Agent - Build Kit (v1.2)
+FLOWRA Busy Sync Agent - Build Kit (v1.3)
 ==========================================
 
 This folder produces a single Windows .exe that bundles the FLOWRA Busy
 Sync Agent and its Tkinter GUI (identical look-and-feel to the FLOWRA
-Tally Sync Agent v9.8.29) into one file your customers can run with no
+Tally Sync Agent v9.8.30) into one file your customers can run with no
 Python install required.
+
+WHAT CHANGED IN v1.3 (Feb 2026)
+-------------------------------
+* pyodbc is now bundled inside FlowraBusyAgent.exe (was missing in v1.2 —
+  caused "ModuleNotFoundError: No module named 'pyodbc'" on first sync).
+* Friendlier error messages when the Access ODBC driver is missing on
+  the customer PC.
+* Requires the "Microsoft Access Database Engine 2016 Redistributable"
+  (free, 64-bit) if the customer PC doesn't already have it — download:
+  https://www.microsoft.com/en-us/download/details.aspx?id=54920
 
 
 CONTENTS

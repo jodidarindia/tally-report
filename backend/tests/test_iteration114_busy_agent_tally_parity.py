@@ -37,16 +37,16 @@ def test_agent_spec_targets_gui_and_bundles_agent_module():
 
 
 # ── Version + branding parity ──────────────────────────────────────────
-def test_gui_version_is_v12():
+def test_gui_version_is_v13():
     import flowra_busy_gui as g
-    assert g.APP_VERSION == "v1.2"
+    assert g.APP_VERSION == "v1.3"
     assert g.APP_NAME == "FLOWRA Busy Sync Agent"
 
 
-def test_agent_version_is_v12():
+def test_agent_version_is_v13():
     import flowra_busy_agent as a
-    assert a.VERSION == "1.2"
-    assert a.AGENT_TAG == "busy-1.2-tally-parity"
+    assert a.VERSION == "1.3"
+    assert a.AGENT_TAG == "busy-1.3-pyodbc-bundled"
 
 
 # ── Backend URL matches Tally agent's default ─────────────────────────
