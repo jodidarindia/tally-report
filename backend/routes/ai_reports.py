@@ -30,6 +30,93 @@ def _build_query(ctx, company_id=None, extra=None):
     return q
 
 
+def _fmt_num(x, dp: int = 2):
+    """Format a number for exports; empty string if not a valid number."""
+    try:
+        if x is None or x == "":
+            return ""
+        return round(float(x), dp)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _summarise_items(items) -> str:
+    """Collapse a list of voucher line items into a single readable cell:
+    "POWER 20W40 CF4 5LT (4PC) x4 @1412; ATF DEXRON x2 @980"."""
+    if not isinstance(items, list) or not items:
+        return ""
+    parts = []
+    for it in items[:5]:  # cap noise in the cell
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("item") or it.get("item_name") or "").strip()
+        qty = it.get("quantity") or it.get("qty") or 0
+        rate = it.get("rate") or it.get("price") or 0
+        try:
+            qty_str = f"x{int(qty)}" if float(qty).is_integer() else f"x{qty}"
+        except (TypeError, ValueError):
+            qty_str = f"x{qty}"
+        try:
+            rate_str = f" @{int(rate)}" if float(rate).is_integer() else f" @{rate}"
+        except (TypeError, ValueError):
+            rate_str = f" @{rate}" if rate else ""
+        parts.append(f"{name} {qty_str}{rate_str}".strip())
+    if len(items) > 5:
+        parts.append(f"+{len(items) - 5} more")
+    return "; ".join(parts)
+
+
+def _project_export_rows(report_type: str, rows: list) -> list:
+    """Return a list of dicts with clean, business-user-friendly columns
+    matching the on-screen table (Sales / Inventory tabs). Drops internal
+    fields like tenant_id / company_id / last_updated / _id etc."""
+    if report_type == "sales":
+        out = []
+        for v in rows:
+            out.append({
+                "Date": v.get("voucher_date", ""),
+                "Voucher #": v.get("voucher_id", ""),
+                "Reference #": v.get("reference_number", "") or "",
+                "Customer": v.get("party_name", ""),
+                "Salesman": v.get("salesman") or "",
+                "Voucher Type": (v.get("voucher_type") or "").title(),
+                "Destination": v.get("destination", "") or "",
+                "Dispatch Through": v.get("dispatch_through", "") or "",
+                "Items": _summarise_items(v.get("items", [])),
+                "Amount (Rs)": _fmt_num(v.get("total_amount"), 2),
+            })
+        return out
+    if report_type == "inventory":
+        out = []
+        for it in rows:
+            aliases = it.get("aliases")
+            if isinstance(aliases, list):
+                aliases_str = ", ".join(str(a) for a in aliases if a)
+            else:
+                aliases_str = str(aliases or "")
+            out.append({
+                "Item Name": it.get("item_name", ""),
+                "Part #": it.get("part_number", "") or "",
+                "ABC": it.get("abc_category", "") or "",
+                "Category": it.get("category", "") or "",
+                "Stock Group": it.get("stock_group", "") or "",
+                "Unit": it.get("unit", "") or "",
+                "Quantity": _fmt_num(it.get("quantity"), 2),
+                "Reorder Level": _fmt_num(it.get("reorder_level"), 2),
+                "Sale Price (Rs)": _fmt_num(
+                    it.get("effective_sale_price") or it.get("standard_price") or it.get("price"), 2,
+                ),
+                "Purchase Price (Rs)": _fmt_num(it.get("purchase_price"), 2),
+                "Stock Value (Rs)": _fmt_num(it.get("closing_value"), 2),
+                "Aliases": aliases_str,
+            })
+        return out
+    # Unknown type — fall back to the old "drop internal keys" behaviour.
+    _INTERNAL = {"_id", "tenant_id", "company_id", "last_updated", "created_at"}
+    return [{k: v for k, v in r.items() if k not in _INTERNAL} for r in rows]
+
+
+
 @router.post("/ai/query")
 async def ai_query(request: Request):
     try:
@@ -193,10 +280,11 @@ async def export_report(request: Request):
         if not data:
             return APIResponse(success=False, error="No data available to export")
 
-        clean_data = []
-        for item in data:
-            clean_item = {k: v for k, v in item.items() if k not in ['last_updated', 'created_at']}
-            clean_data.append(clean_item)
+        # iter-122: project raw DB documents into human-readable columns
+        # matching what the useradmin sees on the Sales / Inventory tabs.
+        # Previous exports dumped tenant_id / company_id / raw items list /
+        # ledger_entries as-is, producing an unusable file for customers.
+        clean_data = _project_export_rows(report_type, data)
 
         # iter-121: resolve the tenant's synced company name so every
         # PDF/Excel/CSV export shows the useradmin's actual business name

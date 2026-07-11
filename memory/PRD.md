@@ -487,3 +487,14 @@ Fixed 5 reported export/UI bugs on the useradmin dashboard:
 5. **Inventory PDF header showed "Anonymous" / "FLOWRA Report"** — `ExportService.export_to_pdf/excel/csv` now accept a `company_name` param; `routes/ai_reports.py` and CRM Outstanding/Targets endpoints resolve the useradmin's synced company name from `db.sync_status` (fallback via `id_mapping_service.get_company_name`) and pass it, so PDF/Excel/CSV all show `ASA AUTOTECH INDIA PRIVATE LIMITED` as the banner.
 
 Regression: `/app/backend/tests/test_iteration121_export_bugs.py` — 11/11 pass.
+
+## Iteration 122 (11 July 2026) — Readable Export Columns
+Follow-up enhancement to iter-121. `/api/reports/export` (Sales + Inventory, all three formats — PDF/Excel/CSV) previously dumped raw MongoDB documents including `tenant_id`, `company_id`, `last_updated`, serialised `items` list and `ledger_entries` list — an unusable file to hand a customer.
+
+Added a projector `_project_export_rows(report_type, rows)` in `routes/ai_reports.py` that maps DB documents to business-user columns matching what shows on-screen:
+
+- **Sales**: `Date | Voucher # | Reference # | Customer | Salesman | Voucher Type | Destination | Dispatch Through | Items | Amount (Rs)`. Multi-line items collapse into a single readable cell: `"POWER 20W40 CF4 5LT (4PC) x4 @1412; SHAKTI GL4 20L x10 @5381"` (top 5 + `+N more`).
+- **Inventory**: `Item Name | Part # | ABC | Category | Stock Group | Unit | Quantity | Reorder Level | Sale Price (Rs) | Purchase Price (Rs) | Stock Value (Rs) | Aliases`.
+
+Company-name banner from iter-121 preserved on all three formats. Regression: `test_iteration121_export_bugs.py` now covers 15 checks (11 iter-121 + 4 iter-122) — all green. Internal fields (`tenant_id`, `company_id`, `_id`) explicitly asserted to NOT leak into export headers.
+

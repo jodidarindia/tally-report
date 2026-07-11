@@ -182,6 +182,78 @@ def test_data_table_th_numeric_css_rule_exists():
     )
 
 
+# ── iter-122 enhancement: human-readable export columns ───────────
+_SALES_EXPECTED_HEADERS = [
+    "Date", "Voucher #", "Reference #", "Customer", "Salesman",
+    "Voucher Type", "Destination", "Dispatch Through", "Items", "Amount (Rs)",
+]
+_INVENTORY_EXPECTED_HEADERS = [
+    "Item Name", "Part #", "ABC", "Category", "Stock Group", "Unit",
+    "Quantity", "Reorder Level", "Sale Price (Rs)", "Purchase Price (Rs)",
+    "Stock Value (Rs)", "Aliases",
+]
+
+_INTERNAL_FIELDS_MUST_NOT_LEAK = ["tenant_id", "company_id", "_id"]
+
+
+def _xlsx_header_row(xlsx_bytes):
+    wb = load_workbook(io.BytesIO(xlsx_bytes))
+    ws = wb.active
+    # Company banner is rows 1-2, header row is row 3
+    return [ws.cell(row=3, column=c).value for c in range(1, ws.max_column + 1)]
+
+
+def test_sales_export_uses_readable_columns(auth_headers):
+    r = httpx.post(f"{API}/reports/export", json={
+        "report_type": "sales", "format": "excel",
+        "filters": {"fy": "2026-27"}, "fy": "2026-27",
+    }, headers=auth_headers, timeout=60)
+    assert r.status_code == 200
+    headers_row = _xlsx_header_row(r.content)
+    assert headers_row == _SALES_EXPECTED_HEADERS, (
+        f"Sales export headers changed. Got: {headers_row}"
+    )
+
+
+def test_inventory_export_uses_readable_columns(auth_headers):
+    r = httpx.post(f"{API}/reports/export", json={
+        "report_type": "inventory", "format": "excel", "filters": {},
+    }, headers=auth_headers, timeout=60)
+    assert r.status_code == 200
+    headers_row = _xlsx_header_row(r.content)
+    assert headers_row == _INVENTORY_EXPECTED_HEADERS, (
+        f"Inventory export headers changed. Got: {headers_row}"
+    )
+
+
+def test_sales_export_does_not_leak_internal_fields(auth_headers):
+    r = httpx.post(f"{API}/reports/export", json={
+        "report_type": "sales", "format": "csv",
+        "filters": {"fy": "2026-27"}, "fy": "2026-27",
+    }, headers=auth_headers, timeout=60)
+    assert r.status_code == 200
+    raw = r.content.decode("utf-8-sig", errors="ignore")
+    for f in _INTERNAL_FIELDS_MUST_NOT_LEAK:
+        assert f not in raw.splitlines()[2], (
+            f"Internal field '{f}' leaked into Sales export headers: "
+            f"{raw.splitlines()[2]}"
+        )
+
+
+def test_inventory_export_does_not_leak_internal_fields(auth_headers):
+    r = httpx.post(f"{API}/reports/export", json={
+        "report_type": "inventory", "format": "csv", "filters": {},
+    }, headers=auth_headers, timeout=60)
+    assert r.status_code == 200
+    raw = r.content.decode("utf-8-sig", errors="ignore")
+    header_line = raw.splitlines()[2]
+    for f in _INTERNAL_FIELDS_MUST_NOT_LEAK:
+        assert f not in header_line, (
+            f"Internal field '{f}' leaked into Inventory export headers: "
+            f"{header_line}"
+        )
+
+
 if __name__ == "__main__":
     # Run standalone (no pytest)
     headers = {"Authorization": f"Bearer {_login()}"}
@@ -210,6 +282,19 @@ if __name__ == "__main__":
     ]:
         try:
             fn()
+            print(f"  ✅ {name}")
+        except Exception as e:
+            print(f"  ❌ {name}: {e}")
+
+    # iter-122 enhancement checks (need HTTP)
+    for name, fn in [
+        ("sales_readable_columns", test_sales_export_uses_readable_columns),
+        ("inventory_readable_columns", test_inventory_export_uses_readable_columns),
+        ("sales_no_leaked_internals", test_sales_export_does_not_leak_internal_fields),
+        ("inventory_no_leaked_internals", test_inventory_export_does_not_leak_internal_fields),
+    ]:
+        try:
+            fn(headers)
             print(f"  ✅ {name}")
         except Exception as e:
             print(f"  ❌ {name}: {e}")
