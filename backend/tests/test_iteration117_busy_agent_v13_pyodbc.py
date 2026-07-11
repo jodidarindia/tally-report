@@ -73,11 +73,11 @@ def test_version_bumped_to_v13_everywhere():
     gui_src   = (BUILD_DIR / "flowra_busy_gui.py").read_text(encoding="utf-8")
     version_info = (BUILD_DIR / "version_info.txt").read_text(encoding="utf-8")
 
-    assert 'VERSION = "1.3"' in agent_src
-    assert 'AGENT_TAG = "busy-1.3-pyodbc-bundled"' in agent_src
-    assert 'APP_VERSION = "v1.3"' in gui_src
-    assert "(1, 3, 0, 0)" in version_info
-    assert "u'1.3.0.0'" in version_info
+    assert 'VERSION = "1.3.1"' in agent_src
+    assert 'busy-1.3.1-db-password-fallback' in agent_src
+    assert 'APP_VERSION = "v1.3.1"' in gui_src
+    assert "(1, 3, 1, 0)" in version_info
+    assert "u'1.3.1.0'" in version_info
     # Ensure no v1.2 leftovers
     for src, name in ((agent_src, "flowra_busy_agent.py"),
                        (gui_src, "flowra_busy_gui.py")):

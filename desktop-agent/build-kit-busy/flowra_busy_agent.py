@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.3"
-AGENT_TAG = "busy-1.3-pyodbc-bundled"
+VERSION = "1.3.1"
+AGENT_TAG = "busy-1.3.1-db-password-fallback"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -151,35 +151,83 @@ class BusyDBReader:
         self.is_windows = sys.platform == "win32"
         self._conn = None
 
+    # v1.3.1 — Busy encrypts every .bds file with a proprietary password.
+    # Without PWD=... the Access ODBC driver returns error -1905
+    # "Not a valid password". Try a fallback chain of the passwords that
+    # ship with each Busy generation. If none work, ask the user to set
+    # BUSY_DB_PASSWORD in the environment (or Settings tab).
+    _KNOWN_BUSY_PASSWORDS = (
+        "bs21DBFile",   # Busy 21
+        "Bus1Wor$1D",   # Busy 18/19
+        "busyww",       # older builds
+        "busy",         # community-reported
+        "",              # blank — some early builds
+    )
+
     def _get_connection(self):
         """Lazy connection — only open when needed."""
-        if self.is_windows:
-            try:
-                import pyodbc
-            except ImportError as e:
-                raise RuntimeError(
-                    "pyodbc is not bundled in this build. Please rebuild "
-                    "FlowraBusyAgent.exe with build.bat — the fresh build "
-                    "includes pyodbc automatically. If you already rebuilt, "
-                    "reinstall the .exe (delete %LOCALAPPDATA%\\Flowra "
-                    "cache first).") from e
-            if not self._conn:
-                conn_str = (
-                    r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
-                    f"Dbq={self.bds_path};"
-                    "ReadOnly=1;"
-                )
-                try:
-                    self._conn = pyodbc.connect(conn_str)
-                except pyodbc.InterfaceError as e:
-                    raise RuntimeError(
-                        "Could not open the Busy database. The "
-                        "'Microsoft Access Database Engine' ODBC driver is "
-                        "missing on this PC. Install the free 64-bit driver "
-                        "from https://www.microsoft.com/en-us/download/details.aspx?id=54920 "
-                        "then restart the agent.") from e
+        if not self.is_windows:
+            return None
+        try:
+            import pyodbc
+        except ImportError as e:
+            raise RuntimeError(
+                "pyodbc is not bundled in this build. Please rebuild "
+                "FlowraBusyAgent.exe with build.bat — the fresh build "
+                "includes pyodbc automatically. If you already rebuilt, "
+                "reinstall the .exe (delete %LOCALAPPDATA%\\Flowra "
+                "cache first).") from e
+        if self._conn:
             return self._conn
-        return None
+
+        # 1) Explicit override wins.
+        pwd_env = os.environ.get("BUSY_DB_PASSWORD", "").strip()
+        candidates = [pwd_env] if pwd_env else list(self._KNOWN_BUSY_PASSWORDS)
+
+        last_error = None
+        for pwd in candidates:
+            conn_str = (
+                r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+                f"Dbq={self.bds_path};"
+                "ReadOnly=1;"
+            )
+            if pwd:
+                # PWD must not be percent-escaped; Access ODBC takes it raw.
+                conn_str += f"PWD={pwd};"
+            try:
+                self._conn = pyodbc.connect(conn_str)
+                if pwd:
+                    logger.info(
+                        f"  Busy DB opened with password profile: "
+                        f"{'env-override' if pwd_env else pwd[:2] + '***'}")
+                else:
+                    logger.info("  Busy DB opened without password")
+                return self._conn
+            except pyodbc.InterfaceError as e:
+                # Driver missing / DSN broken → won't get better with next pwd.
+                raise RuntimeError(
+                    "Could not open the Busy database. The "
+                    "'Microsoft Access Database Engine' ODBC driver is "
+                    "missing on this PC. Install the free 64-bit driver "
+                    "from https://www.microsoft.com/en-us/download/details.aspx?id=54920 "
+                    "then restart the agent.") from e
+            except pyodbc.ProgrammingError as e:
+                last_error = e
+                if "-1905" in str(e) or "Not a valid password" in str(e):
+                    continue    # try next password
+                raise
+            except pyodbc.Error as e:
+                last_error = e
+                continue
+
+        # All candidates failed
+        raise RuntimeError(
+            "Could not open the Busy database — every known password was "
+            "rejected by the ODBC driver.\n\n"
+            "Your Busy version may use a custom password. Please set the "
+            "environment variable BUSY_DB_PASSWORD (or fill it in the "
+            "Settings → Busy Data Folder section of the GUI) and restart.\n\n"
+            f"Last driver error: {last_error}") from last_error
 
     def close(self):
         if self._conn:

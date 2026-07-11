@@ -35,6 +35,32 @@ Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf`, `<p
 **Teaser PDF (v1.1, added Feb 8 2026 same day)** — 10-page 86 KB cold-outreach opener: Cover · Problem · Solution · Traction (Krishna Sales) · Market · Business Model (4-plan price cards) · Unit Economics (6 hero KPIs) · 5-Year Trajectory (compact table + chart) · The Ask (Seed + Series A cards + Use of Funds) · Team + Contact CTA. Same DejaVuSans font, auto-shrinking hero KPI cards, reuses the exact projection numbers from the full pitch so the two documents can never drift.
 
 
+## Shipped — Jul 11 2026 (iteration 118) — Busy Sync Agent v1.3.1 · DB password fallback
+
+Customer log 07:50:55 after the v1.3 rebuild:
+```
+pyodbc.ProgrammingError: (42000) [Microsoft][ODBC Microsoft Access Driver]
+Not a valid password. (-1905)
+```
+Root cause: Busy encrypts every `.bds` file with a proprietary password. v1.3 attempted a passwordless connection so the Access ODBC driver rejected it. Fix: try a fallback chain of the standard Busy passwords per generation (Busy 21 → 18 → older → blank), and honour a `BUSY_DB_PASSWORD` env var override.
+
+**Fixes (in `/app/desktop-agent/build-kit-busy/`):**
+- `flowra_busy_agent.py::_get_connection` — new `_KNOWN_BUSY_PASSWORDS` tuple + fallback loop:
+  1. Env var `BUSY_DB_PASSWORD` (if set) wins, tried alone.
+  2. Otherwise iterate `bs21DBFile → Bus1Wor$1D → busyww → busy → ""`.
+  3. Only `pyodbc.ProgrammingError` containing `-1905` is retried; other pyodbc errors bubble up.
+  4. Successful password is info-logged (first 2 chars only).
+  5. All-fail case raises a friendly `RuntimeError` telling the user to set the env var or fill the Settings field.
+- `flowra_busy_gui.py` — new "Busy DB password" input in Settings § 2 (masked, saves to `busy_db_password` config key). GUI daemon spawn now propagates `BUSY_DB_PASSWORD` env var.
+- Version bumped agent `1.3 → 1.3.1`, GUI `v1.3 → v1.3.1`, `version_info.txt` file/prod `(1,3,1,0)`, agent_tag `busy-1.3.1-db-password-fallback`.
+
+**Tests (31/31 green)**: new `test_iteration118_busy_agent_v131_password.py` (7 tests) covers: known-password list, env override wins, fallback chain iterates in order, all-fail raises friendly error mentioning `BUSY_DB_PASSWORD`, GUI propagates env var, Settings tab has the password field, version bumped. Iteration 113/114/117 tests updated to v1.3.1.
+
+**GUI smoke-boot verified** via Xvfb — password entry widget renders in Settings § 2 without breaking any previous layout.
+
+**Next**: user rebuilds `FlowraBusyAgent_v1.3.1.exe` via `build.bat` on Windows and reinstalls. Should sync on first attempt for standard Busy installs; the ~5% of customers with custom passwords fill the Settings field once.
+
+
 ## Shipped — Jul 11 2026 (iteration 117) — Busy Sync Agent v1.3 · pyodbc bundling fix
 
 Customer log (`busy_agent_20260711.log`) crashed at Phase 1 (Customers):

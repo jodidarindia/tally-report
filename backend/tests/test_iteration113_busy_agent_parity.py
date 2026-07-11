@@ -62,5 +62,5 @@ def test_full_skip_window_days_present():
 
 
 def test_version_is_v11_parity():
-    assert fba.VERSION == "1.3"
-    assert fba.AGENT_TAG == "busy-1.3-pyodbc-bundled"
+    assert fba.VERSION == "1.3.1"
+    assert fba.AGENT_TAG == "busy-1.3.1-db-password-fallback"

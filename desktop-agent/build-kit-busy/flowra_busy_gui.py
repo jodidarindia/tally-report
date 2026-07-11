@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Busy Sync Agent"
-APP_VERSION = "v1.3"
+APP_VERSION = "v1.3.1"
 AGENT_SCRIPT = "flowra_busy_agent.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -777,6 +777,22 @@ class FlowraBusyAgentGUI:
                         "We only READ the .bds files — nothing is modified locally."),
                   foreground="#94A3B8", wraplength=720).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        # v1.3.1 — Busy encrypts .bds with a proprietary password.
+        # For most customers the agent auto-detects the standard password
+        # (Busy 21/18/older); only fill this if your DB uses a custom one.
+        ttk.Label(sec2, text="Busy DB password").grid(
+            row=3, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
+        self.busy_pwd_entry = ttk.Entry(sec2, width=44, show="•")
+        self.busy_pwd_entry.insert(0, self.config.get("busy_db_password", ""))
+        self.busy_pwd_entry.grid(row=3, column=1, sticky="w", pady=(10, 6))
+        self.entries["busy_db_password"] = self.busy_pwd_entry
+        ttk.Label(sec2,
+                  text=("Leave BLANK unless your Busy install uses a custom "
+                        "encryption password. FLOWRA will auto-try the standard "
+                        "passwords first (Busy 21 / 18 / older)."),
+                  foreground="#94A3B8", wraplength=720).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         sec2.columnconfigure(1, weight=1)
 
@@ -1604,6 +1620,7 @@ class FlowraBusyAgentGUI:
                                         or self.config.get("busy_folder", "")),
             "BUSY_COMPANY":           self.config.get("company_name", ""),
             "BUSY_STARTING_FY":       self.config.get("starting_fy", ""),
+            "BUSY_DB_PASSWORD":       self.config.get("busy_db_password", ""),
             "SYNC_INTERVAL_MINUTES":  self.config.get("sync_interval_minutes", "20"),
             "FLOWRA_DATA_DIR":        str(APP_DIR),
             "PYTHONUNBUFFERED":       "1",
