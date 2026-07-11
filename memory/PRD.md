@@ -35,6 +35,22 @@ Files publicly downloadable at `<preview>/pitch/financial_pitch_flowra.pdf`, `<p
 **Teaser PDF (v1.1, added Feb 8 2026 same day)** — 10-page 86 KB cold-outreach opener: Cover · Problem · Solution · Traction (Krishna Sales) · Market · Business Model (4-plan price cards) · Unit Economics (6 hero KPIs) · 5-Year Trajectory (compact table + chart) · The Ask (Seed + Series A cards + Use of Funds) · Team + Contact CTA. Same DejaVuSans font, auto-shrinking hero KPI cards, reuses the exact projection numbers from the full pitch so the two documents can never drift.
 
 
+## Shipped — Jul 11 2026 (iteration 119) — "What's New" single source of truth
+
+Enhancement: bound both the User Admin Dashboard "What's New" panel AND `FLOWRA_Whats_New.pdf` to a single JSON file at `/app/frontend/public/whats_new.json`. Kills the drift problem permanently — one edit updates both surfaces.
+
+**Files touched:**
+- `/app/frontend/public/whats_new.json` (new) — 25 entries covering Apr–Jul 2026, `{updated_at, entries[]}` shape with `date/tag/title/desc` per entry.
+- `/app/frontend/src/pages/Dashboard.js` — new `updates` state + `useEffect` fetch of `/whats_new.json` on mount. Removed the 25-entry inline hardcoded array (~50 lines gone). Loading fallback shows "Loading updates…" data-testid.
+- `/app/scripts/generate_whats_new_pdf.py` — removed the module-level `UPDATES` tuple, now calls `load_updates()` which reads the JSON. Log line now includes `source: whats_new.json updated_at=…` for auditability.
+
+**Workflow going forward:** when we ship a new feature, edit `whats_new.json` (one file) → next Dashboard visit shows it immediately (fetch has `no-cache`) → running `python scripts/generate_whats_new_pdf.py` regenerates the PDF with the same data.
+
+**Tests (6/6 green)**: `backend/tests/test_iteration119_whats_new_single_source.py` — JSON shape/keys/tags, newest-first sort, latest entry ≥ 2026-07-11, Dashboard.js fetches the JSON (not hardcoded), PDF generator reads from JSON (no legacy UPDATES constant), regeneration produces a nontrivial file matching the JSON entry count.
+
+**Verified**: `curl <preview>/whats_new.json` → 6 KB, 25 entries · `curl <preview>/FLOWRA_Whats_New.pdf` → 72 KB, latest entry "Busy Sync Agent v1.3.1". Frontend + backend lint clean.
+
+
 ## Shipped — Jul 11 2026 (iteration 118) — Busy Sync Agent v1.3.1 · DB password fallback
 
 Customer log 07:50:55 after the v1.3 rebuild:

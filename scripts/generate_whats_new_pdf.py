@@ -1,22 +1,21 @@
 """FLOWRA — "What's New" PDF regenerator (Feb 2026 edition).
 
-Rewrites /app/frontend/public/FLOWRA_Whats_New.pdf with a fresh, brand-
-consistent snapshot of everything shipped through Jul 11, 2026. Mirrors the
-same 12-entry list used in the User-Admin Dashboard's "What's New" panel
-so the two sources never drift.
+Reads /app/frontend/public/whats_new.json (SINGLE SOURCE OF TRUTH — also
+consumed by User Admin Dashboard "What's New" panel) and rewrites
+/app/frontend/public/FLOWRA_Whats_New.pdf.
 
 Uses DejaVuSans for ₹/… glyph support.
 """
+import json
 from pathlib import Path
+
 from reportlab.lib import colors as rc
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle,
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
 )
-from reportlab.pdfgen import canvas
-from reportlab.lib.enums import TA_LEFT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import registerFontFamily
@@ -35,56 +34,26 @@ except Exception:
 NAVY  = rc.HexColor("#0F1B4C")
 BLUE  = rc.HexColor("#2563EB")
 AMBER = rc.HexColor("#F59E0B")
-GREEN = rc.HexColor("#10B981")
-RED   = rc.HexColor("#EF4444")
 CYAN  = rc.HexColor("#0891B2")
 PURPLE = rc.HexColor("#8B5CF6")
+RED   = rc.HexColor("#EF4444")
 GREY  = rc.HexColor("#64748B")
-LIGHT = rc.HexColor("#F1F5F9")
 INK   = rc.HexColor("#0F172A")
 
 TAG_COLORS = {"NEW": PURPLE, "FIX": RED, "IMPROVE": CYAN}
 
-UPDATES = [
-    ("2026-07-11", "FIX",     "Busy Sync Agent v1.3.1",
-     "pyodbc bundled + Busy DB password fallback chain (Busy 21/18/older) + BUSY_DB_PASSWORD override field in Settings."),
-    ("2026-07-08", "FIX",     "Tally Agent v9.8.30 — Forward-Dated Voucher Fix",
-     "Quick-sync window now extends to today, not stops at stored LVD. Reconcile is date-scoped — prevents mass deletions when a voucher is added with a future date."),
-    ("2026-07-08", "NEW",     "Busy Sync Agent v1.2 — Full Tally Parity",
-     "Complete 1:1 Tally clone GUI: 4 connectivity cards, Sync Status panel, Subscription block with Request Renewal, auto-detect companies + FYs on folder pick."),
-    ("2026-07-08", "NEW",     "Investor Pitch Kit",
-     "16-page pitch PDF + 10-page cold-email teaser + editable Excel projection model. Auto-generated from a single source of truth."),
-    ("2026-07-05", "NEW",     "Tally Agent v9.8.29 — LVD & AlterID Persist",
-     "Per-company LVD + AlterID + timestamp saved to disk. 7-day full-sync skip window if AlterID unchanged."),
-    ("2026-07-02", "NEW",     "Marketing Kit",
-     "Auto-generated pitch decks (detailed + pointers), print-ready visiting cards (front/back QR), Tally-vs-Busy-vs-FLOWRA comparison charts."),
-    ("2026-06-30", "FIX",     "Inventory Export Bugs",
-     "CSV/Excel list→string coercion, PDF payload updates, multi-group filter fix. All export formats now handle nested product data correctly."),
-    ("2026-06-25", "NEW",     "Beat Run — Mandatory Order/Payment + Close Day",
-     "Yes/No flags on every stop. Unplanned existing-customer dropdown. End-of-Day PDF & Excel with breakdown by salesman."),
-    ("2026-06-20", "NEW",     "Salesman Copy-From",
-     "One-click copy of another salesman's customer mapping + beat plan. Speeds up new-hire onboarding by ~90%."),
-    ("2026-06-15", "NEW",     "Employee Active/Deactivate Toggle",
-     "Deactivate a user without deleting audit history. Deactivated users lose login but their data + reports remain intact."),
-    ("2026-06-01", "NEW",     "Tally Agent v9.8.28 — SVCurrentCompany Fix",
-     "Fixed XML header format that some Tally builds rejected. Zero errors on 5,000+ voucher syncs after fix."),
-    ("2026-05-10", "NEW",     "Cancel Dispatch Cards",
-     "Cancel a card up to the Packed lane with a reason; cancelled cards strikethrough until end-of-day, then auto-archive."),
-    ("2026-05-10", "NEW",     "Tally Invoice Drift Detection",
-     "Cards now auto-flag (amber/red badge) when the source Tally invoice is modified or deleted after sync — no silent drift."),
-    ("2026-05-09", "NEW",     "Fuzzy Search Everywhere",
-     "\"tvs 10\" now finds \"TVS-10\", \"TVS(10)\", \"TVS/10\". Spaces and separators (- / ( ) ! : . , & _) ignored across all search boxes."),
-    ("2026-05-08", "IMPROVE", "SPIP — 12-Month Rolling Window",
-     "Added rolling 12-month fallback and a \"No Movement\" bucket for idle items. Aliases included in global search."),
-    ("2026-05-07", "FIX",     "SPIP & YoY Limits Removed",
-     "Lifted the 5,000-row cap so all items surface in SPIP. Cross-FY YoY sales comparison + forecast tables added."),
-    ("2026-05-05", "IMPROVE", "Mobile Performance",
-     "Server-side pagination + render caps for Inventory and Customer CRM. Tally API delay 2s → 0.5s. New compound DB indexes."),
-    ("2026-04-23", "NEW",     "Dispatch Terminal",
-     "Kanban board, LR tracking, document uploads, porter settlement."),
-]
+JSON_PATH = Path("/app/frontend/public/whats_new.json")
+OUT       = Path("/app/frontend/public/FLOWRA_Whats_New.pdf")
 
-OUT = Path("/app/frontend/public/FLOWRA_Whats_New.pdf")
+
+def load_updates():
+    if not JSON_PATH.exists():
+        raise SystemExit(f"Source file missing: {JSON_PATH}")
+    d = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+    entries = d.get("entries", [])
+    if not entries:
+        raise SystemExit("whats_new.json has no entries")
+    return d.get("updated_at", ""), entries
 
 
 def _frame(canv, doc):
@@ -112,6 +81,7 @@ def _frame(canv, doc):
 
 
 def build():
+    updated_at, entries = load_updates()
     doc = SimpleDocTemplate(
         str(OUT), pagesize=A4,
         leftMargin=15 * mm, rightMargin=15 * mm,
@@ -119,6 +89,8 @@ def build():
         title="FLOWRA · What's New · Feb 2026",
         author="JODIDAR INDIA",
     )
+    global _UPDATED_AT
+    _UPDATED_AT = updated_at
     styles_h1 = ParagraphStyle(name="h1", fontName=FB, fontSize=22,
                                  textColor=NAVY, leading=26, spaceAfter=4)
     styles_h2 = ParagraphStyle(name="h2", fontName=FB, fontSize=13,
@@ -139,7 +111,11 @@ def build():
     ]
 
     rows = []
-    for date, tag, title, desc in UPDATES:
+    for entry in entries:
+        date  = entry.get("date", "")
+        tag   = entry.get("tag", "NEW")
+        title = entry.get("title", "")
+        desc  = entry.get("desc", "")
         tag_color = TAG_COLORS.get(tag, GREY)
         tag_para = Paragraph(f"<b>{tag}</b>", ParagraphStyle(
             name=f"tg{date}", fontName=FB, fontSize=8,
@@ -178,7 +154,7 @@ def build():
         ParagraphStyle(name="ft", fontName=FI, fontSize=8,
                         textColor=GREY, leading=11)))
     doc.build(story, onFirstPage=_frame, onLaterPages=_frame)
-    print(f"✓ Wrote {OUT}  ({OUT.stat().st_size / 1024:.0f} KB, {len(UPDATES)} entries)")
+    print(f"✓ Wrote {OUT}  ({OUT.stat().st_size / 1024:.0f} KB, {len(entries)} entries · source: whats_new.json updated_at={updated_at})")
 
 
 if __name__ == "__main__":

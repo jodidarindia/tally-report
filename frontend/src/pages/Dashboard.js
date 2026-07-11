@@ -17,6 +17,9 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // v2 — single source of truth: /whats_new.json powers both this panel
+  // AND /public/FLOWRA_Whats_New.pdf. Edit that file to update both.
+  const [updates, setUpdates] = useState([]);
   const { user } = useAuth();
   // Scope sync events to this tenant — prevents cross-tenant WS leak.
   // Only admins need the live progress feed; employees see only the static
@@ -30,6 +33,18 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
     fetchSyncStatus();
     fetchReminders();
     fetchOverdueDigest();
+
+    // v2 — single source of truth for What's New (also feeds the PDF)
+    const TAG_COLORS = { NEW: '#8b5cf6', FIX: '#ef4444', IMPROVE: '#0891b2' };
+    fetch('/whats_new.json', { cache: 'no-cache' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(j => setUpdates(
+        (j.entries || []).map(e => ({
+          d: e.date, tag: e.tag, title: e.title, desc: e.desc,
+          tagColor: TAG_COLORS[e.tag] || '#64748b',
+        }))
+      ))
+      .catch(err => console.warn('Could not load whats_new.json', err));
 
     let intervalId;
     if (autoRefresh) {
@@ -417,33 +432,7 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
           <h3 className="text-sm font-semibold text-slate-900">FLOWRA Updates</h3>
         </div>
         <div className="max-h-48 sm:max-h-56 overflow-y-auto divide-y divide-slate-50">
-          {[
-            { d: '2026-07-11', tag: 'FIX', tagColor: '#ef4444', title: 'Busy Sync Agent v1.3.1', desc: 'pyodbc bundled + Busy DB password fallback chain (Busy 21/18/older) + BUSY_DB_PASSWORD override field in Settings.' },
-            { d: '2026-07-08', tag: 'FIX', tagColor: '#ef4444', title: 'Tally Agent v9.8.30 — Forward-Dated Voucher Fix', desc: 'Quick-sync window now extends to today, not stops at stored LVD. Reconcile is date-scoped — prevents mass deletions when a voucher is added with a future date.' },
-            { d: '2026-07-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'Busy Sync Agent v1.2 — Full Tally Parity', desc: 'Complete 1:1 Tally clone GUI: 4 connectivity cards, Sync Status panel, Subscription block with Request Renewal, auto-detect companies + FYs on folder pick.' },
-            { d: '2026-07-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'Investor Pitch Kit', desc: '16-page pitch PDF + 10-page cold-email teaser + editable Excel projection model. Auto-generated from a single source of truth.' },
-            { d: '2026-07-05', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.29 — LVD & AlterID Persist', desc: 'Per-company LVD + AlterID + timestamp saved to disk. 7-day full-sync skip window if AlterID unchanged.' },
-            { d: '2026-07-02', tag: 'NEW', tagColor: '#8b5cf6', title: 'Marketing Kit', desc: 'Auto-generated pitch decks (detailed + pointers), print-ready visiting cards (front/back QR), Tally-vs-Busy-vs-FLOWRA comparison charts.' },
-            { d: '2026-06-30', tag: 'FIX', tagColor: '#ef4444', title: 'Inventory Export Bugs', desc: 'CSV/Excel list→string coercion, PDF payload updates, multi-group filter fix. All export formats now handle nested product data correctly.' },
-            { d: '2026-06-25', tag: 'NEW', tagColor: '#8b5cf6', title: 'Beat Run — Mandatory Order/Payment + Close Day', desc: 'Yes/No flags on every stop. Unplanned existing-customer dropdown. End-of-Day PDF & Excel with breakdown by salesman.' },
-            { d: '2026-06-20', tag: 'NEW', tagColor: '#8b5cf6', title: 'Salesman Copy-From', desc: 'One-click copy of another salesman\'s customer mapping + beat plan. Speeds up new-hire onboarding by ~90%.' },
-            { d: '2026-06-15', tag: 'NEW', tagColor: '#8b5cf6', title: 'Employee Active/Deactivate Toggle', desc: 'Deactivate a user without deleting audit history. Deactivated users lose login but their data + reports remain intact.' },
-            { d: '2026-06-01', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.28 — SVCurrentCompany Fix', desc: 'Fixed XML header format that some Tally builds rejected. Zero errors on 5,000+ voucher syncs after fix.' },
-            { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Cancel Dispatch Cards', desc: 'Cancel a card up to the Packed lane with a reason; cancelled cards strikethrough until end-of-day, then auto-archive.' },
-            { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Invoice Drift Detection', desc: 'Cards now auto-flag (amber/red badge) when the source Tally invoice is modified or deleted after sync — no silent drift.' },
-            { d: '2026-05-09', tag: 'NEW', tagColor: '#8b5cf6', title: 'Fuzzy Search Everywhere', desc: '"tvs 10" now finds "TVS-10", "TVS(10)", "TVS/10". Spaces and separators (- / ( ) ! : . , & _) ignored across all search boxes.' },
-            { d: '2026-05-08', tag: 'IMPROVE', tagColor: '#0891b2', title: 'SPIP — 12-Month Rolling Window', desc: 'Added rolling 12-month fallback and a "No Movement" bucket for idle items. Aliases included in global search.' },
-            { d: '2026-05-07', tag: 'FIX', tagColor: '#ef4444', title: 'SPIP & YoY Limits Removed', desc: 'Lifted the 5,000-row cap so all items surface in SPIP. Cross-FY YoY sales comparison + forecast tables added.' },
-            { d: '2026-05-05', tag: 'IMPROVE', tagColor: '#0891b2', title: 'Mobile Performance', desc: 'Server-side pagination + render caps for Inventory and Customer CRM. Tally API delay 2s → 0.5s. New compound DB indexes.' },
-            { d: '2026-05-03', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.7', desc: 'Standard price via STANDARDPRICELIST, root-group hierarchy, and item alias (LANGUAGENAME) extraction.' },
-            { d: '2026-05-01', tag: 'FIX', tagColor: '#ef4444', title: 'CA Corner BS & P&L Parity', desc: 'Fixed Assets, Sundry Debtors and Creditors re-mapped via root-group hierarchy. Removed double-counting of Stock-in-Hand.' },
-            { d: '2026-04-28', tag: 'NEW', tagColor: '#8b5cf6', title: 'Beat Run Monthly Report', desc: 'Salesman beat coverage and visit summary, exportable to Excel.' },
-            { d: '2026-04-23', tag: 'NEW', tagColor: '#8b5cf6', title: 'Dispatch Terminal', desc: 'Kanban board, LR tracking, document uploads, porter settlement.' },
-            { d: '2026-04-16', tag: 'FIX', tagColor: '#ef4444', title: 'Outstanding Calculation Fixed', desc: 'Opening balances per FY and journal voucher party amounts corrected.' },
-            { d: '2026-04-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Desktop Agent v9', desc: 'Deletion reconciliation, command queue, dual-schedule syncing.' },
-            { d: '2026-04-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'CRM Targets Overhaul', desc: 'Bulk targets, customer removal/reactivation, read-only past FYs.' },
-            { d: '2026-04-05', tag: 'NEW', tagColor: '#8b5cf6', title: 'Digital Questionnaire', desc: 'Public customer forms with SuperAdmin leads and Excel export.' },
-          ].map((u, i) => (
+          {updates.map((u, i) => (
             <div key={i} className="px-4 py-2.5 flex items-start gap-3 hover:bg-slate-25 transition" data-testid={`update-${i}`}>
               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0" style={{ background: u.tagColor + '15', color: u.tagColor }}>{u.tag}</span>
               <div className="min-w-0 flex-1">
@@ -453,6 +442,11 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
               <span className="text-[9px] text-slate-400 flex-shrink-0 mt-0.5">{u.d}</span>
             </div>
           ))}
+          {updates.length === 0 && (
+            <div className="px-4 py-6 text-center text-xs text-slate-400" data-testid="updates-loading">
+              Loading updates…
+            </div>
+          )}
         </div>
       </div>
     </div>

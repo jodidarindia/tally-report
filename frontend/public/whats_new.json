@@ -1,0 +1,31 @@
+{
+  "updated_at": "2026-07-11",
+  "note": "SINGLE SOURCE OF TRUTH for the What's New panel in the User Admin Dashboard AND for FLOWRA_Whats_New.pdf. Edit this file to update both surfaces at once. Regenerate PDF via `python /app/scripts/generate_whats_new_pdf.py`.",
+  "entries": [
+    { "date": "2026-07-11", "tag": "FIX",     "title": "Busy Sync Agent v1.3.1",                          "desc": "pyodbc bundled + Busy DB password fallback chain (Busy 21/18/older) + BUSY_DB_PASSWORD override field in Settings." },
+    { "date": "2026-07-08", "tag": "FIX",     "title": "Tally Agent v9.8.30 — Forward-Dated Voucher Fix", "desc": "Quick-sync window now extends to today, not stops at stored LVD. Reconcile is date-scoped — prevents mass deletions when a voucher is added with a future date." },
+    { "date": "2026-07-08", "tag": "NEW",     "title": "Busy Sync Agent v1.2 — Full Tally Parity",         "desc": "Complete 1:1 Tally clone GUI: 4 connectivity cards, Sync Status panel, Subscription block with Request Renewal, auto-detect companies + FYs on folder pick." },
+    { "date": "2026-07-08", "tag": "NEW",     "title": "Investor Pitch Kit",                                 "desc": "16-page pitch PDF + 10-page cold-email teaser + editable Excel projection model. Auto-generated from a single source of truth." },
+    { "date": "2026-07-05", "tag": "NEW",     "title": "Tally Agent v9.8.29 — LVD & AlterID Persist",      "desc": "Per-company LVD + AlterID + timestamp saved to disk. 7-day full-sync skip window if AlterID unchanged." },
+    { "date": "2026-07-02", "tag": "NEW",     "title": "Marketing Kit",                                       "desc": "Auto-generated pitch decks (detailed + pointers), print-ready visiting cards (front/back QR), Tally-vs-Busy-vs-FLOWRA comparison charts." },
+    { "date": "2026-06-30", "tag": "FIX",     "title": "Inventory Export Bugs",                              "desc": "CSV/Excel list→string coercion, PDF payload updates, multi-group filter fix. All export formats now handle nested product data correctly." },
+    { "date": "2026-06-25", "tag": "NEW",     "title": "Beat Run — Mandatory Order/Payment + Close Day",  "desc": "Yes/No flags on every stop. Unplanned existing-customer dropdown. End-of-Day PDF & Excel with breakdown by salesman." },
+    { "date": "2026-06-20", "tag": "NEW",     "title": "Salesman Copy-From",                                  "desc": "One-click copy of another salesman's customer mapping + beat plan. Speeds up new-hire onboarding by ~90%." },
+    { "date": "2026-06-15", "tag": "NEW",     "title": "Employee Active/Deactivate Toggle",                 "desc": "Deactivate a user without deleting audit history. Deactivated users lose login but their data + reports remain intact." },
+    { "date": "2026-06-01", "tag": "NEW",     "title": "Tally Agent v9.8.28 — SVCurrentCompany Fix",       "desc": "Fixed XML header format that some Tally builds rejected. Zero errors on 5,000+ voucher syncs after fix." },
+    { "date": "2026-05-10", "tag": "NEW",     "title": "Cancel Dispatch Cards",                              "desc": "Cancel a card up to the Packed lane with a reason; cancelled cards strikethrough until end-of-day, then auto-archive." },
+    { "date": "2026-05-10", "tag": "NEW",     "title": "Tally Invoice Drift Detection",                     "desc": "Cards now auto-flag (amber/red badge) when the source Tally invoice is modified or deleted after sync — no silent drift." },
+    { "date": "2026-05-09", "tag": "NEW",     "title": "Fuzzy Search Everywhere",                            "desc": "\"tvs 10\" now finds \"TVS-10\", \"TVS(10)\", \"TVS/10\". Spaces and separators (- / ( ) ! : . , & _) ignored across all search boxes." },
+    { "date": "2026-05-08", "tag": "IMPROVE", "title": "SPIP — 12-Month Rolling Window",                    "desc": "Added rolling 12-month fallback and a \"No Movement\" bucket for idle items. Aliases included in global search." },
+    { "date": "2026-05-07", "tag": "FIX",     "title": "SPIP & YoY Limits Removed",                          "desc": "Lifted the 5,000-row cap so all items surface in SPIP. Cross-FY YoY sales comparison + forecast tables added." },
+    { "date": "2026-05-05", "tag": "IMPROVE", "title": "Mobile Performance",                                  "desc": "Server-side pagination + render caps for Inventory and Customer CRM. Tally API delay 2s → 0.5s. New compound DB indexes." },
+    { "date": "2026-05-03", "tag": "NEW",     "title": "Tally Agent v9.8.7",                                 "desc": "Standard price via STANDARDPRICELIST, root-group hierarchy, and item alias (LANGUAGENAME) extraction." },
+    { "date": "2026-05-01", "tag": "FIX",     "title": "CA Corner BS & P&L Parity",                          "desc": "Fixed Assets, Sundry Debtors and Creditors re-mapped via root-group hierarchy. Removed double-counting of Stock-in-Hand." },
+    { "date": "2026-04-28", "tag": "NEW",     "title": "Beat Run Monthly Report",                            "desc": "Salesman beat coverage and visit summary, exportable to Excel." },
+    { "date": "2026-04-23", "tag": "NEW",     "title": "Dispatch Terminal",                                   "desc": "Kanban board, LR tracking, document uploads, porter settlement." },
+    { "date": "2026-04-16", "tag": "FIX",     "title": "Outstanding Calculation Fixed",                       "desc": "Opening balances per FY and journal voucher party amounts corrected." },
+    { "date": "2026-04-10", "tag": "NEW",     "title": "Desktop Agent v9",                                    "desc": "Deletion reconciliation, command queue, dual-schedule syncing." },
+    { "date": "2026-04-08", "tag": "NEW",     "title": "CRM Targets Overhaul",                                "desc": "Bulk targets, customer removal/reactivation, read-only past FYs." },
+    { "date": "2026-04-05", "tag": "NEW",     "title": "Digital Questionnaire",                                "desc": "Public customer forms with SuperAdmin leads and Excel export." }
+  ]
+}
