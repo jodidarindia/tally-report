@@ -475,3 +475,15 @@ See `/app/memory/DATABASE_STRATEGY.md`. Tier-1 dumps live; Tier-2 Atlas PITR ava
   * `FLOWRA_Presentation.pdf`, `FLOWRA_Customer_Questionnaire.pdf`, `FLOWRA_Training_Booklet.pdf`, `FLOWRA_Deployment_Guide.pdf`, `FLOWRA_Coming_Soon.pdf`, `FLOWRA_Social_Media_Kit.pdf` — all rebuilt with May 2026 content (Beat Run, A/B/C/D, CA Corner Tally-parity, Dispatch mirror view, Backups, Salesman Dashboard, Tally Sync v9.6.0).
   * **Guard-rail:** removed the What's-New builder from the master generator's `__main__` (with a clear comment) — the JSON-driven `generate_whats_new_pdf.py` (fed by `whats_new.json`, the single source of truth) is the sole owner of `FLOWRA_Whats_New.pdf`. Prevents recurrence of the July 11 accidental clobber.
 
+
+
+## Iteration 121 (11 July 2026) — Export Bugs Sweep
+Fixed 5 reported export/UI bugs on the useradmin dashboard:
+
+1. **Sales PDF/Excel export → "Not Found"** — `Sales.js` was hitting a non-existent `GET /api/export/sales`. Switched to `POST /api/reports/export` (same endpoint Inventory uses) with `report_type: 'sales'`. Also corrected the FY filter — `sales_vouchers` doesn't store `fy` as a scalar; we now post-filter via `filter_vouchers_by_fy()`.
+2. **CRM Targets Excel refused to open** — payload field-name mismatch + JSON error body served as blob. Frontend now remaps `last_fy_sales/target_amount/achieved_amount/achievement_percentage` → the backend's expected keys; both Sales and Targets exports now sniff `content-type` and toast on JSON error responses instead of writing garbage to `.xlsx`.
+3. **CRM Targets "All Customers" dropdown filter ignored** — the outstanding tab honoured `selectedGroup`, but the targets block never applied it. Wrapped the targets block in an IIFE that computes `filteredTargets` (group / state / fuzzy search) and passes those to both the table AND the Excel export. Added a "X of Y" visible-count badge.
+4. **CRM Payment Behavior column mis-alignment** — root cause: `.data-table td.numeric { text-align: right }` existed but no matching `.data-table th.numeric` rule → headers stayed left-aligned above right-aligned cells. Added the missing CSS rule. Also fixed the Pay Ratio flex to use `justify-end`.
+5. **Inventory PDF header showed "Anonymous" / "FLOWRA Report"** — `ExportService.export_to_pdf/excel/csv` now accept a `company_name` param; `routes/ai_reports.py` and CRM Outstanding/Targets endpoints resolve the useradmin's synced company name from `db.sync_status` (fallback via `id_mapping_service.get_company_name`) and pass it, so PDF/Excel/CSV all show `ASA AUTOTECH INDIA PRIVATE LIMITED` as the banner.
+
+Regression: `/app/backend/tests/test_iteration121_export_bugs.py` — 11/11 pass.

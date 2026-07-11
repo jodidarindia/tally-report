@@ -174,7 +174,18 @@ async def export_report(request: Request):
             data = await db.inventory_items.find(extra, {"_id": 0}).to_list(10000)
             report_title = "Inventory Report"
         elif report_type == "sales":
-            data = await db.sales_vouchers.find(q, {"_id": 0}).to_list(1000)
+            # iter-121: FY isn't stored on sales_vouchers as a scalar field —
+            # it's derived from voucher_date via filter_vouchers_by_fy.
+            # Previous code did `extra["fy"] = fy_filter` which never matched
+            # → always "No data available". Load, then post-filter.
+            fy_filter = (filters.get("fy") or body.get("fy") or "").strip()
+            data = await db.sales_vouchers.find(q, {"_id": 0}).to_list(100000)
+            if fy_filter:
+                try:
+                    from utils import filter_vouchers_by_fy
+                    data = filter_vouchers_by_fy(data, fy_filter)
+                except Exception as fe:
+                    logger.warning(f"filter_vouchers_by_fy failed for {fy_filter}: {fe}")
             report_title = "Sales Report"
         else:
             return APIResponse(success=False, error="Invalid report type")
@@ -187,18 +198,42 @@ async def export_report(request: Request):
             clean_item = {k: v for k, v in item.items() if k not in ['last_updated', 'created_at']}
             clean_data.append(clean_item)
 
+        # iter-121: resolve the tenant's synced company name so every
+        # PDF/Excel/CSV export shows the useradmin's actual business name
+        # instead of "Anonymous" / hardcoded "FLOWRA Report".
+        company_name = ""
+        try:
+            tenant_id = ctx.get("tenant_id") if ctx else ""
+            company_id = body.get("company_id") or (ctx.get("company_id") if ctx else "")
+            if tenant_id and company_id:
+                from services.id_mapping_service import get_company_name
+                company_name = (await get_company_name(tenant_id, company_id) or "").strip()
+            if not company_name and tenant_id:
+                # Fallback: pick the most recently synced company for this tenant.
+                sync_doc = await db.sync_status.find_one(
+                    {"tenant_id": tenant_id, "type": "agent_sync"},
+                    {"_id": 0, "company_name": 1},
+                    sort=[("last_sync", -1)],
+                )
+                if sync_doc:
+                    company_name = (sync_doc.get("company_name") or "").strip()
+        except Exception as ce:
+            logger.warning(f"Could not resolve company_name for export: {ce}")
+
         export_service = ExportService()
 
         if export_format == "csv":
-            output = export_service.export_to_csv(clean_data)
+            output = export_service.export_to_csv(clean_data, company_name=company_name)
             media_type = "text/csv"
             filename = f"{report_type}_report.csv"
         elif export_format == "excel":
-            output = export_service.export_to_excel(clean_data, report_type.title())
+            output = export_service.export_to_excel(clean_data, report_type.title(),
+                                                    company_name=company_name)
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"{report_type}_report.xlsx"
         elif export_format == "pdf":
-            output = export_service.export_to_pdf(clean_data, report_type.title(), report_title)
+            output = export_service.export_to_pdf(clean_data, report_type.title(),
+                                                   report_title, company_name=company_name)
             media_type = "application/pdf"
             filename = f"{report_type}_report.pdf"
         else:

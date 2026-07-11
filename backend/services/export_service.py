@@ -23,7 +23,8 @@ class ExportService:
     """Service for exporting reports in various formats (PDF, Excel, CSV)"""
 
     @staticmethod
-    def export_to_csv(data: List[Dict[str, Any]], filename: str = "report.csv") -> io.BytesIO:
+    def export_to_csv(data: List[Dict[str, Any]], filename: str = "report.csv",
+                      company_name: str = "") -> io.BytesIO:
         # iter-111: previously used io.TextIOWrapper(BytesIO()) — that pattern is
         # unreliable across Python versions because the wrapper is GC'd on
         # return and may close its underlying BytesIO before FastAPI streams it,
@@ -32,6 +33,10 @@ class ExportService:
         text_buf = io.StringIO(newline='')
         if not data:
             return io.BytesIO(b"")
+        # iter-121: prepend the useradmin company name as a banner row so
+        # CSV opens in Excel with the same context as PDF/xlsx exports.
+        if company_name:
+            text_buf.write(f"{company_name}\n\n")
         fieldnames = list(data[0].keys())
         writer = csv.DictWriter(text_buf, fieldnames=fieldnames)
         writer.writeheader()
@@ -44,7 +49,8 @@ class ExportService:
         return io.BytesIO(encoded)
 
     @staticmethod
-    def export_to_excel(data: List[Dict[str, Any]], report_type: str = "Report") -> io.BytesIO:
+    def export_to_excel(data: List[Dict[str, Any]], report_type: str = "Report",
+                        company_name: str = "") -> io.BytesIO:
         output = io.BytesIO()
         wb = Workbook()
         ws = wb.active
@@ -61,13 +67,39 @@ class ExportService:
         stripe_fill = PatternFill(start_color="F0F4FF", end_color="F0F4FF", fill_type="solid")
 
         headers = list(data[0].keys())
+
+        # Row 1: Company banner (spans all columns) — iter-121, replaces
+        # the previous "Anonymous"/blank title with the useradmin's synced
+        # company name pulled from db.sync_status.
+        banner_row = 1
+        header_row = 1
+        first_data_row = 2
+        if company_name:
+            title_cell = ws.cell(row=1, column=1, value=company_name)
+            title_cell.font = Font(bold=True, color="0F1B4C", size=14)
+            title_cell.alignment = Alignment(horizontal="center", vertical="center")
+            if len(headers) > 1:
+                ws.merge_cells(start_row=1, start_column=1,
+                               end_row=1, end_column=len(headers))
+            subtitle_cell = ws.cell(row=2, column=1, value=f"{report_type} Report")
+            subtitle_cell.font = Font(italic=True, color="64748B", size=10)
+            subtitle_cell.alignment = Alignment(horizontal="center", vertical="center")
+            if len(headers) > 1:
+                ws.merge_cells(start_row=2, start_column=1,
+                               end_row=2, end_column=len(headers))
+            ws.row_dimensions[1].height = 22
+            ws.row_dimensions[2].height = 16
+            header_row = 3
+            first_data_row = 4
+
         for col_idx, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell = ws.cell(row=header_row, column=col_idx, value=header)
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center")
 
-        for row_idx, row_data in enumerate(data, start=2):
+        for row_offset, row_data in enumerate(data):
+            row_idx = first_data_row + row_offset
             for col_idx, header in enumerate(headers, start=1):
                 value = row_data.get(header, "")
                 # iter-111: openpyxl rejects list/dict cell values with
@@ -85,20 +117,30 @@ class ExportService:
                 cell = ws.cell(row=row_idx, column=col_idx, value=safe_value)
                 if isinstance(safe_value, (int, float)):
                     cell.alignment = Alignment(horizontal="right")
-                # Alternating stripe
-                if row_idx % 2 == 0:
+                # Alternating stripe (based on relative data row index)
+                if (row_offset % 2) == 1:
                     cell.fill = stripe_fill
 
-        for column_cells in ws.columns:
-            length = max(len(str(cell.value)) for cell in column_cells)
-            ws.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 50)
+        # iter-121: `ws.columns` returns MergedCell objects for cells inside
+        # the banner merge range, and MergedCell has no `.column_letter`.
+        # Iterate by column index using `get_column_letter` instead.
+        from openpyxl.utils import get_column_letter
+        for col_idx in range(1, len(headers) + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 10
+            for row_idx in range(header_row, first_data_row + len(data)):
+                v = ws.cell(row=row_idx, column=col_idx).value
+                if v is not None:
+                    max_len = max(max_len, len(str(v)))
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
 
         wb.save(output)
         output.seek(0)
         return output
 
     @staticmethod
-    def export_to_pdf(data: List[Dict[str, Any]], report_type: str = "Report", title: str = "FLOWRA Report") -> io.BytesIO:
+    def export_to_pdf(data: List[Dict[str, Any]], report_type: str = "Report",
+                      title: str = "FLOWRA Report", company_name: str = "") -> io.BytesIO:
         output = io.BytesIO()
         doc = SimpleDocTemplate(output, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
         elements = []
@@ -114,19 +156,22 @@ class ExportService:
             except Exception as e:
                 logger.warning(f"Could not add logo to PDF: {e}")
 
-        # Title
+        # iter-121: heading is now the ACTUAL synced company name (falls
+        # back to the passed-in `title` — previously all PDFs showed
+        # "Anonymous" / hardcoded "FLOWRA Report" regardless of tenant).
+        header_text = (company_name or title or "FLOWRA Report").strip()
         title_style = ParagraphStyle(
             'FlowraTitle', parent=styles['Title'],
             textColor=colors.HexColor(BRAND_COLOR_DARK),
-            fontSize=18, spaceAfter=6
+            fontSize=18, spaceAfter=6, alignment=1
         )
-        elements.append(Paragraph(f"<b>{title}</b>", title_style))
+        elements.append(Paragraph(f"<b>{header_text}</b>", title_style))
 
         # Subtitle
         sub_style = ParagraphStyle(
             'FlowraSub', parent=styles['Heading2'],
             textColor=colors.HexColor(BRAND_COLOR),
-            fontSize=12, spaceAfter=12
+            fontSize=12, spaceAfter=12, alignment=1
         )
         elements.append(Paragraph(f"{report_type} Report", sub_style))
         elements.append(Spacer(1, 0.15*inch))

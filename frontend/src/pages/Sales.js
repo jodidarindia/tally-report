@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
+import { toast } from 'sonner';
 import { TrendingUp, Calendar, User, FileText, Download, X, Package, Truck, Receipt, Filter, ChevronDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import SearchableSelect from '../components/SearchableSelect';
@@ -226,14 +227,41 @@ const Sales = ({ selectedFY, excludeBranches }) => {
   });
 
   const handleExport = async (format) => {
+    // iter-121: previous impl hit `${API}/export/sales?format=pdf` (GET)
+    // which does not exist → 404 "Not Found". Switched to the same
+    // POST /api/reports/export endpoint the Inventory tab uses, which
+    // supports `report_type: 'sales'` and now stamps the useradmin
+    // company name as the PDF/Excel banner.
     try {
-      const params = new URLSearchParams();
-      if (selectedFY) params.append('fy', selectedFY);
-      params.append('format', format);
-      const url = `${API}/export/sales?${params.toString()}`;
-      window.open(url, '_blank');
+      const response = await axios.post(
+        `${API}/reports/export`,
+        { report_type: 'sales', format, filters: { fy: selectedFY || '' }, fy: selectedFY || '' },
+        { responseType: 'blob' }
+      );
+      // If the server returned a JSON error body inside a 200 blob (legacy
+      // APIResponse pattern), surface it as a toast instead of writing
+      // JSON bytes to an .xlsx / .pdf file (which Excel then rejects).
+      const contentType = response.headers?.['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = await response.data.text();
+        try { toast.error(JSON.parse(text).error || 'Export failed'); }
+        catch { toast.error('Export failed'); }
+        return;
+      }
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const extMap = { csv: 'csv', excel: 'xlsx', pdf: 'pdf' };
+      const ext = extMap[format] || format;
+      link.setAttribute('download', `sales_report_${selectedFY || 'all'}.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Sales exported to ${format.toUpperCase()}`);
     } catch (err) {
       console.error('Export error:', err);
+      toast.error('Export failed');
     }
   };
 

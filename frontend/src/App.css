@@ -172,6 +172,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* iter-121: without this rule, `.data-table th` (left-aligned) applies
+   to headers marked `numeric`, but the cells (`td.numeric`) are right-
+   aligned — leaving headers and their numbers visibly misaligned
+   (CRM → Payment Behaviour was the reported case). */
+.data-table th.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.data-table th.numeric > span {
+  justify-content: flex-end;
+}
+
 @media (min-width: 640px) {
   .data-table th {
     padding: 1rem;

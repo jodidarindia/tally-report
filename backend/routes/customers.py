@@ -28,6 +28,34 @@ from services.audit_service import log_audit, get_client_ip
 from routes.branch_ledgers import get_branch_parties
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_company_name(ctx) -> str:
+    """iter-121: fetch the useradmin's synced company name so every export
+    (Outstanding / Targets / Ledger PDF etc.) can stamp it as the header
+    banner. Falls back to '' when the tenant hasn't synced yet."""
+    if not ctx or not ctx.get("tenant_id"):
+        return ""
+    tenant_id = ctx["tenant_id"]
+    company_id = ctx.get("company_id")
+    try:
+        if company_id:
+            from services.id_mapping_service import get_company_name
+            name = (await get_company_name(tenant_id, company_id) or "").strip()
+            if name:
+                return name
+        doc = await db.sync_status.find_one(
+            {"tenant_id": tenant_id, "type": "agent_sync"},
+            {"_id": 0, "company_name": 1},
+            sort=[("last_sync", -1)],
+        )
+        if doc:
+            return (doc.get("company_name") or "").strip()
+    except Exception as e:
+        logger.warning(f"_resolve_company_name failed: {e}")
+    return ""
+
+
 router = APIRouter()
 
 
@@ -1333,6 +1361,9 @@ async def export_outstanding_excel(request: Request):
         data = body.get("data", [])
         fy = body.get("fy", "")
 
+        ctx = await get_tenant_context(request)
+        company_name = await _resolve_company_name(ctx)
+
         wb = Workbook()
         ws = wb.active
         ws.title = "Outstanding"
@@ -1340,13 +1371,31 @@ async def export_outstanding_excel(request: Request):
         header_font = Font(bold=True, color="FFFFFF", size=10)
         header_fill = PatternFill("solid", fgColor="2563EB")
         headers = ["Customer Name", "Group", "Opening Bal", "Total Sales", "Paid", "Outstanding", "0-30d", "30-60d", "60-90d", "90+d"]
+
+        # iter-121: banner row with the useradmin's company name
+        header_row = 1
+        first_data_row = 2
+        if company_name:
+            banner = ws.cell(row=1, column=1, value=company_name)
+            banner.font = Font(bold=True, color="0F1B4C", size=14)
+            banner.alignment = Alignment(horizontal="center")
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+            subtitle = ws.cell(row=2, column=1, value=f"CRM Outstanding — FY {fy or 'All'}")
+            subtitle.font = Font(italic=True, color="64748B", size=10)
+            subtitle.alignment = Alignment(horizontal="center")
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+            ws.row_dimensions[1].height = 22
+            header_row = 3
+            first_data_row = 4
+
         for col, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=h)
+            cell = ws.cell(row=header_row, column=col, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center")
 
-        for i, row in enumerate(data, 2):
+        for offset, row in enumerate(data):
+            i = first_data_row + offset
             ws.cell(row=i, column=1, value=row.get("customer_name", ""))
             ws.cell(row=i, column=2, value=row.get("ledger_group", ""))
             ws.cell(row=i, column=3, value=round(row.get("opening_balance", 0), 2))
@@ -1385,6 +1434,9 @@ async def export_targets_excel(request: Request):
         data = body.get("data", [])
         fy = body.get("fy", "")
 
+        ctx = await get_tenant_context(request)
+        company_name = await _resolve_company_name(ctx)
+
         wb = Workbook()
         ws = wb.active
         ws.title = "Targets"
@@ -1396,13 +1448,30 @@ async def export_targets_excel(request: Request):
         months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
         headers.extend(months)
 
+        # iter-121: banner row with useradmin company name
+        header_row = 1
+        first_data_row = 2
+        if company_name:
+            banner = ws.cell(row=1, column=1, value=company_name)
+            banner.font = Font(bold=True, color="0F1B4C", size=14)
+            banner.alignment = Alignment(horizontal="center")
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+            subtitle = ws.cell(row=2, column=1, value=f"CRM Targets — FY {fy or 'All'}")
+            subtitle.font = Font(italic=True, color="64748B", size=10)
+            subtitle.alignment = Alignment(horizontal="center")
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+            ws.row_dimensions[1].height = 22
+            header_row = 3
+            first_data_row = 4
+
         for col, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=h)
+            cell = ws.cell(row=header_row, column=col, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center")
 
-        for i, row in enumerate(data, 2):
+        for offset, row in enumerate(data):
+            i = first_data_row + offset
             ws.cell(row=i, column=1, value=row.get("customer_name", ""))
             ws.cell(row=i, column=2, value=round(row.get("previous_fy_sales", 0), 2))
             ws.cell(row=i, column=3, value=round(row.get("target", 0), 2))

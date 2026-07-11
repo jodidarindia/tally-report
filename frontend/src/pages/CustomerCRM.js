@@ -206,7 +206,32 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
 
   const exportTargetsExcel = async (data) => {
     try {
-      const response = await axios.post(`${API}/customers/targets/export`, { data, fy: selectedFY || '' }, { responseType: 'blob' });
+      // iter-121: the frontend `targets` objects use `last_fy_sales`,
+      // `target_amount`, `achieved_amount`, `achievement_percentage` but
+      // the backend export expects `previous_fy_sales`, `target`,
+      // `current_fy_sales`, `achievement_pct`, `monthly_sales`. Without
+      // this remap the file downloaded fine but every numeric column was
+      // 0 — which Excel opened as blank; on some Windows Excel builds a
+      // blank openpyxl workbook triggers the "file extension or format
+      // is not valid" warning. Explicit remap keeps the export sane.
+      const remapped = (data || []).map(t => ({
+        customer_name: t.customer_name || '',
+        previous_fy_sales: Number(t.last_fy_sales || t.previous_fy_sales || 0),
+        target: Number(t.target_amount || t.target || 0),
+        current_fy_sales: Number(t.achieved_amount || t.current_fy_sales || 0),
+        achievement_pct: Number(t.achievement_percentage || t.achievement_pct || 0),
+        monthly_sales: t.monthly_sales || {},
+      }));
+      const response = await axios.post(`${API}/customers/targets/export`, { data: remapped, fy: selectedFY || '' }, { responseType: 'blob' });
+      // Guard against JSON error body served as blob → prevents Excel
+      // "invalid format" popup when the endpoint fails silently.
+      const contentType = response.headers?.['content-type'] || '';
+      if (contentType.includes('application/json')) {
+        const text = await response.data.text();
+        try { toast.error(JSON.parse(text).error || 'Export failed'); }
+        catch { toast.error('Export failed'); }
+        return;
+      }
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -621,7 +646,27 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
           )}
 
           {/* Targets with Set Target & Monthly Sales */}
-          {activeTab === 'targets' && (
+          {activeTab === 'targets' && (() => {
+            // iter-121: apply the "All Customers / Ledger Group / State"
+            // dropdown filter to the targets tab too (previously only the
+            // Outstanding tab honoured it, so the dropdown looked broken).
+            // Also pass the filtered list — not the raw `targets` — into
+            // the Excel exporter so what you see is what you get.
+            const q = (searchQuery || '').trim();
+            const filteredTargets = targets
+              .filter(t => {
+                if (selectedGroup === 'all') return true;
+                if (selectedGroup.startsWith('group:')) return t.ledger_group === selectedGroup.slice(6);
+                if (selectedGroup.startsWith('state:')) return t.state === selectedGroup.slice(6);
+                return t.ledger_group === selectedGroup;
+              })
+              .filter(t => !q || fuzzyMatchAny(q, [t.customer_name, t.ledger_group, t.state]));
+            const sortedTargets = [...filteredTargets].sort((a, b) => {
+              const dir = sortDir === 'asc' ? 1 : -1;
+              if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
+              return dir * ((a[sortField] || 0) - (b[sortField] || 0));
+            });
+            return (
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-3">
                 {!isFYCompleted() && (
@@ -636,8 +681,19 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                     </button>
                   </>
                 )}
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search name / group / state..."
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg flex-1 min-w-[200px] max-w-[320px]"
+                  data-testid="targets-search"
+                />
+                <span className="text-xs text-slate-400" data-testid="targets-visible-count">
+                  {sortedTargets.length} of {targets.length}
+                </span>
                 <div className="flex-1" />
-                <button onClick={() => exportTargetsExcel(targets)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-targets-excel">
+                <button onClick={() => exportTargetsExcel(sortedTargets)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700" data-testid="export-targets-excel">
                   <Download size={14} /> Export Excel
                 </button>
               </div>
@@ -645,11 +701,11 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                   <table className="data-table min-w-[800px]" data-testid="targets-table">
                     <thead>
                       <tr>
-                        {!isFYCompleted() && <th className="w-10"><input type="checkbox" checked={selectedForRemoval.length === targets.length && targets.length > 0} onChange={(e) => setSelectedForRemoval(e.target.checked ? targets.map(t => t.customer_name) : [])} /></th>}
+                        {!isFYCompleted() && <th className="w-10"><input type="checkbox" checked={selectedForRemoval.length === sortedTargets.length && sortedTargets.length > 0} onChange={(e) => setSelectedForRemoval(e.target.checked ? sortedTargets.map(t => t.customer_name) : [])} /></th>}
                         <SortTh field="customer_name" label="Customer Name" />
-                        <SortTh field="previous_fy_sales" label={`Prev FY Sales${targets[0]?.previous_fy ? ` (${targets[0].previous_fy})` : ''}`} className="numeric" />
+                        <SortTh field="previous_fy_sales" label={`Prev FY Sales${sortedTargets[0]?.previous_fy ? ` (${sortedTargets[0].previous_fy})` : ''}`} className="numeric" />
                         <SortTh field="target_amount" label="Target" className="numeric" />
-                        <SortTh field="achieved" label={`Current FY Achieved${targets[0]?.current_fy ? ` (${targets[0].current_fy})` : ''}`} className="numeric" />
+                        <SortTh field="achieved" label={`Current FY Achieved${sortedTargets[0]?.current_fy ? ` (${sortedTargets[0].current_fy})` : ''}`} className="numeric" />
                         <SortTh field="achievement_percentage" label="Achievement %" className="numeric" />
                         <SortTh field="remaining" label="Remaining" className="numeric" />
                         <th>Status</th>
@@ -657,11 +713,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...targets].sort((a, b) => {
-                        const dir = sortDir === 'asc' ? 1 : -1;
-                        if (sortField === 'customer_name') return dir * (a.customer_name || '').localeCompare(b.customer_name || '');
-                        return dir * ((a[sortField] || 0) - (b[sortField] || 0));
-                      }).map((target, idx) => (
+                      {sortedTargets.map((target, idx) => (
                         <React.Fragment key={idx}>
                           <tr>
                             {!isFYCompleted() && (
@@ -847,7 +899,8 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                 </div>
               )}
             </div>
-          )}
+          );
+          })()}
 
           {/* Payment Behavior */}
           {activeTab === 'behavior' && (
@@ -969,7 +1022,7 @@ const PaymentBehaviorTab = ({ paymentBehavior }) => {
                     <td className="numeric text-emerald-600">{fmtRs(c.paid_amount)}</td>
                     <td className="numeric text-red-600 font-medium">{fmtRs(c.outstanding_amount)}</td>
                     <td className="numeric">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 justify-end">
                         <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                           <div className={`h-full ${c.payment_ratio >= 80 ? 'bg-green-500' : c.payment_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
                             style={{ width: `${Math.min(c.payment_ratio, 100)}%` }} />
