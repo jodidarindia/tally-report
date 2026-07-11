@@ -68,6 +68,42 @@ const STEPS = [
   { id: 'next', title: 'Next Steps', icon: Send },
 ];
 
+// v1.1 — Hoisted out of QuestionnaireForm body. When these were inline
+// component declarations React re-created them on every setState → the
+// <input> unmounted/remounted on every keystroke → cursor lost. Module-
+// scope constants keep the component identity stable across re-renders.
+const _Checkbox = ({ label, checked, onChange }) => (
+  <label className="flex items-start gap-2.5 cursor-pointer group py-1" onClick={onChange}>
+    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 shrink-0 transition-colors ${checked ? 'bg-[#2563EB] border-[#2563EB]' : 'border-slate-300 group-hover:border-slate-400'}`}>
+      {checked && <Check size={12} className="text-white" />}
+    </div>
+    <span className="text-sm text-slate-700">{label}</span>
+  </label>
+);
+
+const _Radio = ({ label, checked, onChange }) => (
+  <label className="flex items-center gap-2.5 cursor-pointer group py-1" onClick={onChange}>
+    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${checked ? 'border-[#2563EB]' : 'border-slate-300 group-hover:border-slate-400'}`}>
+      {checked && <div className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />}
+    </div>
+    <span className="text-sm text-slate-700">{label}</span>
+  </label>
+);
+
+const _Input = ({ label, value, onChange, type = 'text', placeholder = '' }) => (
+  <div>
+    <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB]"
+      placeholder={placeholder}
+      data-testid={`q-${label.toLowerCase().replace(/[^a-z]/g, '-')}`}
+    />
+  </div>
+);
+
 const QuestionnaireForm = ({ onBack }) => {
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -122,8 +158,8 @@ const QuestionnaireForm = ({ onBack }) => {
           </div>
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Thank You!</h2>
           <p className="text-slate-600 mb-6 max-w-md mx-auto">
-            We've received your requirements. Our team will reach out shortly with a personalised recommendation.
-            In the meantime, here's a quick look at FLOWRA in action:
+            We&apos;ve received your requirements. Our team will reach out shortly with a personalised recommendation.
+            In the meantime, here&apos;s a quick look at FLOWRA in action:
           </p>
 
           {/* Branded demo video — auto-plays muted, loops in the background */}
@@ -158,7 +194,7 @@ const QuestionnaireForm = ({ onBack }) => {
               className="px-6 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50"
               data-testid="thank-you-whats-new-btn"
             >
-              See What's New (PDF)
+              See What&apos;s New (PDF)
             </a>
           </div>
         </div>
@@ -166,32 +202,9 @@ const QuestionnaireForm = ({ onBack }) => {
     );
   }
 
-  const Checkbox = ({ label, checked, onChange }) => (
-    <label className="flex items-start gap-2.5 cursor-pointer group py-1">
-      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 shrink-0 transition-colors ${checked ? 'bg-[#2563EB] border-[#2563EB]' : 'border-slate-300 group-hover:border-slate-400'}`}>
-        {checked && <Check size={12} className="text-white" />}
-      </div>
-      <span className="text-sm text-slate-700">{label}</span>
-    </label>
-  );
-
-  const Radio = ({ label, checked, onChange }) => (
-    <label className="flex items-center gap-2.5 cursor-pointer group py-1">
-      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${checked ? 'border-[#2563EB]' : 'border-slate-300 group-hover:border-slate-400'}`}>
-        {checked && <div className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />}
-      </div>
-      <span className="text-sm text-slate-700">{label}</span>
-    </label>
-  );
-
-  const Input = ({ label, value, onChange, type = 'text', placeholder = '' }) => (
-    <div>
-      <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)}
-        className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB]"
-        placeholder={placeholder} data-testid={`q-${label.toLowerCase().replace(/[^a-z]/g, '-')}`} />
-    </div>
-  );
+  const Checkbox = _Checkbox;
+  const Radio = _Radio;
+  const Input = _Input;
 
   const renderStep = () => {
     switch (step) {

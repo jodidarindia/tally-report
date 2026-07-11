@@ -40,7 +40,7 @@ const PLANS = [
     monthly: 3799,
     annual: 37990,
     desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'Beat Plans + Beat Run Today', 'Salesman Performance Dashboard', 'AI-Powered Reports (GPT-5.2)', 'Insider Result BI Analytics', 'CA Corner — 100% Tally/Busy Parity', 'Multi-Company Support (10)', 'Priority Support & Training'],
+    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'Beat Plans + Beat Run — mandatory order/payment tracking', 'Close-of-Day PDF & Excel reports', 'Salesman Copy-From (one-click onboarding)', 'Employee Activate/Deactivate toggle', 'AI-Powered Reports (GPT-5.2)', 'Insider Result BI Analytics', 'CA Corner — 100% Tally/Busy Parity', 'Tally Agent v9.8.30 (forward-dated safe) + Busy Agent v1.3.1', 'Multi-Company Support (10)', 'Priority Support & Training'],
     maxCompanies: 10,
     maxEmployees: 20,
     popular: false
@@ -51,7 +51,7 @@ const FEATURES = [
   { icon: BarChart3, title: 'Inventory Analytics', desc: 'A/B/C/D Pareto categorisation, movement analysis, below-cost detection. Auto-ABC button distributes 80-15-4-1 across FY revenue. New Category Sales tab drills into top customers per tier.', isNew: true },
   { icon: Users, title: 'Customer CRM', desc: 'Payment behavior tracking, outstanding management, aging analysis with FY-based opening balance. Tally/Busy-verified outstanding ✓ badge.' },
   { icon: Truck, title: 'Dispatch Terminal', desc: 'Warehouse Kanban with LR tracking, document uploads, porter & transporter settlement, online-orders panel sorted by invoice, and Close-of-Day PDF.' },
-  { icon: ShoppingCart, title: 'Salesman Orders & Beat Plans', desc: 'Mobile-first order collection. Daily Beat Run sheet auto-derived from your plan. Single-salesman-per-customer enforcement. FY-aware achievement %, customer-wise drill-down.', isNew: true },
+  { icon: ShoppingCart, title: 'Salesman Orders & Beat Run', desc: 'Mobile-first PWA. Mandatory Yes/No order + payment capture per stop, unplanned-visit dropdown, End-of-Day PDF/Excel with per-salesman breakdown. FY-aware achievement %, customer-wise drill-down. New Copy-From speeds up onboarding by ~90%.', isNew: true },
   { icon: Brain, title: 'AI-Powered Reports', desc: 'GPT-5.2 powered purchase order generation, expense insights, natural-language queries across your entire Tally* / Busy* data.' },
   { icon: Landmark, title: 'CA Corner — Tally/Busy Parity', desc: 'Cash Flow, P&L with ledger drill-down, Balance Sheet — matches your accounting software exactly to the rupee. AI expense insights powered by GPT-5.2.' },
   { icon: Lightbulb, title: 'Insider Result BI', desc: 'Customer lifecycle, sales forecast, SPIP gap analysis, concentration risk with Pareto charts.' },
@@ -381,7 +381,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                 <div className="flex items-center gap-1 mb-4">
                   {[1,2,3,4,5].map(s => <Star key={s} size={14} className="text-amber-400 fill-amber-400" />)}
                 </div>
-                <p className="text-zinc-700 text-sm leading-relaxed mb-6">"{t.text}"</p>
+                <p className="text-zinc-700 text-sm leading-relaxed mb-6">&ldquo;{t.text}&rdquo;</p>
                 <div className="flex items-center gap-3">
                   <img src={t.img} alt={t.name} className="w-10 h-10 rounded-full object-cover" />
                   <div>
@@ -453,7 +453,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
           &copy; {new Date().getFullYear()} JODIDAR INDIA. All rights reserved. FLOWRA is a brand owned by JODIDAR INDIA.
         </div>
         <div className="max-w-7xl mx-auto px-6 mt-4 text-[10px] text-zinc-600 text-center leading-relaxed" data-testid="tally-disclaimer">
-          Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same are used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademarks' distinct character or harm the holders' reputation.
+          Tally* and Busy* are trademarks of their respective owners and are not affiliated, endorsed, connected or sponsored in any way to this website, mobile application or any of our affiliate sites. The same are used in accordance with honest practices and not used with any intention to misguide customers to take unfair advantage of the trademarks&apos; distinct character or harm the holders&apos; reputation.
         </div>
       </footer>
 

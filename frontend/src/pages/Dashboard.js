@@ -109,6 +109,7 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
     }
   };
 
+  // eslint-disable-next-line react/no-unstable-nested-components
   const StatCard = ({ title, value, subtitle, icon: Icon, color }) => (
     <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-lg transition-shadow" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>
       <div className="flex items-start justify-between">
@@ -417,6 +418,17 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
         </div>
         <div className="max-h-48 sm:max-h-56 overflow-y-auto divide-y divide-slate-50">
           {[
+            { d: '2026-07-11', tag: 'FIX', tagColor: '#ef4444', title: 'Busy Sync Agent v1.3.1', desc: 'pyodbc bundled + Busy DB password fallback chain (Busy 21/18/older) + BUSY_DB_PASSWORD override field in Settings.' },
+            { d: '2026-07-08', tag: 'FIX', tagColor: '#ef4444', title: 'Tally Agent v9.8.30 — Forward-Dated Voucher Fix', desc: 'Quick-sync window now extends to today, not stops at stored LVD. Reconcile is date-scoped — prevents mass deletions when a voucher is added with a future date.' },
+            { d: '2026-07-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'Busy Sync Agent v1.2 — Full Tally Parity', desc: 'Complete 1:1 Tally clone GUI: 4 connectivity cards, Sync Status panel, Subscription block with Request Renewal, auto-detect companies + FYs on folder pick.' },
+            { d: '2026-07-08', tag: 'NEW', tagColor: '#8b5cf6', title: 'Investor Pitch Kit', desc: '16-page pitch PDF + 10-page cold-email teaser + editable Excel projection model. Auto-generated from a single source of truth.' },
+            { d: '2026-07-05', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.29 — LVD & AlterID Persist', desc: 'Per-company LVD + AlterID + timestamp saved to disk. 7-day full-sync skip window if AlterID unchanged.' },
+            { d: '2026-07-02', tag: 'NEW', tagColor: '#8b5cf6', title: 'Marketing Kit', desc: 'Auto-generated pitch decks (detailed + pointers), print-ready visiting cards (front/back QR), Tally-vs-Busy-vs-FLOWRA comparison charts.' },
+            { d: '2026-06-30', tag: 'FIX', tagColor: '#ef4444', title: 'Inventory Export Bugs', desc: 'CSV/Excel list→string coercion, PDF payload updates, multi-group filter fix. All export formats now handle nested product data correctly.' },
+            { d: '2026-06-25', tag: 'NEW', tagColor: '#8b5cf6', title: 'Beat Run — Mandatory Order/Payment + Close Day', desc: 'Yes/No flags on every stop. Unplanned existing-customer dropdown. End-of-Day PDF & Excel with breakdown by salesman.' },
+            { d: '2026-06-20', tag: 'NEW', tagColor: '#8b5cf6', title: 'Salesman Copy-From', desc: 'One-click copy of another salesman\'s customer mapping + beat plan. Speeds up new-hire onboarding by ~90%.' },
+            { d: '2026-06-15', tag: 'NEW', tagColor: '#8b5cf6', title: 'Employee Active/Deactivate Toggle', desc: 'Deactivate a user without deleting audit history. Deactivated users lose login but their data + reports remain intact.' },
+            { d: '2026-06-01', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Agent v9.8.28 — SVCurrentCompany Fix', desc: 'Fixed XML header format that some Tally builds rejected. Zero errors on 5,000+ voucher syncs after fix.' },
             { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Cancel Dispatch Cards', desc: 'Cancel a card up to the Packed lane with a reason; cancelled cards strikethrough until end-of-day, then auto-archive.' },
             { d: '2026-05-10', tag: 'NEW', tagColor: '#8b5cf6', title: 'Tally Invoice Drift Detection', desc: 'Cards now auto-flag (amber/red badge) when the source Tally invoice is modified or deleted after sync — no silent drift.' },
             { d: '2026-05-09', tag: 'NEW', tagColor: '#8b5cf6', title: 'Fuzzy Search Everywhere', desc: '"tvs 10" now finds "TVS-10", "TVS(10)", "TVS/10". Spaces and separators (- / ( ) ! : . , & _) ignored across all search boxes.' },
