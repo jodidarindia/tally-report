@@ -8,6 +8,25 @@ import SyncStatusBar from '../components/SyncStatusBar';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Hoisted outside Dashboard to prevent unmount/remount on every parent render
+// (defining a component inside another causes React to treat it as a NEW type
+// on each render, dropping DOM state — this was the source of the top-panel
+// flicker during 30-second auto-refresh cycles).
+const StatCard = ({ title, value, subtitle, icon: Icon, color }) => (
+  <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-lg transition-shadow" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>
+    <div className="flex items-start justify-between">
+      <div>
+        <p className="text-sm text-slate-500 mb-1">{title}</p>
+        <p className="text-2xl font-bold text-slate-900">{value}</p>
+        {subtitle && <p className="text-xs text-slate-400 mt-1">{subtitle}</p>}
+      </div>
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
+        <Icon size={20} />
+      </div>
+    </div>
+  </div>
+);
+
 const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const [inventorySummary, setInventorySummary] = useState(null);
   const [salesSummary, setSalesSummary] = useState(null);
@@ -29,7 +48,8 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
   const { isConnected: wsConnected, syncProgress } = useSyncWebSocket(wsTenant);
 
   useEffect(() => {
-    fetchData();
+    // Initial load — show skeleton via loading=true
+    fetchData({ silent: false });
     fetchSyncStatus();
     fetchReminders();
     fetchOverdueDigest();
@@ -49,7 +69,9 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
     let intervalId;
     if (autoRefresh) {
       intervalId = setInterval(() => {
-        fetchData();
+        // Silent refresh — keep old data visible while fetching, no loading
+        // spinner or panel vanish. Only initial mount uses loading=true.
+        fetchData({ silent: true });
         fetchSyncStatus();
         fetchReminders();
         fetchOverdueDigest();
@@ -59,8 +81,8 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
     return () => { if (intervalId) clearInterval(intervalId); };
   }, [autoRefresh, selectedFY, excludeBranches, companyId]);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const fyParam = selectedFY ? `?fy=${selectedFY}` : '';
       const [inventoryRes, salesRes, allSalesRes] = await Promise.all([
@@ -80,7 +102,7 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -162,7 +184,7 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => { fetchData(); fetchSyncStatus(); fetchReminders(); fetchOverdueDigest(); }}
+            onClick={() => { fetchData({ silent: true }); fetchSyncStatus(); fetchReminders(); fetchOverdueDigest(); }}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-sm"
             data-testid="refresh-btn"
           >

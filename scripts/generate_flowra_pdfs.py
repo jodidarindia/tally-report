@@ -877,8 +877,12 @@ def build_social_kit():
 # Main
 # ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # NOTE: "What's New" is intentionally excluded here — it's owned by
+    # scripts/generate_whats_new_pdf.py which reads /app/frontend/public/
+    # whats_new.json (the single source of truth also consumed by the
+    # user-admin Dashboard "What's New" panel). Running build_whats_new()
+    # below would clobber the JSON-driven PDF with stale hardcoded content.
     builders = [
-        ("What's New",            build_whats_new),
         ("Presentation",          build_presentation),
         ("Customer Questionnaire", build_questionnaire),
         ("Training Booklet",      build_training),

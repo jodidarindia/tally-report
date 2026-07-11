@@ -463,3 +463,15 @@ See `/app/memory/DATABASE_STRATEGY.md`. Tier-1 dumps live; Tier-2 Atlas PITR ava
 - `/app/test_reports/iteration_98.json` — initial security audit (22/24 pass, 1 HIGH finding)
 - `/app/test_reports/iteration_99.json` — RBAC fix retest (20/20 pass; HIGH resolved)
 - `/app/test_reports/iteration_97.json` — Atlas cut-over regression (19/19 pass)
+
+## Iteration 120 (11 July 2026)
+- **P0 FIX — Dashboard top-panel flicker on auto-refresh** (`/app/frontend/src/pages/Dashboard.js`)
+  * Root causes: `StatCard` was defined *inside* Dashboard (new component type per render → unmount+remount) AND `fetchData()` unconditionally set `loading=true`, which combined with `{!loading && <StatCards>}` guards made the entire top panel vanish for every 30-s refresh cycle.
+  * Fix (a): Hoisted `StatCard` above `Dashboard` for stable identity.
+  * Fix (b): `fetchData({ silent })` — auto-refresh interval and manual Refresh button both pass `silent:true`; `loading` only toggles on initial mount.
+  * Regression locked in: `/app/backend/tests/test_iteration120_dashboard_flicker_fix.py` (static source assertions).
+  * Verified live: 4 stat cards remained mounted at 50/100/200/400/800 ms after Refresh click.
+- **P1 — Resource PDFs regenerated** from `scripts/generate_flowra_pdfs.py`:
+  * `FLOWRA_Presentation.pdf`, `FLOWRA_Customer_Questionnaire.pdf`, `FLOWRA_Training_Booklet.pdf`, `FLOWRA_Deployment_Guide.pdf`, `FLOWRA_Coming_Soon.pdf`, `FLOWRA_Social_Media_Kit.pdf` — all rebuilt with May 2026 content (Beat Run, A/B/C/D, CA Corner Tally-parity, Dispatch mirror view, Backups, Salesman Dashboard, Tally Sync v9.6.0).
+  * **Guard-rail:** removed the What's-New builder from the master generator's `__main__` (with a clear comment) — the JSON-driven `generate_whats_new_pdf.py` (fed by `whats_new.json`, the single source of truth) is the sole owner of `FLOWRA_Whats_New.pdf`. Prevents recurrence of the July 11 accidental clobber.
+
