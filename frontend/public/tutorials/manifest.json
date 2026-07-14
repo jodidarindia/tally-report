@@ -1,0 +1,217 @@
+{
+  "voice": "onyx",
+  "model": "tts-1-hd",
+  "generated_at": "2026-07-14T18:08:23.666703+00:00",
+  "lessons": [
+    {
+      "n": 1,
+      "slug": "flowra-kya-hai",
+      "title": "FLOWRA kya hai? (2 min mein)",
+      "audio_url": "/tutorials/lessons/lesson-01.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 2,
+      "slug": "pehli-baar-login",
+      "title": "Pehli baar login kaise karein",
+      "audio_url": "/tutorials/lessons/lesson-02.mp3",
+      "duration_hint": "75s"
+    },
+    {
+      "n": 3,
+      "slug": "dashboard-tour",
+      "title": "Home dashboard ka tour",
+      "audio_url": "/tutorials/lessons/lesson-03.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 4,
+      "slug": "fy-company-choose",
+      "title": "FY aur Company choose karna",
+      "audio_url": "/tutorials/lessons/lesson-04.mp3",
+      "duration_hint": "45s"
+    },
+    {
+      "n": 5,
+      "slug": "owner-kpi-cards",
+      "title": "KPI cards padhna \u2014 Sales, Orders, Outstanding, Beat",
+      "audio_url": "/tutorials/lessons/lesson-05.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 6,
+      "slug": "owner-whats-new",
+      "title": "What's New module \u2014 updates kahaan miltay hain",
+      "audio_url": "/tutorials/lessons/lesson-06.mp3",
+      "duration_hint": "60s"
+    },
+    {
+      "n": 7,
+      "slug": "owner-resource-pdfs",
+      "title": "Resource PDFs download karna",
+      "audio_url": "/tutorials/lessons/lesson-07.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 8,
+      "slug": "owner-pitch-deck",
+      "title": "Financial pitch deck aur projections",
+      "audio_url": "/tutorials/lessons/lesson-08.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 9,
+      "slug": "owner-superadmin",
+      "title": "Super-admin \u2014 users, branches, license",
+      "audio_url": "/tutorials/lessons/lesson-09.mp3",
+      "duration_hint": "3m"
+    },
+    {
+      "n": 10,
+      "slug": "ops-sales-tab",
+      "title": "Sales tab \u2014 filters, drill-down, export",
+      "audio_url": "/tutorials/lessons/lesson-10.mp3",
+      "duration_hint": "3m"
+    },
+    {
+      "n": 11,
+      "slug": "ops-inventory-abc",
+      "title": "Inventory tab \u2014 ABC/D, stock groups, reorder",
+      "audio_url": "/tutorials/lessons/lesson-11.mp3",
+      "duration_hint": "3m"
+    },
+    {
+      "n": 12,
+      "slug": "ops-crm-outstanding",
+      "title": "CRM \u2014 Outstanding aur aging buckets",
+      "audio_url": "/tutorials/lessons/lesson-12.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 13,
+      "slug": "ops-crm-targets",
+      "title": "CRM \u2014 Targets aur bulk %",
+      "audio_url": "/tutorials/lessons/lesson-13.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 14,
+      "slug": "ops-crm-payment-behavior",
+      "title": "CRM \u2014 Payment Behaviour",
+      "audio_url": "/tutorials/lessons/lesson-14.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 15,
+      "slug": "ops-ca-corner",
+      "title": "CA Corner overview",
+      "audio_url": "/tutorials/lessons/lesson-15.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 16,
+      "slug": "ops-backups",
+      "title": "Backups aur restore workflow",
+      "audio_url": "/tutorials/lessons/lesson-16.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 17,
+      "slug": "ops-dispatch-mirror",
+      "title": "Dispatch mirror view",
+      "audio_url": "/tutorials/lessons/lesson-17.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 18,
+      "slug": "salesman-mobile",
+      "title": "Salesman mobile dashboard",
+      "audio_url": "/tutorials/lessons/lesson-18.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 19,
+      "slug": "salesman-visit-order",
+      "title": "Visit / order record karna phone se",
+      "audio_url": "/tutorials/lessons/lesson-19.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 20,
+      "slug": "salesman-recommendations",
+      "title": "Recommendation Engine ke tips",
+      "audio_url": "/tutorials/lessons/lesson-20.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 21,
+      "slug": "salesman-target",
+      "title": "Personal target progress",
+      "audio_url": "/tutorials/lessons/lesson-21.mp3",
+      "duration_hint": "60s"
+    },
+    {
+      "n": 22,
+      "slug": "ca-ledger-pdf",
+      "title": "Ledger PDF export (per customer)",
+      "audio_url": "/tutorials/lessons/lesson-22.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 23,
+      "slug": "ca-reconciliation",
+      "title": "Reconciliation window \u2014 date scope",
+      "audio_url": "/tutorials/lessons/lesson-23.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 24,
+      "slug": "ca-sync-status",
+      "title": "Tally/Busy sync status & retry",
+      "audio_url": "/tutorials/lessons/lesson-24.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 25,
+      "slug": "ca-gst-reports",
+      "title": "GST-ready reports (jab module live ho)",
+      "audio_url": "/tutorials/lessons/lesson-25.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 26,
+      "slug": "agent-tally-install",
+      "title": "Tally agent install on Windows",
+      "audio_url": "/tutorials/lessons/lesson-26.mp3",
+      "duration_hint": "2m"
+    },
+    {
+      "n": 27,
+      "slug": "agent-company-mapping",
+      "title": "First-time company mapping",
+      "audio_url": "/tutorials/lessons/lesson-27.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 28,
+      "slug": "agent-sync-health",
+      "title": "Sync Health kya batati hai",
+      "audio_url": "/tutorials/lessons/lesson-28.mp3",
+      "duration_hint": "90s"
+    },
+    {
+      "n": 29,
+      "slug": "agent-troubleshoot",
+      "title": "Top-5 red states \u2014 troubleshoot",
+      "audio_url": "/tutorials/lessons/lesson-29.mp3",
+      "duration_hint": "3m"
+    },
+    {
+      "n": 30,
+      "slug": "agent-busy-primer",
+      "title": "Busy Agent primer",
+      "audio_url": "/tutorials/lessons/lesson-30.mp3",
+      "duration_hint": "2m"
+    }
+  ]
+}

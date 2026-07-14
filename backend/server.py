@@ -34,6 +34,7 @@ from routes.dispatch import router as dispatch_router
 from routes.salesman_orders import router as salesman_orders_router
 from routes.backups import router as backups_router
 from routes.creditors import router as creditors_router
+from routes.academy import router as academy_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -70,6 +71,7 @@ api_router.include_router(dispatch_router)
 api_router.include_router(salesman_orders_router)
 api_router.include_router(backups_router)
 api_router.include_router(creditors_router)
+api_router.include_router(academy_router)
 
 
 # ── Health endpoint (k8s / Atlas liveness probe + uptime monitor) ──────

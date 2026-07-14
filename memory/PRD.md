@@ -534,3 +534,53 @@ User switched from female → male voice pool and asked to start production.
 
 **Awaiting from user:** listen to Lesson 01 in Echo, either confirm to keep Echo for all 30 lessons or reply with `onyx` / `ash` to swap. Once confirmed, next steps: Playwright screencast recorder + FFmpeg composer + Lesson 01 final MP4.
 
+
+## Iteration 125 (14 July 2026) — FLOWRA Academy: audio + video for all 30 lessons + completion tracking
+
+**User approved:** Onyx voice locked, per-user completion tracking (green tick at ≥ 60% watch), full audio + video production for all 30 lessons.
+
+### Shipped end-to-end
+
+**Content — all 30 lessons produced:**
+- Canonical manifest at `/app/tutorials/pipeline/lessons_manifest.py` — 30 Hinglish voiceover scripts (business-owner tone, 100-180 words each) across 6 tracks: Getting Started (4), Owner (5), Ops Manager (8), Salesman (4), CA (4), Desktop Agent (5).
+- **30 voiceover MP3s** (Onyx, `tts-1-hd`) at `/app/tutorials/voiceover/lesson-{01..30}.mp3` — public copies at `/app/frontend/public/tutorials/lessons/*.mp3`.
+- **30 branded MP4 videos** (1920×1080 h264+aac) at `/app/tutorials/final/lesson-{01..30}.mp4` — public copies at `/app/frontend/public/tutorials/lessons/*.mp4`. Total 47 MB.
+- Each video: FLOWRA navy→blue gradient slide, lesson number badge, wrapped title, subtle 2% Ken-Burns zoom, embedded Onyx voiceover, aac 192kbps.
+- **YouTube upload pack** at `/app/tutorials/youtube-metadata/` — 30 per-lesson `.txt` files + one aggregated `all-lessons.md` (also served publicly at `/tutorials/youtube-upload-pack.md`). Titles, descriptions, tags all copy-paste ready.
+- Public manifest at `/tutorials/manifest.json` — voice=onyx, 30 lessons with audio_url + duration_hint.
+
+**Pipeline scripts (repeatable for future updates):**
+- `generate_voice_samples.py` — regenerates the 3 male samples (echo/onyx/ash).
+- `produce_lesson_voiceover.py` — renders a single lesson from its MD script.
+- `generate_all_voiceovers.py` — batch renders all 30 → MP3 + manifest.json.
+- `compose_all_videos.py` — batch renders all 30 → MP4 with Ken-Burns.
+- `build_youtube_metadata.py` — builds copy-paste pack.
+
+**Completion tracking (backend + frontend):**
+- New route `/app/backend/routes/academy.py` — `POST /api/academy/progress` (upsert; keeps max()), `GET /api/academy/progress` (returns `{lessons, completed_count, threshold_pct: 60}`). Mongo collection: `academy_progress`. `completed_at` timestamp set only on first threshold crossing and preserved on scrub-back.
+- Registered in `server.py` include-router list.
+- Frontend `/app/frontend/src/pages/Tutorials.js` fully rewritten:
+  * Hero now shows a live `X / 30 lessons completed` counter + green progress bar (from `/api/academy/progress`).
+  * Voice sample chooser shows Onyx card with blue ring + "LOCKED" pill.
+  * Every lesson row has a green tick + "COMPLETED" pill once threshold crossed.
+  * `▶ Watch` button opens a full-screen modal video player (autoplay, native controls).
+  * `🔊` audio-only button for quick preview.
+  * Modal video sends progress every 5 sec to backend + on ended. Same for audio-only playback.
+
+**Regression:** `/app/backend/tests/test_iteration125_academy.py` — 60 parametrised + 5 focused tests. All green.
+  * 30/30 MP3s > 100 KB
+  * 30/30 MP4s > 300 KB, all 1920×1080 h264+aac
+  * Manifest.json = onyx + 30 lessons
+  * POST progress with 30% → 75% → 20% keeps `completed=True, progress_pct=75.0`, `completed_at` preserved
+  * GET returns `threshold_pct=60.0, completed_count >= 1`
+  * Public MP4s HTTP 200 with content-length > 300 KB (lessons 1 / 15 / 30 spot-checked)
+
+**Voice sample public URLs (for reference / final QA):**
+- `/tutorials/voice-samples/{echo,onyx,ash}.mp3`
+- `/tutorials/lessons/lesson-{01..30}.mp3`
+- `/tutorials/lessons/lesson-{01..30}.mp4`
+- `/tutorials/manifest.json`
+- `/tutorials/youtube-upload-pack.md`
+
+**v2 backlog (Playwright screencast replacement):** current 30 videos are branded slide-with-voiceover (podcast style). v2 can replace individual slides with recorded UI screencasts of the actual app — the Onyx audio track stays identical, so no re-narration needed. Pipeline placeholder is in `compose_all_videos.py` (Ken-Burns rendering approach; screencast recorder can be a drop-in replacement that emits webm→mp4 clips).
+

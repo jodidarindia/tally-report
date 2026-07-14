@@ -20,7 +20,7 @@ load_dotenv("/app/backend/.env")
 
 SCRIPT_PATH = Path("/app/tutorials/scripts/lesson-01-flowra-kya-hai.md")
 OUT_PATH = Path("/app/tutorials/voiceover/lesson-01.mp3")
-VOICE = os.getenv("FLOWRA_ACADEMY_VOICE", "echo")   # male voice locked
+VOICE = os.getenv("FLOWRA_ACADEMY_VOICE", "onyx")   # male voice locked (iter-125)
 MODEL = "tts-1-hd"
 
 
