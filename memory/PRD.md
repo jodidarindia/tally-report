@@ -522,3 +522,15 @@ User approved 30-lesson tutorial programme: Hinglish (business-owner tone), Indi
 4. Batch remaining 29 lessons (3/day cadence, 10 batches).
 5. Ship first-login coach-mark tour and "?" deep-linked help drawer.
 
+
+## Iteration 124 (14 July 2026) — Male voice switch + Lesson 01 audio produced
+User switched from female → male voice pool and asked to start production.
+
+**Delivered:**
+- Regenerated 3 voice samples in the male pool: `echo / onyx / ash` (retired coral/nova/shimmer files).
+- New pipeline script `/app/tutorials/pipeline/produce_lesson_voiceover.py` reads any lesson MD, extracts the `## VOICEOVER SCRIPT` block, and renders full voiceover via OpenAI `tts-1-hd`. Voice controlled by env var `FLOWRA_ACADEMY_VOICE` (default `echo`).
+- **Lesson 01 full voiceover produced** (`echo`, HD MP3, ~75 sec, 1.1 MB) — deployed at `/app/frontend/public/tutorials/lessons/lesson-01.mp3`.
+- Academy page updated: voice cards now show `echo / onyx / ash`; Lesson 01 row shows a blue **AUDIO READY** pill + inline `▶ Voiceover` link that opens the MP3 in a new tab. Copy tells the user we've defaulted to Echo and invites a swap.
+
+**Awaiting from user:** listen to Lesson 01 in Echo, either confirm to keep Echo for all 30 lessons or reply with `onyx` / `ash` to swap. Once confirmed, next steps: Playwright screencast recorder + FFmpeg composer + Lesson 01 final MP4.
+

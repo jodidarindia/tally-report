@@ -9,9 +9,9 @@ import { Play, Pause, GraduationCap, CheckCircle2, Circle, Clock, ChevronRight, 
  */
 
 const VOICE_SAMPLES = [
-  { id: 'coral',   label: 'Coral',   desc: 'Warm, friendly — best for Owner track & explainers' },
-  { id: 'nova',    label: 'Nova',    desc: 'Energetic, upbeat — best for Salesman track' },
-  { id: 'shimmer', label: 'Shimmer', desc: 'Bright, cheerful — best for Getting-Started' },
+  { id: 'echo', label: 'Echo', desc: 'Smooth, calm — DEFAULT for business explainer' },
+  { id: 'onyx', label: 'Onyx', desc: 'Deep, authoritative — best for CA / accountant track' },
+  { id: 'ash',  label: 'Ash',  desc: 'Clear, articulate — safe, neutral' },
 ];
 
 // 30-lesson roadmap. `status` = 'live' | 'in_progress' | 'planned'.
@@ -22,7 +22,7 @@ const TRACKS = [
     persona: 'Everyone',
     color: 'bg-blue-100 text-blue-700',
     lessons: [
-      { n: 1, title: 'FLOWRA kya hai? (2 min mein)',        len: '90s',  status: 'in_progress' },
+      { n: 1, title: 'FLOWRA kya hai? (2 min mein)',        len: '75s',  status: 'audio_ready', audio: '/tutorials/lessons/lesson-01.mp3' },
       { n: 2, title: 'Pehli baar login kaise karein',        len: '75s',  status: 'planned' },
       { n: 3, title: 'Home dashboard ka tour',               len: '2m',   status: 'planned' },
       { n: 4, title: 'FY aur Company choose karna',          len: '45s',  status: 'planned' },
@@ -99,6 +99,9 @@ const TRACKS = [
 const StatusBadge = ({ status }) => {
   if (status === 'live') {
     return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700"><CheckCircle2 size={10} /> LIVE</span>;
+  }
+  if (status === 'audio_ready') {
+    return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700"><Volume2 size={10} /> AUDIO READY</span>;
   }
   if (status === 'in_progress') {
     return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700"><Clock size={10} /> IN PROGRESS</span>;
@@ -179,9 +182,11 @@ const Tutorials = () => {
         <div className="flex items-start gap-3 mb-4">
           <Volume2 size={22} className="text-[#2563EB] mt-0.5" />
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Pick the voiceover — female voices only</h2>
+            <h2 className="text-lg font-bold text-slate-900">Pick the voiceover — male voices</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Same Hinglish line, three different Indian-English female voices. Play each, reply to us with your pick — we'll lock it for all 30 lessons.
+              Same Hinglish line, three Indian-English male voices.
+              <span className="ml-1 text-blue-700 font-medium">We&apos;ve started Lesson 01 in <b>Echo</b></span> — hear the full ~75-sec voiceover under the Getting Started track below.
+              Reply with a different voice name if you want to swap before we mass-produce the rest.
             </p>
           </div>
         </div>
@@ -213,6 +218,17 @@ const Tutorials = () => {
                   <StatusBadge status={lesson.status} />
                   {lesson.status === 'live' && (
                     <a className="text-blue-600 hover:text-blue-700" aria-label="Open on YouTube"><Youtube size={16} /></a>
+                  )}
+                  {lesson.audio && (
+                    <a
+                      href={lesson.audio}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs font-medium"
+                      data-testid={`lesson-${lesson.n}-audio-link`}
+                    >
+                      <Play size={12} /> Voiceover
+                    </a>
                   )}
                   <ChevronRight size={14} className="text-slate-300" />
                 </li>

@@ -1,17 +1,17 @@
-"""FLOWRA Academy — female-voice sample generator.
+"""FLOWRA Academy — male-voice sample generator.
 
-Produces short Hinglish samples for the 3 best female TTS voices so the
-user can pick before we mass-produce all 30 lessons.
+Produces short Hinglish samples for the 3 best male TTS voices so the
+user can pick / confirm before we mass-produce all 30 lessons.
 
 Voices sampled:
-  • coral   — warm, friendly       (candidate for Owner track)
-  • nova    — energetic, upbeat    (candidate for Salesman track)
-  • shimmer — bright, cheerful     (candidate for Getting-Started)
+  • echo  — smooth, calm         (DEFAULT — best for business explainer)
+  • onyx  — deep, authoritative  (great for CA / accountant track)
+  • ash   — clear, articulate    (safe, neutral)
 
 Usage:
     python /app/tutorials/pipeline/generate_voice_samples.py
 Output:
-    /app/tutorials/voice-samples/{coral,nova,shimmer}.mp3
+    /app/tutorials/voice-samples/{echo,onyx,ash}.mp3
 """
 import asyncio
 import os
@@ -34,8 +34,8 @@ SAMPLE_TEXT = (
     "Chaliye shuru karte hain!"
 )
 
-# Only female voices per user's confirmed pick.
-VOICES = ["coral", "nova", "shimmer"]
+# Male voices only per user's confirmed pick.
+VOICES = ["echo", "onyx", "ash"]
 
 
 async def main() -> None:
