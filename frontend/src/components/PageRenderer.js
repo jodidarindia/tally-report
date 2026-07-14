@@ -11,6 +11,7 @@ import SyncHistory from '../pages/SyncHistory';
 import TallySetup from '../pages/TallySetup';
 import ActivityLog from '../pages/ActivityLog';
 import ReferAndEarn from '../pages/ReferAndEarn';
+import Tutorials from '../pages/Tutorials';
 import CACorner from '../pages/CACorner';
 import InsiderResult from '../pages/InsiderResult';
 import DispatchAdmin from '../pages/DispatchAdmin';
@@ -52,6 +53,7 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     case 'setup': return gated('setup', <TallySetup companyId={selectedCompany} />);
     case 'activity': return <ActivityLog token={token} role={user?.role} />;
     case 'referral': return <ReferAndEarn />;
+    case 'tutorials': return <Tutorials />;
     case 'ca-corner': return gated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} />);
     case 'insider': return gated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'dispatch': {

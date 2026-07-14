@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import './App.css';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark, RefreshCw, Warehouse
+  Brain, Truck, History, Settings, Lightbulb, Gift, Landmark, RefreshCw, Warehouse, GraduationCap
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from './hooks/useAuth';
@@ -149,6 +149,7 @@ function App() {
     const setupIdx = items.findIndex(i => i.id === 'setup');
     const extras = [
       { id: 'activity', label: 'Activity', icon: History },
+      { id: 'tutorials', label: 'Academy', icon: GraduationCap },
       { id: 'referral', label: 'Refer & Earn', icon: Gift },
     ];
     if (setupIdx >= 0) items.splice(setupIdx, 0, ...extras);

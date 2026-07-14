@@ -498,3 +498,27 @@ Added a projector `_project_export_rows(report_type, rows)` in `routes/ai_report
 
 Company-name banner from iter-121 preserved on all three formats. Regression: `test_iteration121_export_bugs.py` now covers 15 checks (11 iter-121 + 4 iter-122) — all green. Internal fields (`tenant_id`, `company_id`, `_id`) explicitly asserted to NOT leak into export headers.
 
+
+## Iteration 123 (14 July 2026) — FLOWRA Academy kickoff
+User approved 30-lesson tutorial programme: Hinglish (business-owner tone), Indian-English female voice, FLOWRA branding, user uploads finished MP4s to their own YouTube channel.
+
+**Shipped today:**
+- Integration playbook obtained for OpenAI TTS via Emergent LLM key (`emergentintegrations.llm.openai.OpenAITextToSpeech`, `tts-1-hd` for production quality).
+- Voice-sample generator: `/app/tutorials/pipeline/generate_voice_samples.py` produces the same Hinglish sample in 3 female voices (**coral / nova / shimmer**). MP3s deployed at `/app/frontend/public/tutorials/voice-samples/*.mp3`.
+- Lesson-01 Hinglish script drafted: `/app/tutorials/scripts/lesson-01-flowra-kya-hai.md` (voiceover text, on-screen captions, shot list, thumbnail brief, YouTube metadata, cheat-sheet brief).
+- In-app **FLOWRA Academy** page at `pages/Tutorials.js`, wired into nav under `Academy` (GraduationCap icon) and `PageRenderer` (`case 'tutorials'`). Displays:
+  * FLOWRA-branded hero (navy → blue gradient)
+  * Voice-sample chooser — 3 Play buttons, mutually exclusive audio playback
+  * Full 30-lesson roadmap across 6 tracks (Getting Started / Owner / Ops Manager / Salesman / CA / Desktop Agent), each row tagged status (Live / In Progress / Planned) with lesson length, YouTube link stub, chevron.
+- Folder scaffolding created for the pipeline:
+  * `/app/tutorials/{scripts,voiceover,voice-samples,recordings,final,reels,cheat-sheets,youtube-metadata,pipeline}`
+
+**Awaiting from user:** voice pick (Coral / Nova / Shimmer). Once received we lock the voice and mass-produce all 30 lessons.
+
+**Next steps (post-approval):**
+1. Build screencast recorder using Playwright — `/app/tutorials/pipeline/record_screencast.py`.
+2. Build FFmpeg composer that muxes screencast + voiceover + subtitles + FLOWRA intro/outro.
+3. Ship Lesson-01 end-to-end as pilot; iterate on tone feedback.
+4. Batch remaining 29 lessons (3/day cadence, 10 batches).
+5. Ship first-login coach-mark tour and "?" deep-linked help drawer.
+
