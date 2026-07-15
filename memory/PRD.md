@@ -618,3 +618,25 @@ Addressed 5 user questions:
 - `lesson-01-shorts.mp4` (9:16 pilot; can batch all 30 via `render_shorts.py all`)
 - `/tutorials/youtube-upload-pack.md` — 30 title/desc/tag sets, copyright-safe
 
+
+## Iteration 127 (15 July 2026) — Real Playwright screencasts (pilot Lessons 1 & 2)
+
+User challenged the earlier "slide-with-voiceover" v1 videos and asked for actual FLOWRA UI screencasts using demo data. Delivered:
+
+**New pipeline:**
+- `pipeline/record_screencast.py` — Playwright records 1920×1080 WebM using demo credentials (`demo@flowralive.in / demo2026`). Login bypasses reCAPTCHA by hitting `/api/auth/login` directly and injecting the JWT into `localStorage`. Videos land at `/app/tutorials/recordings/lesson-NN.webm`.
+- `pipeline/screencast_playbooks.py` — Per-lesson async playbooks defining the exact click / hover / scroll timeline. Currently: `PLAYBOOKS = {1: lesson_1, 2: lesson_2}`.
+- `pipeline/compose_screencast.py` — Muxes WebM + `voiceover/lesson-NN.mp3` + `subtitles/lesson-NN-horizontal.ass` + persistent `© FLOWRA · flowralive.in` watermark. Uses `tpad=stop_mode=clone` to freeze the last frame when video is shorter than audio (Lesson 1: 35s recorded → freeze 15s to match 50s audio).
+
+**Deliverables:**
+- `/app/tutorials/final/lesson-01.mp4` — 1902 KB, 50.3 s, **real Sharma Lubricants Dashboard** (39L sales, 35 items, 29 overdue invoices, top customers, FLOWRA Updates panel). Tour: Select Company modal → Dashboard KPI cards → Sales/CRM/Inventory/Analytics tab hovers → scroll to What's New.
+- `/app/tutorials/final/lesson-02.mp4` — 1443 KB, 55.5 s, real landing page → Login screen → Select Company modal.
+- Both files re-deployed under `/app/frontend/public/tutorials/lessons/lesson-{01,02}.mp4` (bytes-in-place replacement, same URLs).
+
+**All safety-nets in place:** demo tenant with 3 fake companies (no real customer names), FLOWRA copyright watermark on every frame, ASS captions synced to Onyx voiceover, footer copyright strip.
+
+**Remaining work when user approves style:**
+- Write 28 more Playwright playbooks (Lessons 3-30), one per feature area.
+- Estimated 20-40 min per playbook × 28 lessons = 10-18 hrs across multiple sessions.
+- Pipeline is production-ready — each new lesson is just a playbook file + one `record` + `compose` invocation.
+
