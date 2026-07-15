@@ -36,6 +36,7 @@ PUB_DIR = Path("/app/frontend/public/tutorials/lessons")
 SLIDES_DIR.mkdir(parents=True, exist_ok=True)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PUB_DIR.mkdir(parents=True, exist_ok=True)
+SRT_DIR = Path("/app/tutorials/subtitles")
 
 # ─────────────────── Design constants ─────────
 W, H = 1920, 1080
@@ -141,9 +142,15 @@ def build_slide(n: int, title: str, out_path: Path) -> None:
     strip_h = 100
     draw.rectangle((0, H - strip_h, W, H), fill=(0, 0, 0, 90))
     footer_font = _font(24)
-    draw.text((100, H - strip_h + 34),
+    # iter-126: shortened footer to make room for the copyright line —
+    # helps discourage clone-uploads to competing YouTube channels.
+    draw.text((100, H - strip_h + 22),
               "FLOWRA Academy  •  Voice: Onyx  •  flowralive.in",
               fill=MUTED, font=footer_font)
+    copyright_font = _font(18)
+    draw.text((100, H - strip_h + 58),
+              "© 2026 FLOWRA. All rights reserved. Unauthorised re-upload prohibited.",
+              fill=(148, 163, 184), font=copyright_font)
     # Bottom right — YouTube-style call-out
     cta_font = _font(24, bold=True)
     cta = "▶ Subscribe for more"
@@ -153,8 +160,15 @@ def build_slide(n: int, title: str, out_path: Path) -> None:
     img.convert("RGB").save(out_path, "PNG", optimize=True)
 
 
-def compose_video(n: int, slide_path: Path, audio_path: Path, out_path: Path) -> None:
-    """Combine slide + voiceover into MP4 with subtle Ken-Burns zoom."""
+def compose_video(n: int, slide_path: Path, audio_path: Path, out_path: Path,
+                  srt_path: Path = None) -> None:
+    """Combine slide + voiceover into MP4 with subtle Ken-Burns zoom.
+
+    iter-126:
+      - Burns SRT captions if provided (Hinglish, bottom of frame).
+      - Adds a persistent © FLOWRA watermark bottom-right so re-uploads
+        anywhere else are visibly branded — an IP-protection measure.
+    """
     # ffprobe to get audio duration
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -169,12 +183,28 @@ def compose_video(n: int, slide_path: Path, audio_path: Path, out_path: Path) ->
         f"zoompan=z='min(zoom+0.0006,1.02)':x='iw/2-(iw/zoom/2)':"
         f"y='ih/2-(ih/zoom/2)':d={total_frames}:s={W}x{H}:fps=30"
     )
+    # Persistent watermark drawtext (small, top-right, alpha 0.65)
+    watermark = (
+        f"drawtext=text='© FLOWRA · flowralive.in':"
+        f"fontsize=22:fontcolor=white@0.65:x=w-tw-40:y=40"
+    )
+
+    filters = [zoom_filter, watermark]
+    # Prefer the ASS file (proper PlayResX/Y + Alignment=2 baked in).
+    ass_path = srt_path.with_name(srt_path.stem + "-horizontal.ass") if srt_path else None
+    if ass_path and ass_path.exists():
+        ass_arg = str(ass_path).replace(":", r"\:")
+        filters.append(f"ass='{ass_arg}'")
+    elif srt_path and srt_path.exists():
+        srt_arg = str(srt_path).replace(":", r"\:")
+        filters.append(f"subtitles='{srt_arg}'")
+    vf = ",".join(filters)
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "warning",
         "-loop", "1", "-framerate", "30", "-i", str(slide_path),
         "-i", str(audio_path),
-        "-filter_complex", f"[0:v]{zoom_filter}[v]",
+        "-filter_complex", f"[0:v]{vf}[v]",
         "-map", "[v]", "-map", "1:a",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "22",
         "-c:a", "aac", "-b:a", "192k",
@@ -197,17 +227,14 @@ def main() -> None:
         slide = SLIDES_DIR / f"lesson-{n:02d}.png"
         final = OUT_DIR / f"lesson-{n:02d}.mp4"
         public = PUB_DIR / f"lesson-{n:02d}.mp4"
+        srt = SRT_DIR / f"lesson-{n:02d}.srt"
 
-        if final.exists() and final.stat().st_size > 100_000:
-            print(f"  ↷ Lesson {n:02d} — already rendered ({final.stat().st_size // 1024} KB)")
-            # Ensure public copy stays fresh
-            public.write_bytes(final.read_bytes())
-            continue
-
+        # iter-126: always re-render — we now bake in captions + watermark.
+        # (Cache guard removed: prior rendered files predate IP protection.)
         print(f"  → Lesson {n:02d} — {title[:60]}")
         build_slide(n, title, slide)
         try:
-            compose_video(n, slide, audio, final)
+            compose_video(n, slide, audio, final, srt_path=srt if srt.exists() else None)
             public.write_bytes(final.read_bytes())
             print(f"     ✓ {final.stat().st_size // 1024} KB")
         except subprocess.CalledProcessError as e:

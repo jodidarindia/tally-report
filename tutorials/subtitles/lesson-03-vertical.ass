@@ -1,0 +1,26 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.78,Default,,0,0,0,,Ye hai aapka FLOWRA Dashboard — aapke business ka homepage.
+Dialogue: 0,0:00:03.78,0:00:09.04,Default,,0,0,0,,Sabse upar aapko chaar cards dikhenge: Total Sales Total Orders Outstanding Amount
+Dialogue: 0,0:00:09.04,0:00:10.44,Default,,0,0,0,,aur Beat Coverage.
+Dialogue: 0,0:00:10.44,0:00:16.14,Default,,0,0,0,,Yeh charon numbers har 30 second mein automatic refresh hote hain — Tally ka latest data.
+Dialogue: 0,0:00:16.14,0:00:19.22,Default,,0,0,0,,Aap manually bhi Refresh button daba sakte hain.
+Dialogue: 0,0:00:19.22,0:00:23.90,Default,,0,0,0,,Neeche What's New panel hai jab bhi FLOWRA mein koi naya feature aata hai
+Dialogue: 0,0:00:23.90,0:00:25.30,Default,,0,0,0,,yaha update dikhega.
+Dialogue: 0,0:00:25.30,0:00:31.07,Default,,0,0,0,,Aur bhi neeche aapko upcoming reminders, overdue customer digest, aur sync status dikhega.
+Dialogue: 0,0:00:31.07,0:00:36.45,Default,,0,0,0,,Upar navigation bar mein Sales CRM Inventory Analytics Salesman AI Reports CA Corner
+Dialogue: 0,0:00:36.45,0:00:38.76,Default,,0,0,0,,har tab ek alag feature ke liye hai.
+Dialogue: 0,0:00:38.76,0:00:40.75,Default,,0,0,0,,Right side mein FY selector hai
+Dialogue: 0,0:00:40.75,0:00:45.24,Default,,0,0,0,,usko change karke aap kisi bhi financial year ka data dekh sakte hain.
+Dialogue: 0,0:00:45.24,0:00:45.58,Default,,0,0,0,,Simple, na?

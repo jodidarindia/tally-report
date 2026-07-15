@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.40,Default,,0,0,0,,Dispatch mirror ek unique feature hai.
+Dialogue: 0,0:00:02.40,0:00:07.27,Default,,0,0,0,,Aapke godown ya factory mein jo dispatch hota hai trucks LR numbers consignee
+Dialogue: 0,0:00:07.27,0:00:09.48,Default,,0,0,0,,sab kuch mobile pe live dikhta hai.
+Dialogue: 0,0:00:09.48,0:00:14.66,Default,,0,0,0,,Sales tab mein Dispatch column enable kariye har voucher ke saath dispatch through
+Dialogue: 0,0:00:14.66,0:00:16.37,Default,,0,0,0,,destination aur LR details.
+Dialogue: 0,0:00:16.37,0:00:20.48,Default,,0,0,0,,Filter bhi kar sakte hain — kis truck se, kis city ko, kya bheja.
+Dialogue: 0,0:00:20.48,0:00:26.10,Default,,0,0,0,,Owner ke liye bahut useful — office nahi jaana padta, dispatch status phone pe milta hai.
+Dialogue: 0,0:00:26.10,0:00:28.44,Default,,0,0,0,,Aur Google Drive integration ke saath
+Dialogue: 0,0:00:28.44,0:00:32.23,Default,,0,0,0,,bilty aur invoice PDFs bhi automatically link ho jaate hain.

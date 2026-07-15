@@ -1,0 +1,47 @@
+1
+00:00:00,000 --> 00:00:02,386
+Ops manager ka pehla tool — Sales tab.
+
+2
+00:00:02,386 --> 00:00:05,086
+Yaha aap har sales voucher dekh sakte hain.
+
+3
+00:00:05,086 --> 00:00:08,917
+Upar filters hain — date range, salesman, customer, category.
+
+4
+00:00:08,917 --> 00:00:11,555
+Filter lagate hi list update ho jaati hai.
+
+5
+00:00:11,555 --> 00:00:15,134
+Kisi bhi voucher pe click kariye — details khul jaayenge.
+
+6
+00:00:15,134 --> 00:00:17,144
+Items, quantities, rates, total.
+
+7
+00:00:17,144 --> 00:00:19,907
+Do buttons upar hain — PDF aur Excel export.
+
+8
+00:00:19,907 --> 00:00:24,115
+Dono files aapki company name ke header ke saath download hoti hain
+
+9
+00:00:24,115 --> 00:00:25,747
+professional look ke liye.
+
+10
+00:00:25,747 --> 00:00:29,139
+Ek pro tip Salesman filter lagakar Excel export kariye
+
+11
+00:00:29,139 --> 00:00:33,158
+aur monthly performance review ke liye salesman ko share kariye.
+
+12
+00:00:33,158 --> 00:00:33,911
+Bahut asaan.

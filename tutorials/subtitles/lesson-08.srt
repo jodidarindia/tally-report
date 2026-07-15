@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:03,676
+Owner ke liye ek special tool hai — Financial Pitch Deck.
+
+2
+00:00:03,676 --> 00:00:08,770
+Yeh aapke business ki 3-year projection banata hai, aapke actual Tally data se.
+
+3
+00:00:08,770 --> 00:00:13,478
+Investors ke saath meeting ho ya bank loan ke liye documentation chaahiye
+
+4
+00:00:13,478 --> 00:00:14,878
+yeh deck ready hai.
+
+5
+00:00:14,878 --> 00:00:19,586
+16 pages, revenue growth chart, gross margin trend, cash flow projection.
+
+6
+00:00:19,586 --> 00:00:24,359
+Ek teaser version bhi hai — 10 pages — WhatsApp par forward karne ke liye.
+
+7
+00:00:24,359 --> 00:00:29,196
+Aur Excel projections file bhi, jismein har month ki numbers editable hain.
+
+8
+00:00:29,196 --> 00:00:31,711
+Sabhi files apne aap generate hoti hain
+
+9
+00:00:31,711 --> 00:00:35,322
+Owner Console mein Generate Pitch Deck button dabaayein.
+
+10
+00:00:35,322 --> 00:00:37,728
+Do minute mein PDF aur Excel dono ready.

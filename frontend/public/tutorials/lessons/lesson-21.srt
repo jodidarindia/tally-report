@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:03,178
+Har salesman ke liye personal target dashboard hai.
+
+2
+00:00:03,178 --> 00:00:07,477
+Ek circular progress bar dikhta hai — current achievement percentage.
+
+3
+00:00:07,477 --> 00:00:12,525
+Green matlab on-track, yellow slightly behind, red matlab critical push chaahiye.
+
+4
+00:00:12,525 --> 00:00:16,824
+Neeche month-wise breakdown — April se abhi tak har month kitna kiya.
+
+5
+00:00:16,824 --> 00:00:20,189
+Bhi dikhta hai — remaining amount, aur remaining days.
+
+6
+00:00:20,189 --> 00:00:22,931
+Simple math — daily kitna achieve karna hai.
+
+7
+00:00:22,931 --> 00:00:27,480
+Yeh ek motivation tool hai — daily open kariye, apne progress ko dekhiye.
+
+8
+00:00:27,480 --> 00:00:31,344
+Chhote goals set kariye, monthly target automatic ban jaayega.

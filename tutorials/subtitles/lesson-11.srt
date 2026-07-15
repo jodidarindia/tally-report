@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:05,113
+Inventory tab mein aapko poora stock dikhta hai item name quantity ABC category
+
+2
+00:00:05,113 --> 00:00:06,513
+stock group.
+
+3
+00:00:06,513 --> 00:00:08,260
+ABC categorisation kya hai?
+
+4
+00:00:08,260 --> 00:00:12,596
+A category — top 20 percent items jo 80 percent revenue laate hain.
+
+5
+00:00:12,596 --> 00:00:13,996
+Focus items.
+
+6
+00:00:13,996 --> 00:00:15,396
+B category — middle.
+
+7
+00:00:15,396 --> 00:00:16,796
+C category — bottom.
+
+8
+00:00:16,796 --> 00:00:20,097
+D category — dead stock, jo bahut kam bik raha hai.
+
+9
+00:00:20,097 --> 00:00:24,240
+Stock groups Tally se aate hain Engine Oil Gear Oil Transmission
+
+10
+00:00:24,240 --> 00:00:26,634
+apne group ke hisab se filter kariye.
+
+11
+00:00:26,634 --> 00:00:28,900
+Reorder alerts bhi yaha dikhte hain
+
+12
+00:00:28,900 --> 00:00:34,595
+jab bhi kisi item ka stock reorder level se neeche jaata hai red highlight ho jaata hai.
+
+13
+00:00:34,595 --> 00:00:37,991
+Export bhi kar sakte hain PDF ya Excel mein — company name banner ke saath.

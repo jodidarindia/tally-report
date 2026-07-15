@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Play, Pause, GraduationCap, CheckCircle2, Circle, Clock, ChevronRight, Youtube, Volume2, Trophy } from 'lucide-react';
+import { Play, Pause, GraduationCap, CheckCircle2, Circle, Clock, ChevronRight, Youtube, Volume2, Trophy, Lock } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
 
 /**
  * FLOWRA Academy — in-app tutorial hub with per-user completion tracking.
@@ -144,13 +145,41 @@ const VoiceSampleCard = ({ sample, playing, onPlay, locked }) => (
 );
 
 const Tutorials = () => {
+  const { user } = useAuth();
+  const role = (user?.role || 'admin').toLowerCase();
+
+  // iter-126: role-based visibility.
+  //   • admin / super_admin (owner + FLOWRA ops) → full 30 lessons
+  //   • employee / salesman / dispatch → only tracks relevant to them:
+  //     Getting Started + Salesman + Desktop Agent + the one Dispatch
+  //     lesson from Ops track. (Per user's explicit request.)
+  const restricted = !['admin', 'super_admin', 'useradmin'].includes(role);
+  const visibleTracks = useMemo(() => {
+    if (!restricted) return TRACKS;
+    let out = TRACKS.filter(t => ['getting-started', 'salesman', 'agent'].includes(t.key));
+    const opsTrack = TRACKS.find(t => t.key === 'ops');
+    const dispatchLesson = opsTrack?.lessons.find(l => l.n === 17);
+    if (opsTrack && dispatchLesson) {
+      out = out.concat([{
+        ...opsTrack,
+        key: 'dispatch',
+        title: 'Dispatch',
+        lessons: [dispatchLesson],
+      }]);
+    }
+    return out;
+  }, [restricted]);
+
   const [playing, setPlaying] = useState(null);          // sample voice id or `lesson:N`
   const [manifest, setManifest] = useState(null);
   const [progressMap, setProgressMap] = useState({});    // { [lesson_n]: {completed, progress_pct} }
   const audioRefs = useRef({});
   const heartbeat = useRef({});                          // { [lesson_n]: intervalId }
 
-  const totalLessons = 30;
+  const totalLessons = useMemo(
+    () => visibleTracks.reduce((n, t) => n + t.lessons.length, 0),
+    [visibleTracks]
+  );
   const completedCount = useMemo(
     () => Object.values(progressMap).filter(p => p.completed).length,
     [progressMap]
@@ -336,10 +365,19 @@ const Tutorials = () => {
         </div>
       </div>
 
-      {/* Track roadmap */}
+      {/* Track roadmap — restricted view when user is not owner/admin */}
       <div className="space-y-4">
-        <h2 className="text-lg font-bold text-slate-900">30-lesson roadmap</h2>
-        {TRACKS.map(track => (
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="text-lg font-bold text-slate-900">
+            {restricted ? 'Your lessons' : '30-lesson roadmap'}
+          </h2>
+          {restricted && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600" data-testid="restricted-badge">
+              <Lock size={10} /> {totalLessons} lessons visible to your role ({role})
+            </span>
+          )}
+        </div>
+        {visibleTracks.map(track => (
           <div key={track.key} className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid={`track-${track.key}`}>
             <div className="px-5 py-3 flex items-center justify-between border-b border-slate-100">
               <div className="flex items-center gap-3">

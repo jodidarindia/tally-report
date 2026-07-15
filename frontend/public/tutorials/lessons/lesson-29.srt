@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:04,084
+Agent red state mein ho toh paanch common problems check kariye.
+
+2
+00:00:04,084 --> 00:00:05,552
+Pehla — Tally band hai.
+
+3
+00:00:05,552 --> 00:00:07,849
+Tally kholiye aur company load karo.
+
+4
+00:00:07,849 --> 00:00:09,317
+Doosra — network issue.
+
+5
+00:00:09,317 --> 00:00:10,721
+Internet check kariye.
+
+6
+00:00:10,721 --> 00:00:12,380
+Teesra — ODBC not enabled.
+
+7
+00:00:12,380 --> 00:00:15,826
+Tally F1 Configure mein ODBC enable karna zaroori hai.
+
+8
+00:00:15,826 --> 00:00:17,613
+Chautha — password mismatch.
+
+9
+00:00:17,613 --> 00:00:21,442
+Agar Tally password badla hai, agent mein bhi update kariye.
+
+10
+00:00:21,442 --> 00:00:23,676
+Paanchwa — company path badal gaya.
+
+11
+00:00:23,676 --> 00:00:26,037
+Agent settings mein new path daaliye.
+
+12
+00:00:26,037 --> 00:00:31,015
+In paanch mein se koi ek fix karne se 90 percent problems solve ho jaate hain.
+
+13
+00:00:31,015 --> 00:00:36,503
+Nahi ho, toh WhatsApp par FLOWRA support ko error screenshot bhejo — team help karegi.

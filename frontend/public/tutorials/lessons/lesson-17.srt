@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:02,401
+Dispatch mirror ek unique feature hai.
+
+2
+00:00:02,401 --> 00:00:07,267
+Aapke godown ya factory mein jo dispatch hota hai trucks LR numbers consignee
+
+3
+00:00:07,267 --> 00:00:09,479
+sab kuch mobile pe live dikhta hai.
+
+4
+00:00:09,479 --> 00:00:14,662
+Sales tab mein Dispatch column enable kariye har voucher ke saath dispatch through
+
+5
+00:00:14,662 --> 00:00:16,368
+destination aur LR details.
+
+6
+00:00:16,368 --> 00:00:20,476
+Filter bhi kar sakte hain — kis truck se, kis city ko, kya bheja.
+
+7
+00:00:20,476 --> 00:00:26,101
+Owner ke liye bahut useful — office nahi jaana padta, dispatch status phone pe milta hai.
+
+8
+00:00:26,101 --> 00:00:28,439
+Aur Google Drive integration ke saath
+
+9
+00:00:28,439 --> 00:00:32,231
+bilty aur invoice PDFs bhi automatically link ho jaate hain.

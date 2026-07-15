@@ -1,0 +1,23 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.17,Default,,0,0,0,,Tally agent Windows ke liye ek chhota sa desktop application hai.
+Dialogue: 0,0:00:04.17,0:00:07.58,Default,,0,0,0,,Downloads section se agent installer download kariye.
+Dialogue: 0,0:00:07.58,0:00:10.92,Default,,0,0,0,,Double click karke run kariye — Next, Next, Install.
+Dialogue: 0,0:00:10.92,0:00:13.10,Default,,0,0,0,,30 second mein install ho jaayega.
+Dialogue: 0,0:00:13.10,0:00:16.95,Default,,0,0,0,,Icon system tray mein aa jaayega — right bottom corner mein.
+Dialogue: 0,0:00:16.95,0:00:18.88,Default,,0,0,0,,Right click karke Open kariye.
+Dialogue: 0,0:00:18.88,0:00:23.05,Default,,0,0,0,,Ek chhota window kholega — apna FLOWRA login credentials daaliye.
+Dialogue: 0,0:00:23.05,0:00:24.45,Default,,0,0,0,,Bas!
+Dialogue: 0,0:00:24.45,0:00:29.01,Default,,0,0,0,,Ab har raat 2 baje ye agent apne aap aapka Tally data cloud pe bhejega.
+Dialogue: 0,0:00:29.01,0:00:30.89,Default,,0,0,0,,Aapko kuch nahi karna — Tally chalu rakhen bas.

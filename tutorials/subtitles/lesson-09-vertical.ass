@@ -1,0 +1,25 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.18,Default,,0,0,0,,Owner ke liye sabse powerful section — Super Admin.
+Dialogue: 0,0:00:03.18,0:00:05.48,Default,,0,0,0,,Yaha se aap teen kaam kar sakte hain.
+Dialogue: 0,0:00:05.48,0:00:09.97,Default,,0,0,0,,Ek — naye users add karna, unko role dena, aur access control set karna.
+Dialogue: 0,0:00:09.97,0:00:12.15,Default,,0,0,0,,Admin, User-admin, Salesman, ya CA.
+Dialogue: 0,0:00:12.15,0:00:13.83,Default,,0,0,0,,Do — branches manage karna.
+Dialogue: 0,0:00:13.83,0:00:16.94,Default,,0,0,0,,Har branch ko include ya exclude karna reports se.
+Dialogue: 0,0:00:16.94,0:00:19.56,Default,,0,0,0,,Teen — license window aur billing details.
+Dialogue: 0,0:00:19.56,0:00:22.99,Default,,0,0,0,,Agar company grow kar rahi hai aur zyada users chaahiye
+Dialogue: 0,0:00:22.99,0:00:25.42,Default,,0,0,0,,yaha se upgrade request kar sakte hain.
+Dialogue: 0,0:00:25.42,0:00:28.91,Default,,0,0,0,,Ek zaroori tip — user delete mat kariye, disable kariye.
+Dialogue: 0,0:00:28.91,0:00:32.52,Default,,0,0,0,,Delete karne se unke past actions ka log gum ho sakta hai.
+Dialogue: 0,0:00:32.52,0:00:35.45,Default,,0,0,0,,Disable safe hai — audit trail bacha rehta hai.

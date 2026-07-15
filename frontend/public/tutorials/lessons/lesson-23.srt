@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:03,089
+Reconciliation FLOWRA mein powerful feature hai.
+
+2
+00:00:03,089 --> 00:00:08,304
+Kabhi Tally aur FLOWRA ke numbers thoda match nahi karte toh Reconcile button hai
+
+3
+00:00:08,304 --> 00:00:10,428
+jo do numbers ko align karta hai.
+
+4
+00:00:10,428 --> 00:00:14,033
+Window bhi set kar sakte hain — start date aur end date.
+
+5
+00:00:14,033 --> 00:00:17,123
+Sirf uss period ke transactions reconcile honge.
+
+6
+00:00:17,123 --> 00:00:21,565
+Deletion bhi scoped hai matlab agar window mein koi voucher extra hai
+
+7
+00:00:21,565 --> 00:00:24,784
+sirf woh delete hoga poora data corrupt nahi hoga.
+
+8
+00:00:24,784 --> 00:00:26,184
+Safe aur precise.
+
+9
+00:00:26,184 --> 00:00:31,608
+Yeh feature CA aur audit team ke liye life-saver hai quarterly reconciliation ekdum easy.

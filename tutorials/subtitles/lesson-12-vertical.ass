@@ -1,0 +1,23 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.65,Default,,0,0,0,,CRM tab ka pehla section — Outstanding.
+Dialogue: 0,0:00:02.65,0:00:06.80,Default,,0,0,0,,Yaha aapke sabhi customers ki current outstanding dikhti hai.
+Dialogue: 0,0:00:06.80,0:00:12.16,Default,,0,0,0,,Har row mein customer name ledger group opening balance total sales paid amount
+Dialogue: 0,0:00:12.16,0:00:13.56,Default,,0,0,0,,aur outstanding.
+Dialogue: 0,0:00:13.56,0:00:18.80,Default,,0,0,0,,Right side mein aging buckets — 0 to 30 din, 30 to 60, 60 to 90, aur 90 plus.
+Dialogue: 0,0:00:18.80,0:00:20.84,Default,,0,0,0,,Yeh sabse important number hai
+Dialogue: 0,0:00:20.84,0:00:25.05,Default,,0,0,0,,90 plus days ki outstanding matlab payment collection problem.
+Dialogue: 0,0:00:25.05,0:00:30.83,Default,,0,0,0,,Upar dropdown hai — All Customers ya ek specific ledger group ya state select kariye.
+Dialogue: 0,0:00:30.83,0:00:34.09,Default,,0,0,0,,Excel export bhi hai — poori list ek click mein.
+Dialogue: 0,0:00:34.09,0:00:37.99,Default,,0,0,0,,Salesman ko share kariye — payment collection ka focus milega.

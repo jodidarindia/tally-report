@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.99,Default,,0,0,0,,CA Corner — accountant ke liye special section.
+Dialogue: 0,0:00:02.99,0:00:07.95,Default,,0,0,0,,Yaha se aap sync status, reconciliation, aur ledger PDF export kar sakte hain.
+Dialogue: 0,0:00:07.95,0:00:12.98,Default,,0,0,0,,Har customer ka detailed ledger opening balance har transaction closing balance
+Dialogue: 0,0:00:12.98,0:00:14.82,Default,,0,0,0,,professional PDF format mein.
+Dialogue: 0,0:00:14.82,0:00:16.99,Default,,0,0,0,,GST-ready format bhi upcoming hai.
+Dialogue: 0,0:00:16.99,0:00:20.04,Default,,0,0,0,,CA Corner mein aap window bhi set kar sakte hain
+Dialogue: 0,0:00:20.04,0:00:22.71,Default,,0,0,0,,reconcile ke liye start date aur end date.
+Dialogue: 0,0:00:22.71,0:00:27.36,Default,,0,0,0,,Sync history mein dekh sakte hain — kab kya sync hua, koi error toh nahi.
+Dialogue: 0,0:00:27.36,0:00:30.79,Default,,0,0,0,,Yeh section mainly CA aur accounts team use karti hai.

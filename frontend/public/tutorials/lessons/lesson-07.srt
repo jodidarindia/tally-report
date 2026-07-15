@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:05,155
+FLOWRA aapko chaar zaroori PDFs deta hai — Landing Page ke Resources section mein.
+
+2
+00:00:05,155 --> 00:00:10,249
+Pehla, Presentation — jo FLOWRA ka features overview hai, board meetings ke liye.
+
+3
+00:00:10,249 --> 00:00:14,776
+Doosra, Deployment Guide — technical team ke liye ki setup kaise karein.
+
+4
+00:00:14,776 --> 00:00:19,743
+Teesra, Training Booklet — aapke staff aur salesman ke liye step-by-step guide.
+
+5
+00:00:19,743 --> 00:00:24,082
+Chautha Customer Questionnaire jab bhi naya customer onboard karna ho
+
+6
+00:00:24,082 --> 00:00:25,482
+yeh form use kariye.
+
+7
+00:00:25,482 --> 00:00:29,820
+Aur haan — What's New PDF alag se, jo product updates ka summary hai.
+
+8
+00:00:29,820 --> 00:00:32,775
+Sabhi PDFs FLOWRA branded hain print-ready hain
+
+9
+00:00:32,775 --> 00:00:35,399
+aur WhatsApp par easily share ho jaati hain.

@@ -1,0 +1,26 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:05.11,Default,,0,0,0,,Inventory tab mein aapko poora stock dikhta hai item name quantity ABC category
+Dialogue: 0,0:00:05.11,0:00:06.51,Default,,0,0,0,,stock group.
+Dialogue: 0,0:00:06.51,0:00:08.26,Default,,0,0,0,,ABC categorisation kya hai?
+Dialogue: 0,0:00:08.26,0:00:12.60,Default,,0,0,0,,A category — top 20 percent items jo 80 percent revenue laate hain.
+Dialogue: 0,0:00:12.60,0:00:13.100,Default,,0,0,0,,Focus items.
+Dialogue: 0,0:00:13.100,0:00:15.40,Default,,0,0,0,,B category — middle.
+Dialogue: 0,0:00:15.40,0:00:16.80,Default,,0,0,0,,C category — bottom.
+Dialogue: 0,0:00:16.80,0:00:20.10,Default,,0,0,0,,D category — dead stock, jo bahut kam bik raha hai.
+Dialogue: 0,0:00:20.10,0:00:24.24,Default,,0,0,0,,Stock groups Tally se aate hain Engine Oil Gear Oil Transmission
+Dialogue: 0,0:00:24.24,0:00:26.63,Default,,0,0,0,,apne group ke hisab se filter kariye.
+Dialogue: 0,0:00:26.63,0:00:28.90,Default,,0,0,0,,Reorder alerts bhi yaha dikhte hain
+Dialogue: 0,0:00:28.90,0:00:34.60,Default,,0,0,0,,jab bhi kisi item ka stock reorder level se neeche jaata hai red highlight ho jaata hai.
+Dialogue: 0,0:00:34.60,0:00:37.99,Default,,0,0,0,,Export bhi kar sakte hain PDF ya Excel mein — company name banner ke saath.

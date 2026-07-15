@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:03,574
+Sync History tab mein aapko har sync ka record milta hai.
+
+2
+00:00:03,574 --> 00:00:08,403
+Timestamp, kitne vouchers aaye, kaunsi tables update hui, koi error toh nahi.
+
+3
+00:00:08,403 --> 00:00:12,166
+Green tick matlab successful, red exclamation matlab failed.
+
+4
+00:00:12,166 --> 00:00:15,302
+Failed sync pe click kariye — error detail milega.
+
+5
+00:00:15,302 --> 00:00:19,566
+Common issues — Tally band tha, network gaya, ya password galat tha.
+
+6
+00:00:19,566 --> 00:00:23,329
+Retry button hai — dabaaein, agent turant fir se try karega.
+
+7
+00:00:23,329 --> 00:00:28,158
+Agar bar bar fail ho raha hai WhatsApp par FLOWRA support ko screenshot bhejo
+
+8
+00:00:28,158 --> 00:00:29,664
+team turant help karegi.

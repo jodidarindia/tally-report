@@ -1,0 +1,27 @@
+1
+00:00:00,000 --> 00:00:03,408
+FLOWRA aapko AI-powered recommendations bhi deta hai.
+
+2
+00:00:03,408 --> 00:00:06,880
+Salesman dashboard mein Recommendations panel dekhiye.
+
+3
+00:00:06,880 --> 00:00:12,282
+System aapke customers ka past order pattern analyse karta hai aur suggest karta hai
+
+4
+00:00:12,282 --> 00:00:17,234
+kis customer ko is week visit karna chaahiye kaunse products offer karna hai.
+
+5
+00:00:17,234 --> 00:00:21,414
+Missed customer — jo 30 din se order nahi diya, follow up kariye.
+
+6
+00:00:21,414 --> 00:00:27,009
+Cross-sell opportunity — is customer ne Engine Oil liya hai, Gear Oil bhi offer kariye.
+
+7
+00:00:27,009 --> 00:00:31,704
+Yeh tips subah ke coffee ke saath 2 minute mein padh lo — day plan ready.

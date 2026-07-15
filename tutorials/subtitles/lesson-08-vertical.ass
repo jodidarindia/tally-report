@@ -1,0 +1,23 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.68,Default,,0,0,0,,Owner ke liye ek special tool hai — Financial Pitch Deck.
+Dialogue: 0,0:00:03.68,0:00:08.77,Default,,0,0,0,,Yeh aapke business ki 3-year projection banata hai, aapke actual Tally data se.
+Dialogue: 0,0:00:08.77,0:00:13.48,Default,,0,0,0,,Investors ke saath meeting ho ya bank loan ke liye documentation chaahiye
+Dialogue: 0,0:00:13.48,0:00:14.88,Default,,0,0,0,,yeh deck ready hai.
+Dialogue: 0,0:00:14.88,0:00:19.59,Default,,0,0,0,,16 pages, revenue growth chart, gross margin trend, cash flow projection.
+Dialogue: 0,0:00:19.59,0:00:24.36,Default,,0,0,0,,Ek teaser version bhi hai — 10 pages — WhatsApp par forward karne ke liye.
+Dialogue: 0,0:00:24.36,0:00:29.20,Default,,0,0,0,,Aur Excel projections file bhi, jismein har month ki numbers editable hain.
+Dialogue: 0,0:00:29.20,0:00:31.71,Default,,0,0,0,,Sabhi files apne aap generate hoti hain
+Dialogue: 0,0:00:31.71,0:00:35.32,Default,,0,0,0,,Owner Console mein Generate Pitch Deck button dabaayein.
+Dialogue: 0,0:00:35.32,0:00:37.73,Default,,0,0,0,,Do minute mein PDF aur Excel dono ready.

@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.09,Default,,0,0,0,,Reconciliation FLOWRA mein powerful feature hai.
+Dialogue: 0,0:00:03.09,0:00:08.30,Default,,0,0,0,,Kabhi Tally aur FLOWRA ke numbers thoda match nahi karte toh Reconcile button hai
+Dialogue: 0,0:00:08.30,0:00:10.43,Default,,0,0,0,,jo do numbers ko align karta hai.
+Dialogue: 0,0:00:10.43,0:00:14.03,Default,,0,0,0,,Window bhi set kar sakte hain — start date aur end date.
+Dialogue: 0,0:00:14.03,0:00:17.12,Default,,0,0,0,,Sirf uss period ke transactions reconcile honge.
+Dialogue: 0,0:00:17.12,0:00:21.56,Default,,0,0,0,,Deletion bhi scoped hai matlab agar window mein koi voucher extra hai
+Dialogue: 0,0:00:21.56,0:00:24.78,Default,,0,0,0,,sirf woh delete hoga poora data corrupt nahi hoga.
+Dialogue: 0,0:00:24.78,0:00:26.18,Default,,0,0,0,,Safe aur precise.
+Dialogue: 0,0:00:26.18,0:00:31.61,Default,,0,0,0,,Yeh feature CA aur audit team ke liye life-saver hai quarterly reconciliation ekdum easy.

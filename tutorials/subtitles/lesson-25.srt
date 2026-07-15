@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:02,829
+Aane wale weeks mein GST module launch hoga.
+
+2
+00:00:02,829 --> 00:00:08,038
+Aap GSTR JSON portal se download karke FLOWRA CA Corner mein upload kar paayenge.
+
+3
+00:00:08,038 --> 00:00:13,182
+System automatically reconcile karega — aapke Tally sales aur portal ke figures.
+
+4
+00:00:13,182 --> 00:00:18,841
+Mismatched invoices highlight honge kaunsa invoice portal mein hai lekin Tally mein nahi
+
+5
+00:00:18,841 --> 00:00:20,241
+ya vice versa.
+
+6
+00:00:20,241 --> 00:00:23,070
+Monthly GSTR filing tension free ho jaayegi.
+
+7
+00:00:23,070 --> 00:00:26,864
+Jab yeh feature live hoga main is video ko update kar dunga
+
+8
+00:00:26,864 --> 00:00:28,679
+Academy ka big update aane wala hai.

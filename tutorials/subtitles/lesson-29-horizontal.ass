@@ -1,0 +1,26 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.08,Default,,0,0,0,,Agent red state mein ho toh paanch common problems check kariye.
+Dialogue: 0,0:00:04.08,0:00:05.55,Default,,0,0,0,,Pehla — Tally band hai.
+Dialogue: 0,0:00:05.55,0:00:07.85,Default,,0,0,0,,Tally kholiye aur company load karo.
+Dialogue: 0,0:00:07.85,0:00:09.32,Default,,0,0,0,,Doosra — network issue.
+Dialogue: 0,0:00:09.32,0:00:10.72,Default,,0,0,0,,Internet check kariye.
+Dialogue: 0,0:00:10.72,0:00:12.38,Default,,0,0,0,,Teesra — ODBC not enabled.
+Dialogue: 0,0:00:12.38,0:00:15.83,Default,,0,0,0,,Tally F1 Configure mein ODBC enable karna zaroori hai.
+Dialogue: 0,0:00:15.83,0:00:17.61,Default,,0,0,0,,Chautha — password mismatch.
+Dialogue: 0,0:00:17.61,0:00:21.44,Default,,0,0,0,,Agar Tally password badla hai, agent mein bhi update kariye.
+Dialogue: 0,0:00:21.44,0:00:23.68,Default,,0,0,0,,Paanchwa — company path badal gaya.
+Dialogue: 0,0:00:23.68,0:00:26.04,Default,,0,0,0,,Agent settings mein new path daaliye.
+Dialogue: 0,0:00:26.04,0:00:31.02,Default,,0,0,0,,In paanch mein se koi ek fix karne se 90 percent problems solve ho jaate hain.
+Dialogue: 0,0:00:31.02,0:00:36.50,Default,,0,0,0,,Nahi ho, toh WhatsApp par FLOWRA support ko error screenshot bhejo — team help karegi.

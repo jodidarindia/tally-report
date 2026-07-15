@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:05.16,Default,,0,0,0,,FLOWRA aapko chaar zaroori PDFs deta hai — Landing Page ke Resources section mein.
+Dialogue: 0,0:00:05.16,0:00:10.25,Default,,0,0,0,,Pehla, Presentation — jo FLOWRA ka features overview hai, board meetings ke liye.
+Dialogue: 0,0:00:10.25,0:00:14.78,Default,,0,0,0,,Doosra, Deployment Guide — technical team ke liye ki setup kaise karein.
+Dialogue: 0,0:00:14.78,0:00:19.74,Default,,0,0,0,,Teesra, Training Booklet — aapke staff aur salesman ke liye step-by-step guide.
+Dialogue: 0,0:00:19.74,0:00:24.08,Default,,0,0,0,,Chautha Customer Questionnaire jab bhi naya customer onboard karna ho
+Dialogue: 0,0:00:24.08,0:00:25.48,Default,,0,0,0,,yeh form use kariye.
+Dialogue: 0,0:00:25.48,0:00:29.82,Default,,0,0,0,,Aur haan — What's New PDF alag se, jo product updates ka summary hai.
+Dialogue: 0,0:00:29.82,0:00:32.78,Default,,0,0,0,,Sabhi PDFs FLOWRA branded hain print-ready hain
+Dialogue: 0,0:00:32.78,0:00:35.40,Default,,0,0,0,,aur WhatsApp par easily share ho jaati hain.

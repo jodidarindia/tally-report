@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:03,077
+Chaliye pehli baar FLOWRA mein login karte hain.
+
+2
+00:00:03,077 --> 00:00:06,090
+Sabse pehle browser mein flowralive.in kholiye.
+
+3
+00:00:06,090 --> 00:00:10,577
+Upar right corner mein aapko Login button dikhega — usko click kijiye.
+
+4
+00:00:10,577 --> 00:00:14,232
+Ab do cheezein daalni hain — aapka username aur password.
+
+5
+00:00:14,232 --> 00:00:18,976
+Yeh dono aapko onboarding ke time diye gaye the — email pe ya WhatsApp pe.
+
+6
+00:00:18,976 --> 00:00:22,694
+Nahi mile toh apne FLOWRA representative se poochh lijiye.
+
+7
+00:00:22,694 --> 00:00:25,323
+Password daalne ke baad Sign In dabaaiye.
+
+8
+00:00:25,323 --> 00:00:26,723
+Bas!
+
+9
+00:00:26,723 --> 00:00:29,672
+Aap seedha apne Dashboard pe pahunch jaayenge.
+
+10
+00:00:29,672 --> 00:00:33,198
+Ek zaroori baat agar aap pehli baar login kar rahe hain
+
+11
+00:00:33,198 --> 00:00:36,147
+toh system aapko ek chhota sa tour dikhaayega.
+
+12
+00:00:36,147 --> 00:00:40,185
+Uspe dhyaan dijiye — 30 second mein sab kuch samajh aa jaayega.
+
+13
+00:00:40,185 --> 00:00:42,311
+Agla video mein hum Dashboard ka pura tour karenge.

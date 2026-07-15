@@ -1,0 +1,21 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.65,Default,,0,0,0,,Busy ke liye bhi FLOWRA ka alag agent hai.
+Dialogue: 0,0:00:02.65,0:00:08.01,Default,,0,0,0,,Tally agent jaisa hi, bas ek difference — Busy ke .bds files ke saath kaam karta hai.
+Dialogue: 0,0:00:08.01,0:00:10.84,Default,,0,0,0,,Installation same — download, install, login.
+Dialogue: 0,0:00:10.84,0:00:16.14,Default,,0,0,0,,Company mapping bhi similar — Busy companies dikhengi, FLOWRA companies assign karo.
+Dialogue: 0,0:00:16.14,0:00:21.44,Default,,0,0,0,,Ek important note — Busy agent abhi licensed Busy 21 installations ke liye best hai.
+Dialogue: 0,0:00:21.44,0:00:26.92,Default,,0,0,0,,Demo version mein encryption password differ hota hai, so demo pe testing avoid kariye.
+Dialogue: 0,0:00:26.92,0:00:32.09,Default,,0,0,0,,Baaki sab features Tally agent jaisi hi hai — sync health, retry, company mapping.
+Dialogue: 0,0:00:32.09,0:00:37.70,Default,,0,0,0,,Agar aap Busy user hain WhatsApp par contact kariye hum aapko dedicated setup call denge.

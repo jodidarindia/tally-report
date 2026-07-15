@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:02,569
+FLOWRA multi-company support karta hai
+
+2
+00:00:02,569 --> 00:00:06,287
+matlab agar aapke paas ek se zyada Tally companies hain
+
+3
+00:00:06,287 --> 00:00:10,884
+toh aap dashboard ke upar company selector se switch kar sakte hain.
+
+4
+00:00:10,884 --> 00:00:16,225
+Naam pe click kariye — list khulegi — jo company dekhni hai us pe click kariye.
+
+5
+00:00:16,225 --> 00:00:18,997
+Data automatic uss company ka aa jaayega.
+
+6
+00:00:18,997 --> 00:00:22,918
+Waisi hi tarah FY selector — abhi FY 2026-27 selected hai.
+
+7
+00:00:22,918 --> 00:00:27,110
+Aap 2025-26 ya kisi bhi previous year ka data dekh sakte hain.
+
+8
+00:00:27,110 --> 00:00:28,510
+Ek tip
+
+9
+00:00:28,510 --> 00:00:35,473
+agar aap sales ya outstanding ka trend dekhna chahte hain toh alag alag FY switch karke compare kariye.
+
+10
+00:00:35,473 --> 00:00:39,887
+Chalo agle video mein Owner track shuru karte hain — KPI cards padhna seekhenge.

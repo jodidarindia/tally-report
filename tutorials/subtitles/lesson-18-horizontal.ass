@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.11,Default,,0,0,0,,Salesman ke liye ek alag simplified dashboard hai.
+Dialogue: 0,0:00:03.11,0:00:08.15,Default,,0,0,0,,Login karte hi aapko sirf apne customers, apne target, aur apne beat dikhte hain.
+Dialogue: 0,0:00:08.15,0:00:10.08,Default,,0,0,0,,My Sales — is month kitna kiya.
+Dialogue: 0,0:00:10.08,0:00:12.20,Default,,0,0,0,,My Target — kitna reach karna hai.
+Dialogue: 0,0:00:12.20,0:00:15.56,Default,,0,0,0,,My Customers — poori list, filter aur search ke saath.
+Dialogue: 0,0:00:15.56,0:00:18.36,Default,,0,0,0,,My Beat — is week kis kis ko visit karna hai.
+Dialogue: 0,0:00:18.36,0:00:21.48,Default,,0,0,0,,Owner ka poora data nahi dikhta — sirf aapka apna.
+Dialogue: 0,0:00:21.48,0:00:23.59,Default,,0,0,0,,Clean, focused, aur phone pe fast.
+Dialogue: 0,0:00:23.59,0:00:25.90,Default,,0,0,0,,Field mein use karne ke liye perfect.

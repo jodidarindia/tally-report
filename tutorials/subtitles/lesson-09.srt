@@ -1,0 +1,47 @@
+1
+00:00:00,000 --> 00:00:03,177
+Owner ke liye sabse powerful section — Super Admin.
+
+2
+00:00:03,177 --> 00:00:05,482
+Yaha se aap teen kaam kar sakte hain.
+
+3
+00:00:05,482 --> 00:00:09,967
+Ek — naye users add karna, unko role dena, aur access control set karna.
+
+4
+00:00:09,967 --> 00:00:12,148
+Admin, User-admin, Salesman, ya CA.
+
+5
+00:00:12,148 --> 00:00:13,830
+Do — branches manage karna.
+
+6
+00:00:13,830 --> 00:00:16,945
+Har branch ko include ya exclude karna reports se.
+
+7
+00:00:16,945 --> 00:00:19,561
+Teen — license window aur billing details.
+
+8
+00:00:19,561 --> 00:00:22,988
+Agar company grow kar rahi hai aur zyada users chaahiye
+
+9
+00:00:22,988 --> 00:00:25,417
+yaha se upgrade request kar sakte hain.
+
+10
+00:00:25,417 --> 00:00:28,906
+Ek zaroori tip — user delete mat kariye, disable kariye.
+
+11
+00:00:28,906 --> 00:00:32,519
+Delete karne se unke past actions ka log gum ho sakta hai.
+
+12
+00:00:32,519 --> 00:00:35,448
+Disable safe hai — audit trail bacha rehta hai.

@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:03,781
+Ye hai aapka FLOWRA Dashboard — aapke business ka homepage.
+
+2
+00:00:03,781 --> 00:00:09,038
+Sabse upar aapko chaar cards dikhenge: Total Sales Total Orders Outstanding Amount
+
+3
+00:00:09,038 --> 00:00:10,438
+aur Beat Coverage.
+
+4
+00:00:10,438 --> 00:00:16,143
+Yeh charon numbers har 30 second mein automatic refresh hote hain — Tally ka latest data.
+
+5
+00:00:16,143 --> 00:00:19,220
+Aap manually bhi Refresh button daba sakte hain.
+
+6
+00:00:19,220 --> 00:00:23,899
+Neeche What's New panel hai jab bhi FLOWRA mein koi naya feature aata hai
+
+7
+00:00:23,899 --> 00:00:25,299
+yaha update dikhega.
+
+8
+00:00:25,299 --> 00:00:31,068
+Aur bhi neeche aapko upcoming reminders, overdue customer digest, aur sync status dikhega.
+
+9
+00:00:31,068 --> 00:00:36,453
+Upar navigation bar mein Sales CRM Inventory Analytics Salesman AI Reports CA Corner
+
+10
+00:00:36,453 --> 00:00:38,760
+har tab ek alag feature ke liye hai.
+
+11
+00:00:38,760 --> 00:00:40,747
+Right side mein FY selector hai
+
+12
+00:00:40,747 --> 00:00:45,235
+usko change karke aap kisi bhi financial year ka data dekh sakte hain.
+
+13
+00:00:45,235 --> 00:00:45,576
+Simple, na?

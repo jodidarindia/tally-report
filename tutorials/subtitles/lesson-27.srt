@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:04,844
+Pehli baar agent install hone ke baad, ek zaroori step hai — company mapping.
+
+2
+00:00:04,844 --> 00:00:07,171
+Agent kholiye, Companies tab kholiye.
+
+3
+00:00:07,171 --> 00:00:10,443
+Aapki Tally mein jitni companies hain, sab dikhengi.
+
+4
+00:00:10,443 --> 00:00:14,029
+Har company ke saathi ek FLOWRA company assign karni hai.
+
+5
+00:00:14,029 --> 00:00:15,664
+Dropdown se select kariye.
+
+6
+00:00:15,664 --> 00:00:19,565
+Agar aap sirf ek company use karte hain, toh mapping easy hai.
+
+7
+00:00:19,565 --> 00:00:25,164
+Multi-company setup mein carefully match kariye — wrong mapping se data mix ho sakta hai.
+
+8
+00:00:25,164 --> 00:00:26,564
+Save Mapping dabaaein.
+
+9
+00:00:26,564 --> 00:00:29,568
+Ho gaya — ab data uss company ke liye sync hoga.

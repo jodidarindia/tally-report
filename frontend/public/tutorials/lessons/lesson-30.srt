@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:02,648
+Busy ke liye bhi FLOWRA ka alag agent hai.
+
+2
+00:00:02,648 --> 00:00:08,007
+Tally agent jaisa hi, bas ek difference — Busy ke .bds files ke saath kaam karta hai.
+
+3
+00:00:08,007 --> 00:00:10,844
+Installation same — download, install, login.
+
+4
+00:00:10,844 --> 00:00:16,140
+Company mapping bhi similar — Busy companies dikhengi, FLOWRA companies assign karo.
+
+5
+00:00:16,140 --> 00:00:21,437
+Ek important note — Busy agent abhi licensed Busy 21 installations ke liye best hai.
+
+6
+00:00:21,437 --> 00:00:26,922
+Demo version mein encryption password differ hota hai, so demo pe testing avoid kariye.
+
+7
+00:00:26,922 --> 00:00:32,092
+Baaki sab features Tally agent jaisi hi hai — sync health, retry, company mapping.
+
+8
+00:00:32,092 --> 00:00:37,704
+Agar aap Busy user hain WhatsApp par contact kariye hum aapko dedicated setup call denge.

@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:04,640
+CA aur accountant ke liye pehla useful tool — customer ledger PDF export.
+
+2
+00:00:04,640 --> 00:00:07,629
+CRM tab mein kisi bhi customer pe click kariye.
+
+3
+00:00:07,629 --> 00:00:09,091
+Ledger button dabaaein.
+
+4
+00:00:09,091 --> 00:00:14,622
+System ek professional PDF banata hai company name header customer details poora ledger
+
+5
+00:00:14,622 --> 00:00:18,118
+opening balance se closing balance tak har transaction.
+
+6
+00:00:18,118 --> 00:00:19,518
+GST ready format mein.
+
+7
+00:00:19,518 --> 00:00:23,015
+Sabse achi baat — client ko bhejne ke liye ekdum ready.
+
+8
+00:00:23,015 --> 00:00:24,859
+Print pe bhi accha lagta hai.
+
+9
+00:00:24,859 --> 00:00:27,527
+Ek click mein poora customer ka statement.

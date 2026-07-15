@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.90,Default,,0,0,0,,Data safety FLOWRA mein highest priority hai.
+Dialogue: 0,0:00:02.90,0:00:06.32,Default,,0,0,0,,Har raat 2 baje automatic backup hota hai — cloud pe.
+Dialogue: 0,0:00:06.32,0:00:12.06,Default,,0,0,0,,Owner Console mein Backups section mein aap dekh sakte hain last 30 days ke backups list.
+Dialogue: 0,0:00:12.06,0:00:15.28,Default,,0,0,0,,Har backup ka size, timestamp, aur restore button.
+Dialogue: 0,0:00:15.28,0:00:19.41,Default,,0,0,0,,Kabhi galti se koi wrong change hua ya data corrupt lag raha hai
+Dialogue: 0,0:00:19.41,0:00:23.22,Default,,0,0,0,,bas ek click mein pichhle backup se restore kar sakte hain.
+Dialogue: 0,0:00:23.22,0:00:28.31,Default,,0,0,0,,Ek zaroori baat — restore karne se pehle current state ka backup lena chaahiye.
+Dialogue: 0,0:00:28.31,0:00:32.89,Default,,0,0,0,,Manual Backup button hai — dabaayein, current snapshot save ho jaayega.
+Dialogue: 0,0:00:32.89,0:00:34.63,Default,,0,0,0,,Fir safe se restore kariye.

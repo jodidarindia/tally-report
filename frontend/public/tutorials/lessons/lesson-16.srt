@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:02,902
+Data safety FLOWRA mein highest priority hai.
+
+2
+00:00:02,902 --> 00:00:06,320
+Har raat 2 baje automatic backup hota hai — cloud pe.
+
+3
+00:00:06,320 --> 00:00:12,059
+Owner Console mein Backups section mein aap dekh sakte hain last 30 days ke backups list.
+
+4
+00:00:12,059 --> 00:00:15,284
+Har backup ka size, timestamp, aur restore button.
+
+5
+00:00:15,284 --> 00:00:19,411
+Kabhi galti se koi wrong change hua ya data corrupt lag raha hai
+
+6
+00:00:19,411 --> 00:00:23,216
+bas ek click mein pichhle backup se restore kar sakte hain.
+
+7
+00:00:23,216 --> 00:00:28,311
+Ek zaroori baat — restore karne se pehle current state ka backup lena chaahiye.
+
+8
+00:00:28,311 --> 00:00:32,890
+Manual Backup button hai — dabaayein, current snapshot save ho jaayega.
+
+9
+00:00:32,890 --> 00:00:34,631
+Fir safe se restore kariye.

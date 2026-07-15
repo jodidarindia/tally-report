@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:02,990
+CA Corner — accountant ke liye special section.
+
+2
+00:00:02,990 --> 00:00:07,952
+Yaha se aap sync status, reconciliation, aur ledger PDF export kar sakte hain.
+
+3
+00:00:07,952 --> 00:00:12,978
+Har customer ka detailed ledger opening balance har transaction closing balance
+
+4
+00:00:12,978 --> 00:00:14,823
+professional PDF format mein.
+
+5
+00:00:14,823 --> 00:00:16,986
+GST-ready format bhi upcoming hai.
+
+6
+00:00:16,986 --> 00:00:20,040
+CA Corner mein aap window bhi set kar sakte hain
+
+7
+00:00:20,040 --> 00:00:22,712
+reconcile ke liye start date aur end date.
+
+8
+00:00:22,712 --> 00:00:27,356
+Sync history mein dekh sakte hain — kab kya sync hua, koi error toh nahi.
+
+9
+00:00:27,356 --> 00:00:30,792
+Yeh section mainly CA aur accounts team use karti hai.

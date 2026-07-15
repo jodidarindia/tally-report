@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:02,650
+CRM tab ka pehla section — Outstanding.
+
+2
+00:00:02,650 --> 00:00:06,796
+Yaha aapke sabhi customers ki current outstanding dikhti hai.
+
+3
+00:00:06,796 --> 00:00:12,165
+Har row mein customer name ledger group opening balance total sales paid amount
+
+4
+00:00:12,165 --> 00:00:13,565
+aur outstanding.
+
+5
+00:00:13,565 --> 00:00:18,798
+Right side mein aging buckets — 0 to 30 din, 30 to 60, 60 to 90, aur 90 plus.
+
+6
+00:00:18,798 --> 00:00:20,837
+Yeh sabse important number hai
+
+7
+00:00:20,837 --> 00:00:25,051
+90 plus days ki outstanding matlab payment collection problem.
+
+8
+00:00:25,051 --> 00:00:30,828
+Upar dropdown hai — All Customers ya ek specific ledger group ya state select kariye.
+
+9
+00:00:30,828 --> 00:00:34,090
+Excel export bhi hai — poori list ek click mein.
+
+10
+00:00:34,090 --> 00:00:37,991
+Salesman ko share kariye — payment collection ka focus milega.

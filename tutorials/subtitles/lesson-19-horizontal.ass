@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.61,Default,,0,0,0,,Salesman phone se hi visit aur order record kar sakta hai.
+Dialogue: 0,0:00:03.61,0:00:08.84,Default,,0,0,0,,Ek customer pe pahunche, app kholiye, customer select kariye, Record Visit dabaaein.
+Dialogue: 0,0:00:08.84,0:00:11.33,Default,,0,0,0,,Location automatic capture ho jaati hai.
+Dialogue: 0,0:00:11.33,0:00:14.13,Default,,0,0,0,,Agar order milta hai — Create Order dabaaiye.
+Dialogue: 0,0:00:14.13,0:00:16.81,Default,,0,0,0,,Items add kariye, quantity daaliye, submit.
+Dialogue: 0,0:00:16.81,0:00:20.73,Default,,0,0,0,,Yeh order Tally mein bhi automatically sync ho jaayega raat ko.
+Dialogue: 0,0:00:20.73,0:00:24.59,Default,,0,0,0,,Digital record milta hai — kab kaun kahaan gaya, kya bik gaya.
+Dialogue: 0,0:00:24.59,0:00:28.20,Default,,0,0,0,,Owner ke liye transparency, salesman ke liye productivity.
+Dialogue: 0,0:00:28.20,0:00:28.94,Default,,0,0,0,,Sabka fayda.

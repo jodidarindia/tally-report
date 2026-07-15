@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.41,Default,,0,0,0,,Agent ke Home tab mein ek indicator hai — Sync Health.
+Dialogue: 0,0:00:03.41,0:00:04.87,Default,,0,0,0,,Green matlab sab theek.
+Dialogue: 0,0:00:04.87,0:00:08.85,Default,,0,0,0,,Yellow matlab warning — jaise slow network ya large data queue.
+Dialogue: 0,0:00:08.85,0:00:11.56,Default,,0,0,0,,Red matlab problem — sync fail ho raha hai.
+Dialogue: 0,0:00:11.56,0:00:16.18,Default,,0,0,0,,Right side mein details bhi milte hain last sync time next scheduled sync
+Dialogue: 0,0:00:16.18,0:00:17.88,Default,,0,0,0,,aur pending vouchers count.
+Dialogue: 0,0:00:17.88,0:00:23.00,Default,,0,0,0,,Agar Sync Health kuch din se yellow hai, ek baar manual Sync Now button dabaaein.
+Dialogue: 0,0:00:23.00,0:00:25.22,Default,,0,0,0,,Usually issue resolve ho jaata hai.
+Dialogue: 0,0:00:25.22,0:00:28.94,Default,,0,0,0,,Red state mein, next video dekhiye — troubleshooting steps.

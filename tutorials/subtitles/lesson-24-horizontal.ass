@@ -1,0 +1,21 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.57,Default,,0,0,0,,Sync History tab mein aapko har sync ka record milta hai.
+Dialogue: 0,0:00:03.57,0:00:08.40,Default,,0,0,0,,Timestamp, kitne vouchers aaye, kaunsi tables update hui, koi error toh nahi.
+Dialogue: 0,0:00:08.40,0:00:12.17,Default,,0,0,0,,Green tick matlab successful, red exclamation matlab failed.
+Dialogue: 0,0:00:12.17,0:00:15.30,Default,,0,0,0,,Failed sync pe click kariye — error detail milega.
+Dialogue: 0,0:00:15.30,0:00:19.57,Default,,0,0,0,,Common issues — Tally band tha, network gaya, ya password galat tha.
+Dialogue: 0,0:00:19.57,0:00:23.33,Default,,0,0,0,,Retry button hai — dabaaein, agent turant fir se try karega.
+Dialogue: 0,0:00:23.33,0:00:28.16,Default,,0,0,0,,Agar bar bar fail ho raha hai WhatsApp par FLOWRA support ko screenshot bhejo
+Dialogue: 0,0:00:28.16,0:00:29.66,Default,,0,0,0,,team turant help karegi.

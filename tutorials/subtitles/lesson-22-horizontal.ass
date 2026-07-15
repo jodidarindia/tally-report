@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.64,Default,,0,0,0,,CA aur accountant ke liye pehla useful tool — customer ledger PDF export.
+Dialogue: 0,0:00:04.64,0:00:07.63,Default,,0,0,0,,CRM tab mein kisi bhi customer pe click kariye.
+Dialogue: 0,0:00:07.63,0:00:09.09,Default,,0,0,0,,Ledger button dabaaein.
+Dialogue: 0,0:00:09.09,0:00:14.62,Default,,0,0,0,,System ek professional PDF banata hai company name header customer details poora ledger
+Dialogue: 0,0:00:14.62,0:00:18.12,Default,,0,0,0,,opening balance se closing balance tak har transaction.
+Dialogue: 0,0:00:18.12,0:00:19.52,Default,,0,0,0,,GST ready format mein.
+Dialogue: 0,0:00:19.52,0:00:23.02,Default,,0,0,0,,Sabse achi baat — client ko bhejne ke liye ekdum ready.
+Dialogue: 0,0:00:23.02,0:00:24.86,Default,,0,0,0,,Print pe bhi accha lagta hai.
+Dialogue: 0,0:00:24.86,0:00:27.53,Default,,0,0,0,,Ek click mein poora customer ka statement.

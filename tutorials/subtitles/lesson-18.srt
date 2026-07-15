@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:03,112
+Salesman ke liye ek alag simplified dashboard hai.
+
+2
+00:00:03,112 --> 00:00:08,154
+Login karte hi aapko sirf apne customers, apne target, aur apne beat dikhte hain.
+
+3
+00:00:08,154 --> 00:00:10,084
+My Sales — is month kitna kiya.
+
+4
+00:00:10,084 --> 00:00:12,201
+My Target — kitna reach karna hai.
+
+5
+00:00:12,201 --> 00:00:15,562
+My Customers — poori list, filter aur search ke saath.
+
+6
+00:00:15,562 --> 00:00:18,363
+My Beat — is week kis kis ko visit karna hai.
+
+7
+00:00:18,363 --> 00:00:21,476
+Owner ka poora data nahi dikhta — sirf aapka apna.
+
+8
+00:00:21,476 --> 00:00:23,592
+Clean, focused, aur phone pe fast.
+
+9
+00:00:23,592 --> 00:00:25,896
+Field mein use karne ke liye perfect.

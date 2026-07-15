@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:02,045
+CRM ka doosra section — Targets.
+
+2
+00:00:02,045 --> 00:00:05,688
+Har customer ke liye ek annual target set kar sakte hain.
+
+3
+00:00:05,688 --> 00:00:10,034
+Manually customer wise ya bulk mein — Bulk % Target button dabaakar.
+
+4
+00:00:10,034 --> 00:00:14,508
+Pichhle FY ki sales ke upar 10 percent 20 percent ya jo bhi percentage
+
+5
+00:00:14,508 --> 00:00:17,448
+sab customers ke liye ek saath set ho jaayega.
+
+6
+00:00:17,448 --> 00:00:22,433
+Har row mein pichhle FY sales, target, current FY achievement, aur percentage.
+
+7
+00:00:22,433 --> 00:00:26,906
+Neeche monthly split bhi hai — April se March tak, har month ki sales.
+
+8
+00:00:26,906 --> 00:00:29,974
+Excel export kariye — poora target report ready.
+
+9
+00:00:29,974 --> 00:00:34,896
+Sales meeting mein use kariye — kaun peeche hai, kise push karna hai — clear.

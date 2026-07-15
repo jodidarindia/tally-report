@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:05,608
+FLOWRA har mahine naye features release karta hai bug fixes improvements aur naye tools.
+
+2
+00:00:05,608 --> 00:00:10,388
+Jab bhi kuch naya aata hai aapko Dashboard ke What's New panel mein dikhega
+
+3
+00:00:10,388 --> 00:00:11,854
+right side mein neeche.
+
+4
+00:00:11,854 --> 00:00:17,335
+Har entry ke saath ek tag hota hai — NEW purple mein, FIX red mein, IMPROVE blue mein.
+
+5
+00:00:17,335 --> 00:00:21,031
+Date bhi dikhti hai, taaki aap dekh saken kab release hua.
+
+6
+00:00:21,031 --> 00:00:26,639
+Aap chahen toh yehi content ek PDF mein bhi download kar sakte hain Resources section se
+
+7
+00:00:26,639 --> 00:00:28,039
+FLOWRA Whats New PDF.
+
+8
+00:00:28,039 --> 00:00:32,437
+Yehi PDF aap apni team ke saath share bhi kar sakte hain WhatsApp pe.
+
+9
+00:00:32,437 --> 00:00:34,223
+Simple aur updated — hamesha.

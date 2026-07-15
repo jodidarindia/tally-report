@@ -584,3 +584,37 @@ User switched from female → male voice pool and asked to start production.
 
 **v2 backlog (Playwright screencast replacement):** current 30 videos are branded slide-with-voiceover (podcast style). v2 can replace individual slides with recorded UI screencasts of the actual app — the Onyx audio track stays identical, so no re-narration needed. Pipeline placeholder is in `compose_all_videos.py` (Ken-Burns rendering approach; screencast recorder can be a drop-in replacement that emits webm→mp4 clips).
 
+
+## Iteration 126 (14 July 2026) — Academy hardening: role-based visibility, IP protection, burned captions, Instagram Shorts
+
+Addressed 5 user questions:
+
+1. **Per-user isolation** confirmed. `academy_progress` collection uses `user_id = str(user.id or _id or username)` as the compound key. Admin's completion state on Lesson 5 does NOT bleed into any other user's view. Verified in `test_iteration125_academy.py`.
+
+2. **Role-based track visibility.** `pages/Tutorials.js` now imports `useAuth()`. If `user.role` is not `admin/super_admin/useradmin`, only these tracks render: Getting Started (4 lessons) + Salesman (4) + Desktop Agent (5) + one Dispatch card (Lesson 17). Admin/owner sees full 30. A `Lock` badge tells restricted users why they see fewer lessons.
+
+3. **Instagram / YouTube Shorts (9:16 vertical)** — `pipeline/render_shorts.py` produces 1080×1920 MP4s with the same Onyx audio + burned Hinglish captions + persistent watermark. First Shorts published at `/tutorials/lessons/lesson-01-shorts.mp4`. `render_shorts.py all` batch-produces all 30 whenever needed.
+
+4. **IP protection for YouTube.** Every re-rendered video now includes:
+   * Top-right corner watermark: `© FLOWRA · flowralive.in` (0.65 alpha, on every frame)
+   * Bottom footer: `© 2026 FLOWRA. All rights reserved. Unauthorised re-upload prohibited.`
+   * Only public information in the YouTube upload pack (grep audit of `/app/tutorials/youtube-metadata/*` confirms no preview URLs, no admin creds, no `/api` paths, no LLM keys leak).
+
+5. **Text captions with every lesson.**
+   * `pipeline/generate_hinglish_subtitles.py` splits the source Hinglish text into ~10–13 caption lines per lesson, distributed proportionally across the known audio duration. Whisper was tried but transcribes into Devanagari; we chose Hinglish source-splitting for accurate spelling.
+   * `pipeline/srt_to_ass.py` converts each SRT into a proper ASS file with `PlayResX/Y`, `Alignment=2`, `MarginV`, `BorderStyle=3`. This fixed a libass bug where SRTs with default PlayRes rendered captions at the wrong position.
+   * `compose_all_videos.py` now prefers the ASS file (2 variants: `-horizontal.ass` for 16:9, `-vertical.ass` for Shorts). Videos re-rendered — verified caption at bottom of frame for Lesson 01 (`"Mobile se sales dekhni ho outstanding check karna ho..."`).
+   * All 30 `.srt` files also served publicly at `/tutorials/lessons/lesson-NN.srt` — user can upload them alongside videos to YouTube for the CC (closed-captions) toggle.
+
+### New pipeline files
+- `/app/tutorials/pipeline/generate_hinglish_subtitles.py`
+- `/app/tutorials/pipeline/srt_to_ass.py`
+- `/app/tutorials/pipeline/render_shorts.py`
+
+### Regenerated content (all in `/app/frontend/public/tutorials/lessons/`)
+- `lesson-{01..30}.mp3` (Onyx voiceover)
+- `lesson-{01..30}.mp4` (16:9 with baked captions + IP watermark)
+- `lesson-{01..30}.srt` + `lesson-{01..30}-horizontal.ass` + `lesson-{01..30}-vertical.ass`
+- `lesson-01-shorts.mp4` (9:16 pilot; can batch all 30 via `render_shorts.py all`)
+- `/tutorials/youtube-upload-pack.md` — 30 title/desc/tag sets, copyright-safe
+

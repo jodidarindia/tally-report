@@ -1,0 +1,21 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.18,Default,,0,0,0,,Har salesman ke liye personal target dashboard hai.
+Dialogue: 0,0:00:03.18,0:00:07.48,Default,,0,0,0,,Ek circular progress bar dikhta hai — current achievement percentage.
+Dialogue: 0,0:00:07.48,0:00:12.52,Default,,0,0,0,,Green matlab on-track, yellow slightly behind, red matlab critical push chaahiye.
+Dialogue: 0,0:00:12.52,0:00:16.82,Default,,0,0,0,,Neeche month-wise breakdown — April se abhi tak har month kitna kiya.
+Dialogue: 0,0:00:16.82,0:00:20.19,Default,,0,0,0,,Bhi dikhta hai — remaining amount, aur remaining days.
+Dialogue: 0,0:00:20.19,0:00:22.93,Default,,0,0,0,,Simple math — daily kitna achieve karna hai.
+Dialogue: 0,0:00:22.93,0:00:27.48,Default,,0,0,0,,Yeh ek motivation tool hai — daily open kariye, apne progress ko dekhiye.
+Dialogue: 0,0:00:27.48,0:00:31.34,Default,,0,0,0,,Chhote goals set kariye, monthly target automatic ban jaayega.

@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:04,174
+Tally agent Windows ke liye ek chhota sa desktop application hai.
+
+2
+00:00:04,174 --> 00:00:07,577
+Downloads section se agent installer download kariye.
+
+3
+00:00:07,577 --> 00:00:10,916
+Double click karke run kariye — Next, Next, Install.
+
+4
+00:00:10,916 --> 00:00:13,100
+30 second mein install ho jaayega.
+
+5
+00:00:13,100 --> 00:00:16,953
+Icon system tray mein aa jaayega — right bottom corner mein.
+
+6
+00:00:16,953 --> 00:00:18,879
+Right click karke Open kariye.
+
+7
+00:00:18,879 --> 00:00:23,053
+Ek chhota window kholega — apna FLOWRA login credentials daaliye.
+
+8
+00:00:23,053 --> 00:00:24,453
+Bas!
+
+9
+00:00:24,453 --> 00:00:29,012
+Ab har raat 2 baje ye agent apne aap aapka Tally data cloud pe bhejega.
+
+10
+00:00:29,012 --> 00:00:30,888
+Aapko kuch nahi karna — Tally chalu rakhen bas.

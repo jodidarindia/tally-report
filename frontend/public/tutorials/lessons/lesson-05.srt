@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:04,336
+Owner ke liye pehla lesson — Dashboard ke chaar KPI cards ka matlab.
+
+2
+00:00:04,336 --> 00:00:08,226
+Pehla card, Total Sales — is FY mein aapki poori sales value.
+
+3
+00:00:08,226 --> 00:00:12,881
+Neeche chhote akshar mein compare hai — pichhle FY se kitna zyada ya kam.
+
+4
+00:00:12,881 --> 00:00:17,217
+Doosra card, Total Orders — kitne unique sales vouchers banaye gaye.
+
+5
+00:00:17,217 --> 00:00:21,553
+Teesra card, Outstanding Amount — customers ne kitna paisa dena hai.
+
+6
+00:00:21,553 --> 00:00:24,742
+Yeh number jitna kam ho, utna hi business healthy.
+
+7
+00:00:24,742 --> 00:00:29,907
+Chautha card, Beat Coverage — kitne percent customers ko is week visit kiya gaya.
+
+8
+00:00:29,907 --> 00:00:34,498
+Agar Beat Coverage 60 percent se kam hai, toh sales team ko push kariye.
+
+9
+00:00:34,498 --> 00:00:37,687
+In chaar numbers ko har subah phone pe dekh lijiye
+
+10
+00:00:37,687 --> 00:00:41,832
+30 second mein pata chal jaayega ki business kaisa chal raha hai.

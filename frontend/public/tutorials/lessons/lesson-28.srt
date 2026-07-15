@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:03,412
+Agent ke Home tab mein ek indicator hai — Sync Health.
+
+2
+00:00:03,412 --> 00:00:04,866
+Green matlab sab theek.
+
+3
+00:00:04,866 --> 00:00:08,847
+Yellow matlab warning — jaise slow network ya large data queue.
+
+4
+00:00:08,847 --> 00:00:11,564
+Red matlab problem — sync fail ho raha hai.
+
+5
+00:00:11,564 --> 00:00:16,178
+Right side mein details bhi milte hain last sync time next scheduled sync
+
+6
+00:00:16,178 --> 00:00:17,884
+aur pending vouchers count.
+
+7
+00:00:17,884 --> 00:00:23,003
+Agar Sync Health kuch din se yellow hai, ek baar manual Sync Now button dabaaein.
+
+8
+00:00:23,003 --> 00:00:25,215
+Usually issue resolve ho jaata hai.
+
+9
+00:00:25,215 --> 00:00:28,943
+Red state mein, next video dekhiye — troubleshooting steps.

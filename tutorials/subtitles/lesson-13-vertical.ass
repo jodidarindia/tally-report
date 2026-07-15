@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.04,Default,,0,0,0,,CRM ka doosra section — Targets.
+Dialogue: 0,0:00:02.04,0:00:05.69,Default,,0,0,0,,Har customer ke liye ek annual target set kar sakte hain.
+Dialogue: 0,0:00:05.69,0:00:10.03,Default,,0,0,0,,Manually customer wise ya bulk mein — Bulk % Target button dabaakar.
+Dialogue: 0,0:00:10.03,0:00:14.51,Default,,0,0,0,,Pichhle FY ki sales ke upar 10 percent 20 percent ya jo bhi percentage
+Dialogue: 0,0:00:14.51,0:00:17.45,Default,,0,0,0,,sab customers ke liye ek saath set ho jaayega.
+Dialogue: 0,0:00:17.45,0:00:22.43,Default,,0,0,0,,Har row mein pichhle FY sales, target, current FY achievement, aur percentage.
+Dialogue: 0,0:00:22.43,0:00:26.91,Default,,0,0,0,,Neeche monthly split bhi hai — April se March tak, har month ki sales.
+Dialogue: 0,0:00:26.91,0:00:29.97,Default,,0,0,0,,Excel export kariye — poora target report ready.
+Dialogue: 0,0:00:29.97,0:00:34.90,Default,,0,0,0,,Sales meeting mein use kariye — kaun peeche hai, kise push karna hai — clear.

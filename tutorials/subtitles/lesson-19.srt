@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:03,610
+Salesman phone se hi visit aur order record kar sakta hai.
+
+2
+00:00:03,610 --> 00:00:08,838
+Ek customer pe pahunche, app kholiye, customer select kariye, Record Visit dabaaein.
+
+3
+00:00:08,838 --> 00:00:11,328
+Location automatic capture ho jaati hai.
+
+4
+00:00:11,328 --> 00:00:14,129
+Agar order milta hai — Create Order dabaaiye.
+
+5
+00:00:14,129 --> 00:00:16,806
+Items add kariye, quantity daaliye, submit.
+
+6
+00:00:16,806 --> 00:00:20,727
+Yeh order Tally mein bhi automatically sync ho jaayega raat ko.
+
+7
+00:00:20,727 --> 00:00:24,586
+Digital record milta hai — kab kaun kahaan gaya, kya bik gaya.
+
+8
+00:00:24,586 --> 00:00:28,197
+Owner ke liye transparency, salesman ke liye productivity.
+
+9
+00:00:28,197 --> 00:00:28,943
+Sabka fayda.

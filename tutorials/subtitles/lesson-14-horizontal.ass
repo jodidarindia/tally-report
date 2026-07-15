@@ -1,0 +1,23 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.83,Default,,0,0,0,,CRM ka teesra section — Payment Behaviour.
+Dialogue: 0,0:00:02.83,0:00:06.12,Default,,0,0,0,,Har customer ka payment pattern analyse hota hai.
+Dialogue: 0,0:00:06.12,0:00:09.69,Default,,0,0,0,,Pay Ratio dikhta hai — kitna sales value pay ho gaya.
+Dialogue: 0,0:00:09.69,0:00:13.73,Default,,0,0,0,,80 percent se upar green, 50 se 80 yellow, 50 se neeche red.
+Dialogue: 0,0:00:13.73,0:00:17.70,Default,,0,0,0,,Avg Delay bhi hai — average kitne din late paise aate hain.
+Dialogue: 0,0:00:17.70,0:00:21.13,Default,,0,0,0,,Score column ek combined rating hai — 0 se 100 tak.
+Dialogue: 0,0:00:21.13,0:00:24.63,Default,,0,0,0,,High score matlab reliable customer, credit badhaao.
+Dialogue: 0,0:00:24.63,0:00:28.27,Default,,0,0,0,,Low score matlab careful raho, advance payment maango.
+Dialogue: 0,0:00:28.27,0:00:33.72,Default,,0,0,0,,Yeh data business decisions mein bahut useful hai kis customer ko credit dena hai
+Dialogue: 0,0:00:33.72,0:00:34.39,Default,,0,0,0,,kise nahi.

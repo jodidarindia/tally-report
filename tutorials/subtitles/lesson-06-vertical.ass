@@ -1,0 +1,22 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,44,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,260,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:05.61,Default,,0,0,0,,FLOWRA har mahine naye features release karta hai bug fixes improvements aur naye tools.
+Dialogue: 0,0:00:05.61,0:00:10.39,Default,,0,0,0,,Jab bhi kuch naya aata hai aapko Dashboard ke What's New panel mein dikhega
+Dialogue: 0,0:00:10.39,0:00:11.85,Default,,0,0,0,,right side mein neeche.
+Dialogue: 0,0:00:11.85,0:00:17.34,Default,,0,0,0,,Har entry ke saath ek tag hota hai — NEW purple mein, FIX red mein, IMPROVE blue mein.
+Dialogue: 0,0:00:17.34,0:00:21.03,Default,,0,0,0,,Date bhi dikhti hai, taaki aap dekh saken kab release hua.
+Dialogue: 0,0:00:21.03,0:00:26.64,Default,,0,0,0,,Aap chahen toh yehi content ek PDF mein bhi download kar sakte hain Resources section se
+Dialogue: 0,0:00:26.64,0:00:28.04,Default,,0,0,0,,FLOWRA Whats New PDF.
+Dialogue: 0,0:00:28.04,0:00:32.44,Default,,0,0,0,,Yehi PDF aap apni team ke saath share bhi kar sakte hain WhatsApp pe.
+Dialogue: 0,0:00:32.44,0:00:34.22,Default,,0,0,0,,Simple aur updated — hamesha.

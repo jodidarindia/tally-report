@@ -1,0 +1,26 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,-1,0,0,0,100,100,0,0,3,2,0,2,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.08,Default,,0,0,0,,Chaliye pehli baar FLOWRA mein login karte hain.
+Dialogue: 0,0:00:03.08,0:00:06.09,Default,,0,0,0,,Sabse pehle browser mein flowralive.in kholiye.
+Dialogue: 0,0:00:06.09,0:00:10.58,Default,,0,0,0,,Upar right corner mein aapko Login button dikhega — usko click kijiye.
+Dialogue: 0,0:00:10.58,0:00:14.23,Default,,0,0,0,,Ab do cheezein daalni hain — aapka username aur password.
+Dialogue: 0,0:00:14.23,0:00:18.98,Default,,0,0,0,,Yeh dono aapko onboarding ke time diye gaye the — email pe ya WhatsApp pe.
+Dialogue: 0,0:00:18.98,0:00:22.69,Default,,0,0,0,,Nahi mile toh apne FLOWRA representative se poochh lijiye.
+Dialogue: 0,0:00:22.69,0:00:25.32,Default,,0,0,0,,Password daalne ke baad Sign In dabaaiye.
+Dialogue: 0,0:00:25.32,0:00:26.72,Default,,0,0,0,,Bas!
+Dialogue: 0,0:00:26.72,0:00:29.67,Default,,0,0,0,,Aap seedha apne Dashboard pe pahunch jaayenge.
+Dialogue: 0,0:00:29.67,0:00:33.20,Default,,0,0,0,,Ek zaroori baat agar aap pehli baar login kar rahe hain
+Dialogue: 0,0:00:33.20,0:00:36.15,Default,,0,0,0,,toh system aapko ek chhota sa tour dikhaayega.
+Dialogue: 0,0:00:36.15,0:00:40.18,Default,,0,0,0,,Uspe dhyaan dijiye — 30 second mein sab kuch samajh aa jaayega.
+Dialogue: 0,0:00:40.18,0:00:42.31,Default,,0,0,0,,Agla video mein hum Dashboard ka pura tour karenge.
