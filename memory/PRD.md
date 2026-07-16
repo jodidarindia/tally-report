@@ -696,3 +696,33 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 **Live smoke test:** spawned the daemon in Linux dev mode with a valid env — it now logs `company=ACME Traders` and proceeds to the login step (fails only on the dummy password, as expected). Old build died before login.
 
 **User next steps:** rebuild `FlowraBusyAgent.exe` via `build.bat` on Windows and re-test on the licensed Busy 21 Enterprise install. The v1.4.1 daemon should no longer refuse to start once the user has clicked Detect Company + Detect FYs.
+
+## Shipped — Feb 16 2026 (iteration 132) — Busy Agent v1.4.2 connection diagnostic
+
+**Context:** after the v1.4.1 daemon-crash fix landed, the user's licensed Busy 21 Enterprise install still couldn't sync — both drivers were missing on the target Windows PC. The daemon reported the driver error in the log tail but it was buried behind stack traces, and users had no way to preflight the environment before spending time on a full sync.
+
+**Shipped in v1.4.2:**
+1. **`probe_busy_drivers()` module-level helper** (`flowra_busy_gui.py`) — three-section diagnostic:
+   - **OLE DB (BSSData)** — tries each provider (`BSSData.6.0/5.0/4.0`) with the user's Busy login credentials. Reports which one registered (or the exact COM error if none).
+   - **ODBC (Microsoft Access Database Engine)** — lists `pyodbc.drivers()` and picks any driver containing "Access Driver".
+   - **Live `.bds` open test** — if the OLE DB path didn't already succeed, tries the ODBC path against the auto-picked `db.bds` file, iterating through the standard Busy password chain (`bs21DBFile`, `Bus1Wor$1D`, `busyww`, `busy`, `""`) or the user's explicit override. Reports which method + which password worked.
+2. **"🧪 Test Busy Connection" button** — sits at the bottom of Settings → Section 2 (green accent, next to the fallback password field). Runs in a background thread with an indeterminate progress spinner modal so the UI stays responsive.
+3. **Diagnostic results modal** — three white cards with green ✓ / red ✗ icons per capability, plain-English subtitles, and an inline `⬇ Download Access Driver (Microsoft)` button that opens https://www.microsoft.com/en-us/download/details.aspx?id=54920 via `webbrowser.open()`. Cross-platform stdlib only — no new deps.
+4. **Linux dev-mode graceful fallback** — the probe returns a well-formed stub dict on non-Windows so the module can be imported and unit-tested on CI without crashing.
+5. **Version markers** — VERSION `1.4.2`, AGENT_TAG `busy-1.4.2-conn-diagnostic`, GUI APP_VERSION `v1.4.2`.
+
+**Files touched:**
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py` — new `_pick_test_bds_file()`, `probe_busy_drivers()`, `_test_busy_connection()` handler, `_show_busy_test_results()` modal renderer, "Test Busy Connection" button in Section 2.
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — VERSION + AGENT_TAG bump.
+
+**Regression tests (21/21 green, 1 skipped for missing libtk on CI):**
+- `test_iteration132_busy_conn_diagnostic.py` (new, 6 tests):
+  - probe helper exists
+  - runtime probe returns stub schema on Linux (importorskip guarded)
+  - AST parse verifies probe result-dict schema matches what the modal reads
+  - GUI wires the button, handler, and modal
+  - Modal links to Microsoft's official Access Driver download page via `webbrowser`
+  - Version markers rolled forward to v1.4.2
+
+**User next step:** rebuild `FlowraBusyAgent.exe` and click "🧪 Test Busy Connection" on Section 2 of Settings. The modal will show *exactly* which driver is missing and offer a one-click download. Once both cards go green, click "Save & Start Sync".
+

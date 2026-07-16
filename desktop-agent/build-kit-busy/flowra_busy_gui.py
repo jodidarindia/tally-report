@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Busy Sync Agent"
-APP_VERSION = "v1.4.1"
+APP_VERSION = "v1.4.2"
 AGENT_SCRIPT = "flowra_busy_agent.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -365,6 +365,171 @@ def current_fy_string() -> str:
     today = _date.today()
     y = today.year if today.month >= 4 else today.year - 1
     return f"{y}-{str(y + 1)[-2:]}"
+
+
+# ── v1.4.2 — Busy connection diagnostic (used by the Test button) ───────
+_KNOWN_BUSY_PASSWORDS = ("bs21DBFile", "Bus1Wor$1D", "busyww", "busy", "")
+_OLEDB_PROVIDERS = ("BSSData.6.0", "BSSData.5.0", "BSSData.4.0")
+
+
+def _pick_test_bds_file(folder: str) -> str:
+    """Return the best .bds file to test against (prefer master db.bds)."""
+    if not folder or not os.path.isdir(folder):
+        return ""
+    master = ""
+    fy_file = ""
+    try:
+        for f in os.listdir(folder):
+            fl = f.lower()
+            if fl == "db.bds":
+                return os.path.join(folder, f)
+            if fl.startswith("db") and fl.endswith(".bds") and not fy_file:
+                fy_file = os.path.join(folder, f)
+    except Exception:
+        pass
+    return master or fy_file
+
+
+def probe_busy_drivers(bds_path: str = "", busy_user: str = "",
+                        busy_pwd: str = "", oledb_company: str = "",
+                        explicit_db_password: str = "") -> dict:
+    """Diagnose which Busy connection paths are viable on THIS PC.
+
+    Returns a dict with three sections:
+      - oledb: {available, provider, error}
+      - odbc:  {available, driver, error}
+      - connection_test: {success, method, password_used, error}
+    """
+    result = {
+        "os_supported": os.name == "nt",
+        "bds_path": bds_path,
+        "oledb": {"available": False, "provider": None, "error": None},
+        "odbc":  {"available": False, "driver":  None, "error": None},
+        "connection_test": {
+            "success": False, "method": None,
+            "password_used": None, "error": None,
+        },
+    }
+
+    if os.name != "nt":
+        msg = "Windows-only. Diagnostics stub returned — build the .exe on Windows to run live."
+        result["oledb"]["error"] = msg
+        result["odbc"]["error"] = msg
+        result["connection_test"]["error"] = msg
+        return result
+
+    # 1) OLE DB (BSSData) provider probe
+    try:
+        import win32com.client
+        data_dir = os.path.dirname(bds_path) if bds_path else ""
+        last_err = None
+        for provider in _OLEDB_PROVIDERS:
+            try:
+                conn = win32com.client.Dispatch("ADODB.Connection")
+                conn_str = f"Provider={provider};"
+                if data_dir:
+                    conn_str += f"Data Source={data_dir};"
+                if oledb_company:
+                    conn_str += f"Company={oledb_company};"
+                if busy_user:
+                    conn_str += f"User Id={busy_user};"
+                if busy_pwd:
+                    conn_str += f"Password={busy_pwd};"
+                conn.Open(conn_str)
+                result["oledb"]["available"] = True
+                result["oledb"]["provider"] = provider
+                result["connection_test"]["success"] = True
+                result["connection_test"]["method"] = f"OLE DB ({provider})"
+                try:
+                    conn.Close()
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                last_err = e
+                continue
+        if not result["oledb"]["available"]:
+            result["oledb"]["error"] = (
+                "BSSData provider is not registered on this PC. Install "
+                "Busy's Data Connectivity add-on or enable it in "
+                "Administration → Configuration."
+            )
+            if last_err:
+                result["oledb"]["error"] += f" (details: {str(last_err)[:180]})"
+    except ImportError:
+        result["oledb"]["error"] = (
+            "pywin32 is not bundled in this build. Rebuild the .exe with "
+            "the latest build.bat.")
+
+    # 2) ODBC (Microsoft Access Database Engine) probe
+    try:
+        import pyodbc
+        drivers = pyodbc.drivers() or []
+        access_drivers = [d for d in drivers if "Access Driver" in d]
+        if access_drivers:
+            result["odbc"]["available"] = True
+            result["odbc"]["driver"] = access_drivers[0]
+        else:
+            result["odbc"]["error"] = (
+                "Microsoft Access Database Engine ODBC driver is not "
+                "installed. Free 64-bit download from Microsoft (~90s)."
+            )
+    except ImportError:
+        result["odbc"]["error"] = "pyodbc not bundled in this build."
+
+    # 3) Live .bds open test (fallback to ODBC + password chain if OLE DB
+    # didn't already succeed above).
+    if (result["odbc"]["available"] and bds_path and os.path.isfile(bds_path)
+            and not result["connection_test"]["success"]):
+        try:
+            import pyodbc
+        except ImportError:
+            pyodbc = None  # already logged above
+        if pyodbc is not None:
+            candidates = ([explicit_db_password] if explicit_db_password
+                          else list(_KNOWN_BUSY_PASSWORDS))
+            last_err = None
+            for pwd in candidates:
+                try:
+                    cs = (r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+                          f"Dbq={bds_path};ReadOnly=1;")
+                    if pwd:
+                        cs += f"PWD={pwd};"
+                    c = pyodbc.connect(cs)
+                    c.close()
+                    result["connection_test"]["success"] = True
+                    result["connection_test"]["method"] = "ODBC (Access Driver)"
+                    if explicit_db_password:
+                        pwd_note = "(custom password from Settings)"
+                    elif pwd:
+                        pwd_note = f"({pwd[:2]}*** — standard Busy password)"
+                    else:
+                        pwd_note = "(blank password)"
+                    result["connection_test"]["password_used"] = pwd_note
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+            if (not result["connection_test"]["success"]
+                    and result["connection_test"]["error"] is None):
+                result["connection_test"]["error"] = (
+                    f"None of the standard Busy passwords worked. "
+                    f"Last driver error: {str(last_err)[:200]}"
+                )
+
+    if (not result["connection_test"]["success"]
+            and result["connection_test"]["error"] is None):
+        if not bds_path:
+            result["connection_test"]["error"] = (
+                "No .bds file was found in the selected folder to test against.")
+        elif not (result["oledb"]["available"] or result["odbc"]["available"]):
+            result["connection_test"]["error"] = (
+                "Neither OLE DB nor ODBC drivers are installed — install "
+                "at least one before running a sync.")
+
+    return result
+
+
 
 
 # ── Main GUI ─────────────────────────────────────────────────────────────
@@ -849,6 +1014,25 @@ class FlowraBusyAgentGUI:
                         "first (Busy 21 / 18 / older)."),
                   foreground="#94A3B8", wraplength=720).grid(
             row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        # v1.4.2 — one-click connection diagnostic. Reports which drivers
+        # are installed BEFORE the user spends time on a full sync.
+        test_row = tk.Frame(sec2)
+        test_row.grid(row=8, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        self.test_conn_btn = tk.Button(
+            test_row, text="🧪  Test Busy Connection",
+            command=self._test_busy_connection,
+            bg="#10B981", fg="white", relief="flat",
+            activebackground="#059669", activeforeground="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=16, pady=6, cursor="hand2", borderwidth=0,
+        )
+        self.test_conn_btn.pack(side="left")
+        tk.Label(test_row,
+                 text=("Checks BSSData OLE DB provider + Access ODBC driver + "
+                       "opens a live .bds file — no sync started."),
+                 fg="#64748B", font=("Segoe UI", 9)
+                 ).pack(side="left", padx=12)
 
         sec2.columnconfigure(1, weight=1)
 
@@ -1645,6 +1829,176 @@ class FlowraBusyAgentGUI:
                                  f"Reason: {msg}\n\n"
                                  "Make sure the folder contains db.bds / db{year}.bds "
                                  "files (or DATA.ZIP).")
+
+    # ---- v1.4.2 — Busy driver + connection diagnostic --------------------
+    def _test_busy_connection(self):
+        """Run driver probes + live .bds open in a background thread and
+        show a modal with the findings + install links."""
+        folder = (self.config.get("company_folder")
+                  or (self.folder_entry.get().strip()
+                      if hasattr(self, "folder_entry") else "")
+                  or self.config.get("busy_folder", ""))
+        if not folder:
+            messagebox.showwarning(
+                APP_NAME,
+                "Please pick a Busy data folder in Section 2 first.")
+            return
+
+        bds_path = _pick_test_bds_file(folder)
+        # Progress modal — closed as soon as worker returns.
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Testing Busy Connection…")
+        dlg.geometry("460x140")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+        tk.Label(dlg, text="Probing OLE DB + ODBC drivers…",
+                 font=("Segoe UI", 11, "bold"), padx=20, pady=(20, 4),
+                 fg="#0F172A").pack()
+        tk.Label(dlg, text="Takes 3–5 seconds. This does not start a sync.",
+                 font=("Segoe UI", 9), fg="#64748B", padx=20).pack()
+        pb = ttk.Progressbar(dlg, mode="indeterminate", length=400)
+        pb.pack(pady=14)
+        pb.start(10)
+
+        def worker():
+            r = probe_busy_drivers(
+                bds_path=bds_path,
+                busy_user=(self.busy_user_entry.get().strip()
+                            if hasattr(self, "busy_user_entry") else ""),
+                busy_pwd=(self.busy_login_pwd_entry.get().strip()
+                          if hasattr(self, "busy_login_pwd_entry") else ""),
+                oledb_company=(self.company_var.get().strip()
+                                if hasattr(self, "company_var") else ""),
+                explicit_db_password=(self.busy_pwd_entry.get().strip()
+                                      if hasattr(self, "busy_pwd_entry") else ""),
+            )
+            self.root.after(0, lambda: (
+                pb.stop(),
+                dlg.destroy(),
+                self._show_busy_test_results(r),
+            ))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_busy_test_results(self, r: dict):
+        """Render the diagnostic modal — checklist cards + install links."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Busy Connection Diagnostic")
+        dlg.geometry("680x560")
+        dlg.transient(self.root)
+        dlg.configure(bg="#F8FAFC")
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+
+        tk.Label(dlg, text="Busy Connection Test Results",
+                 font=("Segoe UI", 15, "bold"),
+                 fg="#0F172A", bg="#F8FAFC").pack(anchor="w", padx=20, pady=(16, 4))
+        bds_path = r.get("bds_path") or ""
+        subtitle = (f"BDS tested:  {bds_path}" if bds_path
+                    else "No .bds file found — driver checks only.")
+        tk.Label(dlg, text=subtitle,
+                 font=("Segoe UI", 9), fg="#64748B", bg="#F8FAFC",
+                 wraplength=620, justify="left"
+                 ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        def _card(parent, ok, title, subtitle, action_label=None, action_url=None):
+            card = tk.Frame(parent, bg="#FFFFFF", relief="solid",
+                            bd=1, padx=14, pady=12,
+                            highlightthickness=0)
+            card.pack(fill="x", padx=20, pady=5)
+            top = tk.Frame(card, bg="#FFFFFF")
+            top.pack(fill="x")
+            tk.Label(top, text="✓" if ok else "✗",
+                     font=("Segoe UI", 18, "bold"),
+                     fg=("#10B981" if ok else "#EF4444"),
+                     bg="#FFFFFF").pack(side="left", padx=(0, 12))
+            tk.Label(top, text=title, font=("Segoe UI", 11, "bold"),
+                     fg="#0F172A", bg="#FFFFFF").pack(side="left")
+            tk.Label(card, text=subtitle, font=("Segoe UI", 9),
+                     fg="#475569", bg="#FFFFFF", wraplength=580,
+                     justify="left"
+                     ).pack(anchor="w", padx=(34, 0), pady=(4, 0))
+            if action_url:
+                def _open():
+                    try:
+                        import webbrowser
+                        webbrowser.open(action_url)
+                    except Exception:
+                        pass
+                tk.Button(card, text=action_label, command=_open,
+                          bg="#2563EB", fg="white", relief="flat",
+                          activebackground="#1D4ED8", activeforeground="white",
+                          font=("Segoe UI", 9, "bold"),
+                          padx=12, pady=4, cursor="hand2", borderwidth=0
+                          ).pack(anchor="w", padx=(34, 0), pady=(8, 0))
+
+        # 1) OLE DB (BSSData) card
+        oledb = r.get("oledb", {})
+        if oledb.get("available"):
+            _card(dlg, True,
+                  "OLE DB (BSSData) provider — INSTALLED",
+                  f"Registered as {oledb.get('provider')}. This is the "
+                  "preferred sync path — no encryption-password guessing "
+                  "needed. FLOWRA uses this automatically.")
+        else:
+            _card(dlg, False,
+                  "OLE DB (BSSData) provider — NOT INSTALLED",
+                  (oledb.get("error") or
+                   "BSSData COM provider isn't registered on this PC. "
+                   "Ships with Busy's paid Data Connectivity add-on. Enable "
+                   "it inside BusyWin (Administration → Configuration → "
+                   "Data Connectivity) or reinstall Busy with the Data "
+                   "Connectivity module."))
+
+        # 2) ODBC (Access DB Engine) card
+        odbc = r.get("odbc", {})
+        if odbc.get("available"):
+            _card(dlg, True,
+                  "Microsoft Access ODBC driver — INSTALLED",
+                  f"Detected: {odbc.get('driver')}. Used as the fallback "
+                  "sync path when OLE DB isn't available.")
+        else:
+            _card(dlg, False,
+                  "Microsoft Access ODBC driver — NOT INSTALLED",
+                  (odbc.get("error") or
+                   "Free 64-bit download from Microsoft. Takes ~90 seconds. "
+                   "Required unless OLE DB above is available."),
+                  action_label="⬇  Download Access Driver (Microsoft)",
+                  action_url="https://www.microsoft.com/en-us/download/details.aspx?id=54920")
+
+        # 3) Live connection test card
+        conn = r.get("connection_test", {})
+        if conn.get("success"):
+            method = conn.get("method") or "unknown"
+            pwd_note = (f"\nPassword: {conn['password_used']}"
+                        if conn.get("password_used") else "")
+            _card(dlg, True,
+                  f"Live connection to .bds — SUCCESS via {method}",
+                  f"You're ready to sync — click Save & Start Sync on the "
+                  f"Settings tab.{pwd_note}")
+        else:
+            _card(dlg, False,
+                  "Live connection to .bds — FAILED",
+                  (conn.get("error") or
+                   "Install one of the two drivers above then click Test "
+                   "Busy Connection again. If both are installed and this "
+                   "still fails, your Busy install may use a custom "
+                   "encryption password — enter it in the 'Busy DB password "
+                   "(fallback)' field above."))
+
+        tk.Button(dlg, text="Close", command=dlg.destroy,
+                  bg="#0F172A", fg="white", relief="flat",
+                  activebackground="#1E293B", activeforeground="white",
+                  font=("Segoe UI", 10, "bold"),
+                  padx=24, pady=8, cursor="hand2", borderwidth=0
+                  ).pack(pady=18)
+
+
 
     # ---- Agent lifecycle -------------------------------------------------
     def start_agent(self):

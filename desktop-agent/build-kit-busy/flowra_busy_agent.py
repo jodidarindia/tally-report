@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.4.1"
-AGENT_TAG = "busy-1.4.1-oledb-envfix"
+VERSION = "1.4.2"
+AGENT_TAG = "busy-1.4.2-conn-diagnostic"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"

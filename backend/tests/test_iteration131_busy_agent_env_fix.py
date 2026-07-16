@@ -132,8 +132,8 @@ def test_daemon_missing_env_message_lists_specifics():
 
 def test_agent_tag_reflects_v141():
     src = AGENT.read_text()
-    assert 'AGENT_TAG = "busy-1.4.1-oledb-envfix"' in src, (
-        "AGENT_TAG must roll forward to v1.4.1 marker"
+    assert 'AGENT_TAG = "busy-1.4.2-conn-diagnostic"' in src, (
+        "AGENT_TAG must roll forward to v1.4.2 marker"
     )
 
 

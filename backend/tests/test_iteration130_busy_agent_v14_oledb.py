@@ -27,7 +27,7 @@ SPEC = Path("/app/desktop-agent/build-kit-busy/agent.spec")
 
 def test_version_bumped():
     src = AGENT.read_text()
-    assert 'VERSION = "1.4.1"' in src, "VERSION must be bumped to 1.4.1"
+    assert 'VERSION = "1.4.2"' in src, "VERSION must be bumped to 1.4.2"
 
 
 def test_oledb_adapter_classes_present():
