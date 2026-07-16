@@ -726,3 +726,29 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 
 **User next step:** rebuild `FlowraBusyAgent.exe` and click "🧪 Test Busy Connection" on Section 2 of Settings. The modal will show *exactly* which driver is missing and offer a one-click download. Once both cards go green, click "Save & Start Sync".
 
+
+## Shipped — Feb 16 2026 (iteration 133) — Daemon-side driver pre-flight banner
+
+**Context:** even after v1.4.2 shipped the "🧪 Test Busy Connection" button, the user's daemon still crashed at Phase 1 with a raw Python stack trace because both Windows drivers were missing on the target PC. The user hadn't clicked the Test button — they hit Start Sync directly. The failure mode looked broken even though the underlying issue was purely environmental (drivers not installed).
+
+**Shipped:**
+1. **`_check_busy_drivers_or_banner(folder)` helper** in `flowra_busy_agent.py` — probes both OLE DB (BSSData COM provider registration) and ODBC (`pyodbc.drivers()` for "Access Driver") right after login, before entering the sync loop.
+2. **`run_daemon` now bails cleanly on missing drivers** — instead of grinding through a 5-minute retry loop with cryptic stack traces, the daemon returns exit code **2** (distinct from code 1 = missing env vars, code 0 = clean shutdown).
+3. **Full-screen install banner** logged with step-by-step instructions:
+   - Option A: direct link to Microsoft's Access DB Engine 54920 download page + "run it, accept defaults, no reboot needed"
+   - Option B: enable Busy's paid Data Connectivity module inside BusyWin
+   - Reference to the "🧪 Test Busy Connection" button for re-checking
+4. **Non-Windows dev safety** — the helper short-circuits to `True` on Linux/Mac so the mdb-export dev path stays working.
+
+**Files touched:**
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — new `_check_busy_drivers_or_banner()` helper; `run_daemon()` calls it after login and returns 2 on failure.
+
+**Regression tests (25/25 green + 1 skipped):**
+- `test_iteration133_daemon_driver_preflight.py` (new, 4 tests):
+  - Helper exists and is called by `run_daemon`
+  - Banner lists both install options (54920 URL + Data Connectivity path)
+  - Bail path uses `return 2` (distinct from env-var-missing code 1)
+  - Non-Windows short-circuits to `True` (preserves Linux dev mode)
+
+**User next step:** the daemon-side code is complete. The only remaining action is to **install ONE driver on the Windows PC** — 90-second free Microsoft download → https://www.microsoft.com/en-us/download/details.aspx?id=54920. No agent rebuild strictly required (the v1.4.2 exe you already tested handles this once the driver appears), but a rebuild will pick up the new pre-flight banner so future users see a clean install message instead of a stack trace.
+

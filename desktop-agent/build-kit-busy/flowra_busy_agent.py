@@ -1536,6 +1536,99 @@ def run_gui():
     root.mainloop()
 
 
+def _check_busy_drivers_or_banner(folder: str) -> bool:
+    """v1.4.2 daemon-side pre-flight. Returns True if at least one of the
+    two supported connection paths is usable. Otherwise logs a big, clear
+    multi-line banner and returns False so run_daemon can bail cleanly
+    (no stack trace, no 20-min retry cycle grinding the log)."""
+    if sys.platform != "win32":
+        # Non-Windows dev boxes → let the existing mdb-export path handle it.
+        return True
+
+    # Probe OLE DB (BSSData COM provider)
+    oledb_ok = False
+    oledb_err = ""
+    try:
+        import win32com.client
+        for provider in ("BSSData.6.0", "BSSData.5.0", "BSSData.4.0"):
+            try:
+                conn = win32com.client.Dispatch("ADODB.Connection")
+                conn_str = f"Provider={provider};Data Source={folder};"
+                conn.Open(conn_str)
+                oledb_ok = True
+                try:
+                    conn.Close()
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                oledb_err = str(e)[:200]
+                continue
+    except ImportError:
+        oledb_err = "pywin32 not bundled"
+
+    # Probe ODBC (Microsoft Access Database Engine)
+    odbc_ok = False
+    odbc_err = ""
+    try:
+        import pyodbc
+        drivers = pyodbc.drivers() or []
+        odbc_ok = any("Access Driver" in d for d in drivers)
+        if not odbc_ok:
+            odbc_err = "Microsoft Access Database Engine driver is not installed"
+    except ImportError:
+        odbc_err = "pyodbc not bundled"
+
+    if oledb_ok or odbc_ok:
+        logger.info(
+            f"[daemon] Driver check OK — "
+            f"OLE DB {'available' if oledb_ok else 'unavailable'}, "
+            f"ODBC {'available' if odbc_ok else 'unavailable'}."
+        )
+        return True
+
+    # Both missing — big obvious banner.
+    banner = [
+        "",
+        "==============================================================================",
+        "  ⛔  BUSY SYNC AGENT — REQUIRED DRIVER NOT INSTALLED",
+        "==============================================================================",
+        "",
+        "  FLOWRA cannot open your Busy .bds files because NEITHER of the two",
+        "  supported drivers is installed on this PC:",
+        "",
+        f"    ✗  OLE DB (BSSData) provider     →  {oledb_err or 'not registered'}",
+        f"    ✗  Microsoft Access ODBC driver  →  {odbc_err or 'not installed'}",
+        "",
+        "  Install ANY ONE of the following, then restart the FLOWRA agent:",
+        "",
+        "  Option A  (fastest, ~90 seconds, free)",
+        "  ────────────────────────────────────────",
+        "  1. Open this URL in a browser:",
+        "     https://www.microsoft.com/en-us/download/details.aspx?id=54920",
+        "  2. Download 'AccessDatabaseEngine_X64.exe'.",
+        "  3. Run it. Accept defaults. Reboot not needed.",
+        "  4. Right-click the FLOWRA tray icon → Quit, then relaunch it.",
+        "",
+        "  Option B  (preferred long-term — requires Busy paid add-on)",
+        "  ────────────────────────────────────────────────────────────",
+        "  1. In BusyWin: Administration → Configuration → Data Connectivity",
+        "     → Enable. (Requires the Data Connectivity module on your licence.)",
+        "  2. Restart Busy and the FLOWRA agent.",
+        "",
+        "  Tip: click the '🧪 Test Busy Connection' button in the FLOWRA Settings",
+        "  tab (Section 2) any time to re-check driver status without starting",
+        "  a full sync.",
+        "",
+        "==============================================================================",
+        "",
+    ]
+    for line in banner:
+        logger.error(line)
+    return False
+
+
+
 def run_daemon() -> int:
     """Headless daemon mode. Reads env vars set by the GUI subprocess and
     runs the sync loop on the configured interval until killed.
@@ -1590,6 +1683,15 @@ def run_daemon() -> int:
                 break
 
     logger.info(f"[daemon] logged in as {email}. Entering sync loop.")
+
+    # v1.4.2 — Pre-flight driver check. Detects the "Both drivers missing"
+    # scenario BEFORE trying to open a .bds file, so users see a clear
+    # banner instead of a Python stack trace buried in the logs.
+    _drv_ok = _check_busy_drivers_or_banner(folder)
+    if not _drv_ok:
+        logger.error("[daemon] Refusing to enter sync loop — install a "
+                      "driver from the banner above, then restart the agent.")
+        return 2
 
     quick_every_min = 5   # sales delta
     tick = 0
