@@ -53,7 +53,7 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 AGENT_TAG = "busy-1.3.1-db-password-fallback"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -139,6 +139,63 @@ def now_ist_display() -> str:
 # ---------------------------------------------------------------------------
 # Busy Database Reader — LOW RAM, cursor-based
 # ---------------------------------------------------------------------------
+class _OLEDBConnectionAdapter:
+    """v1.4 — thin shim so an ADODB.Connection object satisfies the same
+    `.cursor().execute(sql)` + `.fetchone()` contract as a pyodbc connection.
+
+    ADO's native API is `Recordset.Open(sql, conn)` → row-by-row via
+    `MoveNext()`. This adapter presents a pyodbc-shaped facade so
+    downstream code (iter_rows / count_rows) needs zero branching."""
+
+    def __init__(self, ado_conn):
+        self._ado = ado_conn
+
+    def cursor(self):
+        return _OLEDBCursor(self._ado)
+
+    def close(self):
+        try:
+            self._ado.Close()
+        except Exception:
+            pass
+
+
+class _OLEDBCursor:
+    def __init__(self, ado_conn):
+        self._ado = ado_conn
+        self._rs = None
+        self.description = None
+
+    def execute(self, sql: str):
+        import win32com.client
+        self._rs = win32com.client.Dispatch("ADODB.Recordset")
+        # 0 = adOpenForwardOnly, 1 = adLockReadOnly, 1 = adCmdText
+        self._rs.Open(sql, self._ado, 0, 1, 1)
+        if self._rs.Fields.Count > 0:
+            self.description = [
+                (self._rs.Fields.Item(i).Name, None, None, None, None, None, None)
+                for i in range(self._rs.Fields.Count)
+            ]
+        return self
+
+    def fetchone(self):
+        if not self._rs or self._rs.EOF:
+            return None
+        row = tuple(
+            self._rs.Fields.Item(i).Value
+            for i in range(self._rs.Fields.Count)
+        )
+        self._rs.MoveNext()
+        return row
+
+    def close(self):
+        try:
+            if self._rs:
+                self._rs.Close()
+        except Exception:
+            pass
+
+
 class BusyDBReader:
     """Reads Busy .bds (MS Access/Jet) files with minimal RAM usage.
 
@@ -150,6 +207,7 @@ class BusyDBReader:
         self.bds_path = bds_path
         self.is_windows = sys.platform == "win32"
         self._conn = None
+        self._connection_method = None   # set on first successful connect: "OLE DB" or "ODBC"
 
     # v1.3.1 — Busy encrypts every .bds file with a proprietary password.
     # Without PWD=... the Access ODBC driver returns error -1905
@@ -164,10 +222,78 @@ class BusyDBReader:
         "",              # blank — some early builds
     )
 
-    def _get_connection(self):
-        """Lazy connection — only open when needed."""
+    # v1.4 — Busy Solutions' official OLEDB provider (BSSData) is our
+    # preferred connection path. It handles the internal file encryption
+    # itself, so we ONLY need the user's normal Busy login (username +
+    # password) — the same one they type when opening BusyWin.
+    #
+    # If the provider is not registered on the host (Busy Basic edition,
+    # Demo build, or the Data-Connectivity add-on wasn't purchased) we
+    # fall back to the v1.3 password-fallback ODBC path.
+    _OLEDB_PROVIDERS = (
+        "BSSData.6.0",
+        "BSSData.5.0",
+        "BSSData.4.0",
+    )
+
+    def _try_oledb(self):
+        """Attempt COM/OLE DB connection via pywin32. Returns a live
+        connection or None if unavailable. Windows-only."""
         if not self.is_windows:
             return None
+        try:
+            import win32com.client
+        except ImportError:
+            logger.info("  OLE DB unavailable — pywin32 not installed")
+            return None
+
+        busy_user = os.environ.get("BUSY_USER", "").strip()
+        busy_pwd = os.environ.get("BUSY_LOGIN_PASSWORD", "").strip()
+        company = os.environ.get("BUSY_COMPANY", "").strip()
+        data_dir = os.path.dirname(self.bds_path)
+
+        last_err = None
+        for provider in self._OLEDB_PROVIDERS:
+            try:
+                conn = win32com.client.Dispatch("ADODB.Connection")
+                conn_str = (
+                    f"Provider={provider};"
+                    f"Data Source={data_dir};"
+                )
+                if company:
+                    conn_str += f"Company={company};"
+                if busy_user:
+                    conn_str += f"User Id={busy_user};"
+                if busy_pwd:
+                    conn_str += f"Password={busy_pwd};"
+                conn.Open(conn_str)
+                logger.info(
+                    f"  Busy DB opened via OLE DB (provider={provider}, "
+                    f"user={'set' if busy_user else 'default'})")
+                return _OLEDBConnectionAdapter(conn)
+            except Exception as e:
+                last_err = e
+                # com_error / pywintypes.com_error means provider not
+                # registered → try the next version
+                continue
+        logger.info(f"  OLE DB providers all failed. Last: {last_err}")
+        return None
+
+    def _get_connection(self):
+        """Lazy connection — OLE DB first (preferred), ODBC fallback."""
+        if self._conn:
+            return self._conn
+        if not self.is_windows:
+            return None
+
+        # ── Try OLE DB first (v1.4) ─────────────────────────────
+        oledb = self._try_oledb()
+        if oledb is not None:
+            self._conn = oledb
+            self._connection_method = "OLE DB"
+            return self._conn
+
+        # ── Fall back to ODBC + password chain (v1.3.1) ──────────
         try:
             import pyodbc
         except ImportError as e:
@@ -177,8 +303,6 @@ class BusyDBReader:
                 "includes pyodbc automatically. If you already rebuilt, "
                 "reinstall the .exe (delete %LOCALAPPDATA%\\Flowra "
                 "cache first).") from e
-        if self._conn:
-            return self._conn
 
         # 1) Explicit override wins.
         pwd_env = os.environ.get("BUSY_DB_PASSWORD", "").strip()
@@ -192,19 +316,18 @@ class BusyDBReader:
                 "ReadOnly=1;"
             )
             if pwd:
-                # PWD must not be percent-escaped; Access ODBC takes it raw.
                 conn_str += f"PWD={pwd};"
             try:
                 self._conn = pyodbc.connect(conn_str)
+                self._connection_method = "ODBC"
                 if pwd:
                     logger.info(
-                        f"  Busy DB opened with password profile: "
-                        f"{'env-override' if pwd_env else pwd[:2] + '***'}")
+                        f"  Busy DB opened via ODBC (password profile: "
+                        f"{'env-override' if pwd_env else pwd[:2] + '***'})")
                 else:
-                    logger.info("  Busy DB opened without password")
+                    logger.info("  Busy DB opened via ODBC (no password)")
                 return self._conn
             except pyodbc.InterfaceError as e:
-                # Driver missing / DSN broken → won't get better with next pwd.
                 raise RuntimeError(
                     "Could not open the Busy database. The "
                     "'Microsoft Access Database Engine' ODBC driver is "
@@ -214,19 +337,21 @@ class BusyDBReader:
             except pyodbc.ProgrammingError as e:
                 last_error = e
                 if "-1905" in str(e) or "Not a valid password" in str(e):
-                    continue    # try next password
+                    continue
                 raise
             except pyodbc.Error as e:
                 last_error = e
                 continue
 
-        # All candidates failed
         raise RuntimeError(
-            "Could not open the Busy database — every known password was "
-            "rejected by the ODBC driver.\n\n"
-            "Your Busy version may use a custom password. Please set the "
-            "environment variable BUSY_DB_PASSWORD (or fill it in the "
-            "Settings → Busy Data Folder section of the GUI) and restart.\n\n"
+            "Could not open the Busy database — both OLE DB and every "
+            "known ODBC password were rejected.\n\n"
+            "Best path forward:\n"
+            "  • On a LICENSED Busy install: enable 'Busy Data "
+            "Connectivity' from Setup → License, and set your Busy user "
+            "credentials in Settings → Busy Data Folder.\n"
+            "  • On Demo/older builds: paste a custom BUSY_DB_PASSWORD "
+            "in Settings → Busy Data Folder.\n\n"
             f"Last driver error: {last_error}") from last_error
 
     def close(self):

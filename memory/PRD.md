@@ -640,3 +640,31 @@ User challenged the earlier "slide-with-voiceover" v1 videos and asked for actua
 - Estimated 20-40 min per playbook × 28 lessons = 10-18 hrs across multiple sessions.
 - Pipeline is production-ready — each new lesson is just a playbook file + one `record` + `compose` invocation.
 
+
+## Iteration 130 (15 July 2026) — Busy Agent v1.4 — OLE DB primary + ODBC fallback
+
+Unblocked the -1905 ODBC password issue by wiring Busy Solutions' official OLE DB provider (BSSData) as the preferred connection path.
+
+**Code changes:**
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py`
+  * `VERSION → "1.4.0"`
+  * New `_OLEDBConnectionAdapter` + `_OLEDBCursor` classes — pyodbc-shaped facade over `ADODB.Connection` so downstream `iter_rows()` / `count_rows()` need zero branching
+  * New `_try_oledb()` method — walks `BSSData.6.0 → 5.0 → 4.0` provider IDs, connects with the user's regular Busy login (username + password + company). Returns `None` on non-Windows or when provider isn't registered.
+  * `_get_connection()` refactored: **OLE DB first**, gracefully falls back to the v1.3 ODBC password chain when provider unavailable (Basic edition, Demo build, missing Data Connectivity add-on)
+  * Records `_connection_method` (`"OLE DB"` or `"ODBC"`) so the GUI can show a status pill
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py`
+  * Settings → Busy Data Folder section adds 3 new inputs: **Busy login username**, **Busy login password**, **Busy company name** (blue "preferred" style)
+  * Legacy encryption-password field kept below as fallback
+  * All 3 new fields exported as env vars (`BUSY_USER`, `BUSY_LOGIN_PASSWORD`, `BUSY_COMPANY`) to the agent process
+- `desktop-agent/build-kit-busy/requirements.txt` — adds `pywin32>=306; sys_platform == "win32"`
+- `desktop-agent/build-kit-busy/agent.spec` — hiddenimports += `win32com`, `win32com.client`, `pywintypes`, `pythoncom`
+
+**Regression:** `/app/backend/tests/test_iteration130_busy_agent_v14_oledb.py` — 8/8 green (structural checks; the OLE DB runtime path requires a licensed Windows Busy install for validation).
+
+**Still pending (Enterprise validation):**
+1. User to test v1.4 on Krishna Sales licensed Busy 21 Enterprise (with Data Connectivity module).
+2. If OLE DB path fails, capture the exact `com_error` text so we can iterate on the connection-string variants.
+
+**Not yet done (Phase-3 backlog per user's proposal):**
+- Option 2 (Advanced XML export) — user picked (b), so XML path is deferred. Can be revisited later as a universal-compatibility layer.
+

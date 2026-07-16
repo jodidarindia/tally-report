@@ -778,21 +778,56 @@ class FlowraBusyAgentGUI:
                   foreground="#94A3B8", wraplength=720).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        # v1.3.1 — Busy encrypts .bds with a proprietary password.
-        # For most customers the agent auto-detects the standard password
-        # (Busy 21/18/older); only fill this if your DB uses a custom one.
-        ttk.Label(sec2, text="Busy DB password").grid(
-            row=3, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
+        # v1.4 — Busy Solutions' official OLE DB provider (BSSData) uses
+        # the user's regular Busy LOGIN credentials, not the file-level
+        # encryption password. Fill these three fields if you use a
+        # licensed Busy install with Data Connectivity enabled — FLOWRA
+        # will prefer this path automatically. If the provider isn't
+        # available (Basic / Demo build) we fall back to the legacy
+        # encryption-password path further below.
+        ttk.Label(sec2, text="Busy login username",
+                  foreground="#38BDF8").grid(
+            row=3, column=0, sticky="w", padx=(0, 12), pady=(14, 6))
+        self.busy_user_entry = ttk.Entry(sec2, width=44)
+        self.busy_user_entry.insert(0, self.config.get("busy_user", ""))
+        self.busy_user_entry.grid(row=3, column=1, sticky="w", pady=(14, 6))
+        self.entries["busy_user"] = self.busy_user_entry
+
+        ttk.Label(sec2, text="Busy login password").grid(
+            row=4, column=0, sticky="w", padx=(0, 12), pady=(0, 6))
+        self.busy_login_pwd_entry = ttk.Entry(sec2, width=44, show="•")
+        self.busy_login_pwd_entry.insert(0, self.config.get("busy_login_password", ""))
+        self.busy_login_pwd_entry.grid(row=4, column=1, sticky="w", pady=(0, 6))
+        self.entries["busy_login_password"] = self.busy_login_pwd_entry
+
+        ttk.Label(sec2, text="Busy company name").grid(
+            row=5, column=0, sticky="w", padx=(0, 12), pady=(0, 6))
+        self.busy_company_entry = ttk.Entry(sec2, width=44)
+        self.busy_company_entry.insert(0, self.config.get("busy_company", ""))
+        self.busy_company_entry.grid(row=5, column=1, sticky="w", pady=(0, 6))
+        self.entries["busy_company"] = self.busy_company_entry
+
+        ttk.Label(sec2,
+                  text=("Preferred path — uses BSSData OLE DB provider "
+                        "(no encryption-password guessing). Leave blank on "
+                        "Busy Demo / Basic — FLOWRA will fall back to ODBC."),
+                  foreground="#94A3B8", wraplength=720).grid(
+            row=6, column=0, columnspan=3, sticky="w", pady=(2, 12))
+
+        # Legacy encryption password (ODBC fallback path)
+        ttk.Label(sec2, text="Busy DB password (fallback)").grid(
+            row=7, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
         self.busy_pwd_entry = ttk.Entry(sec2, width=44, show="•")
         self.busy_pwd_entry.insert(0, self.config.get("busy_db_password", ""))
-        self.busy_pwd_entry.grid(row=3, column=1, sticky="w", pady=(10, 6))
+        self.busy_pwd_entry.grid(row=7, column=1, sticky="w", pady=(10, 6))
         self.entries["busy_db_password"] = self.busy_pwd_entry
         ttk.Label(sec2,
-                  text=("Leave BLANK unless your Busy install uses a custom "
-                        "encryption password. FLOWRA will auto-try the standard "
-                        "passwords first (Busy 21 / 18 / older)."),
+                  text=("Only needed if the OLE DB fields above are empty "
+                        "AND your Busy install uses a custom file-encryption "
+                        "password. FLOWRA auto-tries the standard passwords "
+                        "first (Busy 21 / 18 / older)."),
                   foreground="#94A3B8", wraplength=720).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            row=8, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         sec2.columnconfigure(1, weight=1)
 
@@ -1621,6 +1656,10 @@ class FlowraBusyAgentGUI:
             "BUSY_COMPANY":           self.config.get("company_name", ""),
             "BUSY_STARTING_FY":       self.config.get("starting_fy", ""),
             "BUSY_DB_PASSWORD":       self.config.get("busy_db_password", ""),
+            # v1.4 — OLE DB (BSSData) provider credentials
+            "BUSY_USER":              self.config.get("busy_user", ""),
+            "BUSY_LOGIN_PASSWORD":    self.config.get("busy_login_password", ""),
+            "BUSY_COMPANY":           self.config.get("busy_company", ""),
             "SYNC_INTERVAL_MINUTES":  self.config.get("sync_interval_minutes", "20"),
             "FLOWRA_DATA_DIR":        str(APP_DIR),
             "PYTHONUNBUFFERED":       "1",

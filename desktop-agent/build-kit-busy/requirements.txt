@@ -18,3 +18,9 @@ cryptography>=44.0.0
 # to read the customer's local .bds files. The driver itself is installed on
 # every Busy Windows install; we only ship the Python bindings.
 pyodbc>=5.1.0
+
+# v1.4 — pywin32 gives us COM/ADODB access to Busy's official BSSData OLE DB
+# provider, which uses the user's normal Busy login (no -1905 password issue).
+# Windows-only; ignored on Linux dev machines.
+pywin32>=306; sys_platform == "win32"
+

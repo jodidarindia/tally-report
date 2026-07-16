@@ -31,6 +31,9 @@ a = Analysis(
         # _get_connection(), so PyInstaller's static analyzer misses it.
         # Declare it explicitly so the bundle contains the binary wheel.
         'pyodbc',
+        # v1.4 — pywin32 for the ADODB / OLE DB (BSSData) provider path.
+        # Also lazy-imported, so declare explicitly.
+        'win32com', 'win32com.client', 'pywintypes', 'pythoncom',
         # GUI tray + icon generation
         'pystray',
         'pystray._win32',
