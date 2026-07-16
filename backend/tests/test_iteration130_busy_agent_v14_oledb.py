@@ -27,7 +27,7 @@ SPEC = Path("/app/desktop-agent/build-kit-busy/agent.spec")
 
 def test_version_bumped():
     src = AGENT.read_text()
-    assert 'VERSION = "1.4.0"' in src, "VERSION must be bumped to 1.4.0"
+    assert 'VERSION = "1.4.1"' in src, "VERSION must be bumped to 1.4.1"
 
 
 def test_oledb_adapter_classes_present():
@@ -70,11 +70,13 @@ def test_get_connection_prefers_oledb_before_odbc():
 
 def test_gui_captures_busy_login_credentials():
     src = GUI.read_text()
-    # Three new fields in the config schema
-    for key in ("busy_user", "busy_login_password", "busy_company"):
+    # v1.4.1 — busy_company text field was REMOVED to fix the dict duplicate-
+    # key crash. The OLE DB provider's Company= param now reuses the auto-
+    # detected `company_name`.
+    for key in ("busy_user", "busy_login_password"):
         assert key in src, f"GUI config missing {key}"
     # Env vars exported to the agent subprocess
-    for env_var in ("BUSY_USER", "BUSY_LOGIN_PASSWORD", "BUSY_COMPANY"):
+    for env_var in ("BUSY_USER", "BUSY_LOGIN_PASSWORD", "BUSY_OLEDB_COMPANY"):
         assert env_var in src, f"GUI env-var export missing {env_var}"
 
 

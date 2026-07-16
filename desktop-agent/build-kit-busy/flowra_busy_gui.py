@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Busy Sync Agent"
-APP_VERSION = "v1.3.1"
+APP_VERSION = "v1.4.1"
 AGENT_SCRIPT = "flowra_busy_agent.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -412,9 +412,36 @@ class FlowraBusyAgentGUI:
         self.root.geometry("1100x820")
         self.root.minsize(960, 720)
         try:
-            self.root.iconbitmap(resource_path("flowra.ico"))
+            ico = resource_path("flowra.ico")
+            if os.path.exists(ico):
+                # Primary — .ico gives crisp Windows taskbar + title-bar icon
+                self.root.iconbitmap(ico)
         except Exception:
             pass
+        # Fallback + secondary path: iconphoto works when iconbitmap silently
+        # fails on some newer Tk builds (that fallback previously left Tk's
+        # default red-feather / leaf logo visible in the taskbar).
+        try:
+            from PIL import Image, ImageTk
+            for _c in ("flowra_logo.png", "flowra.ico"):
+                _p = resource_path(_c)
+                if os.path.exists(_p):
+                    _im = Image.open(_p).convert("RGBA")
+                    _im.thumbnail((256, 256), Image.LANCZOS)
+                    self._app_iconphoto = ImageTk.PhotoImage(_im)
+                    self.root.iconphoto(True, self._app_iconphoto)
+                    break
+        except Exception:
+            pass
+        # Windows taskbar grouping — without an explicit AppUserModelID, Tk
+        # apps get grouped under "python.exe" and pick up its default icon.
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "Flowra.BusySyncAgent.1")
+            except Exception:
+                pass
 
         # Header strip
         header = tk.Frame(self.root, bg="#0F172A", height=72)
@@ -800,26 +827,20 @@ class FlowraBusyAgentGUI:
         self.busy_login_pwd_entry.grid(row=4, column=1, sticky="w", pady=(0, 6))
         self.entries["busy_login_password"] = self.busy_login_pwd_entry
 
-        ttk.Label(sec2, text="Busy company name").grid(
-            row=5, column=0, sticky="w", padx=(0, 12), pady=(0, 6))
-        self.busy_company_entry = ttk.Entry(sec2, width=44)
-        self.busy_company_entry.insert(0, self.config.get("busy_company", ""))
-        self.busy_company_entry.grid(row=5, column=1, sticky="w", pady=(0, 6))
-        self.entries["busy_company"] = self.busy_company_entry
-
         ttk.Label(sec2,
                   text=("Preferred path — uses BSSData OLE DB provider "
                         "(no encryption-password guessing). Leave blank on "
-                        "Busy Demo / Basic — FLOWRA will fall back to ODBC."),
+                        "Busy Demo / Basic — FLOWRA will fall back to ODBC. "
+                        "The Busy company is auto-detected from the folder above."),
                   foreground="#94A3B8", wraplength=720).grid(
-            row=6, column=0, columnspan=3, sticky="w", pady=(2, 12))
+            row=5, column=0, columnspan=3, sticky="w", pady=(2, 12))
 
         # Legacy encryption password (ODBC fallback path)
         ttk.Label(sec2, text="Busy DB password (fallback)").grid(
-            row=7, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
+            row=6, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
         self.busy_pwd_entry = ttk.Entry(sec2, width=44, show="•")
         self.busy_pwd_entry.insert(0, self.config.get("busy_db_password", ""))
-        self.busy_pwd_entry.grid(row=7, column=1, sticky="w", pady=(10, 6))
+        self.busy_pwd_entry.grid(row=6, column=1, sticky="w", pady=(10, 6))
         self.entries["busy_db_password"] = self.busy_pwd_entry
         ttk.Label(sec2,
                   text=("Only needed if the OLE DB fields above are empty "
@@ -827,7 +848,7 @@ class FlowraBusyAgentGUI:
                         "password. FLOWRA auto-tries the standard passwords "
                         "first (Busy 21 / 18 / older)."),
                   foreground="#94A3B8", wraplength=720).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         sec2.columnconfigure(1, weight=1)
 
@@ -1629,13 +1650,30 @@ class FlowraBusyAgentGUI:
     def start_agent(self):
         if self.proc and self.proc.poll() is None:
             return
-        if not self.config.get("email") or not self.config.get("password"):
-            messagebox.showwarning(APP_NAME,
-                "Please login first in Settings.")
-            return
-        if not self.config.get("busy_folder") or not self.config.get("company_name"):
-            messagebox.showwarning(APP_NAME,
-                "Pick your Busy data folder and detect a company first.")
+        # v1.4.1 — per-field pre-flight validation. Previously the daemon
+        # would spawn with missing env vars and die with a cryptic "Missing
+        # required env vars" line in the log. Surface the exact fields the
+        # user needs to fill before we spawn.
+        missing = []
+        if not self.config.get("email"):
+            missing.append("Login Email (Settings → 1. FLOWRA Login)")
+        if not self.config.get("password"):
+            missing.append("Password (Settings → 1. FLOWRA Login)")
+        folder = (self.config.get("company_folder")
+                  or self.config.get("busy_folder", ""))
+        if not folder:
+            missing.append("Busy Data Folder (Settings → 2. Browse…)")
+        if not self.config.get("company_name"):
+            missing.append("Busy Company — click ‘Detect Company’ in Settings")
+        if not self.config.get("starting_fy"):
+            missing.append("Starting Financial Year (Settings → 3. Detect FYs)")
+        if missing:
+            messagebox.showwarning(
+                APP_NAME,
+                "Cannot start the sync service yet — please fill:\n\n"
+                + "\n".join(f"  •  {m}" for m in missing)
+                + "\n\nTip: use 💾 Save & Start Sync on the Settings tab to "
+                "save + start in one click.")
             return
         info = getattr(self, "_sub_info", None)
         if info and info.get("subscription_days_left") is not None \
@@ -1647,6 +1685,10 @@ class FlowraBusyAgentGUI:
             return
 
         env = os.environ.copy()
+        # v1.4.1 — BUSY_COMPANY (the sync-identifier used by the daemon) MUST
+        # come from the auto-detected `company_name`, never overwritten by an
+        # empty OLE DB text field. OLE DB's own Company= parameter is passed
+        # separately via BUSY_OLEDB_COMPANY.
         env.update({
             "BACKEND_URL":            self.config.get("backend_url", DEFAULT_BACKEND_URL),
             "FLOWRA_EMAIL":           self.config.get("email", ""),
@@ -1656,10 +1698,12 @@ class FlowraBusyAgentGUI:
             "BUSY_COMPANY":           self.config.get("company_name", ""),
             "BUSY_STARTING_FY":       self.config.get("starting_fy", ""),
             "BUSY_DB_PASSWORD":       self.config.get("busy_db_password", ""),
-            # v1.4 — OLE DB (BSSData) provider credentials
+            # v1.4 — OLE DB (BSSData) provider credentials. Company is the
+            # same auto-detected value; user-typed field was removed in
+            # v1.4.1 to avoid the duplicate-key crash.
             "BUSY_USER":              self.config.get("busy_user", ""),
             "BUSY_LOGIN_PASSWORD":    self.config.get("busy_login_password", ""),
-            "BUSY_COMPANY":           self.config.get("busy_company", ""),
+            "BUSY_OLEDB_COMPANY":     self.config.get("company_name", ""),
             "SYNC_INTERVAL_MINUTES":  self.config.get("sync_interval_minutes", "20"),
             "FLOWRA_DATA_DIR":        str(APP_DIR),
             "PYTHONUNBUFFERED":       "1",

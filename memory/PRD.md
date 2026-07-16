@@ -668,3 +668,31 @@ Unblocked the -1905 ODBC password issue by wiring Busy Solutions' official OLE D
 **Not yet done (Phase-3 backlog per user's proposal):**
 - Option 2 (Advanced XML export) — user picked (b), so XML path is deferred. Can be revisited later as a universal-compatibility layer.
 
+
+
+## Shipped — Feb 16 2026 (iteration 131) — Busy Agent v1.4.1 daemon-crash fix
+
+**Root cause of the v1.4.0 crash reported by user:**
+The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice — once from the auto-detected `company_name` and again from the new v1.4 user-typed OLE DB field `busy_company`. Python dict literals silently drop the first entry, so the empty OLE DB field always won and the daemon booted with `BUSY_COMPANY=""`, tripping the required-vars validator with:
+
+    [daemon] Missing required env vars — cannot start.
+
+**Fixes shipped:**
+1. **Daemon env-var collision resolved** — the OLE DB provider's Company= param moved to its own env var `BUSY_OLEDB_COMPANY`. `_try_oledb()` reads it first (falls back to `BUSY_COMPANY` for backward-compat).
+2. **Removed the manual "Busy company name" text field** in Settings → Section 2. The company name is now always the auto-detected value from `Detect Company` (same UX as Tally Agent — user's request #3).
+3. **Pre-flight validation in `start_agent()`** — instead of spawning the daemon blindly, the GUI now checks each required field (email / password / folder / detected company / starting FY) and pops a warning listing exactly what's missing before Popen fires.
+4. **Daemon's own error message is specific** — "Missing: BUSY_COMPANY, BUSY_STARTING_FY" instead of the flat "Missing required env vars".
+5. **Windows taskbar icon fixed (user's request #2)** — the "leaf" icon was Tk's default fallback showing up when `iconbitmap` silently failed on some Tk builds. Added `iconphoto()` fallback (loads `flowra_logo.png` → `PhotoImage`) plus `SetCurrentProcessExplicitAppUserModelID("Flowra.BusySyncAgent.1")` so Windows doesn't group under `python.exe`.
+6. **Version marker** — VERSION `1.4.1`, AGENT_TAG `busy-1.4.1-oledb-envfix`, GUI APP_VERSION `v1.4.1`.
+
+**Files touched:**
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — VERSION, AGENT_TAG, `_try_oledb` env read, daemon error message.
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py` — APP_VERSION, taskbar icon (iconphoto + AppUserModelID), removed `busy_company_entry` widget, fixed `env.update({…})` duplicate-key bug, per-field pre-flight validation in `start_agent()`.
+
+**Regression tests (16/16 green):**
+- `backend/tests/test_iteration130_busy_agent_v14_oledb.py` — refreshed for v1.4.1 config schema (8 tests).
+- `backend/tests/test_iteration131_busy_agent_env_fix.py` — new (8 tests): AST-parses the env dict to guarantee no duplicate keys, asserts `BUSY_COMPANY` resolves to `company_name`, checks daemon error specificity, verifies iconphoto + AppUserModelID hardening, verifies the manual company text-field is fully removed.
+
+**Live smoke test:** spawned the daemon in Linux dev mode with a valid env — it now logs `company=ACME Traders` and proceeds to the login step (fails only on the dummy password, as expected). Old build died before login.
+
+**User next steps:** rebuild `FlowraBusyAgent.exe` via `build.bat` on Windows and re-test on the licensed Busy 21 Enterprise install. The v1.4.1 daemon should no longer refuse to start once the user has clicked Detect Company + Detect FYs.

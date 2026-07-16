@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.4.0"
-AGENT_TAG = "busy-1.3.1-db-password-fallback"
+VERSION = "1.4.1"
+AGENT_TAG = "busy-1.4.1-oledb-envfix"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -249,7 +249,11 @@ class BusyDBReader:
 
         busy_user = os.environ.get("BUSY_USER", "").strip()
         busy_pwd = os.environ.get("BUSY_LOGIN_PASSWORD", "").strip()
-        company = os.environ.get("BUSY_COMPANY", "").strip()
+        # v1.4.1 — OLE DB provider's Company= param now lives on its own env
+        # var so it can never collide with BUSY_COMPANY (which the daemon
+        # uses as the sync identifier and validates on boot).
+        company = (os.environ.get("BUSY_OLEDB_COMPANY", "").strip()
+                   or os.environ.get("BUSY_COMPANY", "").strip())
         data_dir = os.path.dirname(self.bds_path)
 
         last_err = None
@@ -1559,7 +1563,17 @@ def run_daemon() -> int:
                 f"interval={interval_min}min")
 
     if not (email and password and folder and company and start_fy):
-        logger.error("[daemon] Missing required env vars — cannot start.")
+        _missing = [k for k, v in (
+            ("FLOWRA_EMAIL", email),
+            ("FLOWRA_PASSWORD", password),
+            ("BUSY_DATA_FOLDER", folder),
+            ("BUSY_COMPANY", company),
+            ("BUSY_STARTING_FY", start_fy),
+        ) if not v]
+        logger.error(
+            f"[daemon] Missing required env vars — cannot start. "
+            f"Missing: {', '.join(_missing)}. Set them in the GUI Settings "
+            "tab then click Save & Start Sync.")
         return 1
 
     agent = FlowraBusySyncAgent(status_callback=lambda m: logger.info(f"[daemon] {m}"))
