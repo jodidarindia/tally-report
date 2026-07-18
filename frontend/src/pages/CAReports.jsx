@@ -3,7 +3,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import {
   FileText, Download, Loader, RefreshCw, ShieldCheck, Info,
-  AlertTriangle, Landmark, Sparkles, Lock,
+  AlertTriangle, Landmark, Sparkles, Lock, Plus, Trash2, X,
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -48,6 +48,16 @@ const CAReports = () => {
   const [saving, setSaving] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('cma');
   const [downloading, setDownloading] = useState('');
+  const [manualRows, setManualRows] = useState([]);
+  const [manualForm, setManualForm] = useState(null);   // null = closed
+  const [manualSaving, setManualSaving] = useState(false);
+
+  const loadManual = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/ca-reports/manual-historicals`);
+      if (res.data?.success) setManualRows(res.data.data.historicals || []);
+    } catch { /* silent — non-blocking */ }
+  }, []);
 
   const loadPreview = useCallback(async () => {
     setLoading(true);
@@ -69,7 +79,58 @@ const CAReports = () => {
     }
   }, []);
 
-  useEffect(() => { loadPreview(); }, [loadPreview]);
+  useEffect(() => { loadPreview(); loadManual(); }, [loadPreview, loadManual]);
+
+  const openNewManual = () => {
+    setManualForm({
+      fy_label: '', net_sales: '', purchases: '', sga_expenses: '',
+      depreciation: '', interest: '', provision_for_tax: '',
+      sundry_creditors: '', receivables_domestic: '',
+      inventory_finished: '', cash_bank_balance: '',
+      bank_st_borrowings: '', term_loans: '', unsecured_loans: '',
+      proprietors_capital: '', reserves_surplus: '', gross_block: '',
+    });
+  };
+
+  const openEditManual = (row) => setManualForm({ ...row });
+
+  const saveManual = async () => {
+    if (!manualForm?.fy_label ||
+         !/^\d{4}-\d{2}$/.test(manualForm.fy_label)) {
+      toast.error("Enter FY label as 'YYYY-YY' (e.g. '2020-21').");
+      return;
+    }
+    setManualSaving(true);
+    try {
+      const res = await axios.post(`${API}/ca-reports/manual-historicals`,
+                                     manualForm);
+      if (res.data?.success) {
+        toast.success(`FY ${manualForm.fy_label} saved (encrypted)`);
+        setManualForm(null);
+        await Promise.all([loadManual(), loadPreview()]);
+      } else {
+        toast.error(res.data?.error || 'Save failed');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    } finally {
+      setManualSaving(false);
+    }
+  };
+
+  const deleteManual = async (fy_label) => {
+    if (!window.confirm(`Delete manual FY ${fy_label}?`)) return;
+    try {
+      const res = await axios.delete(
+        `${API}/ca-reports/manual-historicals/${encodeURIComponent(fy_label)}`);
+      if (res.data?.success) {
+        toast.success(`FY ${fy_label} removed`);
+        await Promise.all([loadManual(), loadPreview()]);
+      } else toast.error(res.data?.error || 'Delete failed');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Delete failed');
+    }
+  };
 
   const saveAssumptions = async () => {
     setSaving(true);
@@ -139,17 +200,39 @@ const CAReports = () => {
 
   if (!preview) {
     return (
-      <div className="bg-white border border-slate-200 rounded-xl p-6 text-center"
-             data-testid="ca-reports-empty">
-        <AlertTriangle className="mx-auto text-amber-500 mb-2" size={26} />
-        <div className="text-slate-700 font-medium">
-          Unable to load bank-report data.
+      <div className="space-y-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-center"
+               data-testid="ca-reports-empty">
+          <AlertTriangle className="mx-auto text-amber-500 mb-2" size={26} />
+          <div className="text-slate-700 font-medium mb-1">
+            No historical data available yet.
+          </div>
+          <div className="text-slate-500 text-sm max-w-xl mx-auto">
+            The CMA needs at least one historical FY. You can either sync a
+            Tally / Busy company via the desktop agent, OR type in the audited
+            numbers for a prior year in the form below.
+          </div>
+          <button onClick={loadPreview}
+                   data-testid="btn-reload-preview"
+                   className="mt-3 px-3 py-1.5 bg-[#2563EB] text-white text-sm rounded-lg">
+            Retry
+          </button>
         </div>
-        <button onClick={loadPreview}
-                 data-testid="btn-reload-preview"
-                 className="mt-3 px-3 py-1.5 bg-[#2563EB] text-white text-sm rounded-lg">
-          Retry
-        </button>
+        <ManualHistoricalsSection
+          rows={manualRows}
+          onNew={openNewManual}
+          onEdit={openEditManual}
+          onDelete={deleteManual}
+        />
+        {manualForm && (
+          <ManualHistoricalForm
+            row={manualForm}
+            setRow={setManualForm}
+            onSave={saveManual}
+            onCancel={() => setManualForm(null)}
+            saving={manualSaving}
+          />
+        )}
       </div>
     );
   }
@@ -360,6 +443,24 @@ const CAReports = () => {
         </div>
       </details>
 
+      {/* Prior-Year Manual Entry (useful when Tally sync < 2 FYs, or when
+           the CA wants to override the audited numbers) */}
+      <ManualHistoricalsSection
+        rows={manualRows}
+        onNew={openNewManual}
+        onEdit={openEditManual}
+        onDelete={deleteManual}
+      />
+      {manualForm && (
+        <ManualHistoricalForm
+          row={manualForm}
+          setRow={setManualForm}
+          onSave={saveManual}
+          onCancel={() => setManualForm(null)}
+          saving={manualSaving}
+        />
+      )}
+
       {/* Download buttons */}
       <div className="bg-white border border-slate-200 rounded-xl p-5">
         <h3 className="font-semibold text-slate-900 mb-1">
@@ -367,7 +468,7 @@ const CAReports = () => {
         </h3>
         <div className="text-xs text-slate-500 mb-4">
           Each file carries the company name in the header, and
-          "Auto-generated by FLOWRA" with a timestamp in the footer of
+          &ldquo;Auto-generated by FLOWRA&rdquo; with a timestamp in the footer of
           every page. The methodology page inside each file explains every
           formula.
         </div>
@@ -455,6 +556,204 @@ const DownloadBtn = ({ testid, icon: Icon, title, subtitle, onClick,
     </div>
     <Download size={16} className="text-slate-400 mt-1" />
   </button>
+);
+
+/* ─── Prior-Year Manual Entry ─────────────────────────────────────────── */
+
+const ManualHistoricalsSection = ({ rows, onNew, onEdit, onDelete }) => (
+  <div className="bg-white border border-slate-200 rounded-xl p-5"
+        data-testid="manual-historicals-section">
+    <div className="flex items-start justify-between mb-3 gap-3">
+      <div>
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold text-slate-900">
+            Prior-Year Manual Entry
+          </h3>
+          <span className="text-xs bg-emerald-50 text-emerald-700 border
+                  border-emerald-200 px-2 py-0.5 rounded-full">
+            Encrypted at rest
+          </span>
+        </div>
+        <div className="text-xs text-slate-500 mt-1 max-w-2xl">
+          If your Tally / Busy sync doesn&apos;t yet cover 2 historical FYs
+          (typical for new deployments), type in the audited numbers for
+          up to 2 prior years here. These entries merge with the Tally-
+          synced FYs so your CMA ships with a complete 5-column layout
+          (2 historicals + 3 projections). All monetary fields are
+          Fernet-AES-128 encrypted at rest — only you (useradmin) can
+          read them back.
+        </div>
+      </div>
+      <button onClick={onNew}
+               data-testid="btn-add-manual-fy"
+               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2563EB]
+                  hover:bg-[#1D4ED8] text-white text-sm rounded-lg
+                  whitespace-nowrap">
+        <Plus size={14}/> Add prior year
+      </button>
+    </div>
+    {rows.length === 0 ? (
+      <div className="text-sm text-slate-400 italic py-3">
+        No manual entries yet.
+      </div>
+    ) : (
+      <div className="mt-2 border border-slate-200 rounded-lg overflow-hidden">
+        <table className="w-full text-xs">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="text-left py-2 px-3">FY</th>
+              <th className="text-right py-2 px-3">Net Sales</th>
+              <th className="text-right py-2 px-3">Purchases</th>
+              <th className="text-right py-2 px-3">Debtors</th>
+              <th className="text-right py-2 px-3">Creditors</th>
+              <th className="text-right py-2 px-3">Capital</th>
+              <th className="py-2 px-3 w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.fy_label}
+                   data-testid={`manual-row-${r.fy_label}`}
+                   className="border-t border-slate-100">
+                <td className="py-2 px-3 font-medium text-slate-900">
+                  {r.fy_label}
+                </td>
+                {['net_sales', 'purchases', 'receivables_domestic',
+                   'sundry_creditors', 'proprietors_capital'].map(f => (
+                  <td key={f} className="py-2 px-3 text-right tabular-nums text-slate-600">
+                    {(Number(r[f]) || 0).toLocaleString('en-IN',
+                                                          { maximumFractionDigits: 2 })}
+                  </td>
+                ))}
+                <td className="py-2 px-3">
+                  <div className="flex gap-1 justify-end">
+                    <button onClick={() => onEdit(r)}
+                             data-testid={`btn-edit-manual-${r.fy_label}`}
+                             className="text-slate-500 hover:text-[#2563EB] text-xs px-2 py-0.5">
+                      Edit
+                    </button>
+                    <button onClick={() => onDelete(r.fy_label)}
+                             data-testid={`btn-delete-manual-${r.fy_label}`}
+                             className="text-slate-500 hover:text-red-600 p-1">
+                      <Trash2 size={13}/>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
+
+const MANUAL_FIELDS = [
+  { section: 'P&L (from audited P&L statement)', fields: [
+    ['net_sales', 'Net Sales'],
+    ['purchases', 'Purchases'],
+    ['sga_expenses', 'SG&A Expenses'],
+    ['depreciation', 'Depreciation'],
+    ['interest', 'Interest'],
+    ['provision_for_tax', 'Tax provision'],
+  ]},
+  { section: 'Balance Sheet (from audited BS)', fields: [
+    ['sundry_creditors', 'Sundry Creditors'],
+    ['bank_st_borrowings', 'Bank OD / CC (ST)'],
+    ['term_loans', 'Term Loans (Long)'],
+    ['unsecured_loans', 'Unsecured Loans'],
+    ['proprietors_capital', 'Proprietor\'s Capital'],
+    ['reserves_surplus', 'Reserves & Surplus'],
+    ['cash_bank_balance', 'Cash & Bank'],
+    ['receivables_domestic', 'Sundry Debtors'],
+    ['inventory_finished', 'Inventory'],
+    ['gross_block', 'Gross Fixed Assets'],
+  ]},
+];
+
+const ManualHistoricalForm = ({ row, setRow, onSave, onCancel, saving }) => (
+  <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center
+                    z-50 p-4"
+        data-testid="manual-fy-modal">
+    <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh]
+                      overflow-y-auto shadow-xl">
+      <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-4
+                        flex items-center justify-between">
+        <div>
+          <div className="font-semibold text-slate-900">
+            Add / Edit Prior-Year Historical
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            All values in Rs. Lacs. Encrypted at rest. Only fields you enter
+            are used — leave irrelevant ones blank.
+          </div>
+        </div>
+        <button onClick={onCancel} className="text-slate-500 hover:text-slate-900">
+          <X size={18}/>
+        </button>
+      </div>
+      <div className="p-5 space-y-4">
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">
+            Financial year label
+            <span className="text-slate-400 ml-1">(e.g. 2020-21)</span>
+          </label>
+          <input type="text" placeholder="2020-21" maxLength={7}
+                  data-testid="manual-fy-label"
+                  value={row.fy_label || ''}
+                  onChange={e => setRow(p => ({...p, fy_label: e.target.value}))}
+                  className="w-40 px-2.5 py-1.5 border border-slate-300 rounded-md
+                      text-sm focus:outline-none focus:ring-2
+                      focus:ring-[#2563EB]/30"/>
+        </div>
+        {MANUAL_FIELDS.map(sec => (
+          <div key={sec.section}>
+            <div className="text-xs font-semibold text-slate-500 mb-2 mt-3
+                              uppercase tracking-wide">
+              {sec.section}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {sec.fields.map(([key, label]) => (
+                <div key={key} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-slate-700">
+                    {label}
+                  </label>
+                  <input type="number" step="0.01"
+                          data-testid={`manual-field-${key}`}
+                          value={row[key] ?? ''}
+                          onChange={e => setRow(p => ({
+                            ...p, [key]: e.target.value === '' ? '' :
+                                          Number(e.target.value),
+                          }))}
+                          className="w-full px-2.5 py-1.5 border border-slate-300
+                              rounded-md text-sm focus:outline-none
+                              focus:ring-2 focus:ring-[#2563EB]/30"/>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="sticky bottom-0 bg-white border-t border-slate-200 px-5 py-3
+                        flex justify-end gap-2">
+        <button onClick={onCancel}
+                 data-testid="btn-cancel-manual"
+                 className="px-4 py-1.5 border border-slate-300 hover:bg-slate-50
+                    text-slate-700 text-sm rounded-lg">
+          Cancel
+        </button>
+        <button onClick={onSave}
+                 disabled={saving}
+                 data-testid="btn-save-manual"
+                 className="px-4 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8]
+                    text-white text-sm rounded-lg disabled:opacity-60
+                    flex items-center gap-1.5">
+          {saving && <Loader className="animate-spin" size={14}/>}
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
 );
 
 export default CAReports;

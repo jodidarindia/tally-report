@@ -251,23 +251,43 @@ async def preview_report(request: Request, body: PreviewRequest = Body(...)):
     tid, cid = ctx["tenant_id"], ctx["company_id"]
 
     fys = await _detect_synced_fys(tid, cid)
-    if len(fys) == 0:
+    # Also check for manual prior-year entries — a tenant with zero
+    # synced FYs can still preview a CMA if the CA has typed in prior
+    # audited numbers manually.
+    manual_count = await db.ca_manual_historicals.count_documents(
+        _tenant_company_query(ctx))
+    if len(fys) == 0 and manual_count == 0:
         return APIResponse(success=False,
-                             error=("No FY data synced yet for this company. "
-                                     "Please sync at least one FY via the "
-                                     "Tally / Busy agent before generating "
-                                     "a CMA."))
+                             error=("No FY data synced yet for this company, "
+                                     "and no prior-year figures entered "
+                                     "manually. Either sync at least one FY "
+                                     "via the Tally / Busy agent, OR use "
+                                     "the 'Prior-Year Manual Entry' form "
+                                     "below to type in the audited numbers "
+                                     "for at least one prior year."))
     # Limit historicals to what's actually synced (min 1, max body.n_hist)
     hist_fys = fys[-body.n_hist:] if len(fys) >= body.n_hist else fys
-    warn = None
-    if len(hist_fys) < 2:
-        warn = (f"Only {len(hist_fys)} FY of data is synced. For a "
-                 "bank-quality CMA, sync 2+ FYs OR enter the previous year "
-                 "figures manually in the review step.")
     hist = []
     for fy in hist_fys:
         h = await _build_historical_fy(tid, cid, fy)
         hist.append(h)
+
+    # Merge in manually-entered prior-year historicals (Tally always wins
+    # on collision — that way re-syncing later doesn't overwrite user
+    # audited numbers with Tally's fresher-but-different figures.)
+    manual = await _load_manual_historicals(ctx)
+    synced_labels = {h.fy_label for h in hist}
+    manual_extras = [m for m in manual if m.fy_label not in synced_labels]
+    hist = sorted(hist + manual_extras, key=lambda h: h.fy_label)
+    # Keep at most body.n_hist most recent
+    hist = hist[-body.n_hist:] if len(hist) > body.n_hist else hist
+
+    warn = None
+    if len(hist) < 2:
+        warn = (f"Only {len(hist)} historical FY available (synced + "
+                 "manual). Add another prior year in the 'Prior-Year "
+                 "Manual Entry' section for a bank-quality CMA with "
+                 "2 historicals.")
 
     # Load stored assumptions (if any) else defaults
     saved = await db.ca_report_assumptions.find_one(
@@ -294,6 +314,7 @@ async def preview_report(request: Request, body: PreviewRequest = Body(...)):
         "projections": [p.__dict__ for p in proj],
         "assumptions": assumptions.__dict__,
         "fys_available": fys,
+        "manual_fy_labels": [m.fy_label for m in manual],
         "warnings": [warn] if warn else [],
     })
 
@@ -351,6 +372,155 @@ async def save_assumptions(request: Request, body: Dict[str, Any] = Body(...)):
     return APIResponse(success=True, data={"saved": True})
 
 
+
+# ─── Route: MANUAL PRIOR-YEAR HISTORICALS ────────────────────────────────
+#
+# When a tenant has < 2 FYs synced from Tally, the CMA still needs 2
+# historical columns for a bank-quality submission. This route lets the
+# useradmin type in the audited numbers for one or more prior FYs. The
+# preview / generate endpoints merge these with Tally-synced FYs (Tally
+# wins on collision so re-syncing later doesn't get overridden).
+#
+# Sensitive financial values are Fernet-AES-128 encrypted at rest for
+# the same reason we encrypt the assumption fields.
+
+_MANUAL_ENCRYPTED_FIELDS = (
+    # Every monetary value in a manual FY is treated as sensitive PII
+    # (it's the company's audited P&L / BS that hasn't been synced yet).
+    "gross_sales", "net_sales", "purchases", "sga_expenses",
+    "depreciation", "interest", "provision_for_tax",
+    "opening_stock_fg", "closing_stock_fg",
+    "bank_st_borrowings", "sundry_creditors", "term_loans",
+    "unsecured_loans", "proprietors_capital", "reserves_surplus",
+    "withdrawals", "cash_bank_balance", "receivables_domestic",
+    "inventory_raw", "inventory_wip", "inventory_finished",
+    "gross_block", "accumulated_depreciation",
+)
+
+
+def _encrypt_manual(doc: Dict[str, Any]) -> Dict[str, Any]:
+    out = {}
+    for k, v in doc.items():
+        if k in _MANUAL_ENCRYPTED_FIELDS:
+            out[k] = encrypt_field(str(v)) if v not in (None, "", 0) else ""
+        else:
+            out[k] = v
+    return out
+
+
+def _decrypt_manual(doc: Dict[str, Any]) -> Dict[str, Any]:
+    out = {}
+    for k, v in doc.items():
+        if k in _MANUAL_ENCRYPTED_FIELDS and v:
+            try:
+                out[k] = float(decrypt_field(v))
+            except (TypeError, ValueError):
+                out[k] = 0.0
+        else:
+            out[k] = v
+    return out
+
+
+def _manual_doc_to_historical_fy(doc: Dict[str, Any]) -> HistoricalFY:
+    """Convert a decrypted `ca_manual_historicals` row into a
+    HistoricalFY dataclass — coerces every value to float and only keeps
+    keys that the dataclass declares."""
+    d = _decrypt_manual(doc)
+    allowed = set(HistoricalFY.__dataclass_fields__.keys())
+    clean: Dict[str, Any] = {}
+    for k, v in d.items():
+        if k not in allowed:
+            continue
+        if k == "fy_label":
+            clean[k] = str(v or "-")
+        else:
+            try:
+                clean[k] = float(v) if v not in (None, "") else 0.0
+            except (TypeError, ValueError):
+                clean[k] = 0.0
+    return HistoricalFY(**clean)
+
+
+@router.get("/ca-reports/manual-historicals")
+async def list_manual_historicals(request: Request):
+    try:
+        guard = await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx = guard["ctx"]
+    rows = await db.ca_manual_historicals.find(
+        _tenant_company_query(ctx), {"_id": 0}
+    ).sort("fy_label", 1).to_list(20)
+    decrypted = [_decrypt_manual(r) for r in rows]
+    return APIResponse(success=True, data={"historicals": decrypted})
+
+
+@router.post("/ca-reports/manual-historicals")
+async def upsert_manual_historical(request: Request,
+                                     body: Dict[str, Any] = Body(...)):
+    """Save one manual prior-year FY. Payload = a HistoricalFY dict; the
+    fy_label is the natural primary key per (tenant, company)."""
+    try:
+        guard = await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx, user = guard["ctx"], guard["user"]
+    fy_label = str(body.get("fy_label") or "").strip()
+    if not fy_label:
+        return APIResponse(success=False,
+                             error="fy_label is required (e.g. '2020-21').")
+    # Sanity-check the FY label — 'YYYY-YY'
+    if len(fy_label) != 7 or fy_label[4] != "-":
+        return APIResponse(
+            success=False,
+            error="fy_label must be in the form 'YYYY-YY' (e.g. '2020-21').")
+    # Only allow fields the dataclass knows about
+    allowed = set(HistoricalFY.__dataclass_fields__.keys())
+    clean = {k: v for k, v in body.items() if k in allowed}
+    clean["fy_label"] = fy_label
+    # Coerce numerics
+    for k, v in list(clean.items()):
+        if k == "fy_label":
+            continue
+        try:
+            clean[k] = float(v) if v not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            clean[k] = 0.0
+    payload = _encrypt_manual(clean)
+    payload.update({
+        **_tenant_company_query(ctx),
+        "fy_label": fy_label,   # kept in cleartext — safe & needed for lookup
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": user.get("id") or user.get("_id"),
+    })
+    await db.ca_manual_historicals.update_one(
+        {**_tenant_company_query(ctx), "fy_label": fy_label},
+        {"$set": payload}, upsert=True,
+    )
+    return APIResponse(success=True, data={"saved": True,
+                                              "fy_label": fy_label})
+
+
+@router.delete("/ca-reports/manual-historicals/{fy_label}")
+async def delete_manual_historical(request: Request, fy_label: str):
+    try:
+        guard = await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx = guard["ctx"]
+    res = await db.ca_manual_historicals.delete_one(
+        {**_tenant_company_query(ctx), "fy_label": fy_label})
+    return APIResponse(success=True, data={"deleted": res.deleted_count})
+
+
+async def _load_manual_historicals(ctx: Dict[str, Any]) -> List[HistoricalFY]:
+    rows = await db.ca_manual_historicals.find(
+        _tenant_company_query(ctx), {"_id": 0}
+    ).to_list(20)
+    return [_manual_doc_to_historical_fy(r) for r in rows]
+
+
+
 # ─── Route: GENERATE ARTIFACTS ───────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
@@ -387,6 +557,7 @@ async def _assemble_fys(guard: Dict[str, Any], body: GenerateRequest
         assumptions = _decrypt_assumptions(saved) if saved else Assumptions()
 
     # Historicals — use edited if user reviewed cells, else Tally-derived
+    # merged with any manually-entered prior-year audited numbers.
     if body.edited_historicals:
         hist = [HistoricalFY(**_coerce_hist(h))
                 for h in body.edited_historicals]
@@ -396,6 +567,13 @@ async def _assemble_fys(guard: Dict[str, Any], body: GenerateRequest
         hist = []
         for fy in hist_fys:
             hist.append(await _build_historical_fy(tid, cid, fy))
+        # Merge in manually-entered FYs (Tally always wins on collision).
+        manual = await _load_manual_historicals(ctx)
+        synced_labels = {h.fy_label for h in hist}
+        hist = sorted(hist + [m for m in manual
+                                if m.fy_label not in synced_labels],
+                       key=lambda h: h.fy_label)
+        hist = hist[-body.n_hist:] if len(hist) > body.n_hist else hist
 
     # Projections — use edited if user overrode, else project fresh
     if body.edited_projections:

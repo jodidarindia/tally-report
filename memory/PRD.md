@@ -809,3 +809,41 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 - Admin JWT + preview → returns `"No FY data synced yet"` (correct — the ASA test tenant has no FY data)
 - Salesman JWT + preview → returns **`"This report is available only to the tenant owner (useradmin role). Your role is 'salesman'."`** — 403 role guard confirmed end-to-end.
 
+
+## Shipped — Feb 16 2026 (iteration 135) — CA Reports: Prior-Year Manual Entry
+
+**Context:** After v134, if a tenant only had 1 (or 0) FYs synced from Tally the CMA still couldn't produce 2 historicals — the RBI submission format requires 2 audited FYs. User asked for a form to manually type in prior-year audited numbers so the CMA still ships with 2 historicals even for new deployments.
+
+**Shipped:**
+1. **New MongoDB collection `ca_manual_historicals`** — one document per (tenant_id, company_id, fy_label). Sensitive monetary fields (net_sales, purchases, sga_expenses, depreciation, interest, provision_for_tax, sundry_creditors, term_loans, unsecured_loans, proprietors_capital, reserves_surplus, cash_bank_balance, receivables_domestic, inventory_finished, gross_block, etc. — 23 fields) are **Fernet-AES-128 encrypted at rest** via `_encrypt_manual` / `_decrypt_manual`. `fy_label` remains cleartext (natural key needed for lookup).
+2. **3 new endpoints**, all guarded by `_require_useradmin` (verified 403 for salesman on all three methods):
+   - `GET /api/ca-reports/manual-historicals` — lists all manual FYs for the selected company
+   - `POST /api/ca-reports/manual-historicals` — upsert one FY (validates `fy_label` matches `YYYY-YY` pattern, coerces numerics, encrypts before storage)
+   - `DELETE /api/ca-reports/manual-historicals/{fy_label}` — soft delete
+3. **Merge logic in `preview_report` + `_assemble_fys`** — Tally-synced FYs and manual FYs are combined, deduped by `fy_label` (Tally wins on collision so re-syncing later doesn't overwrite user-audited numbers), sorted chronologically, and capped at `n_hist`. `preview_report`'s "No FY data" early return now checks BOTH synced FYs AND manual FY count before bailing.
+4. **Frontend UI** (`CAReports.jsx`) — new `<ManualHistoricalsSection>` card:
+   - Table of existing manual entries with FY / Net Sales / Purchases / Debtors / Creditors / Capital columns + per-row Edit and Delete buttons
+   - "Add prior year" button opens a full-screen modal `<ManualHistoricalForm>` with 17 fields split into two sections: P&L (6 fields) and Balance Sheet (10 fields) + FY label
+   - Empty-state fallback: when preview fails because tenant has 0 data anywhere, the section still renders so the user can add their first manual FY without needing Tally sync
+   - "Encrypted at rest" badge visible to the user
+   - Confirm-before-delete dialog via `window.confirm`
+5. **Data flow update**: on save/delete, both `loadManual()` AND `loadPreview()` refetch in parallel so the historicals-preview table + projection engine + download buttons all reflect the change immediately.
+
+**Live curl verification:**
+- Admin POST 2 manual FYs (2019-20, 2020-21 with real Krishna-style numbers) → preview now returns 2 historicals + 3 projections (2021-22 → 2023-24 auto-projected at 25% CAGR from the manual data alone) — with **zero synced Tally FYs**.
+- CMA PDF download works end-to-end from manual-only historicals (23,481-byte `%PDF-1.4` streamed).
+- Salesman role gets 403 on all three methods (GET/POST/DELETE) with the exact "This report is available only to the tenant owner" message.
+- Cleanup DELETE calls return `{"deleted": 1}` on success.
+
+**Files touched:**
+- `backend/routes/ca_reports.py` — added 3 endpoints, encryption helpers, merge logic in preview + `_assemble_fys`.
+- `frontend/src/pages/CAReports.jsx` — added `ManualHistoricalsSection`, `ManualHistoricalForm` components + state.
+
+**Regression tests (16/16 green combining iter-134 + iter-135):**
+- Manual endpoints exist and all use `_require_useradmin`
+- `_MANUAL_ENCRYPTED_FIELDS` covers every monetary field the manual-entry form exposes
+- Encryption round-trip preserves float fidelity (540.0 → encrypted string → 540.0)
+- Preview endpoint's "no data" bail relaxes when `ca_manual_historicals` count > 0
+- `_assemble_fys` merges Tally + manual with Tally winning on collision, sorted by fy_label
+- Frontend has all 6 core testids (section, add button, modal, fy-label input, save, cancel) + delete/edit buttons + confirm-before-delete
+
