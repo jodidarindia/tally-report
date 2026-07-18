@@ -312,3 +312,78 @@ def credentials_to_persist(creds: Credentials, google_email: str
         "last_used_at": datetime.now(timezone.utc).isoformat(),
         "folder_cache": {},   # populated on first upload
     }
+
+
+# ─── Reusable backup helper (fire-and-forget) ────────────────────────────
+
+async def try_backup_to_drive(db, tenant_id: str, company_id: str,
+                                file_bytes: bytes, filename: str,
+                                mime_type: str, subfolder: str,
+                                company_display_name: str) -> Optional[Dict[str, Any]]:
+    """Silently upload a generated file to the tenant's Drive if
+    connected. Returns the Drive metadata on success or None if there's
+    no connection or the upload fails.
+
+    Callers use this after building an artefact (CMA PDF, XLSX, reports
+    export) so users get a Drive copy without blocking the direct
+    download response. Fire-and-forget — errors are logged, never raised.
+    Strict tenant + company isolation — only the connection scoped to
+    (tenant_id, company_id) is used."""
+    try:
+        conn = await db.gdrive_tenant_connections.find_one(
+            {"tenant_id": tenant_id, "company_id": company_id})
+        if not conn or not conn.get("refresh_token_encrypted"):
+            return None
+        result = upload_stream(
+            conn, file_bytes, filename, mime_type,
+            company_display_name=company_display_name,
+            subfolder_path=subfolder)
+        await db.gdrive_tenant_connections.update_one(
+            {"tenant_id": tenant_id, "company_id": company_id},
+            {"$set": {
+                "folder_cache": result.get("folder_cache"),
+                "last_used_at": result.get("uploaded_at"),
+            }})
+        return {
+            "drive_file_id": result["drive_file_id"],
+            "drive_view_link": result["web_view_link"],
+            "folder_path": result["folder_path"],
+        }
+    except GDriveRevoked:
+        # Mark connection revoked — dispatch employee's next upload
+        # will get a clean error and the UI will prompt reconnect.
+        try:
+            await db.gdrive_tenant_connections.update_one(
+                {"tenant_id": tenant_id, "company_id": company_id},
+                {"$set": {"status": "revoked"}})
+        except Exception:
+            pass
+        logger.warning(
+            f"Drive backup: refresh_token revoked for tenant={tenant_id}")
+        return None
+    except Exception as e:
+        logger.warning(f"Drive backup failed (non-fatal): {e}")
+        return None
+
+
+async def download_file_bytes(db, tenant_id: str, company_id: str,
+                                drive_file_id: str) -> Optional[bytes]:
+    """Fetch a file's raw bytes from the tenant's Drive by drive_file_id.
+    Returns None on any failure. Used by bulk-download endpoints."""
+    from googleapiclient.http import MediaIoBaseDownload
+    try:
+        conn = await db.gdrive_tenant_connections.find_one(
+            {"tenant_id": tenant_id, "company_id": company_id})
+        if not conn:
+            return None
+        service = _get_service(conn)
+        req = service.files().get_media(fileId=drive_file_id)
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"Drive download failed for {drive_file_id}: {e}")
+        return None

@@ -1,11 +1,14 @@
 """Dispatch Terminal routes — Kanban board, porter/transport management, card lifecycle, document uploads."""
-from fastapi import APIRouter, Request, UploadFile, File
-from fastapi.responses import FileResponse
-from typing import Optional
+from fastapi import APIRouter, Request, UploadFile, File, Body, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+from typing import Optional, List
 from datetime import datetime, timezone
 import logging
 import uuid
 import os
+import io
+import zipfile
 
 from db import db
 from models import APIResponse
@@ -424,6 +427,151 @@ async def serve_file(filename: str):
     if not os.path.exists(filepath):
         return APIResponse(success=False, error="File not found")
     return FileResponse(filepath)
+
+
+# ═══════════════════════════════════════════════════════
+# BULK DOWNLOAD (Useradmin only, tenant + company isolated)
+# ═══════════════════════════════════════════════════════
+
+class BulkDownloadRequest(BaseModel):
+    start_date: str                  # ISO date YYYY-MM-DD (inclusive)
+    end_date: str                    # ISO date YYYY-MM-DD (inclusive)
+    doc_types: List[str] = ["invoice_doc", "sales_order", "lr_receipt"]
+
+
+async def _require_useradmin_dispatch(request: Request):
+    user = await get_current_user(request, db)
+    if not user or (user.get("role") or "").lower() != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Bulk download is available only to the tenant "
+                    "useradmin (owner role).")
+    ctx = await get_tenant_context(request)
+    if not ctx.get("tenant_id") or not ctx.get("company_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant + company context required.")
+    return {"user": user, "ctx": ctx}
+
+
+@router.post("/dispatch/bulk-download")
+async def bulk_download_dispatch_docs(
+    request: Request, body: BulkDownloadRequest = Body(...)):
+    """Zip every dispatch document uploaded to Drive within the given
+    date range for the CURRENT (tenant, company) and stream it back.
+    Strict tenant + company isolation — the Drive-download call uses
+    ONLY the connection scoped to (tenant_id, company_id) so no file
+    from another tenant can enter the ZIP even if some drive_file_ids
+    were leaked."""
+    try:
+        guard = await _require_useradmin_dispatch(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx = guard["ctx"]
+
+    # Parse dates
+    try:
+        start = datetime.fromisoformat(body.start_date)
+        end = datetime.fromisoformat(body.end_date)
+    except Exception:
+        return APIResponse(success=False,
+                             error="start_date / end_date must be ISO YYYY-MM-DD.")
+    if end < start:
+        return APIResponse(success=False,
+                             error="end_date must be >= start_date.")
+    if (end - start).days > 366:
+        return APIResponse(success=False,
+                             error="Date range too wide (max 1 year per download).")
+
+    valid_doc_types = {"invoice_doc", "sales_order", "lr_receipt"}
+    doc_types = [d for d in body.doc_types if d in valid_doc_types]
+    if not doc_types:
+        return APIResponse(success=False,
+                             error="No valid doc_types specified.")
+
+    # Query dispatch cards in range — STRICT tenant + company isolation
+    # via _q(ctx); no card from another tenant can match this filter.
+    cursor = db.dispatch_cards.find(
+        {**_q(ctx),
+         "created_at": {"$gte": start.isoformat(),
+                         "$lte": (end.replace(hour=23, minute=59, second=59)
+                                   .isoformat())}},
+        {"_id": 0, "card_id": 1, "customer_name": 1, "documents": 1,
+         "created_at": 1}
+    ).sort("created_at", 1)
+
+    # Assemble ZIP in memory (streaming for large ranges)
+    from services.gdrive_service import download_file_bytes
+    zip_buf = io.BytesIO()
+    included, skipped_no_drive, skipped_dl_fail = 0, 0, 0
+    used_names = set()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        async for card in cursor:
+            docs = card.get("documents") or {}
+            date_prefix = (card.get("created_at") or "")[:10]
+            customer = "".join(
+                c for c in (card.get("customer_name") or "customer")
+                if c.isalnum() or c in " -_")[:40].strip().replace(" ", "_")
+            for dt in doc_types:
+                d = docs.get(dt) or {}
+                fid = d.get("drive_file_id")
+                if not fid:
+                    if d:   # non-Drive legacy doc — skip
+                        skipped_no_drive += 1
+                    continue
+                blob = await download_file_bytes(
+                    db, ctx["tenant_id"], ctx["company_id"], fid)
+                if not blob:
+                    skipped_dl_fail += 1
+                    continue
+                ext = os.path.splitext(d.get("filename") or "")[1] or ".bin"
+                arcname = f"{date_prefix}/{customer}_{dt}{ext}"
+                # de-dupe filenames if a customer has multiple in one day
+                base = arcname; n = 1
+                while arcname in used_names:
+                    n += 1
+                    arcname = base.replace(ext, f"_{n}{ext}")
+                used_names.add(arcname)
+                zf.writestr(arcname, blob)
+                included += 1
+        # Manifest for auditability
+        manifest = (f"FLOWRA Bulk Download\n"
+                     f"Tenant: {ctx['tenant_id']}\n"
+                     f"Company: {ctx['company_id']}\n"
+                     f"Range: {body.start_date} → {body.end_date}\n"
+                     f"Doc types: {', '.join(doc_types)}\n"
+                     f"Files included: {included}\n"
+                     f"Skipped (no drive backup): {skipped_no_drive}\n"
+                     f"Skipped (Drive fetch failed): {skipped_dl_fail}\n"
+                     f"Generated: {datetime.now(timezone.utc).isoformat()}\n"
+                     f"Generated by: {guard['user'].get('username','')}\n")
+        zf.writestr("_MANIFEST.txt", manifest)
+
+    if included == 0:
+        return APIResponse(
+            success=False,
+            error=(f"No Drive-backed documents in {body.start_date} → "
+                    f"{body.end_date}. If files were uploaded before the "
+                    "Drive migration, they only exist on the legacy "
+                    "server disk and can't be bulk-downloaded."))
+
+    # Audit log — record every bulk download for this tenant
+    await db.dispatch_bulk_downloads.insert_one({
+        **_q(ctx),
+        "start_date": body.start_date, "end_date": body.end_date,
+        "doc_types": doc_types,
+        "files_included": included,
+        "files_skipped_no_drive": skipped_no_drive,
+        "files_skipped_dl_fail": skipped_dl_fail,
+        "downloaded_at": datetime.now(timezone.utc).isoformat(),
+        "downloaded_by": guard["user"].get("username", ""),
+    })
+
+    zip_buf.seek(0)
+    fname = f"Dispatch_{body.start_date}_to_{body.end_date}.zip"
+    return StreamingResponse(
+        zip_buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ═══════════════════════════════════════════════════════

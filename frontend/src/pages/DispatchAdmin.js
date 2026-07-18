@@ -130,6 +130,8 @@ export default function DispatchAdmin({ selectedFY, companyId, isEmployee = fals
     // Employees tab is admin-only — dispatch employees can view their own dispatch board
     // but should not see/manage the employee roster.
     ...(isEmployee ? [] : [{id:'employees', label:'Employees'}]),
+    // v137 — useradmin-only bulk download from Google Drive backups
+    ...(isEmployee ? [] : [{id:'bulk-download', label:'Bulk Download'}]),
   ];
 
   if(loading) return <div className="flex items-center justify-center h-48"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"/></div>;
@@ -241,6 +243,8 @@ export default function DispatchAdmin({ selectedFY, companyId, isEmployee = fals
           <span className="ml-auto text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold flex-shrink-0">dispatch</span>
         </div>)}
       </div>}
+
+      {tab==='bulk-download' && !isEmployee && <BulkDownloadTab hdr={hdr}/>}
 
       {/* MODALS */}
       {reassignCard && <Modal onClose={()=>setReassignCard(null)} title="Reassign Card">
@@ -519,4 +523,114 @@ function PendingBillingTab({ companyId, hdr }) {
       </div>
     </div>}
   </div>;
+}
+
+
+/* ─── Bulk Download tab (useradmin only) ─────────────────────────────── */
+
+function BulkDownloadTab({ hdr }) {
+  const [start, setStart] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [end, setEnd] = useState(() => new Date().toISOString().split('T')[0]);
+  const [types, setTypes] = useState({
+    invoice_doc: true, sales_order: true, lr_receipt: true,
+  });
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    const doc_types = Object.entries(types).filter(([, v]) => v).map(([k]) => k);
+    if (doc_types.length === 0) {
+      toast.error('Pick at least one document type');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API}/api/dispatch/bulk-download`,
+        { start_date: start, end_date: end, doc_types },
+        { headers: hdr(), responseType: 'blob' });
+      // Errors come back as JSON blobs; success is a real zip binary
+      if (res.data.type && res.data.type.includes('application/json')) {
+        const text = await res.data.text();
+        try {
+          const j = JSON.parse(text);
+          toast.error(j?.error || 'Bulk download failed');
+        } catch { toast.error('Bulk download failed'); }
+        return;
+      }
+      const blob = new Blob([res.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Dispatch_${start}_to_${end}.zip`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('ZIP downloaded');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Bulk download failed');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4"
+          data-testid="bulk-download-tab">
+      <div>
+        <div className="font-semibold text-slate-900">Bulk Download from Google Drive</div>
+        <div className="text-xs text-slate-500 mt-1 max-w-2xl">
+          Download every Transport LR, Invoice, and Sales Order for the
+          selected date range as a single ZIP — pulled straight from your
+          linked Google Drive. Files are grouped by upload date +
+          customer inside the archive. Great for month-end reconciliation
+          with your CA. Only files uploaded AFTER you connected Drive
+          (v137+) are included.
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">Start date</label>
+          <input type="date" value={start} onChange={e => setStart(e.target.value)}
+                  data-testid="bulk-start-date"
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-sm"/>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">End date</label>
+          <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+                  data-testid="bulk-end-date"
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-sm"/>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium text-slate-700 mb-2">Include document types</div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            ['invoice_doc',  'Invoices'],
+            ['sales_order',  'Sales Orders'],
+            ['lr_receipt',   'LR / Transport'],
+          ].map(([k, label]) => (
+            <label key={k}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs cursor-pointer
+                                   ${types[k] ? 'bg-blue-50 border-blue-300 text-blue-800'
+                                                : 'bg-white border-slate-300 text-slate-600'}`}>
+              <input type="checkbox" checked={types[k]}
+                      onChange={e => setTypes(p => ({...p, [k]: e.target.checked}))}
+                      data-testid={`bulk-type-${k}`}/>
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <button onClick={run} disabled={busy}
+               data-testid="bulk-download-btn"
+               className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm rounded-lg font-medium disabled:opacity-60">
+        {busy && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/>}
+        <FileDown size={14}/> Download ZIP
+      </button>
+      <div className="text-[11px] text-slate-400">
+        Tenant + company isolated — each ZIP contains ONLY files uploaded
+        under the currently-selected company. A manifest.txt listing all
+        included files is bundled inside.
+      </div>
+    </div>
+  );
 }

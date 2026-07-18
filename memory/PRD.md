@@ -951,3 +951,51 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 4. As a dispatch employee, upload a Transport LR against a dispatch card → the file lands in the useradmin's Drive under `FLOWRA Documents → <Company> → Dispatch → 2026-02/`.
 5. In the useradmin's Drive, the FLOWRA folder tree appears; each dispatch card shows a "View" link that opens the file in Drive directly.
 
+
+## Shipped — Feb 16 2026 (iteration 138) — Drive-Backed CA artefacts + Bulk Download
+
+### 1. Drive-Backed CMA / Pitch backups
+- **New reusable helper** `services.gdrive_service.try_backup_to_drive(db, tenant_id, company_id, bytes, filename, mime, subfolder, company_display_name)` — fire-and-forget. Returns `None` silently if no Drive connection exists or the upload fails. Detects `GDriveRevoked` and marks the connection `status="revoked"` so the useradmin sees a reconnect prompt.
+- **New reusable helper** `services.gdrive_service.download_file_bytes(db, tenant_id, company_id, drive_file_id)` — pulls a file's raw bytes from the tenant's Drive; used by the bulk-download endpoint.
+- **CMA PDF + CMA XLSX + Pitch PDF endpoints in `routes/ca_reports.py`** now call `_backup_ca_artifact(...)` after building the artefact. Files land in the useradmin's Drive under `FLOWRA Documents → <Company> → CA Reports/CMA/YYYY-MM/` (or `.../Pitch/YYYY-MM/`). Direct-download response is unchanged — the Drive mirror is silent and non-blocking.
+
+### 2. Bulk Download endpoint (useradmin only)
+- **`POST /api/dispatch/bulk-download`** with body `{start_date, end_date, doc_types[]}`. Downloads every dispatch document uploaded to Drive within the range and streams a ZIP archive.
+- **Strict tenant + company isolation** guaranteed by:
+  1. `_require_useradmin_dispatch` guard (role=admin AND tenant_id + company_id resolved).
+  2. Cards query filtered by `_q(ctx)` (`{tenant_id, company_id}`) — no card from another tenant can match.
+  3. Every Drive download call passes `ctx["tenant_id"]` + `ctx["company_id"]` — even if two tenants had the same `drive_file_id`, the connection scope prevents cross-fetch.
+- **Range validation**: end >= start, and max 1-year span (prevents accidental multi-year exports that would freeze the pod).
+- **Doc-type filter**: `invoice_doc`, `sales_order`, `lr_receipt` (validated against a whitelist).
+- **In-ZIP layout**: `<YYYY-MM-DD>/<Customer>_<doc_type>.<ext>` — chronological + human-readable + de-duped when a customer has multiple files on the same day.
+- **`_MANIFEST.txt` bundled inside** listing tenant_id, company_id, range, doc types, files included, files skipped (no drive backup vs Drive fetch failed), generated timestamp + user — for auditability.
+- **Audit log**: every bulk download writes a row to the new `dispatch_bulk_downloads` collection (tenant_id, company_id, dates, doc_types, counts, downloaded_by).
+- **Legacy files skipped**: cards uploaded before v137 have no `drive_file_id` — the manifest counts them as `skipped_no_drive` so the useradmin knows how many predate the Drive migration.
+
+### 3. Frontend
+- **New "Bulk Download" tab** on the Dispatch Admin page (`DispatchAdmin.js`), hidden from `isEmployee` users. `<BulkDownloadTab>` component with:
+  - Start / end date pickers (default: last 30 days)
+  - Three doc-type checkbox chips (invoices / sales orders / LR / transport)
+  - "Download ZIP" button with spinner + toast on completion
+  - Info line reminding user of tenant + company isolation
+  - Handles both zip-binary success and JSON-error paths (Blob type detection).
+
+### Files touched
+- `backend/services/gdrive_service.py` — new `try_backup_to_drive` + `download_file_bytes` helpers (~90 lines).
+- `backend/routes/ca_reports.py` — new `_backup_ca_artifact` helper; wired into `gen_cma_pdf`, `gen_cma_xlsx`, `gen_pitch_pdf`.
+- `backend/routes/dispatch.py` — imports `zipfile` + `io`; new `_require_useradmin_dispatch` + `bulk_download_dispatch_docs` route (~90 lines).
+- `frontend/src/pages/DispatchAdmin.js` — new `Bulk Download` tab entry + `<BulkDownloadTab>` component (~90 lines).
+- `backend/tests/test_iteration138_drive_backups_bulk.py` — 7 new tests, all green.
+
+### Live curl verification
+- Bulk download without Drive connection → clean error `"No Drive-backed documents ... If files were uploaded before the Drive migration, they only exist on the legacy server disk"`.
+- Salesman → 403 `"Bulk download is available only to the tenant useradmin"`.
+- Bad range → `"end_date must be >= start_date"`.
+- >1-year range → `"Date range too wide (max 1 year per download)"`.
+- Bad ISO dates → `"start_date / end_date must be ISO YYYY-MM-DD"`.
+
+### Regression tests: 40/40 green (all of iter-134 → iter-138).
+
+### Notes for OAuth Consent screen publishing (user's request)
+The user must click **PUBLISH APP** on the Google Cloud Console → OAuth Consent Screen page. This removes the "unverified app" warning for the first ~100 users. For unlimited users + no warning, Google needs to review branding + logo + privacy policy — 3-7 day turnaround. Once published I can wire up any additional Drive-related features (Tally CSV export mirroring, unified backup dashboard, etc.).
+

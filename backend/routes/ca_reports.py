@@ -635,6 +635,21 @@ async def _track_cma_generation(ctx: Dict[str, Any], user: Dict[str, Any],
         logger.warning(f"CMA generation tracking failed (non-fatal): {e}")
 
 
+async def _backup_ca_artifact(ctx, meta, blob: bytes, filename: str,
+                                mime_type: str, subfolder: str) -> None:
+    """Fire-and-forget Drive backup for a CA-Corner artefact. Non-fatal —
+    if Drive isn't connected or the upload fails, the download response
+    still succeeds."""
+    from services.gdrive_service import try_backup_to_drive
+    try:
+        await try_backup_to_drive(
+            db, ctx["tenant_id"], ctx["company_id"],
+            blob, filename, mime_type, subfolder,
+            company_display_name=meta.company_name)
+    except Exception as e:
+        logger.warning(f"CA artefact Drive backup non-fatal error: {e}")
+
+
 @router.post("/ca-reports/cma/pdf")
 async def gen_cma_pdf(request: Request, body: GenerateRequest = Body(...)):
     try:
@@ -645,6 +660,12 @@ async def gen_cma_pdf(request: Request, body: GenerateRequest = Body(...)):
     pdf = build_cma_pdf(meta, hist, proj, a)
     await _track_cma_generation(guard["ctx"], guard["user"], "pdf")
     fname = f"CMA_{_sanitize(meta.company_name)}.pdf"
+    # v137 — mirror to useradmin's Drive if connected (silent, fire-and-
+    # forget). "CA Reports/CMA/YYYY-MM/" folder tree.
+    from datetime import datetime as _dt
+    await _backup_ca_artifact(
+        guard["ctx"], meta, pdf, fname, "application/pdf",
+        f"CA Reports/CMA/{_dt.now().strftime('%Y-%m')}")
     return _stream(pdf, fname, "application/pdf")
 
 
@@ -658,6 +679,11 @@ async def gen_cma_xlsx(request: Request, body: GenerateRequest = Body(...)):
     xlsx = build_cma_xlsx(meta, hist, proj, a)
     await _track_cma_generation(guard["ctx"], guard["user"], "xlsx")
     fname = f"CMA_{_sanitize(meta.company_name)}.xlsx"
+    from datetime import datetime as _dt
+    await _backup_ca_artifact(
+        guard["ctx"], meta, xlsx, fname,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        f"CA Reports/CMA/{_dt.now().strftime('%Y-%m')}")
     return _stream(
         xlsx, fname,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -672,6 +698,10 @@ async def gen_pitch_pdf(request: Request, body: GenerateRequest = Body(...)):
     meta, hist, proj, a = await _assemble_fys(guard, body)
     pdf = build_pitch_pdf(meta, hist, proj, a, teaser=False)
     fname = f"Pitch_Deck_{_sanitize(meta.company_name)}.pdf"
+    from datetime import datetime as _dt
+    await _backup_ca_artifact(
+        guard["ctx"], meta, pdf, fname, "application/pdf",
+        f"CA Reports/Pitch/{_dt.now().strftime('%Y-%m')}")
     return _stream(pdf, fname, "application/pdf")
 
 
