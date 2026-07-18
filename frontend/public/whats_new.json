@@ -1,7 +1,8 @@
 {
-  "updated_at": "2026-07-11",
+  "updated_at": "2026-07-12",
   "note": "SINGLE SOURCE OF TRUTH for the What's New panel in the User Admin Dashboard AND for FLOWRA_Whats_New.pdf. Edit this file to update both surfaces at once. Regenerate PDF via `python /app/scripts/generate_whats_new_pdf.py`.",
   "entries": [
+    { "date": "2026-07-12", "tag": "IMPROVE", "title": "Analytics — Sales Frequency Readability",       "desc": "Increased row height and padding on the Sales Frequency table so item names, top customers and totals no longer feel cramped." },
     { "date": "2026-07-11", "tag": "FIX",     "title": "Busy Sync Agent v1.3.1",                          "desc": "pyodbc bundled + Busy DB password fallback chain (Busy 21/18/older) + BUSY_DB_PASSWORD override field in Settings." },
     { "date": "2026-07-08", "tag": "FIX",     "title": "Tally Agent v9.8.30 — Forward-Dated Voucher Fix", "desc": "Quick-sync window now extends to today, not stops at stored LVD. Reconcile is date-scoped — prevents mass deletions when a voucher is added with a future date." },
     { "date": "2026-07-08", "tag": "NEW",     "title": "Busy Sync Agent v1.2 — Full Tally Parity",         "desc": "Complete 1:1 Tally clone GUI: 4 connectivity cards, Sync Status panel, Subscription block with Request Renewal, auto-detect companies + FYs on folder pick." },

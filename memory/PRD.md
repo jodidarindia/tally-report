@@ -999,3 +999,25 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 ### Notes for OAuth Consent screen publishing (user's request)
 The user must click **PUBLISH APP** on the Google Cloud Console → OAuth Consent Screen page. This removes the "unverified app" warning for the first ~100 users. For unlimited users + no warning, Google needs to review branding + logo + privacy policy — 3-7 day turnaround. Once published I can wire up any additional Drive-related features (Tally CSV export mirroring, unified backup dashboard, etc.).
 
+
+## Shipped — Jul 12 2026 (iteration 139) — Sales Frequency row padding + What's New refresh
+
+**Problem**: User reported that Analytics → Sales Frequency tab rows felt cramped (item names, top-customer chips, and totals were vertically squeezed).
+
+**Fix**:
+- Added scoped CSS class `.sales-freq-table` to the sales frequency `<table>` in `/app/frontend/src/pages/InventoryAnalytics.js`.
+- New CSS rules in `/app/frontend/src/App.css`:
+  - `td` vertical padding bumped `0.75rem → 1.1rem` (mobile) and `1rem → 1.35rem` (≥640px).
+  - `th` padding bumped to `0.9rem` / `1.1rem` respectively.
+  - `line-height: 1.5` for airier rows.
+- Change is scoped — does NOT affect other `data-table` instances (CRM, Below-Cost, Movement etc. all keep their current density).
+
+**What's New panel refreshed**:
+- `/app/frontend/public/whats_new.json` gets a new `IMPROVE` entry dated 2026-07-12 explaining the readability fix. The change surfaces on the User Admin Dashboard "What's New" panel AND (post `python /app/scripts/generate_whats_new_pdf.py`) in FLOWRA_Whats_New.pdf.
+
+**Files touched**:
+- `frontend/src/pages/InventoryAnalytics.js` (1-line className add)
+- `frontend/src/App.css` (17-line scoped padding block)
+- `frontend/public/whats_new.json` (new IMPROVE entry, `updated_at` → 2026-07-12)
+
+**Verification**: Frontend compiled cleanly (hot reload, no errors in `frontend.err.log`); whats_new.json parses as valid JSON. Live UI screenshot blocked by reCAPTCHA in preview env — user should validate visually on `/analytics → Sales Frequency` tab.

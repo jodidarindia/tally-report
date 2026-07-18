@@ -511,7 +511,7 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl overflow-auto max-h-[calc(100vh-460px)]">
-                  <table className="data-table min-w-[700px]" data-testid="sales-frequency-table">
+                  <table className="data-table sales-freq-table min-w-[700px]" data-testid="sales-frequency-table">
                     <thead>
                       <tr>
                         <SortTh field="item_name" label="Item Name" />
