@@ -135,18 +135,34 @@ async def _build_historical_fy(tenant_id: str, company_id: str,
                 s += safe_num(l.get("closing_balance", 0))
         return abs(s)
 
-    # Voucher aggregates for the FY (guarded — only if the FY tag exists)
+    # Voucher aggregates for the FY (iter-139: filter by voucher_date
+    # range — sales_vouchers/purchase_vouchers do NOT persist a scalar
+    # `fy` field, so the previous `{fy: fy_label}` filter always returned
+    # zero and every historical FY looked like a blank company. Also the
+    # amount field is `total_amount`, not `amount` — the older code was
+    # summing a non-existent key on both collections).
+    from utils import fy_to_date_range
     sales_amt = 0.0
     purchase_amt = 0.0
     if fy_label:
-        sv = await db.sales_vouchers.find(
-            {**q, "fy": fy_label}, {"amount": 1}
-        ).to_list(200000)
-        sales_amt = sum(abs(safe_num(v.get("amount", 0))) for v in sv)
-        pv = await db.purchase_vouchers.find(
-            {**q, "fy": fy_label}, {"amount": 1}
-        ).to_list(200000)
-        purchase_amt = sum(abs(safe_num(v.get("amount", 0))) for v in pv)
+        fy_start, fy_end = fy_to_date_range(fy_label)
+        if fy_start and fy_end:
+            sv = await db.sales_vouchers.find(
+                {**q, "voucher_date": {"$gte": fy_start, "$lte": fy_end}},
+                {"amount": 1, "total_amount": 1}
+            ).to_list(200000)
+            sales_amt = sum(
+                abs(safe_num(v.get("total_amount") or v.get("amount") or 0))
+                for v in sv
+            )
+            pv = await db.purchase_vouchers.find(
+                {**q, "voucher_date": {"$gte": fy_start, "$lte": fy_end}},
+                {"amount": 1, "total_amount": 1}
+            ).to_list(200000)
+            purchase_amt = sum(
+                abs(safe_num(v.get("total_amount") or v.get("amount") or 0))
+                for v in pv
+            )
 
     # Depreciation & interest
     dep_amt = 0.0
@@ -211,11 +227,61 @@ async def _build_historical_fy(tenant_id: str, company_id: str,
 
 
 async def _detect_synced_fys(tenant_id: str, company_id: str) -> List[str]:
-    """Return the list of FY tags actually present in the tenant's data."""
+    """Return the list of FY tags actually present in the tenant's data.
+
+    iter-139 bugfix: `sales_vouchers` and `profit_loss` do NOT persist an
+    `fy` scalar field (see ai_reports.py iter-121 note). Deriving FY via
+    `distinct('fy', ...)` therefore always returned [], which surfaced as
+    a false "No FY data synced yet" error even when 2+ FYs were live.
+    Fix: enumerate FYs from the actual `voucher_date` range in
+    sales_vouchers (Tally's most authoritative FY signal).
+    """
+    from utils import fy_to_date_range
     q = {"tenant_id": tenant_id, "company_id": company_id}
-    fys = await db.sales_vouchers.distinct("fy", q) or []
-    fys += await db.profit_loss.distinct("fy", q) or []
-    fys = sorted({f for f in fys if f})
+
+    # 1) Any explicitly-tagged FYs (defensive — supports future schemas
+    #    that DO persist the scalar `fy` field).
+    tagged: set[str] = set()
+    for col in ("sales_vouchers", "profit_loss", "purchase_vouchers"):
+        try:
+            for f in (await db[col].distinct("fy", q)) or []:
+                if f:
+                    tagged.add(str(f))
+        except Exception:
+            pass
+
+    # 2) Derive FYs from the sales_vouchers.voucher_date range — this is
+    #    the source of truth today (see filter_vouchers_by_fy usage).
+    date_derived: set[str] = set()
+    try:
+        oldest = await db.sales_vouchers.find(
+            q, {"_id": 0, "voucher_date": 1}
+        ).sort("voucher_date", 1).limit(1).to_list(1)
+        newest = await db.sales_vouchers.find(
+            q, {"_id": 0, "voucher_date": 1}
+        ).sort("voucher_date", -1).limit(1).to_list(1)
+        if oldest and newest:
+            def _fy_of(iso_date: str) -> str:
+                # 'YYYY-MM-DD' → Indian FY tag 'YYYY-YY' (Apr–Mar).
+                y, m = int(iso_date[:4]), int(iso_date[5:7])
+                start = y if m >= 4 else y - 1
+                return f"{start}-{str(start + 1)[-2:]}"
+            start_fy = _fy_of(oldest[0]["voucher_date"])
+            end_fy = _fy_of(newest[0]["voucher_date"])
+            sy = int(start_fy.split("-")[0])
+            ey = int(end_fy.split("-")[0])
+            for y in range(sy, ey + 1):
+                fy = f"{y}-{str(y + 1)[-2:]}"
+                # Confirm the FY has ≥1 voucher (guards against gaps).
+                fs, fe = fy_to_date_range(fy)
+                if fs and await db.sales_vouchers.count_documents(
+                        {**q, "voucher_date": {"$gte": fs, "$lte": fe}},
+                        limit=1):
+                    date_derived.add(fy)
+    except Exception:
+        pass
+
+    fys = sorted(tagged | date_derived)
     return fys[-5:] if len(fys) > 5 else fys
 
 

@@ -1021,3 +1021,29 @@ The user must click **PUBLISH APP** on the Google Cloud Console → OAuth Consen
 - `frontend/public/whats_new.json` (new IMPROVE entry, `updated_at` → 2026-07-12)
 
 **Verification**: Frontend compiled cleanly (hot reload, no errors in `frontend.err.log`); whats_new.json parses as valid JSON. Live UI screenshot blocked by reCAPTCHA in preview env — user should validate visually on `/analytics → Sales Frequency` tab.
+
+## Shipped — Jul 12 2026 (iteration 139 pt.2) — CA Corner Bank/Investor Reports FY Detection Bug
+
+**Bug reported by user**: In *CA Corner → Bank & Investor Report* tab, the preview endpoint returned
+> "No FY data synced yet for this company, and no prior-year figures entered manually. Either sync at least one FY via the Tally / Busy agent, OR use the 'Prior-Year Manual Entry' form below to type in the audited numbers for at least one prior year."
+even though **two FYs (2025-26 and 2026-27) of Tally data were live** in the tenant.
+
+**Root cause (2 stacked bugs in `/app/backend/routes/ca_reports.py`)**:
+1. `_detect_synced_fys` used `db.sales_vouchers.distinct("fy", …)` and `db.profit_loss.distinct("fy", …)` — but *neither collection persists a scalar `fy` field* (FY is derived from `voucher_date`, see `ai_reports.py` iter-121 comment). Result: `distinct()` always returned `[]` → false "no FY synced" error.
+2. `_build_historical_fy` used `db.sales_vouchers.find({"fy": fy_label, …})` — same non-existent field. It also summed `v.get("amount")`, but the real field on Tally-synced vouchers is `total_amount`. Both bugs together meant every historical FY looked completely empty even if it had 1,000+ vouchers.
+
+**Fix**:
+- `_detect_synced_fys` now enumerates FYs from the `voucher_date` min/max span in `sales_vouchers`, then validates each candidate FY has ≥1 voucher.
+- `_build_historical_fy` filters by `voucher_date` range and reads `total_amount` (with `amount` fallback).
+- Tenant isolation preserved (t1's FYs don't leak into t2).
+
+**Verified (live)** against admin tenant `3079b0af…` / company `03f638d1…`:
+- Before: preview returned `success: False, error: "No FY data synced yet…"`
+- After: preview returns `success: True, fys_available: ['2025-26', '2026-27']`, historicals populated with real per-FY numbers (FY25-26 net_sales=500.06L / purchases=20.26L; FY26-27 net_sales=48.02L / purchases=0.91L), 3 projections generated automatically.
+
+**Regression tests**: `backend/tests/test_iteration139_ca_fy_detection.py` — 5 tests, all green, plus 40/40 pre-existing CA/GDrive tests still pass (45/45 total on the CA + Drive suites).
+
+**Files touched**:
+- `backend/routes/ca_reports.py` — `_detect_synced_fys` rewritten (~55 lines), `_build_historical_fy` voucher-aggregate block rewritten (~25 lines).
+- `backend/tests/test_iteration139_ca_fy_detection.py` — new (5 tests, 215 lines).
+- `frontend/public/whats_new.json` — new FIX entry dated 2026-07-12.
