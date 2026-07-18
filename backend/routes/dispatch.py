@@ -275,26 +275,141 @@ async def reassign_card(card_id: str, request: Request):
 # ═══════════════════════════════════════════════════════
 # DOCUMENT UPLOADS
 # ═══════════════════════════════════════════════════════
+#
+# v136 — Drive-only storage. Files are streamed directly into the
+# tenant useradmin's linked Google Drive (see routes.gdrive +
+# services.gdrive_service). NOTHING is written to the FLOWRA pod's
+# local disk anymore. If Drive is not connected → HTTP 400 (hard mode).
+#
+# Old files uploaded before this migration still resolve via the legacy
+# /api/dispatch/files/{filename} endpoint below (kept for backward
+# compat; new uploads never populate that path again).
+
+_ALLOWED_MIME_PREFIXES = ("image/", "application/pdf")
+
 
 @router.post("/dispatch/cards/{card_id}/upload/{doc_type}")
-async def upload_document(card_id: str, doc_type: str, request: Request, file: UploadFile = File(...)):
+async def upload_document(card_id: str, doc_type: str, request: Request,
+                            file: UploadFile = File(...)):
+    """Stream one Transport LR / Invoice / Sales Order directly into the
+    tenant useradmin's Google Drive. No local disk writes."""
     try:
         if doc_type not in ("invoice_doc", "sales_order", "lr_receipt"):
-            return APIResponse(success=False, error="doc_type must be: invoice_doc, sales_order, lr_receipt")
+            return APIResponse(
+                success=False,
+                error="doc_type must be: invoice_doc, sales_order, lr_receipt")
         user = await get_current_user(request, db)
         ctx = await get_tenant_context(request)
-        card = await db.dispatch_cards.find_one({**_q(ctx), "card_id": card_id}, {"_id": 0, "card_id": 1})
+        card = await db.dispatch_cards.find_one(
+            {**_q(ctx), "card_id": card_id},
+            {"_id": 0, "card_id": 1, "customer_name": 1})
         if not card:
             return APIResponse(success=False, error="Card not found")
-        ext = os.path.splitext(file.filename)[1] or ".jpg"
-        filename = f"{card_id}_{doc_type}_{uuid.uuid4().hex[:6]}{ext}"
-        with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
-            f.write(await file.read())
-        file_url = f"/api/dispatch/files/{filename}"
-        await db.dispatch_cards.update_one({**_q(ctx), "card_id": card_id},
-            {"$set": {f"documents.{doc_type}": {"filename": filename, "url": file_url,
-                      "uploaded_at": datetime.now(timezone.utc).isoformat(), "uploaded_by": user.get("username", "")}}})
-        return APIResponse(success=True, data={"url": file_url, "filename": filename})
+
+        # Fetch this tenant's Drive connection. HARD MODE — reject if
+        # not connected. The dispatch employee sees a clear message
+        # telling them to ping their useradmin.
+        conn = await db.gdrive_tenant_connections.find_one(
+            {"tenant_id": ctx["tenant_id"],
+             "company_id": ctx["company_id"]})
+        if not conn or not conn.get("refresh_token_encrypted"):
+            return APIResponse(
+                success=False,
+                error=("Google Drive is not connected for this company. "
+                        "Ask your useradmin to connect Drive from Profile "
+                        "→ Integrations, then retry."))
+
+        # Guard against unreasonable file types / sizes so we don't burn
+        # Drive quota on garbage.
+        mime = (file.content_type or "").lower()
+        if not any(mime.startswith(p) for p in _ALLOWED_MIME_PREFIXES):
+            return APIResponse(
+                success=False,
+                error=f"Only images or PDFs allowed. Got: {mime or 'unknown'}")
+
+        raw = await file.read()
+        if not raw:
+            return APIResponse(success=False, error="Empty file.")
+        if len(raw) > 25 * 1024 * 1024:
+            return APIResponse(
+                success=False,
+                error="File too large (max 25 MB per upload).")
+
+        # Build a helpful filename: <customer>_<doc>_<YYYY-MM-DD>.<ext>
+        from datetime import datetime as _dt
+        ext = os.path.splitext(file.filename or "")[1].lower() or ".bin"
+        safe_customer = "".join(
+            c for c in (card.get("customer_name") or "customer")
+            if c.isalnum() or c in " -_")[:40].strip().replace(" ", "_")
+        today = _dt.now().strftime("%Y-%m-%d")
+        drive_filename = f"{safe_customer}_{doc_type}_{today}{ext}"
+
+        # Company display name for the folder path
+        try:
+            from services.id_mapping_service import get_company_name
+            company_display = await get_company_name(
+                ctx["tenant_id"], ctx["company_id"]) or ctx["company_id"]
+        except Exception:
+            company_display = ctx["company_id"]
+
+        try:
+            from services.gdrive_service import (
+                upload_stream, GDriveNotConnected, GDriveRevoked,
+            )
+            result = upload_stream(
+                conn, raw, drive_filename, mime,
+                company_display_name=company_display,
+                subfolder_path=f"Dispatch/{_dt.now().strftime('%Y-%m')}")
+        except GDriveNotConnected:
+            return APIResponse(
+                success=False,
+                error="Drive connection missing — ask useradmin to reconnect.")
+        except GDriveRevoked as e:
+            # User revoked us at Google. Mark connection revoked so the
+            # UI shows the right state; ask them to reconnect.
+            await db.gdrive_tenant_connections.update_one(
+                {"tenant_id": ctx["tenant_id"],
+                 "company_id": ctx["company_id"]},
+                {"$set": {"status": "revoked"}})
+            return APIResponse(
+                success=False,
+                error=("Google Drive connection was revoked. "
+                        f"Ask useradmin to reconnect. ({e})"))
+        except RuntimeError as e:
+            return APIResponse(success=False, error=str(e))
+
+        # Cache updated folder IDs + last_used_at so the next upload is
+        # a single Drive round-trip.
+        await db.gdrive_tenant_connections.update_one(
+            {"tenant_id": ctx["tenant_id"],
+             "company_id": ctx["company_id"]},
+            {"$set": {
+                "folder_cache": result.get("folder_cache"),
+                "last_used_at": result.get("uploaded_at"),
+            }})
+
+        # Persist metadata on the card. NO local `url` field — Drive is
+        # the only place the file lives now.
+        doc_meta = {
+            "filename": drive_filename,
+            "drive_file_id": result["drive_file_id"],
+            "drive_view_link": result["web_view_link"],
+            "size_bytes": result["size_bytes"],
+            "mime_type": result["mime_type"],
+            "uploaded_at": result["uploaded_at"],
+            "uploaded_by": user.get("username", ""),
+            "storage": "gdrive",
+        }
+        await db.dispatch_cards.update_one(
+            {**_q(ctx), "card_id": card_id},
+            {"$set": {f"documents.{doc_type}": doc_meta}})
+
+        return APIResponse(success=True, data={
+            "drive_view_link": result["web_view_link"],
+            "drive_file_id": result["drive_file_id"],
+            "filename": drive_filename,
+            "storage": "gdrive",
+        })
     except Exception as e:
         logger.error(f"Upload error: {e}")
         return APIResponse(success=False, error=str(e))
@@ -302,6 +417,9 @@ async def upload_document(card_id: str, doc_type: str, request: Request, file: U
 
 @router.get("/dispatch/files/{filename}")
 async def serve_file(filename: str):
+    """Legacy — kept alive so cards uploaded BEFORE the Drive migration
+    still resolve. New uploads (v136+) go straight to Drive and this
+    route is not populated any more."""
     filepath = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(filepath):
         return APIResponse(success=False, error="File not found")

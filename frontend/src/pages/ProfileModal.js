@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { X, Eye, EyeOff, User, Lock, Key, CreditCard, Calendar, Shield, AlertTriangle, Users, Plus, Trash2, Mail } from 'lucide-react';
+import { X, Eye, EyeOff, User, Lock, Key, CreditCard, Calendar, Shield, AlertTriangle, Users, Plus, Trash2, Mail, Link2, Cloud, CheckCircle2, Loader2 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -190,6 +190,13 @@ const ProfileModal = ({ user, token, onClose }) => {
             </button>
           )}
           {user?.role === 'admin' && (
+            <button onClick={() => setActiveTab('integrations')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'integrations' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              data-testid="profile-tab-integrations">
+              <Link2 size={14} className="inline mr-1.5" />Integrations
+            </button>
+          )}
+          {user?.role === 'admin' && (
             <button onClick={() => setActiveTab('subscription')}
               className={`px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'subscription' ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
               data-testid="profile-tab-subscription">
@@ -368,6 +375,10 @@ const ProfileModal = ({ user, token, onClose }) => {
             </div>
           )}
 
+          {activeTab === 'integrations' && user?.role === 'admin' && (
+            <IntegrationsSection token={token} />
+          )}
+
           {activeTab === 'subscription' && user?.role === 'admin' && (
             <div className="space-y-4" data-testid="subscription-section">
               {/* Expiry Warning */}
@@ -461,3 +472,187 @@ const ProfileModal = ({ user, token, onClose }) => {
 };
 
 export default ProfileModal;
+
+
+/* ─── Google Drive Integration Section (v136) ─────────────────────── */
+
+const IntegrationsSection = ({ token }) => {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/gdrive/status`, { headers });
+      if (res.data?.success) setStatus(res.data.data);
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    reload();
+    // Handle the OAuth callback redirect. Google → our /callback route →
+    // 302 back to /#gdrive-connected=<email>  or  /#gdrive-error=<reason>.
+    const hash = window.location.hash || '';
+    if (hash.startsWith('#gdrive-connected=')) {
+      const email = decodeURIComponent(hash.replace('#gdrive-connected=', ''));
+      toast.success(`Google Drive connected as ${email}`);
+      window.history.replaceState({}, '', window.location.pathname);
+      setTimeout(reload, 400);
+    } else if (hash.startsWith('#gdrive-error=')) {
+      const reason = hash.replace('#gdrive-error=', '');
+      toast.error(`Drive connection failed: ${reason}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startConnect = async () => {
+    setBusy(true);
+    try {
+      const res = await axios.get(`${API}/gdrive/connect`, { headers });
+      if (res.data?.success) {
+        window.location.href = res.data.data.authorization_url;
+      } else {
+        toast.error(res.data?.error || 'Could not start OAuth flow');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Could not start OAuth flow');
+    } finally { setBusy(false); }
+  };
+
+  const disconnect = async () => {
+    if (!window.confirm(
+      'Disconnect Google Drive? Existing files in Drive stay put — new '
+      + 'dispatch uploads will be BLOCKED until you reconnect.')) return;
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API}/gdrive/disconnect`, {}, { headers });
+      if (res.data?.success) {
+        toast.success('Google Drive disconnected');
+        setStatus(null);
+        reload();
+      } else {
+        toast.error(res.data?.error || 'Disconnect failed');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Disconnect failed');
+    } finally { setBusy(false); }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12"
+             data-testid="integrations-loading">
+        <Loader2 className="animate-spin text-[#2563EB]" size={20} />
+      </div>
+    );
+  }
+
+  const connected = status?.connected;
+  return (
+    <div className="space-y-4" data-testid="integrations-section">
+      <div className="flex items-center gap-2 mb-2">
+        <Link2 size={18} className="text-slate-500" />
+        <h3 className="font-semibold text-slate-900">Cloud Storage</h3>
+      </div>
+
+      <div className={`border rounded-xl p-5 ${connected
+                ? 'border-emerald-200 bg-emerald-50/60'
+                : 'border-slate-200 bg-white'}`}
+            data-testid="gdrive-card">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-white shadow-sm
+                              flex items-center justify-center">
+              <Cloud size={22} className={connected
+                                            ? 'text-emerald-600'
+                                            : 'text-slate-400'} />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900 flex items-center gap-2">
+                Google Drive
+                {connected && (
+                  <span className="text-xs bg-emerald-100 text-emerald-700
+                          border border-emerald-200 px-2 py-0.5 rounded-full
+                          flex items-center gap-1">
+                    <CheckCircle2 size={12}/> Connected
+                  </span>
+                )}
+              </div>
+              {connected ? (
+                <>
+                  <div className="text-sm text-slate-700 mt-1"
+                        data-testid="gdrive-connected-email">
+                    Connected as <b>{status?.google_email}</b>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Since {status?.connected_at
+                             ? formatIST(status.connected_at)
+                             : '—'}
+                    {status?.last_used_at && (
+                      <> · Last used {formatIST(status.last_used_at)}</>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-2 max-w-xl">
+                    Every Transport LR / Invoice / Sales Order your dispatch
+                    team uploads goes directly into <b>your</b> Google Drive
+                    under <code>FLOWRA Documents → &lt;Company&gt; → Dispatch</code>.
+                    FLOWRA never keeps a copy on its own servers.
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-slate-600 max-w-xl mt-1">
+                  Connect your personal Google Drive so all dispatch
+                  documents (Transport LR, Invoices, Sales Orders) land
+                  directly in your own Drive. FLOWRA stores nothing on
+                  its own servers — you own the files. Uses Google&apos;s
+                  <b> <code>drive.file</code></b> scope: FLOWRA can only
+                  touch files it creates, never sees anything else in
+                  your Drive.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            {connected ? (
+              <button onClick={disconnect} disabled={busy}
+                       data-testid="btn-gdrive-disconnect"
+                       className="px-4 py-2 border border-red-300 text-red-700
+                          hover:bg-red-50 text-sm rounded-lg font-medium
+                          disabled:opacity-60 whitespace-nowrap">
+                Disconnect
+              </button>
+            ) : (
+              <button onClick={startConnect} disabled={busy}
+                       data-testid="btn-gdrive-connect"
+                       className="px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8]
+                          text-white text-sm rounded-lg font-medium
+                          disabled:opacity-60 whitespace-nowrap flex
+                          items-center gap-1.5">
+                {busy && <Loader2 className="animate-spin" size={14}/>}
+                Connect Google Drive
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {connected && status?.status === 'revoked' && (
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200
+                          text-red-800 text-sm rounded-lg p-3">
+          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+          <div>
+            Your Drive access was revoked (either by you at Google Account
+            settings or automatically after a password change). Click
+            <b> Disconnect</b> then <b>Connect Google Drive</b> again to
+            restore uploads.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

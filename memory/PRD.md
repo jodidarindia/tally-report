@@ -904,3 +904,50 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 ### Regression tests: 25/25 green
 (9 new + 8 iter-135 + 8 iter-134 = 25 total; 1 skipped from the busy-agent suite for missing libtk on CI.)
 
+
+## Shipped — Feb 16 2026 (iteration 137) — Google Drive integration for Dispatch documents
+
+**Context:** Dispatch employees upload Transport LRs / Invoices / Sales Orders. Historically these landed on the FLOWRA pod's local disk under `UPLOAD_DIR` — vulnerable to pod restarts + couldn't be accessed outside the app. User asked to route these directly into the tenant useradmin's **personal Google Drive** with strict per-tenant + per-company isolation, and NO local storage on FLOWRA.
+
+### Architecture
+- **One Google Cloud OAuth app** (client_id `537491921642-...`) owned by FLOWRA — every tenant reuses it via the standard OAuth 2.0 consent flow.
+- **Scope: `drive.file`** — the sandboxed scope. FLOWRA can only see files it creates in the user's Drive; the user's private files are invisible even if we wanted to look. Passes Google verification with basic branding review only (no restricted-scope security audit needed).
+- **MongoDB collection `gdrive_tenant_connections`** — one document per `(tenant_id, company_id)`. Stores `refresh_token_encrypted` (Fernet-AES-128 via existing `services.encryption_service`), plus `google_email`, `status`, `connected_at`, `last_used_at`, and `folder_cache`.
+- **HARD MODE** (per user choice): if a tenant's useradmin hasn't connected Drive, all dispatch uploads are rejected with "Ask your useradmin to connect Google Drive from Profile → Integrations".
+- **Zero local storage**: files stream directly from `UploadFile` bytes → `io.BytesIO` → `MediaIoBaseUpload` → Drive. FLOWRA never persists the file to any disk.
+
+### Files
+- **NEW** `backend/services/gdrive_service.py` — OAuth helpers + `upload_stream()` + folder-tree autocreation + Drive token refresh + explicit revoke path.
+- **NEW** `backend/routes/gdrive.py` — `/gdrive/connect`, `/gdrive/oauth/callback`, `/gdrive/status`, `/gdrive/disconnect`. Admin-guarded except status (dispatch employees need to know if uploads will work).
+- **MODIFIED** `backend/routes/dispatch.py` — `upload_document` rewritten: no local disk writes anymore; guards on tenant Drive connection; stores `drive_file_id + drive_view_link` on the card; catches `GDriveRevoked` and marks connection status. Legacy `/dispatch/files/{filename}` route kept for backward compat on old files uploaded before this migration.
+- **MODIFIED** `backend/server.py` — wires `gdrive_router`.
+- **MODIFIED** `backend/.env` — added GOOGLE_CLIENT_ID / SECRET / REDIRECT_URI (fixed a missing newline bug that merged them with RECAPTCHA_SECRET_KEY).
+- **MODIFIED** `backend/requirements.txt` — installed `google-api-python-client==2.185.0`, `google-auth-httplib2==0.2.0`, `google-auth-oauthlib==1.2.2`.
+- **MODIFIED** `frontend/src/pages/ProfileModal.js` — added "Integrations" tab visible only to useradmin; new `<IntegrationsSection>` with Connect/Disconnect flow, live status card, OAuth callback hash handling (`#gdrive-connected=...` / `#gdrive-error=...`).
+- **MODIFIED** `frontend/src/pages/DispatchTerminal.js` — `doc.drive_view_link` used first, `doc.url` kept as fallback for old files. Toast message updated to "Uploaded to Google Drive".
+- **NEW** `backend/tests/test_iteration137_gdrive.py` (8 tests).
+
+### Security & isolation guarantees (all covered by tests)
+- refresh_token Fernet-encrypted at rest; never returned by any API.
+- Employees see the useradmin's other Drive files? **No** — scope=`drive.file` prevents it at the Google side, structurally impossible.
+- Backend never sends token to frontend; only short-lived Drive links.
+- Only role=admin can connect/disconnect Drive.
+- Every Drive query filtered by `(tenant_id, company_id)`.
+- User revokes at Google → next call detects invalid_grant → connection auto-marked `status="revoked"` → UI prompts reconnect.
+- Disconnect endpoint calls Google's upstream revoke URL so token stops working everywhere.
+
+### Live curl verification
+- **Connect** returns valid Google auth URL: `host=accounts.google.com scope=drive.file access_type=offline prompt=consent state=<tenant>:<company> redirect=https://tally-report-ai.preview.emergentagent.com/api/gdrive/oauth/callback`.
+- **Salesman blocked** on `/gdrive/connect` → 403 "Only the tenant useradmin can manage Drive integration."
+- **Status** available to non-admin (dispatch needs to check upload eligibility).
+- **Disconnect** idempotent — safe to call when no connection exists.
+
+### Regression tests: 33/33 green (all iter-134 through iter-137).
+
+### Next-user-action for full end-to-end validation
+1. Publish the OAuth consent screen in Google Cloud Console (currently in Testing; publishing removes the "unverified app" warning for the first ~100 users).
+2. From a logged-in useradmin session, open **Profile → Integrations → Connect Google Drive** → Google's consent screen → Allow.
+3. Return to FLOWRA — toast shows "Google Drive connected as `<email>`".
+4. As a dispatch employee, upload a Transport LR against a dispatch card → the file lands in the useradmin's Drive under `FLOWRA Documents → <Company> → Dispatch → 2026-02/`.
+5. In the useradmin's Drive, the FLOWRA folder tree appears; each dispatch card shows a "View" link that opens the file in Drive directly.
+

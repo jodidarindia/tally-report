@@ -94,7 +94,7 @@ export default function DispatchTerminal({ selectedFY, companyId, filterDate }) 
   };
   const uploadDoc = async (id, type, file) => {
     const fd=new FormData(); fd.append('file', file);
-    try { const r = await axios.post(`${API}/api/dispatch/cards/${id}/upload/${type}`, fd, {headers:{...hdr(),'Content-Type':'multipart/form-data'}}); if(r.data.success) { toast.success('Uploaded'); load(); return r.data.data.url; } else toast.error(r.data.error); } catch{ toast.error('Upload failed'); } return null;
+    try { const r = await axios.post(`${API}/api/dispatch/cards/${id}/upload/${type}`, fd, {headers:{...hdr(),'Content-Type':'multipart/form-data'}}); if(r.data.success) { toast.success('Uploaded to Google Drive'); load(); return r.data.data.drive_view_link || r.data.data.url; } else toast.error(r.data.error || 'Upload failed'); } catch(e){ toast.error(e.response?.data?.error || 'Upload failed'); } return null;
   };
   const createManual = async d => {
     try { const r = await axios.post(`${API}/api/dispatch/cards`, d, {headers:hdr()}); if(r.data.success) { toast.success('Card created'); load(); setShowManual(false); } else toast.error(r.data.error); } catch{ toast.error('Failed'); }
@@ -429,7 +429,7 @@ function Inp({icon,label,value,set,type='text',tid,full}) {
 function DocSlot({label,type,doc,onUpload}) {
   const ref=useRef();
   return <div className="text-center" data-testid={`doc-${type}`}><div className="text-[9px] text-slate-500 mb-1">{label}</div>
-    {doc ? <a href={`${API}${doc.url}`} target="_blank" rel="noreferrer" className="block p-2 bg-green-50 border border-green-200 rounded-lg text-[9px] text-green-700 hover:bg-green-100"><CheckCircle2 size={14} className="mx-auto mb-0.5"/>Uploaded</a>
+    {doc ? <a href={doc.drive_view_link || `${API}${doc.url}`} target="_blank" rel="noreferrer" className="block p-2 bg-green-50 border border-green-200 rounded-lg text-[9px] text-green-700 hover:bg-green-100"><CheckCircle2 size={14} className="mx-auto mb-0.5"/>Uploaded</a>
     : <button onClick={()=>ref.current?.click()} className="block w-full p-2 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-[9px] text-slate-400 hover:border-blue-400 hover:text-blue-500"><UploadCloud size={14} className="mx-auto mb-0.5"/>Upload</button>}
     <input ref={ref} type="file" accept="image/*,.pdf" className="hidden" onChange={e=>onUpload(type,e)}/></div>;
 }
@@ -532,7 +532,7 @@ function HistoryDetailModal({ card, onClose }) {
               {['invoice_doc','sales_order','lr_receipt'].map(dt=>{
                 const doc = card.documents[dt];
                 return <div key={dt} className="text-center"><div className="text-[9px] text-slate-500 mb-1">{dt==='invoice_doc'?'Invoice':dt==='sales_order'?'Sales Order':'LR Receipt'}</div>
-                  {doc ? <a href={`${API}${doc.url}`} target="_blank" rel="noreferrer" className="block p-2 bg-green-50 border border-green-200 rounded-lg text-[9px] text-green-700 hover:bg-green-100"><CheckCircle2 size={14} className="mx-auto mb-0.5"/>View</a>
+                  {doc ? <a href={doc.drive_view_link || `${API}${doc.url}`} target="_blank" rel="noreferrer" className="block p-2 bg-green-50 border border-green-200 rounded-lg text-[9px] text-green-700 hover:bg-green-100"><CheckCircle2 size={14} className="mx-auto mb-0.5"/>View</a>
                   : <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-[9px] text-slate-400">Not uploaded</div>}
                 </div>;
               })}
