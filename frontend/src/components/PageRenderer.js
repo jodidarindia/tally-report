@@ -54,7 +54,7 @@ const PageRenderer = ({ currentPage, user, selectedFY, selectedCompany, excludeB
     case 'activity': return <ActivityLog token={token} role={user?.role} />;
     case 'referral': return <ReferAndEarn />;
     case 'tutorials': return <Tutorials />;
-    case 'ca-corner': return gated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} />);
+    case 'ca-corner': return gated('ca_corner', <CACorner selectedFY={selectedFY} excludeBranches={excludeBranches} userRole={user?.role} />);
     case 'insider': return gated('insider', <InsiderResult selectedFY={selectedFY} companyId={selectedCompany} excludeBranches={excludeBranches} />);
     case 'dispatch': {
       const role = user?.role;

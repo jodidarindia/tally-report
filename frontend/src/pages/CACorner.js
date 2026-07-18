@@ -4,13 +4,14 @@ import { toast } from 'sonner';
 import {
   Landmark, TrendingUp, TrendingDown, Brain, ArrowUpCircle, ArrowDownCircle,
   Loader, IndianRupee, BarChart3, ChevronDown, ChevronUp, RefreshCw, Download,
-  PieChart, Layers
+  PieChart, Layers, FileBarChart2
 } from 'lucide-react';
+import CAReports from './CAReports';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 const fmtRs = (v) => `Rs.${(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
-const CACorner = ({ selectedFY, excludeBranches }) => {
+const CACorner = ({ selectedFY, excludeBranches, userRole }) => {
   const [activeTab, setActiveTab] = useState('cashflow');
   const [loading, setLoading] = useState(false);
   const [cashFlow, setCashFlow] = useState(null);
@@ -89,6 +90,14 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
     { id: 'bs', label: 'Balance Sheet', icon: Layers },
     { id: 'drill', label: 'Ledger Drill-Down', icon: PieChart },
     { id: 'ai', label: 'AI Expense Insights', icon: Brain },
+    // v133 — Useradmin-only Bank & Investor Reports (CMA + Pitch Deck).
+    // Hidden from employees / dispatch / salesmen at the tab level; the
+    // backend also rejects non-admin calls with 403.
+    ...(userRole === 'admin'
+        ? [{ id: 'bank-reports',
+              label: 'Bank & Investor Reports',
+              icon: FileBarChart2 }]
+        : []),
   ];
 
   return (
@@ -144,6 +153,9 @@ const CACorner = ({ selectedFY, excludeBranches }) => {
         <DrillDownView data={drillData} drillType={drillType} setDrillType={setDrillType}
           expanded={expandedGroups} toggleExpand={(g) => setExpandedGroups(e => ({...e, [g]: !e[g]}))} />
       )}
+
+      {/* Bank & Investor Reports (Useradmin only) */}
+      {activeTab === 'bank-reports' && userRole === 'admin' && <CAReports />}
     </div>
   );
 };
