@@ -208,6 +208,23 @@ async def startup_event():
     logger.info("Admin user seeded")
     await ensure_indexes(db)
     logger.info("MongoDB indexes ensured")
+    # v135 — background sweep for CMA annual reminders. Runs every 24h;
+    # each sweep is idempotent (marks reminder_sent_at so a second run
+    # in the same cycle doesn't duplicate emails).
+    import asyncio as _asyncio
+    from routes.ca_reports import sweep_cma_reminders
+
+    async def _cma_reminder_loop():
+        # Small stagger so we don't hit Resend hard on server boot.
+        await _asyncio.sleep(60)
+        while True:
+            try:
+                await sweep_cma_reminders()
+            except Exception as e:
+                logger.warning(f"CMA reminder sweep errored: {e}")
+            await _asyncio.sleep(24 * 60 * 60)   # 24 hours
+
+    _asyncio.create_task(_cma_reminder_loop())
 
 
 async def ensure_indexes(db):

@@ -611,6 +611,30 @@ def _stream(data: bytes, filename: str, mimetype: str) -> StreamingResponse:
                     f'attachment; filename="{filename}"'})
 
 
+async def _track_cma_generation(ctx: Dict[str, Any], user: Dict[str, Any],
+                                  artifact: str) -> None:
+    """Record every CMA artefact generation so the reminder sweep knows
+    when the tenant's last CMA rolled out. Fire-and-forget — a DB blip
+    must never block a successful download."""
+    try:
+        await db.ca_report_generations.update_one(
+            {**_tenant_company_query(ctx), "artifact": "cma"},
+            {"$set": {
+                **_tenant_company_query(ctx),
+                "artifact": "cma",
+                "last_generated_at": datetime.now(timezone.utc).isoformat(),
+                "last_generated_by": user.get("email")
+                                        or user.get("username")
+                                        or user.get("id"),
+                "last_artifact_kind": artifact,
+                "reminder_sent_at": None,   # reset when a fresh CMA ships
+            }},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"CMA generation tracking failed (non-fatal): {e}")
+
+
 @router.post("/ca-reports/cma/pdf")
 async def gen_cma_pdf(request: Request, body: GenerateRequest = Body(...)):
     try:
@@ -619,6 +643,7 @@ async def gen_cma_pdf(request: Request, body: GenerateRequest = Body(...)):
         return APIResponse(success=False, error=e.detail)
     meta, hist, proj, a = await _assemble_fys(guard, body)
     pdf = build_cma_pdf(meta, hist, proj, a)
+    await _track_cma_generation(guard["ctx"], guard["user"], "pdf")
     fname = f"CMA_{_sanitize(meta.company_name)}.pdf"
     return _stream(pdf, fname, "application/pdf")
 
@@ -631,6 +656,7 @@ async def gen_cma_xlsx(request: Request, body: GenerateRequest = Body(...)):
         return APIResponse(success=False, error=e.detail)
     meta, hist, proj, a = await _assemble_fys(guard, body)
     xlsx = build_cma_xlsx(meta, hist, proj, a)
+    await _track_cma_generation(guard["ctx"], guard["user"], "xlsx")
     fname = f"CMA_{_sanitize(meta.company_name)}.xlsx"
     return _stream(
         xlsx, fname,
@@ -680,3 +706,279 @@ def _sanitize(name: str) -> str:
     safe = "".join(c for c in (name or "company")
                     if c.isalnum() or c in ("-", "_"))
     return safe[:64] or "company"
+
+
+
+# ─── CMA ANNUAL REMINDER ────────────────────────────────────────────────
+#
+# Whenever a CMA PDF/XLSX ships, `_track_cma_generation` writes a row into
+# `ca_report_generations`. A background sweep (see
+# `services.ca_reminders`) runs daily on the server, finds tenants where
+# a CMA was generated ~305 days ago (365 − 60), has not yet had a
+# reminder email sent, and emails the useradmin a nudge to regenerate.
+
+REMINDER_LEAD_DAYS = 60         # send 60 days before the 1-year anniversary
+CMA_ANNIVERSARY_DAYS = 365
+
+
+@router.get("/ca-reports/reminders/status")
+async def get_reminder_status(request: Request):
+    """UI helper — surfaces the last CMA generation date + next reminder
+    date + whether a reminder was already sent for this cycle."""
+    try:
+        guard = await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx = guard["ctx"]
+    doc = await db.ca_report_generations.find_one(
+        {**_tenant_company_query(ctx), "artifact": "cma"},
+        {"_id": 0}) or {}
+    from datetime import timedelta
+    last_iso = doc.get("last_generated_at")
+    next_reminder = None
+    days_until = None
+    if last_iso:
+        try:
+            last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+            due_dt = last_dt + timedelta(
+                days=CMA_ANNIVERSARY_DAYS - REMINDER_LEAD_DAYS)
+            next_reminder = due_dt.isoformat()
+            days_until = (due_dt - datetime.now(timezone.utc)).days
+        except Exception:
+            pass
+    return APIResponse(success=True, data={
+        "last_generated_at": last_iso,
+        "last_artifact_kind": doc.get("last_artifact_kind"),
+        "next_reminder_at": next_reminder,
+        "days_until_reminder": days_until,
+        "reminder_sent_at": doc.get("reminder_sent_at"),
+        "reminder_lead_days": REMINDER_LEAD_DAYS,
+    })
+
+
+# ─── CSV BULK IMPORT for manual historicals ─────────────────────────────
+
+@router.get("/ca-reports/manual-historicals/csv-template")
+async def download_manual_csv_template(request: Request):
+    """Return an empty CSV with the exact column headers users should
+    populate. Downloaded by the 'Import CSV' flow's info link."""
+    try:
+        await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+
+    from services.ca_reports_engine import HistoricalFY
+    cols = list(HistoricalFY.__dataclass_fields__.keys())
+    header = ",".join(cols)
+    example = ",".join(["2020-21"] + ["0"] * (len(cols) - 1))
+    csv_text = header + "\n" + example + "\n"
+    return _stream(csv_text.encode("utf-8"),
+                     "manual_historicals_template.csv", "text/csv")
+
+
+class CSVImportRequest(BaseModel):
+    """Accepts either a raw CSV string OR a list of parsed row dicts.
+    Front-end can send either — we pick whichever is present."""
+    csv_text: Optional[str] = None
+    rows: Optional[List[Dict[str, Any]]] = None
+
+
+@router.post("/ca-reports/manual-historicals/import-csv")
+async def import_manual_csv(request: Request,
+                              body: CSVImportRequest = Body(...)):
+    """Bulk-upsert manual historicals from a CSV. First column MUST be
+    fy_label. Every other column is coerced to float (blank → 0). Rows
+    with a duplicate fy_label overwrite the earlier row (last wins)."""
+    try:
+        guard = await _require_useradmin(request)
+    except HTTPException as e:
+        return APIResponse(success=False, error=e.detail)
+    ctx, user = guard["ctx"], guard["user"]
+
+    # Parse CSV → list of dicts
+    import csv as _csv
+    from io import StringIO
+    rows: List[Dict[str, Any]] = []
+    if body.rows:
+        rows = body.rows
+    elif body.csv_text:
+        try:
+            reader = _csv.DictReader(StringIO(body.csv_text))
+            rows = list(reader)
+        except Exception as e:
+            return APIResponse(success=False,
+                                 error=f"CSV parse error: {e}")
+    if not rows:
+        return APIResponse(success=False,
+                             error="No rows in the uploaded CSV.")
+    # Validate + upsert
+    allowed = set(HistoricalFY.__dataclass_fields__.keys())
+    written, errors = 0, []
+    for i, row in enumerate(rows, start=1):
+        fy_label = str(row.get("fy_label") or "").strip()
+        if not fy_label:
+            errors.append(f"Row {i}: fy_label missing.")
+            continue
+        if len(fy_label) != 7 or fy_label[4] != "-":
+            errors.append(
+                f"Row {i}: fy_label '{fy_label}' invalid — expected 'YYYY-YY'.")
+            continue
+        clean = {"fy_label": fy_label}
+        for k, v in row.items():
+            if k == "fy_label" or k not in allowed:
+                continue
+            try:
+                clean[k] = float(v) if v not in (None, "") else 0.0
+            except (TypeError, ValueError):
+                errors.append(
+                    f"Row {i} ({fy_label}): field '{k}' non-numeric ('{v}').")
+                clean[k] = 0.0
+        payload = _encrypt_manual(clean)
+        payload.update({
+            **_tenant_company_query(ctx),
+            "fy_label": fy_label,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": user.get("id") or user.get("_id"),
+            "imported_via": "csv",
+        })
+        await db.ca_manual_historicals.update_one(
+            {**_tenant_company_query(ctx), "fy_label": fy_label},
+            {"$set": payload}, upsert=True,
+        )
+        written += 1
+    return APIResponse(success=True, data={
+        "written": written,
+        "total_rows": len(rows),
+        "errors": errors[:20],   # cap noise
+        "errors_truncated": len(errors) > 20,
+    })
+
+
+# ─── Background sweep (called from server startup) ──────────────────────
+
+async def sweep_cma_reminders() -> Dict[str, Any]:
+    """Find every ca_report_generations row where:
+       (last_generated_at + 305 days) ≤ now   AND
+       reminder_sent_at is null OR older than last_generated_at
+    Sends an email to the useradmin and marks reminder_sent_at.
+    Idempotent — safe to call daily. Returns a summary dict."""
+    from datetime import timedelta
+    from services.email_service import send_email
+    from services.id_mapping_service import get_company_name
+
+    now = datetime.now(timezone.utc)
+    threshold = now - timedelta(
+        days=CMA_ANNIVERSARY_DAYS - REMINDER_LEAD_DAYS)
+    summary = {"checked": 0, "sent": 0, "errors": 0}
+
+    async for gen in db.ca_report_generations.find(
+        {"artifact": "cma"}, {"_id": 0}
+    ):
+        summary["checked"] += 1
+        last_iso = gen.get("last_generated_at")
+        if not last_iso:
+            continue
+        try:
+            last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if last_dt > threshold:
+            continue  # not yet due
+        # Skip if a reminder was already sent for THIS generation cycle
+        r_iso = gen.get("reminder_sent_at")
+        if r_iso:
+            try:
+                r_dt = datetime.fromisoformat(r_iso.replace("Z", "+00:00"))
+                if r_dt >= last_dt:
+                    continue
+            except Exception:
+                pass
+
+        # Fetch useradmin email
+        useradmin = await db.users.find_one(
+            {"tenant_id": gen["tenant_id"], "role": "admin"},
+            {"_id": 0, "email": 1, "username": 1, "name": 1})
+        to = (useradmin or {}).get("email") or (useradmin or {}).get("username")
+        if not to:
+            summary["errors"] += 1
+            continue
+        try:
+            company_name = await get_company_name(
+                gen["tenant_id"], gen["company_id"]) or "your company"
+        except Exception:
+            company_name = "your company"
+
+        # Days remaining until the CMA anniversary (60 → 0)
+        due_dt = last_dt + timedelta(days=CMA_ANNIVERSARY_DAYS)
+        days_left = max((due_dt - now).days, 0)
+
+        subject = (f"Time to renew your working-capital limit "
+                    f"— {company_name}")
+        html = _reminder_html(company_name, days_left, last_dt.date().isoformat())
+        try:
+            ok = await send_email(to, subject, html,
+                                    tag="cma-reminder", cc="auto")
+            if ok:
+                await db.ca_report_generations.update_one(
+                    {**_tenant_company_query(gen), "artifact": "cma"},
+                    {"$set": {"reminder_sent_at": now.isoformat()}})
+                summary["sent"] += 1
+            else:
+                summary["errors"] += 1
+        except Exception as e:
+            logger.error(f"reminder send failed: {e}")
+            summary["errors"] += 1
+    if summary["sent"] or summary["errors"]:
+        logger.info(f"CMA reminder sweep: {summary}")
+    return summary
+
+
+def _reminder_html(company_name: str, days_left: int, last_generated_date: str
+                    ) -> str:
+    return f"""
+      <div style="font-family: -apple-system,'Segoe UI',Roboto,sans-serif;
+                    color:#0F172A;max-width:600px;margin:0 auto;padding:32px;
+                    background:#F8FAFC;border-radius:12px;">
+        <img src="https://flowralive.in/assets/flowra-logo.png"
+              alt="FLOWRA" style="height:36px;margin-bottom:24px;">
+        <h1 style="font-size:22px;font-weight:700;margin:0 0 8px;
+                    color:#0F1B4C;">
+          Time to renew your working-capital limit
+        </h1>
+        <div style="color:#475569;line-height:1.6;margin-bottom:20px;">
+          Hi there — this is a friendly nudge that <b>{company_name}</b>'s
+          bank CMA is coming up for annual renewal.
+        </div>
+        <div style="background:#FFFFFF;border:1px solid #E2E8F0;
+                     border-radius:10px;padding:16px 20px;
+                     margin-bottom:20px;">
+          <div style="font-size:13px;color:#64748B;">Last CMA generated on</div>
+          <div style="font-size:16px;font-weight:600;">
+            {last_generated_date}
+          </div>
+          <div style="font-size:13px;color:#64748B;margin-top:12px;">
+            Renewal window opens in
+          </div>
+          <div style="font-size:22px;font-weight:700;color:#2563EB;">
+            {days_left} days
+          </div>
+        </div>
+        <div style="color:#475569;line-height:1.6;margin-bottom:20px;">
+          Your Tally / Busy sync has a full year of fresh data now — the
+          projections in your last submission are stale by ~11 months.
+          Bankers routinely reject renewals built on outdated financials.
+        </div>
+        <a href="https://insights.flowralive.in/ca-corner"
+            style="display:inline-block;background:#2563EB;color:#FFFFFF;
+                   padding:12px 22px;border-radius:8px;text-decoration:none;
+                   font-weight:600;font-size:14px;">
+          → Regenerate CMA in one click
+        </a>
+        <div style="color:#94A3B8;font-size:11px;margin-top:32px;">
+          You're receiving this because <b>{company_name}</b> generated a
+          CMA through FLOWRA. To turn off these reminders, ask your
+          useradmin to delete the CMA generation record from CA Corner →
+          Bank &amp; Investor Reports.
+        </div>
+      </div>
+    """

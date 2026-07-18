@@ -847,3 +847,60 @@ The GUI's `subprocess.Popen(env=…)` dict declared the key `BUSY_COMPANY` twice
 - `_assemble_fys` merges Tally + manual with Tally winning on collision, sorted by fy_label
 - Frontend has all 6 core testids (section, add button, modal, fy-label input, save, cancel) + delete/edit buttons + confirm-before-delete
 
+
+## Shipped — Feb 16 2026 (iteration 136) — CMA Annual Reminder + CSV Bulk Import
+
+### 1. CMA Annual Reminder (email 60 days before anniversary)
+
+**Why:** CMAs get submitted to banks once a year for working-capital renewal. Without a nudge, tenants forget and let the reminder pass, then scramble to pull one together at the last minute (or worse, resubmit last year's numbers). This closes that loop.
+
+**Data flow:**
+1. Every call to `/api/ca-reports/cma/pdf` or `/api/ca-reports/cma/xlsx` upserts a row in the new `ca_report_generations` collection: `{tenant_id, company_id, artifact:"cma", last_generated_at, last_artifact_kind, last_generated_by, reminder_sent_at:null}`. Reminder flag resets on each fresh generation.
+2. Background sweep `sweep_cma_reminders()` runs every 24h from an `asyncio.create_task(...)` spawned in `server.py`'s `startup_event`. Cadence + idempotency:
+   - Finds rows where `last_generated_at + 305 days ≤ now` AND `reminder_sent_at` is either null or older than `last_generated_at`.
+   - Loads the tenant's useradmin (`role="admin"`), computes `days_left = anniversary - now`.
+   - Sends an HTML email via existing Resend integration (`services.email_service.send_email`) tagged `"cma-reminder"`. Subject: "Time to renew your working-capital limit — <Company Name>". Body carries FLOWRA branding + last-generated date + days-until countdown + a CTA that deep-links to `/ca-corner`.
+   - Marks `reminder_sent_at = now` only on send-success (so a Resend outage → retry on next sweep).
+3. New endpoint `GET /api/ca-reports/reminders/status` returns `{last_generated_at, next_reminder_at, days_until_reminder, reminder_sent_at, reminder_lead_days=60}` for the UI card.
+
+**UI:**
+- New `<ReminderStatusCard>` at top of the Bank & Investor Reports panel:
+  - Grey neutral state ("not yet armed") when no CMA has ever been generated
+  - Blue armed state showing `next reminder in N days`
+  - Red DUE state when `days_until_reminder ≤ 0`
+  - Muted "already sent" state when `reminder_sent_at` is set
+- After every successful CMA download, `loadReminder()` refetches automatically so the countdown resets in real time without a page reload.
+
+**Constants** (`REMINDER_LEAD_DAYS=60`, `CMA_ANNIVERSARY_DAYS=365`) live at module scope in `routes/ca_reports.py` so a single tweak changes both the API contract and the UI copy in one place.
+
+### 2. CSV Bulk Import (potential improvement — shipped)
+
+**Why:** For CAs onboarding an existing client with 3-5 years of audited history, typing each year's 15+ fields into the modal takes ~15 min. Pasting from Excel is 30 seconds.
+
+**Two new endpoints:**
+- `GET /api/ca-reports/manual-historicals/csv-template` — streams an empty CSV with every `HistoricalFY.__dataclass_fields__` key as headers + one example row (`2020-21,0,0,…`). The CA opens it in Excel, fills the rows, saves back to CSV, and uploads.
+- `POST /api/ca-reports/manual-historicals/import-csv` — accepts `{csv_text: "..."}` OR `{rows: [...]}`. Parses with `csv.DictReader`, validates each `fy_label` matches `YYYY-YY`, coerces every other column to float (blank → 0), Fernet-encrypts and upserts through the same path as the manual-form endpoint. Returns `{written, total_rows, errors: [row-level messages], errors_truncated: bool}` — first 20 errors surfaced verbatim.
+
+**UI:**
+- New `<CsvImportModal>` triggered by an "Import CSV" button in the manual-historicals section header.
+- Info panel with a "Download blank template" link (triggers the template endpoint).
+- File-picker + Import button + inline result panel showing written count and per-row error list (first 5 shown; more collapsed with an italic "…more errors truncated").
+- On zero errors, modal auto-closes 800ms after success and both `loadManual()` + `loadPreview()` refetch so the projection engine + table + downloads all reflect the new rows immediately.
+
+### Files touched
+- `backend/routes/ca_reports.py` — `_track_cma_generation` helper wired into both CMA endpoints; `GET /reminders/status`; `sweep_cma_reminders()` + `_reminder_html()`; `GET /manual-historicals/csv-template`; `POST /manual-historicals/import-csv`.
+- `backend/server.py` — startup event spawns `_cma_reminder_loop` as an `asyncio.create_task` (60s stagger on boot then 24h cadence).
+- `frontend/src/pages/CAReports.jsx` — `<ReminderStatusCard>`, `<CsvImportModal>`, wired into both the normal and empty-state renders. `loadReminder()` refreshes after each CMA download.
+- NEW `backend/tests/test_iteration136_cma_reminder_csv.py` (9 tests, all green).
+
+### Live curl verification
+- Reminder BEFORE any CMA → `last_generated_at: null, days_until_reminder: null`.
+- Generate CMA PDF → 200 OK, 23217 bytes `%PDF-1.4`.
+- Reminder AFTER → `next_reminder_at = 2027-05-19, days_until_reminder = 304` (correct: 365 − 60 − <1 minute drift).
+- CSV template endpoint → 200 OK, 826 bytes, CSV header contains all 47 HistoricalFY fields.
+- CSV import (3 rows, 1 with bad `fy_label`) → `{written: 2, total_rows: 3, errors: ["Row 3: fy_label 'badFY' invalid — expected 'YYYY-YY'."]}`.
+- Sweep script (backdated CMA to 310 days ago) → `{checked: 1, sent: 0, errors: 1}` — sweep found the due row, tried to email, correctly failed on the seeded admin's missing real email address (production tenants have real emails so this path is verified error-side).
+
+### Regression tests: 25/25 green
+(9 new + 8 iter-135 + 8 iter-134 = 25 total; 1 skipped from the busy-agent suite for missing libtk on CI.)
+

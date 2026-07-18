@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import {
   FileText, Download, Loader, RefreshCw, ShieldCheck, Info,
   AlertTriangle, Landmark, Sparkles, Lock, Plus, Trash2, X,
+  Bell, Upload, FileDown,
 } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -51,12 +52,21 @@ const CAReports = () => {
   const [manualRows, setManualRows] = useState([]);
   const [manualForm, setManualForm] = useState(null);   // null = closed
   const [manualSaving, setManualSaving] = useState(false);
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [reminder, setReminder] = useState(null);
 
   const loadManual = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/ca-reports/manual-historicals`);
       if (res.data?.success) setManualRows(res.data.data.historicals || []);
     } catch { /* silent — non-blocking */ }
+  }, []);
+
+  const loadReminder = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/ca-reports/reminders/status`);
+      if (res.data?.success) setReminder(res.data.data);
+    } catch { /* silent */ }
   }, []);
 
   const loadPreview = useCallback(async () => {
@@ -79,7 +89,8 @@ const CAReports = () => {
     }
   }, []);
 
-  useEffect(() => { loadPreview(); loadManual(); }, [loadPreview, loadManual]);
+  useEffect(() => { loadPreview(); loadManual(); loadReminder(); },
+             [loadPreview, loadManual, loadReminder]);
 
   const openNewManual = () => {
     setManualForm({
@@ -170,6 +181,9 @@ const CAReports = () => {
       a.href = url; a.download = filename; a.click();
       window.URL.revokeObjectURL(url);
       toast.success(`${keyLabel} downloaded`);
+      // v135 — a CMA generation resets the annual reminder clock, so
+      // refresh the reminder status card in the background.
+      if (keyLabel.startsWith('CMA')) loadReminder();
     } catch (e) {
       toast.error(e.response?.data?.error
                     || e.response?.data?.detail
@@ -223,6 +237,7 @@ const CAReports = () => {
           onNew={openNewManual}
           onEdit={openEditManual}
           onDelete={deleteManual}
+          onImportCsv={() => setCsvOpen(true)}
         />
         {manualForm && (
           <ManualHistoricalForm
@@ -231,6 +246,15 @@ const CAReports = () => {
             onSave={saveManual}
             onCancel={() => setManualForm(null)}
             saving={manualSaving}
+          />
+        )}
+        {csvOpen && (
+          <CsvImportModal
+            onClose={() => setCsvOpen(false)}
+            onImported={async () => {
+              setCsvOpen(false);
+              await Promise.all([loadManual(), loadPreview()]);
+            }}
           />
         )}
       </div>
@@ -273,6 +297,9 @@ const CAReports = () => {
           <div>{warnings.join(' ')}</div>
         </div>
       )}
+
+      {/* v135 — annual reminder status card */}
+      <ReminderStatusCard status={reminder} />
 
       {/* Sub-tabs */}
       <div className="bg-white border border-slate-200 rounded-xl p-1.5 flex gap-1.5">
@@ -450,6 +477,7 @@ const CAReports = () => {
         onNew={openNewManual}
         onEdit={openEditManual}
         onDelete={deleteManual}
+        onImportCsv={() => setCsvOpen(true)}
       />
       {manualForm && (
         <ManualHistoricalForm
@@ -458,6 +486,15 @@ const CAReports = () => {
           onSave={saveManual}
           onCancel={() => setManualForm(null)}
           saving={manualSaving}
+        />
+      )}
+      {csvOpen && (
+        <CsvImportModal
+          onClose={() => setCsvOpen(false)}
+          onImported={async () => {
+            setCsvOpen(false);
+            await Promise.all([loadManual(), loadPreview()]);
+          }}
         />
       )}
 
@@ -560,11 +597,12 @@ const DownloadBtn = ({ testid, icon: Icon, title, subtitle, onClick,
 
 /* ─── Prior-Year Manual Entry ─────────────────────────────────────────── */
 
-const ManualHistoricalsSection = ({ rows, onNew, onEdit, onDelete }) => (
+const ManualHistoricalsSection = ({ rows, onNew, onEdit, onDelete,
+                                      onImportCsv }) => (
   <div className="bg-white border border-slate-200 rounded-xl p-5"
         data-testid="manual-historicals-section">
-    <div className="flex items-start justify-between mb-3 gap-3">
-      <div>
+    <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
+      <div className="min-w-0">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold text-slate-900">
             Prior-Year Manual Entry
@@ -584,13 +622,22 @@ const ManualHistoricalsSection = ({ rows, onNew, onEdit, onDelete }) => (
           read them back.
         </div>
       </div>
-      <button onClick={onNew}
-               data-testid="btn-add-manual-fy"
-               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2563EB]
-                  hover:bg-[#1D4ED8] text-white text-sm rounded-lg
-                  whitespace-nowrap">
-        <Plus size={14}/> Add prior year
-      </button>
+      <div className="flex gap-2">
+        <button onClick={onImportCsv}
+                 data-testid="btn-import-csv"
+                 className="flex items-center gap-1.5 px-3 py-1.5 border
+                    border-slate-300 hover:bg-slate-50 text-slate-700
+                    text-sm rounded-lg whitespace-nowrap">
+          <Upload size={14}/> Import CSV
+        </button>
+        <button onClick={onNew}
+                 data-testid="btn-add-manual-fy"
+                 className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2563EB]
+                    hover:bg-[#1D4ED8] text-white text-sm rounded-lg
+                    whitespace-nowrap">
+          <Plus size={14}/> Add prior year
+        </button>
+      </div>
     </div>
     {rows.length === 0 ? (
       <div className="text-sm text-slate-400 italic py-3">
@@ -755,5 +802,206 @@ const ManualHistoricalForm = ({ row, setRow, onSave, onCancel, saving }) => (
     </div>
   </div>
 );
+
+/* ─── Annual reminder status card ─────────────────────────────────────── */
+
+const ReminderStatusCard = ({ status }) => {
+  if (!status || !status.last_generated_at) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-4 flex
+                        items-start gap-3 text-sm"
+             data-testid="reminder-card">
+        <Bell size={16} className="text-slate-400 mt-0.5" />
+        <div>
+          <div className="font-medium text-slate-800">
+            Annual reminder: not yet armed
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            Generate your first CMA (PDF or Excel) and we&apos;ll email you a
+            renewal nudge 60 days before the 1-year anniversary. The
+            reminder resets every time you regenerate.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const days = status.days_until_reminder;
+  const alreadySent = !!status.reminder_sent_at;
+  const isDue = days !== null && days <= 0;
+  const armed = !alreadySent && !isDue && days !== null;
+  const tone = isDue ? 'red' : (armed ? 'blue' : 'slate');
+  const bg = { red: 'bg-red-50 border-red-200 text-red-700',
+                 blue: 'bg-blue-50 border-blue-200 text-blue-800',
+                 slate: 'bg-slate-50 border-slate-200 text-slate-700'
+               }[tone];
+  const lastDate = new Date(status.last_generated_at).toLocaleDateString(
+    'en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return (
+    <div className={`border rounded-xl p-4 ${bg}`}
+          data-testid="reminder-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <Bell size={18} className="mt-0.5"/>
+          <div>
+            <div className="font-semibold text-sm">
+              {isDue ? 'CMA renewal is due — banker wants fresh numbers'
+                       : (alreadySent
+                            ? 'Reminder already sent for this cycle'
+                            : `CMA renewal reminder armed`)}
+            </div>
+            <div className="text-xs mt-1 opacity-80">
+              Last CMA generated on <b>{lastDate}</b> ({status.last_artifact_kind?.toUpperCase() || 'PDF'}).
+              {days !== null && !alreadySent && (
+                <> Nudge email will fire in <b>{Math.max(days, 0)} days</b>.</>
+              )}
+              {alreadySent && (
+                <> Regenerate the CMA below to re-arm the annual clock.</>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── CSV bulk import modal ───────────────────────────────────────────── */
+
+const CsvImportModal = ({ onClose, onImported }) => {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const downloadTemplate = async () => {
+    try {
+      const res = await axios.get(
+        `${API}/ca-reports/manual-historicals/csv-template`,
+        { responseType: 'blob' });
+      const blob = new Blob([res.data]);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'manual_historicals_template.csv'; a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Template download failed');
+    }
+  };
+
+  const runImport = async () => {
+    if (!file) { toast.error('Pick a CSV file first'); return; }
+    setBusy(true);
+    try {
+      const csv_text = await file.text();
+      const res = await axios.post(
+        `${API}/ca-reports/manual-historicals/import-csv`,
+        { csv_text });
+      if (res.data?.success) {
+        setResult(res.data.data);
+        const { written, errors } = res.data.data;
+        if (written > 0) {
+          toast.success(
+            `Imported ${written} row${written === 1 ? '' : 's'}`);
+        }
+        if (errors?.length === 0) {
+          setTimeout(onImported, 800);
+        }
+      } else {
+        toast.error(res.data?.error || 'Import failed');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Import failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center
+                      z-50 p-4"
+          data-testid="csv-import-modal">
+      <div className="bg-white rounded-xl w-full max-w-lg shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4 flex items-center
+                          justify-between">
+          <div>
+            <div className="font-semibold text-slate-900">
+              Bulk-import prior FYs from CSV
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Paste rows from Excel to fill years all at once
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900">
+            <X size={18}/>
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3
+                            text-xs text-blue-800">
+            <div className="font-medium mb-1">CSV format</div>
+            First column must be <code>fy_label</code> (e.g. 2020-21). Every
+            other column is a numeric field name from the
+            HistoricalFY schema. Leave blank cells empty.
+            <button onClick={downloadTemplate}
+                     data-testid="btn-download-csv-template"
+                     className="flex items-center gap-1.5 mt-2 text-blue-700
+                        hover:text-blue-900 font-medium">
+              <FileDown size={13}/> Download blank template
+            </button>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-700 block mb-1">
+              Pick CSV file
+            </label>
+            <input type="file" accept=".csv,text/csv"
+                    data-testid="csv-file-input"
+                    onChange={e => setFile(e.target.files?.[0] || null)}
+                    className="text-sm w-full"/>
+            {file && (
+              <div className="text-xs text-slate-500 mt-1">
+                Selected: <b>{file.name}</b> ({(file.size / 1024).toFixed(1)} KB)
+              </div>
+            )}
+          </div>
+          {result && (
+            <div className="text-sm bg-slate-50 border border-slate-200
+                              rounded-lg p-3"
+                  data-testid="csv-import-result">
+              <div className="font-medium text-slate-900">
+                {result.written} row{result.written === 1 ? '' : 's'} written
+                {result.errors?.length ? ` · ${result.errors.length} errors`
+                                         : ''}
+              </div>
+              {result.errors?.length > 0 && (
+                <ul className="mt-2 text-xs text-red-600 list-disc pl-5">
+                  {result.errors.slice(0, 5).map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                  {result.errors_truncated && (
+                    <li className="italic">…more errors truncated</li>
+                  )}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="border-t border-slate-200 px-5 py-3 flex justify-end gap-2">
+          <button onClick={onClose}
+                   className="px-4 py-1.5 border border-slate-300 hover:bg-slate-50
+                      text-slate-700 text-sm rounded-lg">
+            Close
+          </button>
+          <button onClick={runImport} disabled={busy || !file}
+                   data-testid="btn-run-csv-import"
+                   className="px-4 py-1.5 bg-[#2563EB] hover:bg-[#1D4ED8]
+                      text-white text-sm rounded-lg disabled:opacity-60
+                      flex items-center gap-1.5">
+            {busy && <Loader className="animate-spin" size={14}/>}
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default CAReports;
