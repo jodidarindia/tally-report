@@ -274,19 +274,53 @@ async def receive_agent_sync(request: dict):
                     customer_name = cust.get('customer_name', '')
                     if not customer_name:
                         continue
+                    # iter-140: enriched fields from Busy agent v1.5+.
+                    # All new fields default to empty/0 so v1.4.x agents
+                    # keep working without regression.
+                    mobile = _clean_tally_val(
+                        cust.get('mobile_number') or cust.get('phone', ''))
                     operations.append(
                         UpdateOne(
                             {"customer_name": customer_name, "tenant_id": req_tenant_id, "company_id": req_company_id},
                             {"$set": {
                                 "customer_name": customer_name,
+                                "customer_id": _clean_tally_val(cust.get('customer_id', '')),
                                 "ledger_group": _clean_tally_val(cust.get('ledger_group', 'Sundry Debtors')),
+                                "group_id": _clean_tally_val(cust.get('group_id', '')),
+                                "group_name": _clean_tally_val(cust.get('group_name', '')),
                                 "outstanding_amount": cust.get('outstanding_amount', 0),
                                 "opening_balance": cust.get('opening_balance', 0),
+                                "closing_balance": cust.get('closing_balance', 0),
+                                "balance": cust.get('balance', cust.get('closing_balance', 0)),
                                 "total_purchases": cust.get('total_purchases', 0),
                                 "transaction_count": cust.get('transaction_count', 0),
-                                "phone": _clean_tally_val(cust.get('phone', '')),
+                                # Contact (enriched)
+                                "phone": mobile,
+                                "mobile_number": mobile,
+                                "whatsapp_number": _clean_tally_val(cust.get('whatsapp_number', '')),
+                                "email": _clean_tally_val(cust.get('email_id') or cust.get('email', '')),
                                 "contact_person": _clean_tally_val(cust.get('contact_person', '')),
+                                # Address (enriched)
+                                "address": _clean_tally_val(cust.get('address', '')),
+                                "address_line_1": _clean_tally_val(cust.get('address_line_1', '')),
+                                "address_line_2": _clean_tally_val(cust.get('address_line_2', '')),
+                                "address_line_3": _clean_tally_val(cust.get('address_line_3', '')),
+                                "address_line_4": _clean_tally_val(cust.get('address_line_4', '')),
+                                "city": _clean_tally_val(cust.get('city', '')),
+                                "station": _clean_tally_val(cust.get('station', '')),
+                                "pin_code": _clean_tally_val(cust.get('pin_code', '')),
                                 "state": _clean_tally_val(cust.get('state', '')),
+                                "country": _clean_tally_val(cust.get('country', '')),
+                                # Tax IDs
+                                "gst_number": _clean_tally_val(cust.get('gst_number', '')),
+                                "pan_number": _clean_tally_val(cust.get('pan_number', '')),
+                                # Salesman link (enriched)
+                                "salesman_id": _clean_tally_val(cust.get('salesman_id', '')),
+                                "salesman_name": _clean_tally_val(cust.get('salesman_name', '')),
+                                "salesman_mobile_number": _clean_tally_val(cust.get('salesman_mobile_number', '')),
+                                "salesman_whatsapp_number": _clean_tally_val(cust.get('salesman_whatsapp_number', '')),
+                                # Price tier
+                                "price_category": _clean_tally_val(cust.get('price_category', '0')),
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id

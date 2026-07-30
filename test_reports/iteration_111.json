@@ -1,0 +1,50 @@
+{
+  "summary": "Iter-141 backend ingest testing for Busy Agent v1.5.0 customer enrichment. Wrote 5 pytest cases in /app/backend/tests/test_iteration141_busy_agent_v15_backend_ingest.py. 4/5 pass. Write-side (POST /api/agent/sync data_type='customers') correctly persists ALL enriched fields, is backwards-compatible with v1.4.x legacy payloads, is tenant-isolated, and rejects cross-tenant sync tokens. Read-side gap detected: /api/customers/outstanding (the endpoint the CRM tab reads — confirmed by grep in /app/frontend/src/pages/CustomerCRM.js and SalesmanPerformance.js) does NOT expose the newly-persisted v1.5.0 fields, so the CRM UI cannot show mobile/whatsapp/gst/pan/salesman/address_line_*/city/station/pin_code/price_category/group_* even though they land in Mongo correctly.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/customers/outstanding",
+        "issue": "Drops v1.5.0 enriched customer fields when building the response. customer_map in /app/backend/routes/customers.py (~line 223-240) only projects: customer_name, ledger_group, phone, contact_person, state, opening_balance, tally_outstanding. The following enriched fields are stored in Mongo but PROJECTED OUT for the CRM tab: mobile_number, whatsapp_number, email, gst_number, pan_number, address, address_line_1..4, city, station, pin_code, country, salesman_id, salesman_name, salesman_mobile_number, salesman_whatsapp_number, price_category, group_id, group_name, customer_id, closing_balance, balance.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "CRM tab display of Busy Agent v1.5.0 enriched customer master",
+        "issue": "Even after Busy Agent v1.5.0 syncs enriched customers (mobile/whatsapp/gst/pan/salesman/address/etc.), the CRM tab won't render those fields because /api/customers/outstanding does not include them in its projection. Fix backend read side first, then wire columns in CustomerCRM.js.",
+        "affected_selectors": ["/api/customers/outstanding response.data.customers[*]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration141_busy_agent_v15_backend_ingest.py",
+    "/app/test_reports/pytest/iter141_results.xml"
+  ],
+  "action_items": [
+    "In /app/backend/routes/customers.py get_customer_outstanding(), extend the per-customer projection built at ~L223-L240 to include the v1.5.0 enriched fields from the `sc` (synced_customers) doc: mobile_number, whatsapp_number, email, gst_number, pan_number, address, address_line_1..4, city, station, pin_code, country, salesman_id, salesman_name, salesman_mobile_number, salesman_whatsapp_number, price_category, group_id, group_name, customer_id, closing_balance, balance. All are already stored by sync.py — just surface them.",
+    "Verify no other read-side endpoint (ai_reports.get / ca_corner.get / dashboard.get) drops these fields if the UI needs them there too. Their find() already uses {\"_id\": 0} so the raw doc has everything; the issue is specifically the customer_map rebuild in customers.py.",
+    "After fix, re-run test_customers_outstanding_surfaces_enriched_fields — it will flip to green."
+  ],
+  "critical_code_review_comments": [
+    "sync.py customers branch (L269-L333) correctly persists every v1.5.0 field with safe defaults (empty string / 0), giving full backwards-compat with v1.4.x agents — verified by test_legacy_v14_payload_still_persists_no_keyerror.",
+    "phone/mobile_number mirroring is done ONE-WAY only: mobile takes precedence when present, else falls back to phone (line ~280-281). Good, but the mirrored value is written to BOTH `phone` and `mobile_number` on Mongo which is a tiny denorm — acceptable to keep old readers working.",
+    "verify_sync_token cross-tenant leak is properly blocked (test_sync_token_from_tenant_A_cannot_write_for_tenant_B).",
+    "customers.py get_customer_outstanding() rebuilds a new dict from the synced doc instead of spreading `**sc` and overriding — this is why the enriched fields are silently dropped. Consider building the customer_map entry from `sc` and only overlaying the computed FY/aging numbers on top.",
+    "customers.py file is 1498 lines — over the 700-line guideline. Splitting outstanding / targets / followups / ledger / payment-behavior into separate modules would help maintenance."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration141_busy_agent_v15_backend_ingest.py (new)"
+  ],
+  "success_rate": {"backend": "80% (4/5 - write-side 100%, read-side fails)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Used forged JWT via services.auth_service.create_access_token + synthetic tenant/company UUIDs (matches pattern used by test_iteration102_tally_status_tenant_scoped.py). Real admin credentials not needed for this test since sync uses HMAC sync_token.",
+  "seed_data_creation": "Test-only customer docs (TEST_ENRICHED_CUST_A / TEST_LEGACY_CUST_A / TEST_ISOLATION_CUST_A/B / TEST_READSIDE_ENRICHED / TEST_XT_TOKEN_LEAK) inserted under synthetic tenant UUIDs and cleaned up in finally blocks. No production data touched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Write-side (POST /api/agent/sync data_type='customers') is fully green for v1.5.0 enrichment + v1.4.x compat + tenant isolation. The ONE remaining bug is the read-side projection in /app/backend/routes/customers.py get_customer_outstanding() (line ~223) — it needs to surface the enriched fields. Once that is patched, re-run: pytest /app/backend/tests/test_iteration141_busy_agent_v15_backend_ingest.py -v --junitxml=/app/test_reports/pytest/iter141_results.xml — the 5th test should flip green.",
+  "rca of the issue": "sync.py::customers-branch persists 20+ enriched fields into the `customers` Mongo collection (verified). customers.py::get_customer_outstanding() then reads that collection with `find(q, {'_id': 0})` (line 142) — so the raw doc contains everything. But the endpoint rebuilds a NEW dict per row (customer_map[name] = {...}) at line 223-240 and only copies 5 legacy fields (ledger_group, phone, contact_person, state, opening_balance, outstanding_amount). All other enriched fields are dropped before the JSON response reaches the CRM UI. Reproduction: run test_customers_outstanding_surfaces_enriched_fields in iter141 suite — fails with 'DROPPING enriched fields: [mobile_number, whatsapp_number, email, gst_number, pan_number, address, city, station, pin_code, salesman_id, salesman_name, price_category, group_id, group_name]'. Mitigation: in the customer_map builder loop, either spread `**{k: sc.get(k, '') for k in ENRICHED_FIELDS}` or copy the raw sc dict and layer computed fields on top."
+}

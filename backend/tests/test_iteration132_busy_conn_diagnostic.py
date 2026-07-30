@@ -102,10 +102,10 @@ def test_modal_links_to_microsoft_access_download():
 
 
 def test_version_markers_v142():
-    assert 'APP_VERSION = "v1.4.2"' in GUI.read_text()
+    assert 'APP_VERSION = "v1.5.0"' in GUI.read_text()
     agent_src = AGENT.read_text()
-    assert 'VERSION = "1.4.2"' in agent_src
-    assert 'AGENT_TAG = "busy-1.4.2-conn-diagnostic"' in agent_src
+    assert 'VERSION = "1.5.0"' in agent_src
+    assert 'AGENT_TAG = "busy-1.5.0-enriched-customers"' in agent_src
 
 
 if __name__ == "__main__":

@@ -1047,3 +1047,34 @@ even though **two FYs (2025-26 and 2026-27) of Tally data were live** in the ten
 - `backend/routes/ca_reports.py` — `_detect_synced_fys` rewritten (~55 lines), `_build_historical_fy` voucher-aggregate block rewritten (~25 lines).
 - `backend/tests/test_iteration139_ca_fy_detection.py` — new (5 tests, 215 lines).
 - `frontend/public/whats_new.json` — new FIX entry dated 2026-07-12.
+
+## Shipped — Jul 13 2026 (iteration 140) — Busy Sync Agent v1.5.0 · Enriched Customer Sync
+
+**Trigger**: User shared BusyNotify's Postman collection (`api.busynotify.in/v1/*`) and a sample `/v1/customers` JSON row. User explicitly asked to **learn from the API shape and mirror it in FLOWRA's Busy agent — with ZERO runtime dependency on BusyNotify** (no bridge, no cloud call).
+
+**What shipped**:
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` → **v1.5.0**
+  - New helpers `_row_pick(row, candidates)` + `_normalize_whatsapp(mobile)`.
+  - New `BUSY_MASTER1_FIELD_ALIASES` — defensive column-alias table that probes both human-named columns (`MobileNo`, `Email`, `GSTIN`, `Add1..4`, `City`, `PinCode`, `Station`, `PriceCat`, `Salesman`) AND legacy `Dn` fallbacks. Missing columns fail silently.
+  - New `_load_salesman_map(fy)` and `_load_folio_closing_bal(fy)` caches. Both wrapped in `try/except` — older Busy builds that lack MasterAss1/Folio1 tables degrade gracefully instead of crashing.
+  - Rewrote `extract_customers(fy)` to yield BusyNotify-shaped keys: `customer_id`, `customer_name`, `group_id`, `group_name`, `mobile_number`, `phone` (legacy alias), `whatsapp_number` (91-prefixed E.164), `email_id`, `address_line_1..4`, `address` (joined), `city`, `station`, `pin_code`, `state`, `country` (defaults to India), `gst_number`, `pan_number`, `opening_balance`, `closing_balance`, `balance` (BusyNotify convention alias), `salesman_id`, `salesman_name`, `salesman_mobile_number`, `salesman_whatsapp_number`, `price_category`, `ledger_group`. Legacy consumers keep working because all previous keys are still emitted.
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py` → GUI header now shows **v1.5.0**.
+- `backend/routes/sync.py` → `customers` upsert branch persists all enriched fields; every new key uses `.get(..., default)` so v1.4.x agents keep syncing without regression.
+
+**Explicit design choices**:
+- We did **NOT** call `api.busynotify.in`. There is no bridge mode. FLOWRA's Busy Agent talks straight to the customer's local `.bds` via Access ODBC — same architecture as v1.4.2, just pulling more columns.
+- We copied only the *data shape* (key names) so downstream tools written for BusyNotify's response format can drop-in against FLOWRA responses. Nothing else.
+
+**Regression tests**: `backend/tests/test_iteration140_busy_agent_v15_enrichment.py` — 15 new tests covering helper edge cases, enriched extractor emit, bare-row safety, non-debtor filtering, backend upsert coverage, backwards compat. All green.
+
+**Full pytest suite (Busy + CA + GDrive)**: **85 passed, 1 skipped**. No regressions.
+
+**Files touched**:
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — VERSION + AGENT_TAG + helpers block + salesman/folio loaders + rewritten `extract_customers` (~200 LOC total).
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py` — APP_VERSION only.
+- `backend/routes/sync.py` — `customers` upsert branch enriched (~55 LOC diff).
+- `backend/tests/test_iteration140_busy_agent_v15_enrichment.py` — new (315 LOC, 15 tests).
+- `backend/tests/test_iteration130_busy_agent_v14_oledb.py`, `test_iteration131_busy_agent_env_fix.py`, `test_iteration132_busy_conn_diagnostic.py` — version-fence assertions rolled forward to 1.5.0.
+- `frontend/public/whats_new.json` — new NEW entry dated 2026-07-13.
+
+**Ops note**: For the change to reach the customer's PC, the `.exe` must be **rebuilt on Windows** via `desktop-agent/build-kit-busy/build.bat` and re-distributed. Nothing changes for existing tenants until they run the new EXE. The **backend** change is already live via hot reload — it accepts *both* v1.4.x (limited) and v1.5.0 (enriched) payloads.

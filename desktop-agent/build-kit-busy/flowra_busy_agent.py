@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.4.2"
-AGENT_TAG = "busy-1.4.2-conn-diagnostic"
+VERSION = "1.5.0"
+AGENT_TAG = "busy-1.5.0-enriched-customers"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -413,6 +413,76 @@ class BusyDBReader:
 
 
 # ---------------------------------------------------------------------------
+# Busy Master1 column aliases (iter-140: enrichment inspired by BusyNotify's
+# public API response shape — implementation is 100% our own via direct
+# ODBC, no dependency or bridge to BusyNotify.)
+#
+# Busy's Master1 table stores extended party attributes in `Dn` (D1..D30ish)
+# columns whose *meaning* varies by Busy build. Rather than hard-coding one
+# mapping, we probe a candidate list in order and pick the first non-empty
+# value. Newer builds also carry human-named columns (Add1, GSTIN, Email,
+# PinCode, PhoneNo, MobileNo, PANNo, Station, PriceCat) — we prefer those.
+#
+# Each key maps to a list of possible source column names. On any given
+# Busy install only a subset will actually exist; missing columns are
+# silently ignored so we never crash on older schemas.
+# ---------------------------------------------------------------------------
+BUSY_MASTER1_FIELD_ALIASES: Dict[str, List[str]] = {
+    "phone":       ["MobileNo", "Mobile", "PhoneNo", "Phone", "D8"],
+    "email":       ["Email", "EmailId", "EmailAddress", "D14"],
+    "gstin":       ["GSTIN", "GSTNo", "TIN", "D18"],
+    "pan":         ["PANNo", "PAN", "D19"],
+    "address_1":   ["Add1", "Address1", "AddLine1", "D3"],
+    "address_2":   ["Add2", "Address2", "AddLine2", "D4"],
+    "address_3":   ["Add3", "Address3", "AddLine3", "D5"],
+    "address_4":   ["Add4", "Address4", "AddLine4", "D6"],
+    "city":        ["City", "Town", "D7"],
+    "station":     ["Station", "StationName", "D12"],
+    "pincode":     ["PinCode", "Pin", "ZipCode", "D9"],
+    "state":       ["State", "StateName", "D10"],
+    "country":     ["Country", "CountryName", "D11"],
+    "price_cat":   ["PriceCat", "PriceCategory", "PC", "D24"],
+    "opening_bal": ["D1", "OpBal", "OpeningBalance"],
+    "salesman_code_link": ["Salesman", "SalesmanCode", "AssociatedSalesman"],
+}
+
+
+def _row_pick(row: Dict, candidates: List[str]) -> str:
+    """Return the first non-empty value from `row` for any key in `candidates`.
+    Empty string if nothing matches. Handles both str and numeric values."""
+    for k in candidates:
+        v = row.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.lower() not in ("none", "null"):
+            return s
+    return ""
+
+
+def _normalize_whatsapp(mobile: str, default_country_code: str = "91") -> str:
+    """Convert a raw Indian mobile number into E.164 form (911XXXXXXXXXX).
+    Rules mirror BusyNotify's public contract: strip non-digits, drop
+    leading 0/+91, keep last 10, prefix `91`. Returns '' if not
+    reconstructable — never raises. Users on non-India country codes can
+    override via BUSY_WHATSAPP_COUNTRY_CODE env in a future release."""
+    if not mobile:
+        return ""
+    digits = "".join(ch for ch in str(mobile) if ch.isdigit())
+    if not digits:
+        return ""
+    # Trim leading 0 or country-code duplication
+    if digits.startswith("0"):
+        digits = digits.lstrip("0")
+    if len(digits) > 10 and digits.startswith(default_country_code):
+        digits = digits[len(default_country_code):]
+    if len(digits) < 10:
+        return ""
+    last10 = digits[-10:]
+    return f"{default_country_code}{last10}"
+
+
+# ---------------------------------------------------------------------------
 # Busy Data Extractor — converts Busy schema to FLOWRA format
 # ---------------------------------------------------------------------------
 class BusyDataExtractor:
@@ -501,27 +571,179 @@ class BusyDataExtractor:
 
     # ── Master Data Extractors ──────────────────────────
 
+    def _load_salesman_map(self, fy: str) -> Dict[str, Dict[str, str]]:
+        """Build code → {name, mobile, whatsapp} for MasterType=6 (Salesman).
+        Iter-140: enables per-party salesman enrichment on `extract_customers`.
+        Cached after first call. Safe on older Busy builds that may lack the
+        salesman master — returns {} silently instead of raising."""
+        if hasattr(self, "_salesman_map_cache") and self._salesman_map_cache is not None:
+            return self._salesman_map_cache
+        result: Dict[str, Dict[str, str]] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._salesman_map_cache = result
+            return result
+        try:
+            reader = BusyDBReader(db_path)
+            try:
+                for row in reader.iter_rows("Master1"):
+                    if row.get("MasterType") != "6":
+                        continue
+                    code = str(row.get("Code") or "").strip()
+                    if not code:
+                        continue
+                    mobile = _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["phone"])
+                    result[code] = {
+                        "name": (row.get("Name") or "").strip(),
+                        "mobile": mobile,
+                        "whatsapp": _normalize_whatsapp(mobile),
+                    }
+            finally:
+                reader.close()
+        except Exception as e:
+            logger.warning(f"Salesman map load skipped: {e}")
+        self._salesman_map_cache = result
+        return result
+
+    def _load_folio_closing_bal(self, fy: str) -> Dict[str, float]:
+        """Build code → closing_balance for MasterType=2 rows (parties).
+        Iter-140: same source Folio1.D23 we already read for the P&L
+        ledger extractor — reused here so both consumers see the same
+        closing figure and we don't re-read the file twice unnecessarily."""
+        if hasattr(self, "_folio_bal_cache") and self._folio_bal_cache is not None:
+            return self._folio_bal_cache
+        result: Dict[str, float] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._folio_bal_cache = result
+            return result
+        try:
+            reader = BusyDBReader(db_path)
+            try:
+                for row in reader.iter_rows("Folio1"):
+                    if row.get("MasterType") != "2":
+                        continue
+                    code = str(row.get("MasterCode") or "").strip()
+                    if code:
+                        try:
+                            result[code] = float(row.get("D23") or 0)
+                        except (TypeError, ValueError):
+                            result[code] = 0.0
+            finally:
+                reader.close()
+        except Exception as e:
+            logger.warning(f"Folio closing-balance map skipped: {e}")
+        self._folio_bal_cache = result
+        return result
+
     def extract_customers(self, fy: str) -> Generator[Dict, None, None]:
-        """Yield Sundry Debtor records one by one."""
+        """Yield Sundry Debtor records one by one, enriched with contact,
+        address, GST/PAN, salesman link, price category, and closing balance.
+
+        Iter-140 — schema inspired by BusyNotify's public /v1/customers
+        response contract. Implementation is 100% our own direct ODBC —
+        no dependency on any BusyNotify endpoint or bridge.
+        """
         self._load_code_map(fy)
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
+        salesman_map = self._load_salesman_map(fy)
+        closing_bal_map = self._load_folio_closing_bal(fy)
         reader = BusyDBReader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 if row.get("MasterType") != "2":
                     continue
-                parent = self._resolve_category(row.get("ParentGrp", ""))
+                parent_code = str(row.get("ParentGrp") or "").strip()
+                parent = self._resolve_category(parent_code)
                 if parent != "sundry_debtors":
                     continue
+
+                code = str(row.get("Code") or "").strip()
+                customer_name = (row.get("Name") or "").strip()
+
+                # Address — join non-empty lines with commas (avoids dangling
+                # commas when only a couple of fields are populated).
+                addr_lines = [
+                    _row_pick(row, BUSY_MASTER1_FIELD_ALIASES[k])
+                    for k in ("address_1", "address_2", "address_3", "address_4")
+                ]
+                address_joined = ", ".join([a for a in addr_lines if a])
+
+                # Contact
+                phone = _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["phone"])
+                whatsapp = _normalize_whatsapp(phone)
+
+                # Balances — opening from D1 (existing convention), closing
+                # from Folio1 lookup we built above.
+                try:
+                    opening = float(row.get("D1") or 0)
+                except (TypeError, ValueError):
+                    opening = 0.0
+                closing = closing_bal_map.get(code, 0.0)
+
+                # Salesman link — best-effort. If the Salesman column is not
+                # populated we simply emit empty salesman fields (matches
+                # BusyNotify's convention of `null` — we use "" for JSON
+                # transport friendliness against our existing backend
+                # schema, which coalesces missing values to "").
+                salesman_code = _row_pick(
+                    row, BUSY_MASTER1_FIELD_ALIASES["salesman_code_link"])
+                sales_info = salesman_map.get(salesman_code, {}) if salesman_code else {}
+
+                # Price category — 0 by default (BusyNotify emits "0" as
+                # string; we keep the same shape).
+                price_cat = _row_pick(
+                    row, BUSY_MASTER1_FIELD_ALIASES["price_cat"]) or "0"
+
                 yield {
-                    "customer_name": (row.get("Name") or "").strip(),
-                    "customer_id": row.get("Code", ""),
-                    "phone": (row.get("D8") or "").strip(),  # D8 often has phone
-                    "email": "",
-                    "state": "",
-                    "opening_balance": float(row.get("D1") or 0),
+                    # Identity
+                    "customer_id": code,
+                    "customer_name": customer_name,
+
+                    # Group hierarchy (BusyNotify's group_id/group_name)
+                    "group_id": parent_code,
+                    "group_name": self._resolve_name(parent_code) if parent_code else "",
+
+                    # Contact
+                    "mobile_number": phone,
+                    "phone": phone,                       # legacy — keep for backwards-compat
+                    "whatsapp_number": whatsapp,
+                    "email_id": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["email"]),
+
+                    # Address — expose both split and joined shapes
+                    "address_line_1": addr_lines[0],
+                    "address_line_2": addr_lines[1],
+                    "address_line_3": addr_lines[2],
+                    "address_line_4": addr_lines[3],
+                    "address": address_joined,
+                    "city": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["city"]),
+                    "station": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["station"]),
+                    "pin_code": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["pincode"]),
+                    "state": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["state"]),
+                    "country": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["country"]) or "India",
+
+                    # Tax IDs
+                    "gst_number": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["gstin"]),
+                    "pan_number": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["pan"]),
+
+                    # Balances
+                    "opening_balance": opening,
+                    "closing_balance": closing,
+                    "balance": closing,                   # BusyNotify convention alias
+
+                    # Salesman (party-level link)
+                    "salesman_id": salesman_code or "",
+                    "salesman_name": sales_info.get("name", ""),
+                    "salesman_mobile_number": sales_info.get("mobile", ""),
+                    "salesman_whatsapp_number": sales_info.get("whatsapp", ""),
+
+                    # Price category
+                    "price_category": price_cat,
+
+                    # Legacy fields kept for backwards-compat with v1.4.x
+                    # payloads that older tests / dashboards may still key on.
                     "ledger_group": "Sundry Debtors",
                 }
         finally:
