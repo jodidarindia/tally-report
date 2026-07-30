@@ -1078,3 +1078,13 @@ even though **two FYs (2025-26 and 2026-27) of Tally data were live** in the ten
 - `frontend/public/whats_new.json` — new NEW entry dated 2026-07-13.
 
 **Ops note**: For the change to reach the customer's PC, the `.exe` must be **rebuilt on Windows** via `desktop-agent/build-kit-busy/build.bat` and re-distributed. Nothing changes for existing tenants until they run the new EXE. The **backend** change is already live via hot reload — it accepts *both* v1.4.x (limited) and v1.5.0 (enriched) payloads.
+
+### iter-140 follow-up — Read-side surfacing (iter-141)
+
+**Testing agent finding**: `sync.py` correctly wrote all 20+ enriched fields to Mongo, but `customers.py::get_customer_outstanding()` (line ~223-240) rebuilt a slim response dict per row and *silently dropped* every enriched field before the CRM UI could see them.
+
+**Fix**: Extended the `customer_map[name] = {...}` builder in `customers.py` to explicitly surface all 22 enriched fields (customer_id, group_id, group_name, mobile_number, whatsapp_number, email, address, address_line_1..4, city, station, pin_code, country, gst_number, pan_number, salesman_id/name/mobile/whatsapp, price_category, closing_balance, balance). All default to '' or 0 so pre-v1.5 customer docs still render cleanly.
+
+**Tests**: `test_iteration141_busy_agent_v15_backend_ingest.py` — 5/5 now green (was 4/5). Includes the previously-failing `test_customers_outstanding_surfaces_enriched_fields`.
+
+**Combined suites (iter130-141)**: 90 passed, 1 skipped, 0 failed.

@@ -223,7 +223,7 @@ async def get_customer_outstanding(
             customer_map[name] = {
                 "customer_name": name,
                 "ledger_group": sc.get("ledger_group", ""),
-                "phone": sc.get("phone", ""),
+                "phone": sc.get("phone", "") or sc.get("mobile_number", ""),
                 "contact_person": sc.get("contact_person", ""),
                 "state": sc.get("state", ""),
                 "opening_balance": ob,
@@ -236,7 +236,37 @@ async def get_customer_outstanding(
                 "last_transaction": None,
                 "aging_0_30": 0.0, "aging_30_60": 0.0,
                 "aging_60_90": 0.0, "aging_90_plus": 0.0,
-                "oldest_invoice_days": 0
+                "oldest_invoice_days": 0,
+                # iter-140/141: enriched fields from Busy Agent v1.5.0 (and
+                # equivalent Tally sync where present). Surfaced here so the
+                # CRM UI can display contact / GST / salesman / address / group
+                # / price-category / balance columns without needing extra
+                # endpoints. Every field defaults to '' or 0 so pre-v1.5
+                # customer docs still render cleanly.
+                "customer_id": sc.get("customer_id", ""),
+                "group_id": sc.get("group_id", ""),
+                "group_name": sc.get("group_name", ""),
+                "mobile_number": sc.get("mobile_number", "") or sc.get("phone", ""),
+                "whatsapp_number": sc.get("whatsapp_number", ""),
+                "email": sc.get("email", ""),
+                "address": sc.get("address", ""),
+                "address_line_1": sc.get("address_line_1", ""),
+                "address_line_2": sc.get("address_line_2", ""),
+                "address_line_3": sc.get("address_line_3", ""),
+                "address_line_4": sc.get("address_line_4", ""),
+                "city": sc.get("city", ""),
+                "station": sc.get("station", ""),
+                "pin_code": sc.get("pin_code", ""),
+                "country": sc.get("country", ""),
+                "gst_number": sc.get("gst_number", ""),
+                "pan_number": sc.get("pan_number", ""),
+                "salesman_id": sc.get("salesman_id", ""),
+                "salesman_name": sc.get("salesman_name", ""),
+                "salesman_mobile_number": sc.get("salesman_mobile_number", ""),
+                "salesman_whatsapp_number": sc.get("salesman_whatsapp_number", ""),
+                "price_category": sc.get("price_category", ""),
+                "closing_balance": safe_num(sc.get("closing_balance", 0)),
+                "balance": safe_num(sc.get("balance", sc.get("closing_balance", 0))),
             }
             customer_vouchers[name] = []
             synced_name_lower_to_canonical[name.lower().strip()] = name
