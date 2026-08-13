@@ -1,0 +1,40 @@
+{
+  "summary": "Iter-147 backend round-trip validation of Busy Agent v1.5.3 VchType-mapping fix against the LIVE preview backend (https://tally-report-ai.preview.emergentagent.com) for admin tenant 3079b0af-…-fe296 / company 03f638d1-…-bb207. Generated real payloads from /tmp/comp0002/unpacked/COMP0002 (NAVDURGA AUTO, licensed Busy 21) via flowra_busy_agent.BusyDataExtractor v1.5.3 and POSTed them via /api/agent/sync using an HMAC sync_token forged with services.auth_service.generate_sync_token — same production auth vector Busy Agent uses on the wire. 13/13 pytest green. VERIFIED: (a) NEW data_type='payment_vouchers' (VchType=16, 431 real rows, chunked to 50) — HTTP 200/success:true, doc lands in db.payment_vouchers with voucher_id, voucher_date, party_name, party_code, total_amount, ledger_entries, tenant_id, company_id, voucher_type='payment'; (b) NEW data_type='sundry_journals' (VchType=3, all 16 real rows) — landed in db.sundry_journals with voucher_type='sundry_journal'; (c) REGRESSION on the five re-mapped categories all green — purchase_vouchers (VchType=2, 50), contra_vouchers (VchType=19, 50), journal_vouchers (VchType=4, 3), debit_notes (VchType=12, 1), credit_notes (VchType=10+17+18 folded, 50) — every category persists non-zero rows to its Mongo collection; (d) v1.5.2 customer ingest + /api/customers/outstanding round-trip still working — endpoint returns 200 with the enriched projection keys (mobile_number, gst_number, closing_balance surfaced on every returned customer); (e) tenant isolation confirmed — sync_token signed for tenant A rejects an /api/agent/sync claiming tenant B ('Invalid sync token'); missing-token and bad-token both rejected. NO backend regressions from v1.5.2. NO agent-side changes needed. The iter-113 model-drop bugs on InventoryItem/SalesVoucher are NOT re-exercised here because the new payment_vouchers / sundry_journals handlers write dict-based upserts (not through those Pydantic models) — they're already forward-compatible.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/agent/sync (payment_vouchers, sundry_journals)",
+        "issue": "Same multi-FY upsert-key blind spot flagged in iter-113 applies here: filter is {voucher_id, tenant_id, company_id} with no financial_year (routes/sync.py L382, L418). Agent-generated voucher_id now embeds fy ('BUSY-2025-26-204-16') so collisions are avoided in practice, but the backend still has no defence-in-depth. Recommend adding financial_year to the upsert filter for the two new branches (and for the five older branches already flagged)."
+      },
+      {
+        "endpoint": "POST /api/agent/sync (all voucher branches)",
+        "issue": "logger.info at L162 still doesn't log financial_year — hides multi-FY sync mistakes from log tail. Follow-up from iter-113 not yet done."
+      }
+    ]
+  },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration147_busy_v153_backend_ingest.py",
+    "/app/test_reports/pytest/iter147.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional hardening: add financial_year to the {voucher_id, tenant_id, company_id} upsert filter on the payment_vouchers and sundry_journals branches (defence-in-depth against future voucher_id scheme changes).",
+    "Optional: include financial_year in the sync logger.info line (L162) so multi-FY sync ticks are observable in supervisor tails."
+  ],
+  "critical_code_review_comments": [
+    "routes/sync.py — the new payment_vouchers (L370-403) and sundry_journals (L405-439) branches follow the correct dict-based upsert pattern (like customers branch), sidestepping the ConfigDict(extra='ignore') model-drop trap that iter-113 flagged on SalesVoucher/InventoryItem. Good pattern; consider migrating the old Pydantic-based branches to this style over time.",
+    "extractor v1.5.3 voucher_id scheme is now 'BUSY-{fy}-{vch_code}-{vch_type}' (verified in output: 'BUSY-2025-26-204-16', 'BUSY-2025-26-1088-3'), which resolves the cross-FY collision iter-113 warned about — but the backend upsert filter still doesn't include financial_year, so the moment someone rolls voucher_id back to 'BUSY-{vch_code}-{vch_type}' the collision returns silently. Recommend belt-and-braces.",
+    "sync_phases wiring in flowra_busy_agent.py correctly lists all 13 voucher categories including the two new ones; confirmed by grep. Daemon will pull payment_vouchers and sundry_journals on every tick per FY."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration147_busy_v153_backend_ingest.py (new, 13 tests — 4 auth/handshake, 2 new-category, 5 regression, 1 outstanding read, 1 tenant isolation)"
+  ],
+  "success_rate": { "backend": "100% (13/13)", "frontend": "skipped per request" },
+  "test_credentials": "Admin JWT via POST /api/auth/login {username:'admin', password:'admin123'} (from /app/memory/test_credentials.md). Sync writes use HMAC sync_token forged via services.auth_service.generate_sync_token(ADMIN_TENANT) — same production path Busy Agent uses.",
+  "seed_data_creation": "Wrote to admin tenant 3079b0af-…-fe296 / company 03f638d1-…-bb207 on the LIVE preview backend: 50 payment_vouchers (first 50 of 431), 16 sundry_journals (all), 50 purchase_vouchers, 50 contra_vouchers, 3 journal_vouchers, 1 debit_note, 50 credit_notes, 50 customers — all real Busy 21 data from /tmp/comp0002/unpacked/COMP0002 FY 2025-26. This overwrites/upserts into the admin tenant's demo data; if the admin tenant is meant to stay 'ASA AUTOTECH', main agent may want to purge these NAVDURGA rows post-test (they're all tagged tenant_id=3079b0af-… and voucher_ids prefixed 'BUSY-2025-26-*').",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "v1.5.3 backend ingest is fully validated end-to-end for the 7 voucher categories touched (payment_vouchers, sundry_journals, purchase_vouchers, contra_vouchers, journal_vouchers, debit_notes, credit_notes) plus customers. If main agent addresses the multi-FY upsert-key follow-up, extend test_iteration147 with a case that syncs the same voucher_id across FY 2025-26 and 2026-27 and asserts both persist. To re-run: python -m pytest /app/backend/tests/test_iteration147_busy_v153_backend_ingest.py -v (takes ~5min because the extractor loads the .bds file per fixture).",
+  "rca of the issue": "v1.5.3 correctly closes the user's original 'purchase/journal/contra/debit_note = 0 rows synced' bug at both layers: (1) extractor uses real Busy 21 VchType codes (2, 14, 16, 19, 4, 12 …) — verified by direct extraction against the licensed COMP0002 sample (payments=431, sundry=16, purchases>400, receipts>1000, contra>400, journals=3, credit_notes>70, debit_notes>=1); (2) backend accepts the two new data_type payloads with correct dict-based upsert, no Pydantic drop path; (3) round-trip lands non-zero counts in the respective Mongo collections and voucher shape (voucher_id, voucher_date, party_name, party_code, total_amount, ledger_entries, narration, tenant_id, company_id, voucher_type) is preserved. No action required."
+}

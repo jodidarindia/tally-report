@@ -367,6 +367,77 @@ async def receive_agent_sync(request: dict):
                     await db.receipt_vouchers.bulk_write(operations)
             logger.info(f"Synced {len(data)} receipt/payment vouchers")
 
+        elif data_type == 'payment_vouchers':
+            # v1.5.3 — Busy 21 VchType=16 → separate payment vouchers so
+            # cash-out records don't get mixed with cash-in receipts.
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for pv in data:
+                    v_id = pv.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": "payment",
+                                "voucher_date": pv.get('voucher_date', ''),
+                                "voucher_number": pv.get('voucher_number', ''),
+                                "party_name": pv.get('party_name', ''),
+                                "party_code": pv.get('party_code', ''),
+                                "amount": pv.get('total_amount', pv.get('amount', 0)),
+                                "total_amount": pv.get('total_amount', 0),
+                                "ledger_entries": pv.get('ledger_entries', []),
+                                "narration": pv.get('narration', ''),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id,
+                            }},
+                            upsert=True,
+                        )
+                    )
+                if operations:
+                    await db.payment_vouchers.bulk_write(operations)
+            logger.info(f"Synced {len(data)} payment vouchers")
+
+        elif data_type == 'sundry_journals':
+            # v1.5.3 — Busy 21 VchType=3 mixes sale-adjustment / rounding
+            # journals; keep them isolated from journal_vouchers so P&L
+            # doesn't double-count.
+            if data:
+                from pymongo import UpdateOne
+                operations = []
+                for sj in data:
+                    v_id = sj.get('voucher_id', '')
+                    if not v_id:
+                        continue
+                    operations.append(
+                        UpdateOne(
+                            {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            {"$set": {
+                                "voucher_id": v_id,
+                                "voucher_type": "sundry_journal",
+                                "voucher_date": sj.get('voucher_date', ''),
+                                "voucher_number": sj.get('voucher_number', ''),
+                                "party_name": sj.get('party_name', ''),
+                                "party_code": sj.get('party_code', ''),
+                                "amount": sj.get('total_amount', 0),
+                                "total_amount": sj.get('total_amount', 0),
+                                "ledger_entries": sj.get('ledger_entries', []),
+                                "narration": sj.get('narration', ''),
+                                "last_synced": sync_time,
+                                "tenant_id": req_tenant_id,
+                                "company_id": req_company_id,
+                            }},
+                            upsert=True,
+                        )
+                    )
+                if operations:
+                    await db.sundry_journals.bulk_write(operations)
+            logger.info(f"Synced {len(data)} sundry-journal vouchers")
+
         elif data_type == 'credit_notes':
             if data:
                 from pymongo import UpdateOne

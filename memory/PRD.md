@@ -1176,3 +1176,33 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 - SHITLA AUTO SPARES voucher shows Drive PDF link: `https://drive.google.com/…`.
 
 **Ops note (mocked/manual)**: The desktop `.exe` must be **rebuilt on Windows** via `build.bat` and redistributed. Backend already accepts both v1.4.x/1.5.0/1.5.1/1.5.2 payload shapes.
+
+## Shipped — Aug 14 2026 (iteration 146 + 147) — Busy Sync Agent v1.5.3 · Real Busy 21 VchType Mapping
+
+**User bug**: After v1.5.2 shipped, live sync logs showed `journal_vouchers: 0`, `purchase_vouchers: 0`, `contra_vouchers: 0`, `debit_notes: 0`. User confirmed those categories DO have data in NAVDURGA Busy 21.
+
+**Root cause**: The extract_* method chain used Busy Demo VchType defaults. Live licensed Busy 21 uses different codes. Verified against real Tran1 distribution in COMP0002:
+
+| Category | Demo default (v1.5.2) | Real Busy 21 (v1.5.3) | Actual row count |
+|---|---|---|---|
+| Sales | 9 | 9 ✓ | 1,774 |
+| Purchase | 7 | **2** | 467 |
+| Receipt | 1 + 3 | **14** | 1,446 |
+| Payment | *(missing)* | **16 (new)** | 431 |
+| Credit Note | 10 + 12 | **10 + 17 + 18** (fold rate-diff + discount) | 95 |
+| Debit Note | 8 + 11 | **12** | 1 |
+| Journal | 5 | **4** | 3 |
+| Contra | 6 | **19** | 568 |
+| Sundry Adjustment | *(missing)* | **3 (new)** | 16 |
+| Stock Journal | 15 | 15 ✓ | 29 |
+
+**Fixes shipped**:
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — every extract_* method now points at the correct real-Busy-21 VchType; NEW `extract_payments` (VchType=16) and `extract_sundry_journals` (VchType=3) methods; `credit_notes` folds 10 + 17 + 18 for a complete customer-balance-reduction picture; sync_phases wires 13 categories (was 11).
+- `backend/routes/sync.py` — NEW `data_type='payment_vouchers'` and `data_type='sundry_journals'` upsert handlers persisting to their own Mongo collections with tenant + company scoping.
+- VERSION → 1.5.3, AGENT_TAG → `busy-1.5.3-vchtype-mapping-fix`, GUI APP_VERSION → v1.5.3.
+
+**Regression tests**: `test_iteration146_busy_v153_vchtype_mapping.py` — 17 tests including 7 real-DB e2e (all green, ~4 min run). Full sweep: **102 passed, 1 skipped, 0 failed** across iter130 → iter147.
+
+**Live backend round-trip** (testing agent iter-147, 13/13 green on preview): NEW payment_vouchers + sundry_journals categories, all 5 re-mapped voucher categories, existing v1.5.2 flows unchanged, tenant isolation verified.
+
+**Ops note (mocked/manual)**: Rebuild the desktop `.exe` on Windows via `build.bat` and redistribute. The agent will now discover ~3,500 real vouchers per FY (was reporting <2,000 before v1.5.3).

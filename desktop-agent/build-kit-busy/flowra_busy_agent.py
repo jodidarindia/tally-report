@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.2"
-AGENT_TAG = "busy-1.5.2-multi-fy-and-schema"
+VERSION = "1.5.3"
+AGENT_TAG = "busy-1.5.3-vchtype-mapping-fix"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -1321,35 +1321,55 @@ class BusyDataExtractor:
             pass
         return raw
 
+    # v1.5.3 — VchType mapping VERIFIED against real licensed Busy 21
+    # (COMP0002 NAVDURGA AUTO). The 1.5.1 map used Busy Demo defaults
+    # which don't match live installs. Live distribution proved:
+    #   VchType=9  Sale (1774)   VchType=2  Purchase (467)
+    #   VchType=14 Receipt (1446)  VchType=16 Payment (431)
+    #   VchType=10 Credit Note (38)  VchType=12 Debit Note (1)
+    #   VchType=4  Journal (3)  VchType=19 Contra (568)
+    #   VchType=15 Stock Journal (29)
+    #   VchType=17 Rate-Diff-on-Sale (5) — lump into credit_notes
+    #   VchType=18 Discount-on-Sale (52)  — lump into credit_notes
+    #   VchType=3  Sales adjustment (16)  — legacy "sundry_journals"
+
     def extract_sales(self, fy: str) -> Generator[Dict, None, None]:
         yield from self._extract_vouchers_by_type(fy, 9)
 
+    def extract_purchases(self, fy: str) -> Generator[Dict, None, None]:
+        yield from self._extract_vouchers_by_type(fy, 2)
+
     def extract_receipts(self, fy: str) -> Generator[Dict, None, None]:
-        for v in self._extract_vouchers_by_type(fy, 1):
-            yield v
-        for v in self._extract_vouchers_by_type(fy, 3):
-            yield v
+        # Receipts (bank/cash IN from customer) — Busy 21 VchType=14.
+        yield from self._extract_vouchers_by_type(fy, 14)
+
+    def extract_payments(self, fy: str) -> Generator[Dict, None, None]:
+        """v1.5.3 — Payments (bank/cash OUT to supplier or expense).
+        Real Busy 21 VchType=16."""
+        yield from self._extract_vouchers_by_type(fy, 16)
 
     def extract_credit_notes(self, fy: str) -> Generator[Dict, None, None]:
-        for v in self._extract_vouchers_by_type(fy, 10):
-            yield v
-        for v in self._extract_vouchers_by_type(fy, 12):
-            yield v
-
-    def extract_journals(self, fy: str) -> Generator[Dict, None, None]:
-        yield from self._extract_vouchers_by_type(fy, 5)
-
-    def extract_purchases(self, fy: str) -> Generator[Dict, None, None]:
-        yield from self._extract_vouchers_by_type(fy, 7)
+        # Credit-side adjustments reducing receivable: sale-return + rate
+        # diff + on-sale discount all funnel into `credit_notes`.
+        for vt in (10, 17, 18):
+            for v in self._extract_vouchers_by_type(fy, vt):
+                yield v
 
     def extract_debit_notes(self, fy: str) -> Generator[Dict, None, None]:
-        for v in self._extract_vouchers_by_type(fy, 8):
-            yield v
-        for v in self._extract_vouchers_by_type(fy, 11):
-            yield v
+        # Debit-side adjustment (purchase return / supplier claim).
+        yield from self._extract_vouchers_by_type(fy, 12)
+
+    def extract_journals(self, fy: str) -> Generator[Dict, None, None]:
+        yield from self._extract_vouchers_by_type(fy, 4)
 
     def extract_contra(self, fy: str) -> Generator[Dict, None, None]:
-        yield from self._extract_vouchers_by_type(fy, 6)
+        yield from self._extract_vouchers_by_type(fy, 19)
+
+    def extract_sundry_journals(self, fy: str) -> Generator[Dict, None, None]:
+        """v1.5.3 — Busy 21 VchType=3 mixes sale-adjustment / rounding
+        journals; keep them under a distinct label so they don't inflate
+        the sales-return count."""
+        yield from self._extract_vouchers_by_type(fy, 3)
 
     def extract_stock_journals(self, fy: str) -> Generator[Dict, None, None]:
         yield from self._extract_vouchers_by_type(fy, 15)
@@ -1781,8 +1801,10 @@ class FlowraBusySyncAgent:
             ("inventory",         self.extractor.extract_inventory_items,  "item_id"),
             ("sales",             self.extractor.extract_sales,            "voucher_id"),
             ("receipts",          self.extractor.extract_receipts,         "voucher_id"),
+            ("payment_vouchers",  self.extractor.extract_payments,         "voucher_id"),   # v1.5.3
             ("credit_notes",      self.extractor.extract_credit_notes,     "voucher_id"),
             ("journal_vouchers",  self.extractor.extract_journals,         "voucher_id"),
+            ("sundry_journals",   self.extractor.extract_sundry_journals,  "voucher_id"),   # v1.5.3
             ("purchase_vouchers", self.extractor.extract_purchases,        "voucher_id"),
             ("debit_notes",       self.extractor.extract_debit_notes,      "voucher_id"),
             ("contra_vouchers",   self.extractor.extract_contra,           "voucher_id"),
