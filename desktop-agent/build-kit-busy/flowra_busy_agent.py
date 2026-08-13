@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.3"
-AGENT_TAG = "busy-1.5.3-vchtype-mapping-fix"
+VERSION = "1.5.4"
+AGENT_TAG = "busy-1.5.4-display-name-and-retry"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -674,6 +674,72 @@ class BusyDataExtractor:
 
     def get_available_fys(self) -> List[str]:
         return sorted(self._fy_dbs.keys())
+
+    def get_company_display_name(self, folder_id: str = "") -> str:
+        """v1.5.4 — Resolve the human-readable company name (e.g.
+        `NAVDURGA AUTO SPARES JABALPUR`) from the Busy database itself
+        instead of falling back to the folder id (`COMP0002`).
+
+        Busy 21 stores the company header inside `db.bds` (the master
+        DB, shared across all FYs of a company). Column names differ
+        across Busy generations, so we probe a candidate list and
+        return the first non-empty value. Falls back to `folder_id`
+        if none of the candidates yield a name — the agent still
+        works, just with the old ugly label.
+        """
+        # Prefer master DB (constant across FYs). Fall back to any FY
+        # DB — company header is duplicated in every FY file too.
+        candidate_dbs = []
+        if self._master_db:
+            candidate_dbs.append(self._master_db)
+        for _fy, _path in sorted(self._fy_dbs.items(), reverse=True):
+            if _path not in candidate_dbs:
+                candidate_dbs.append(_path)
+
+        # (table, [name_columns]) tuples — tried in order.
+        table_probes = [
+            ("Cmpny",     ["BDEPName", "Name", "CompanyName", "CmpnyName"]),
+            ("Company1",  ["BDEPName", "Name", "CompanyName"]),
+            ("Company",   ["BDEPName", "Name", "CompanyName"]),
+            ("BusyDataInfo", ["Name", "CompanyName", "BDEPName"]),
+            ("BDept",     ["BDEPName", "Name"]),
+            ("CompanyInfo", ["Name", "CompanyName", "BDEPName"]),
+        ]
+
+        for db_path in candidate_dbs:
+            reader = None
+            try:
+                reader = BusyDBReader(db_path)
+                for tbl, cols in table_probes:
+                    try:
+                        for row in reader.iter_rows(tbl):
+                            for col in cols:
+                                name = (row.get(col) or "").strip()
+                                if name and name.lower() != "default":
+                                    logger.info(
+                                        f"  Resolved company display name: "
+                                        f"'{name}' (via {tbl}.{col})"
+                                    )
+                                    return name
+                    except Exception:
+                        # Table missing on this Busy build — try next.
+                        continue
+            except Exception as e:
+                logger.info(f"  Company name probe skipped for {db_path}: {e}")
+            finally:
+                if reader is not None:
+                    try:
+                        reader.close()
+                    except Exception:
+                        pass
+
+        fallback = (folder_id or "").strip() or "Default Company"
+        logger.info(
+            f"  Company display name not found in DB — falling back to "
+            f"'{fallback}'. Set BUSY_COMPANY_DISPLAY_NAME env var to "
+            "override manually."
+        )
+        return fallback
 
     def _load_code_map(self, fy: str):
         """Load code→name lookup. Small dataset (~500 entries ≈ 50KB RAM).
@@ -1499,28 +1565,59 @@ class FlowraAPIClient:
 
     def _post_chunk(self, data_type: str, chunk: list, company_id: str,
                     company_name: str, financial_year: str) -> bool:
+        """POST one chunk with 3-attempt retry + exponential backoff.
+
+        v1.5.4 — Previously a single 502/503/timeout burned the entire
+        phase. We now retry with 5s → 30s → 60s sleeps before giving up
+        and logging a LOUD error so downstream operators can pinpoint
+        the exact data_type + FY that lost data.
+
+        Empty chunks still short-circuit as `True` (no-op).
+        """
         import requests
         if not chunk:
             return True
-        try:
-            payload = self._build_envelope(data_type, chunk, company_id, company_name, financial_year)
-            r = requests.post(
-                f"{self.backend_url}/api/agent/sync",
-                json=payload,
-                headers=self._auth_headers(),
-                timeout=60,
-            )
-            if r.status_code != 200:
-                logger.warning(f"Sync {data_type}: HTTP {r.status_code} — {r.text[:200]}")
-                return False
-            js = r.json()
-            if not js.get("success"):
-                logger.warning(f"Sync {data_type} failed: {js.get('error', '')}")
-                return False
-            return True
-        except Exception as e:
-            logger.error(f"Sync error {data_type}: {e}")
-            return False
+        url = f"{self.backend_url}/api/agent/sync"
+        payload = self._build_envelope(data_type, chunk, company_id, company_name, financial_year)
+        backoffs = [5, 30, 60]
+        for attempt in range(1, len(backoffs) + 2):
+            try:
+                r = requests.post(url, json=payload, headers=self._auth_headers(), timeout=60)
+                if r.status_code == 200:
+                    js = r.json()
+                    if js.get("success"):
+                        return True
+                    logger.warning(
+                        f"Sync {data_type} attempt {attempt} → app-error: "
+                        f"{js.get('error', '')[:200]}"
+                    )
+                    # App-level errors (e.g. subscription expired,
+                    # tenant_id missing) are NOT transient — no retry.
+                    return False
+                # 4xx / 5xx — treat as transient and retry.
+                logger.warning(
+                    f"Sync {data_type} attempt {attempt} → HTTP {r.status_code} "
+                    f"({len(chunk)} records) · body[:180]: {r.text[:180]}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Sync {data_type} attempt {attempt} → network error: {e}"
+                )
+            if attempt <= len(backoffs):
+                sleep_s = backoffs[attempt - 1]
+                logger.info(
+                    f"  Retrying {data_type} in {sleep_s}s "
+                    f"(attempt {attempt + 1}/{len(backoffs) + 1})…"
+                )
+                time.sleep(sleep_s)
+
+        logger.error(
+            f"[SYNC-LOST] {data_type}: {len(chunk)} records dropped after "
+            f"{len(backoffs) + 1} attempts to {url} · company={company_name} "
+            f"({company_id}) fy={financial_year}. Next full-sync tick will "
+            "attempt them again."
+        )
+        return False
 
     def sync_generator(self, company_id: str, company_name: str, financial_year: str,
                        data_type: str, gen: Generator, id_key: str = "voucher_id") -> tuple:
@@ -2332,6 +2429,27 @@ def run_daemon() -> int:
                       "driver from the banner above, then restart the agent.")
         return 2
 
+    # v1.5.4 — Resolve the human-readable company display name from the
+    # Busy master DB. Falls back to the folder id (e.g. `COMP0002`) on
+    # older Busy builds that don't ship a `Cmpny` / `Company1` table.
+    # An explicit BUSY_COMPANY_DISPLAY_NAME env var (from GUI Settings)
+    # trumps the auto-detection so users can override edge cases.
+    override = os.environ.get("BUSY_COMPANY_DISPLAY_NAME", "").strip()
+    try:
+        if override:
+            company_display = override
+        elif agent.extractor is not None:
+            company_display = agent.extractor.get_company_display_name(company)
+        else:
+            company_display = company
+    except Exception as e:
+        logger.warning(f"[daemon] Display-name resolution failed ({e}); "
+                       f"using folder id '{company}' instead.")
+        company_display = company
+    logger.info(
+        f"[daemon] Company identifier — folder='{company}' display='{company_display}'"
+    )
+
     quick_every_min = 5   # sales delta
     tick = 0
     while True:
@@ -2347,11 +2465,11 @@ def run_daemon() -> int:
             # Full sync every `interval_min` minutes; quick sync every 5 min.
             for fy in fys_to_sync:
                 if tick % (interval_min // quick_every_min or 1) == 0:
-                    logger.info(f"[daemon] Starting full sync for {company} | FY {fy}")
-                    agent.run_full_sync(company, company, fy, force=False)
+                    logger.info(f"[daemon] Starting full sync for {company_display} | FY {fy}")
+                    agent.run_full_sync(company, company_display, fy, force=False)
                 else:
-                    logger.info(f"[daemon] Quick sales sync {company} | FY {fy}")
-                    agent.run_quick_sales_sync(company, company, fy)
+                    logger.info(f"[daemon] Quick sales sync {company_display} | FY {fy}")
+                    agent.run_quick_sales_sync(company, company_display, fy)
         except Exception as e:
             logger.exception(f"[daemon] sync tick failed: {e}")
         tick += 1

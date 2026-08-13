@@ -10,6 +10,44 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 16 2026 (iteration 148) — Busy Agent v1.5.4: display name + retry
+Two shipping fixes for the live Busy customer whose CRM, Dashboard, CA Corner
+and Target tab were showing `COMP0002` instead of `NAVDURGA AUTO SPARES JABALPUR`:
+
+1. **Real company name resolution** — added `BusyDataExtractor.get_company_display_name()`
+   which probes the master `db.bds` file for `Cmpny.BDEPName`, `Company1.Name`,
+   `BDept.BDEPName` etc, returning the first non-empty value (folder id
+   fallback if all probes miss). `run_daemon()` now passes this as
+   `company_name` while keeping the stable folder id (`COMP0002`) as
+   `company_id`. `BUSY_COMPANY_DISPLAY_NAME` env var overrides for edge cases.
+
+2. **Folder-keyed company mapping (backend)** — new
+   `services.id_mapping_service.register_company_by_folder(tenant_id, folder_id, display_name)`
+   keys the mapping on `folder_id_hash` (stable) instead of the display name
+   hash. Same folder id → same UUID even if the user renames the company in
+   Busy. **Legacy v1.5.3 mappings** (whose `company_name_hash` accidentally
+   equals the folder id) get auto-migrated on the next sync: stamp the
+   `folder_id_hash`, update the encrypted display name, same UUID — no
+   orphan data, no re-sync required. `/api/agent/sync` uses the new resolver
+   when `company_name` is provided and differs from `company_id`.
+
+3. **`_post_chunk()` 3-tier retry with backoff** (5s / 30s / 60s) on any
+   4xx or 5xx that isn't `success:false`. Silent 502/503 data-loss is now
+   loud: `[SYNC-LOST]` dead-letter log with data_type + FY + company on
+   permanent failure. Next full-sync tick will re-post the same records
+   (idempotent voucher_id upsert already guaranteed).
+
+Tests: `test_iteration148_busy_v154_display_name.py` (8/8 green) — locks
+fresh-create, in-place rename, legacy migration, sync_token guard,
+end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
+backoff source anchor.
+
+**P1 still open**: `BusyDBReader` object pool (25× file-parse overhead per
+sync tick) — deferred; needs live .bds smoke test before touching 25 call
+sites. Track via TODO in agent header.
+
+
+
 ## Shipped — Jul 8 2026 (iteration 116) — FLOWRA Financial Pitch (Feb 2026 raise)
 
 Founder locked pricing (Starter ₹833 / Professional ₹2,083 / Enterprise ₹3,166 per company/mo), 1 current paid customer, Y5 ARR target ₹5 Cr, team plan 12→25 by Y5, two-tranche fundraise. Built two deliverables in `/app/scripts/generate_financial_pitch.py`:

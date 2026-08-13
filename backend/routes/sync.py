@@ -123,7 +123,7 @@ async def receive_agent_sync(request: dict):
             return APIResponse(success=False, error="Invalid sync token")
 
         # Resolve company_id: if it's a plain name (not UUID), map it to UUID
-        from services.id_mapping_service import register_company_mapping, get_company_uuid
+        from services.id_mapping_service import register_company_mapping, register_company_by_folder, get_company_uuid
         is_uuid = False
         try:
             import uuid as _uuid
@@ -133,9 +133,25 @@ async def receive_agent_sync(request: dict):
             pass
 
         if req_company_id and not is_uuid and req_tenant_id:
-            # Agent sent a company name — resolve or create UUID mapping
-            resolved_uuid = await register_company_mapping(req_tenant_id, req_company_id)
-            company_name_raw = req_company_id
+            # v1.5.4 — Busy Sync Agent now sends BOTH a stable folder id
+            # (`company_id`, e.g. COMP0002) AND the human-readable name
+            # (`company_name`, e.g. "NAVDURGA AUTO SPARES JABALPUR").
+            # Prefer the folder-keyed resolver so:
+            #   - Existing legacy mappings keyed only on the folder-id
+            #     name get adopted + renamed (no orphan UUID).
+            #   - A Busy-side rename shows up in FLOWRA immediately.
+            explicit_display = (request.get('company_name') or '').strip()
+            if explicit_display and explicit_display != req_company_id:
+                resolved_uuid = await register_company_by_folder(
+                    req_tenant_id, req_company_id, explicit_display
+                )
+                company_name_raw = explicit_display
+            else:
+                # Legacy Tally-agent path — company_name equals company_id
+                # (e.g. agent sends the display name as both). Keep the
+                # historical behaviour untouched.
+                resolved_uuid = await register_company_mapping(req_tenant_id, req_company_id)
+                company_name_raw = req_company_id
             req_company_id = resolved_uuid
 
         # Add company to admin's company list if new — enforce max_companies limit

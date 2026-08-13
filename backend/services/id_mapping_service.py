@@ -80,6 +80,104 @@ async def register_company_mapping(tenant_id: str, company_name: str) -> str:
     return company_uuid
 
 
+async def register_company_by_folder(tenant_id: str, folder_id: str,
+                                     display_name: str) -> str:
+    """v1.5.4 — Busy Sync Agent variant of `register_company_mapping`.
+
+    The Busy agent sends a **stable folder id** (e.g. `COMP0002`) as
+    `company_id` — that never changes — plus the current human-readable
+    company name (e.g. `NAVDURGA AUTO SPARES JABALPUR`) which the user
+    might edit inside Busy over time.
+
+    We key the mapping on the folder id so:
+      - A rename in Busy just updates the display name in-place (no
+        duplicate UUID, no orphan data).
+      - The legacy row whose `company_name_hash` still equals the folder
+        id (from v1.5.3 and earlier, when the agent sent the folder id
+        as the name) gets adopted and re-labelled instead of leaving
+        stale data.
+    """
+    folder_id = (folder_id or "").strip()
+    display_name = (display_name or "").strip() or folder_id
+    if not folder_id:
+        return ""
+
+    folder_hash = _stable_name_hash(f"__folder__:{folder_id}")
+    # 1) Fast path — mapping already keyed on the folder id.
+    existing = await db.company_mappings.find_one(
+        {"tenant_id": tenant_id, "folder_id_hash": folder_hash}, {"_id": 0}
+    )
+    if existing:
+        # Keep the display name fresh (Busy rename → FLOWRA rename).
+        current_name = ""
+        try:
+            current_name = decrypt_field(existing.get("company_name_encrypted", "")).strip()
+        except Exception:
+            pass
+        if display_name and display_name != current_name:
+            await db.company_mappings.update_one(
+                {"company_uuid": existing["company_uuid"], "tenant_id": tenant_id},
+                {"$set": {
+                    "company_name_encrypted": encrypt_field(display_name),
+                    "company_name_hash": _stable_name_hash(display_name),
+                }},
+            )
+            logger.info(
+                f"Renamed company mapping {existing['company_uuid']}: "
+                f"'{current_name}' → '{display_name}'"
+            )
+        return existing["company_uuid"]
+
+    # 2) Legacy migration — mapping created by v1.5.3 with the folder id
+    #    as the display name. Adopt it, stamp folder_id_hash, rename.
+    legacy = await db.company_mappings.find_one(
+        {"tenant_id": tenant_id, "company_name_hash": _stable_name_hash(folder_id)},
+        {"_id": 0}
+    )
+    if legacy:
+        await db.company_mappings.update_one(
+            {"company_uuid": legacy["company_uuid"], "tenant_id": tenant_id},
+            {"$set": {
+                "folder_id_hash": folder_hash,
+                "company_name_encrypted": encrypt_field(display_name),
+                "company_name_hash": _stable_name_hash(display_name),
+            }},
+        )
+        logger.info(
+            f"Migrated legacy folder-name mapping {legacy['company_uuid']}: "
+            f"folder='{folder_id}' → display='{display_name}'"
+        )
+        return legacy["company_uuid"]
+
+    # 3) Also check if a mapping already exists under the display name
+    #    hash (user might have registered manually first). Adopt it.
+    name_hash = _stable_name_hash(display_name)
+    by_name = await db.company_mappings.find_one(
+        {"tenant_id": tenant_id, "company_name_hash": name_hash}, {"_id": 0}
+    )
+    if by_name:
+        await db.company_mappings.update_one(
+            {"company_uuid": by_name["company_uuid"], "tenant_id": tenant_id},
+            {"$set": {"folder_id_hash": folder_hash}},
+        )
+        return by_name["company_uuid"]
+
+    # 4) Nothing exists — create a fresh mapping keyed on both hashes.
+    company_uuid = str(uuid.uuid4())
+    await db.company_mappings.insert_one({
+        "tenant_id": tenant_id,
+        "company_uuid": company_uuid,
+        "folder_id_hash": folder_hash,
+        "company_name_encrypted": encrypt_field(display_name),
+        "company_name_hash": name_hash,
+    })
+    logger.info(
+        f"Registered folder-keyed company mapping: folder='{folder_id}' "
+        f"display='{display_name}' -> {company_uuid}"
+    )
+    return company_uuid
+
+
 async def get_company_name(tenant_id: str, company_uuid: str) -> str:
     """Resolve a company UUID back to its display name."""
     mapping = await db.company_mappings.find_one({
