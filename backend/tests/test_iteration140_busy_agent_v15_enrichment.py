@@ -278,8 +278,8 @@ def test_extract_customers_filters_non_debtor_parties(monkeypatch):
 
 def test_agent_version_bumped():
     from flowra_busy_agent import VERSION, AGENT_TAG
-    assert VERSION == "1.5.1"
-    assert "1.5.1" in AGENT_TAG
+    assert VERSION == "1.5.2"
+    assert "1.5.2" in AGENT_TAG
 
 
 # ---------------------------------------------------------------------------

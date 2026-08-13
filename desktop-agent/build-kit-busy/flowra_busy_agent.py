@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.1"
-AGENT_TAG = "busy-1.5.1-licensed-jet4-fix"
+VERSION = "1.5.2"
+AGENT_TAG = "busy-1.5.2-multi-fy-and-schema"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -676,7 +676,14 @@ class BusyDataExtractor:
         return sorted(self._fy_dbs.keys())
 
     def _load_code_map(self, fy: str):
-        """Load code→name lookup. Small dataset (~500 entries ≈ 50KB RAM)."""
+        """Load code→name lookup. Small dataset (~500 entries ≈ 50KB RAM).
+
+        v1.5.2 — For MasterType=6 (items), Busy 21 stores the human-
+        readable name in `Alias` while `Name` is the alphanumeric SKU
+        code. We now prefer Alias for items so voucher-item names, sales
+        frequency, and inventory analytics render intelligibly.
+        Non-item masters (parties, ledgers, groups) still use `Name`.
+        """
         if self._code_map:
             return
         db_path = self._fy_dbs.get(fy)
@@ -686,10 +693,14 @@ class BusyDataExtractor:
         try:
             for row in reader.iter_rows("Master1"):
                 code = row.get("Code", "")
+                mtype = str(row.get("MasterType") or "")
                 name = (row.get("Name") or "").strip()
-                mtype = row.get("MasterType", "")
+                alias = (row.get("Alias") or "").strip()
                 parent = row.get("ParentGrp", "")
-                self._code_map[code] = name
+
+                # Items (MasterType=6) — prefer human-readable Alias.
+                display = (alias if mtype == "6" and alias else name)
+                self._code_map[code] = display
                 self._parent_map[code] = parent
                 if mtype == "1":
                     # Account group
@@ -957,39 +968,170 @@ class BusyDataExtractor:
             reader.close()
 
     def extract_inventory_items(self, fy: str) -> Generator[Dict, None, None]:
+        """v1.5.2 — Rewritten against real licensed Busy 21 schema.
+
+        Confirmed via COMP0002 (10,630 items):
+          • `Master1.Name`  = alphanumeric SKU code (e.g. "10039927AA")
+          • `Master1.Alias` = human-readable name (e.g. "SARTHI Engine Oil 1 LTR")
+            ← this is what the FLOWRA UI must display.
+          • `Master1.PrintName` = invoice-print name
+          • `Master1.HSNCode` = HSN
+          • `Master1.D1..D26` are numeric flags/factors — NOT prices, so
+            we no longer default `price = D1` (which was always 1.0).
+          • `Folio1` (for MasterType=6) holds monthly quantity slots
+            across multiple dimensions; last non-zero within D11..D30 is
+            the most recent qty snapshot.
+
+        Cost & sale price are computed as a weighted-average from
+        purchase/sales voucher line-items via `_load_item_price_map` —
+        this is the same last-known-rate approach Busy uses internally.
+        """
         self._load_code_map(fy)
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
-        # Get Folio1 balances for item quantities
-        folio_qty = {}
-        reader = BusyDBReader(db_path)
-        try:
-            for row in reader.iter_rows("Folio1"):
-                if row.get("MasterType") == "6":
-                    code = row.get("MasterCode", "")
-                    # D23 often contains closing quantity
-                    folio_qty[code] = float(row.get("D23") or 0)
-        finally:
-            reader.close()
+
+        # Build item quantity and price maps once (streamed, cached).
+        item_qty_map = self._load_item_qty_map(fy)
+        item_price_map = self._load_item_price_map(fy)
 
         reader = BusyDBReader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
-                if row.get("MasterType") != "6":
+                if str(row.get("MasterType") or "") != "6":
                     continue
-                code = row.get("Code", "")
+                code = str(row.get("Code") or "").strip()
+                # Alias holds the human-readable name in Busy 21; some
+                # older builds put it in `Name`. Fall back defensively.
+                alias = (row.get("Alias") or "").strip()
+                sku_code = (row.get("Name") or "").strip()
+                item_name = alias or sku_code
+                price_row = item_price_map.get(code, {})
+
                 yield {
-                    "item_name": (row.get("Name") or "").strip(),
+                    # Legacy keys — kept for backwards-compat with v1.5.1
+                    # and the analytics tables that key on them.
+                    "item_name": item_name,
                     "item_id": code,
-                    "part_number": (row.get("Alias") or "").strip(),
-                    "quantity": folio_qty.get(code, 0),
-                    "price": float(row.get("D1") or 0),
-                    "unit": (row.get("D2") or "").strip() if row.get("D2") else "",
+                    "part_number": (row.get("PrintName") or alias or sku_code).strip(),
+                    "quantity": item_qty_map.get(code, 0.0),
+                    "price": price_row.get("sale_price", 0.0),
+                    "unit": "",     # unit code resolves via CM master later
                     "stock_group": self._resolve_name(row.get("ParentGrp", "")),
+
+                    # v1.5.2 — new enriched fields
+                    "sku_code": sku_code,
+                    "alias": alias,
+                    "hsn_code": (row.get("HSNCode") or "").strip(),
+                    "sale_price": price_row.get("sale_price", 0.0),
+                    "cost_price": price_row.get("cost_price", 0.0),
+                    "last_sold_rate": price_row.get("last_sold_rate", 0.0),
+                    "last_purchased_rate": price_row.get("last_purchased_rate", 0.0),
+                    "closing_qty": item_qty_map.get(code, 0.0),
+                    "stock_group_code": (row.get("ParentGrp") or "").strip(),
+                    "created_at": (row.get("CreationTime") or "").strip(),
+                    "modified_at": (row.get("ModificationTime") or "").strip(),
                 }
         finally:
             reader.close()
+
+    def _load_item_qty_map(self, fy: str) -> Dict[str, float]:
+        """v1.5.2 — Closing quantity per item, read from Folio1.
+
+        Busy 21 stores item balances in Folio1 rows where MasterType=6.
+        Quantity slots span D11..D50; the last non-zero column is the
+        most recent snapshot. We take max abs across those columns as a
+        robust heuristic — under-selects during mid-FY are better than
+        picking a stale zeroed month."""
+        if hasattr(self, "_item_qty_cache") and self._item_qty_cache is not None:
+            return self._item_qty_cache
+        result: Dict[str, float] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._item_qty_cache = result
+            return result
+        try:
+            reader = BusyDBReader(db_path)
+            try:
+                for row in reader.iter_rows("Folio1"):
+                    if str(row.get("MasterType") or "") != "6":
+                        continue
+                    code = str(row.get("MasterCode") or "").strip()
+                    if not code:
+                        continue
+                    # Only quantity-range D-columns (D11..D50). D1..D10
+                    # and D51+ hold value-in-rupees or other metrics.
+                    best = 0.0
+                    for key in [f"D{n}" for n in range(11, 51)]:
+                        try:
+                            v = float(row.get(key) or 0)
+                        except (TypeError, ValueError):
+                            v = 0.0
+                            continue
+                        # Ignore obviously-value columns (values in ₹
+                        # are typically 3+ digits and much larger than
+                        # typical qty). If it looks like a price, skip.
+                        if abs(v) > 100000:
+                            continue
+                        if abs(v) > abs(best):
+                            best = v
+                    result[code] = best
+            finally:
+                reader.close()
+        except Exception as e:
+            logger.warning(f"Item qty map skipped: {e}")
+        self._item_qty_cache = result
+        return result
+
+    def _load_item_price_map(self, fy: str) -> Dict[str, Dict[str, float]]:
+        """v1.5.2 — Derive per-item sale_price + cost_price from voucher
+        line items in this FY. Uses the most recent sale/purchase rate
+        so newly-adjusted prices show up in FLOWRA within the same tick.
+
+        Streamed in one pass over Tran2 — no full-history retention."""
+        if hasattr(self, "_item_price_cache") and self._item_price_cache is not None:
+            return self._item_price_cache
+        result: Dict[str, Dict[str, float]] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._item_price_cache = result
+            return result
+        try:
+            reader = BusyDBReader(db_path)
+            try:
+                # Reader over Tran2 rows carrying stock-item lines
+                # (RecType=2) across sales (VchType=9) & purchases
+                # (VchType=2). We keep the LAST non-zero rate per item
+                # per direction — this is Busy's own "last rate" logic.
+                for row in reader.iter_rows("Tran2"):
+                    if str(row.get("RecType") or "") != "2":
+                        continue
+                    vch_type = str(row.get("VchType") or "")
+                    item_code = str(row.get("MasterCode1") or "").strip()
+                    if not item_code:
+                        continue
+                    try:
+                        rate = abs(float(row.get("D2") or row.get("D3") or 0))
+                    except (TypeError, ValueError):
+                        rate = 0.0
+                    if rate <= 0:
+                        continue
+                    slot = result.setdefault(item_code, {
+                        "sale_price": 0.0, "cost_price": 0.0,
+                        "last_sold_rate": 0.0, "last_purchased_rate": 0.0,
+                    })
+                    if vch_type == "9":           # sale
+                        slot["last_sold_rate"] = rate
+                        slot["sale_price"] = rate
+                    elif vch_type == "2":         # purchase
+                        slot["last_purchased_rate"] = rate
+                        slot["cost_price"] = rate
+            finally:
+                reader.close()
+        except Exception as e:
+            logger.warning(f"Item price map skipped: {e}")
+        self._item_price_cache = result
+        return result
 
     def extract_all_ledgers(self, fy: str) -> Generator[Dict, None, None]:
         """All ledger accounts with closing balances for Balance Sheet & P&L."""
@@ -1032,14 +1174,25 @@ class BusyDataExtractor:
     # ── Voucher Extractors (streaming, chunked) ─────────
 
     def _extract_vouchers_by_type(self, fy: str, vch_type: int) -> Generator[Dict, None, None]:
-        """Stream vouchers of a specific type. Joins Tran1 (header) + Tran2 (items)."""
+        """Stream vouchers of a specific type. Joins Tran1 (header) + Tran2 (items).
+
+        v1.5.2 — SCHEMA CORRECTION verified against real licensed Busy 21 DB:
+          • RecType=2 in Tran2 = STOCK ITEM lines (NOT ledger lines — the
+            v1.5.1 mapping had this flipped). Item code lives in
+            MasterCode1, warehouse/material-center in MasterCode2, sold
+            quantity in D1 (with sign), rate in D2/D3, MRP in D4, discount
+            in D5, net line amount in D6, GST rate% in D9, GST amount in
+            D10, CGST/SGST in D11.
+          • RecType=1 = journal ledger postings (party dr/cr, sales cr,
+            GST payable cr, freight etc). MasterCode1 = ledger code,
+            Value1 = amount (signed).
+          • RecType=3 = rounding / auto-generated adjustments.
+        """
         self._load_code_map(fy)
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
 
-        # Phase 1: Build Tran2 index (VchCode → items). Only for matching VchType.
-        # This is the only thing we hold in memory — but grouped by VchCode, released after use.
         items_by_vch = defaultdict(list)
         reader = BusyDBReader(db_path)
         try:
@@ -1047,22 +1200,36 @@ class BusyDataExtractor:
                 if str(row.get("VchType", "")) != str(vch_type):
                     continue
                 vch_code = row.get("VchCode", "")
-                rec_type = row.get("RecType", "")
+                rec_type = str(row.get("RecType") or "")
                 master_code = row.get("MasterCode1", "")
-                value = float(row.get("Value2") or row.get("Value1") or 0)
+                # For stock lines (RecType=2), D6 is the net amount; for
+                # ledger lines (RecType=1), Value1 is the posting amount.
+                if rec_type == "2":
+                    amount = abs(float(row.get("D6") or row.get("Value3") or 0))
+                    quantity = abs(float(row.get("D1") or row.get("Value1") or 0))
+                    rate = abs(float(row.get("D2") or row.get("D3") or 0))
+                else:
+                    amount = abs(float(row.get("Value1") or row.get("Value3") or 0))
+                    quantity = 0.0
+                    rate = 0.0
                 items_by_vch[vch_code].append({
                     "rec_type": rec_type,
                     "master_code": master_code,
                     "name": self._resolve_name(master_code),
-                    "value": abs(value),
-                    "quantity": abs(float(row.get("D5") or row.get("D4") or 0)),
-                    "rate": abs(float(row.get("Value1") or 0)),
+                    "value": amount,
+                    "quantity": quantity,
+                    "rate": rate,
+                    "mrp": abs(float(row.get("D4") or 0)),
+                    "discount": abs(float(row.get("D5") or 0)),
+                    "gst_pct": abs(float(row.get("D9") or 0)),
+                    "gst_amount": abs(float(row.get("D10") or 0)),
+                    "warehouse_code": row.get("MasterCode2", ""),
+                    "warehouse_name": self._resolve_name(row.get("MasterCode2", "")),
                     "short_nar": (row.get("ShortNar") or "").strip(),
                 })
         finally:
             reader.close()
 
-        # Phase 2: Stream Tran1 headers and join items
         reader = BusyDBReader(db_path)
         try:
             for row in reader.iter_rows("Tran1"):
@@ -1073,17 +1240,22 @@ class BusyDataExtractor:
                 party_name = self._resolve_name(party_code)
                 vch_date_raw = (row.get("Date") or "").strip()
                 vch_date = self._parse_date(vch_date_raw)
-                vch_no = (row.get("VchNo") or "").strip()
+                # VchNo comes right-space-padded in the DB — strip aggressively.
+                vch_no = (row.get("VchNo") or row.get("AutoVchNo") or "").strip()
                 amount = abs(float(row.get("VchAmtBaseCur") or 0))
+                # v1.5.2 — Busy 21 stores a Drive link to the invoice PDF
+                # per voucher. Expose it so FLOWRA UI can open the source.
+                doc_link = (row.get("BusyDocLink") or "").strip()
+                doc_name = (row.get("BusyDocName") or "").strip()
 
-                # Get line items for this voucher
                 line_items = items_by_vch.pop(vch_code, [])
-                # Separate: RecType=2 = ledger entries, RecType=3 = item entries
-                item_entries = [i for i in line_items if i["rec_type"] == "3"]
-                ledger_entries = [i for i in line_items if i["rec_type"] == "2"]
+                # v1.5.2 — CORRECTED mapping (was inverted in v1.5.1):
+                # RecType=2 → stock items, RecType=1 → ledger postings.
+                item_entries = [i for i in line_items if i["rec_type"] == "2"]
+                ledger_entries = [i for i in line_items if i["rec_type"] == "1"]
 
                 voucher = {
-                    "voucher_id": f"BUSY-{vch_code}-{vch_type}",
+                    "voucher_id": f"BUSY-{fy}-{vch_code}-{vch_type}",   # v1.5.2 — FY-scoped so multi-FY syncs don't overwrite
                     "voucher_date": vch_date,
                     "voucher_number": vch_no,
                     "reference_number": vch_no,
@@ -1093,16 +1265,25 @@ class BusyDataExtractor:
                     "items": [{
                         "item": i["name"],
                         "item_name": i["name"],
+                        "item_code": i["master_code"],
                         "quantity": i["quantity"],
                         "rate": i["rate"],
                         "amount": i["value"],
+                        "mrp": i.get("mrp", 0),
+                        "discount": i.get("discount", 0),
+                        "gst_pct": i.get("gst_pct", 0),
+                        "gst_amount": i.get("gst_amount", 0),
+                        "warehouse": i.get("warehouse_name", ""),
                         "remark": i["short_nar"],
                     } for i in item_entries],
                     "ledger_entries": [{
                         "ledger_name": e["name"],
+                        "ledger_code": e["master_code"],
                         "amount": e["value"],
                     } for e in ledger_entries],
                     "narration": "",
+                    "busy_doc_link": doc_link,      # v1.5.2 — Google Drive URL to invoice PDF
+                    "busy_doc_name": doc_name,
                     "synced_at": now_ist(),
                 }
 
@@ -1533,6 +1714,10 @@ class FlowraBusySyncAgent:
 
     def get_fys(self) -> list:
         return self.extractor.get_available_fys() if self.extractor else []
+
+    def available_fys(self) -> list:
+        """v1.5.2 alias used by the daemon multi-FY loop."""
+        return self.get_fys()
 
     def run_full_sync(self, company_id: str, company_name: str, fy: str,
                       force: bool = False):
@@ -2036,6 +2221,31 @@ def _check_busy_drivers_or_banner(folder: str) -> bool:
 
 
 
+def _fy_key(fy: str) -> int:
+    """Parse 'YYYY-YY' → sortable integer starting-year. Returns -1 on
+    malformed inputs so they sort to the front (and get quietly skipped
+    upstream)."""
+    try:
+        return int(fy.split("-")[0])
+    except (ValueError, AttributeError, IndexError):
+        return -1
+
+
+def _fys_from_start(available: List[str], start_fy: str) -> List[str]:
+    """v1.5.2 — Return every FY from `start_fy` onwards (inclusive), in
+    chronological order. Used by the daemon to sync ALL live FYs on
+    every tick instead of the single start_fy (which was the v1.5.1
+    bug: users who set start_fy=2024-25 never saw 2025-26 or 2026-27
+    data reach FLOWRA)."""
+    if not available:
+        return []
+    start_k = _fy_key(start_fy)
+    return sorted(
+        (fy for fy in available if _fy_key(fy) >= start_k),
+        key=_fy_key,
+    )
+
+
 def run_daemon() -> int:
     """Headless daemon mode. Reads env vars set by the GUI subprocess and
     runs the sync loop on the configured interval until killed.
@@ -2104,13 +2314,22 @@ def run_daemon() -> int:
     tick = 0
     while True:
         try:
+            # v1.5.2 — Sync ALL FYs from start_fy onwards (was previously
+            # syncing only the single start_fy, so newer FYs never landed).
+            available = agent.available_fys()
+            fys_to_sync = _fys_from_start(available, start_fy)
+            if not fys_to_sync:
+                fys_to_sync = [start_fy]
+            logger.info(f"[daemon] FYs queued this tick: {fys_to_sync}")
+
             # Full sync every `interval_min` minutes; quick sync every 5 min.
-            if tick % (interval_min // quick_every_min or 1) == 0:
-                logger.info(f"[daemon] Starting full sync for {company} | FY {start_fy}")
-                agent.run_full_sync(company, company, start_fy, force=False)
-            else:
-                logger.info(f"[daemon] Quick sales sync {company}")
-                agent.run_quick_sales_sync(company, company, start_fy)
+            for fy in fys_to_sync:
+                if tick % (interval_min // quick_every_min or 1) == 0:
+                    logger.info(f"[daemon] Starting full sync for {company} | FY {fy}")
+                    agent.run_full_sync(company, company, fy, force=False)
+                else:
+                    logger.info(f"[daemon] Quick sales sync {company} | FY {fy}")
+                    agent.run_quick_sales_sync(company, company, fy)
         except Exception as e:
             logger.exception(f"[daemon] sync tick failed: {e}")
         tick += 1

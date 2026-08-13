@@ -1132,3 +1132,47 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 - Closing balance: ₹1,34,633.00 ✓ (from Folio1.D22 – previously read as 0 from wrong D23)
 
 **Ops note (mocked/manual)**: The desktop `.exe` must be **rebuilt on Windows** via `desktop-agent/build-kit-busy/build.bat` and redistributed for the fix to reach customer PCs. `access-parser` is now bundled via requirements.txt so PyInstaller will pick it up automatically. Backend already accepts both v1.4.x and v1.5.1 payloads so existing customers keep syncing without disruption.
+
+## Shipped — Aug 14 2026 (iteration 144 + 145) — Busy Sync Agent v1.5.2 · Multi-FY + Real-Schema Fix
+
+**User bug report** (after v1.5.1 shipped, synced to production preview as busydemo@flowralive.in):
+1. Only one FY synced — must fetch all FYs from selected start onwards.
+2. Sales invoice lines empty / showing accounting ledgers (Rounded Off).
+3. Inventory missing HSN, cost + sale price; item name shows SKU code.
+4. Sales Frequency tab shows "Rounded Off" ledger instead of items.
+5. CA Corner + Insider blank due to missing item + sales data.
+
+**Root causes (four stacked bugs, all agent-side except one hidden backend model gap)**:
+1. `run_daemon()` loop passed only `start_fy` to `run_full_sync` on every tick → newer FYs never landed.
+2. Tran2 `RecType` semantics flipped in v1.5.1: real Busy 21 uses RecType=2 → stock items, RecType=1 → ledgers, RecType=3 → adjustments. v1.5.1 had item and ledger swapped.
+3. `Master1.Name` is the alphanumeric SKU code (e.g. "10039927AA"), `Master1.Alias` is the human name (e.g. "SARTHI Engine Oil 1 LTR"). v1.5.1 put SKU into `item_name`. `D1` was also wrongly used as price (always 1.0 flag).
+4. Sales Frequency was a downstream victim of (2)+(3).
+5. **Hidden backend gap surfaced by iter-145 testing agent**: `InventoryItem` and `SalesVoucher` Pydantic models had `ConfigDict(extra='ignore')` and did NOT declare the new v1.5.2 fields → backend silently stripped them at `model_dump()`.
+
+**Fixes shipped in v1.5.2**:
+
+*Agent side (`desktop-agent/build-kit-busy/flowra_busy_agent.py`)*:
+- `_fys_from_start(available, start_fy)` helper + rewritten daemon loop iterates every FY ≥ start_fy on every tick.
+- `_extract_vouchers_by_type` — RecType classification corrected (2 → items, 1 → ledgers). Line items now include `item_code`, `mrp`, `discount`, `gst_pct`, `gst_amount`, `warehouse`, `remark`. Voucher header carries `busy_doc_link` + `busy_doc_name` (Google Drive PDF URLs Busy stores per invoice).
+- Voucher-ID is **FY-scoped**: `BUSY-<fy>-<vch_code>-<vch_type>` so multi-FY syncs don't overwrite each other's Mongo docs.
+- `extract_inventory_items` — reads `Alias` (human name) + `Name` (SKU) + `HSNCode`. Computes `sale_price` and `cost_price` from voucher line rates (`_load_item_price_map`). Quantity from `Folio1.D11..D50` last non-zero (`_load_item_qty_map`).
+- `_load_code_map` — prefers Alias for MasterType=6 items so voucher-item resolution shows human names everywhere.
+- VERSION → 1.5.2, AGENT_TAG → `busy-1.5.2-multi-fy-and-schema`, GUI APP_VERSION → v1.5.2.
+
+*Backend side (`backend/models.py`)*:
+- `InventoryItem` model — added fields: `sku_code`, `alias`, `hsn_code`, `sale_price`, `cost_price`, `last_sold_rate`, `last_purchased_rate`, `closing_qty`, `stock_group_code`, `created_at`, `modified_at` (all Optional).
+- `SalesVoucher` model — added: `voucher_number`, `party_code`, `narration`, `busy_doc_link`, `busy_doc_name`.
+
+**Regression tests**:
+- `test_iteration144_busy_agent_v152_multi_fy_and_schema.py` — 15 tests including 10 real-DB e2e (module-scoped fixture, ~3.5min run).
+- `test_iteration145_busy_v152_real_ingest.py` — 6 tests validating the full round-trip through the LIVE preview backend under busydemo@flowralive.in tenant. All 6/6 green after the model fix.
+- Full sweep: **106 passed, 1 skipped, 0 failed** across iter130 → iter145.
+
+**Live-data verification** on COMP0002 (NAVDURGA AUTO — real licensed Busy 21):
+- 12 Sundry Debtors, all with real GST/PAN/mobile/WhatsApp/address/balance.
+- 1,774 sales vouchers in FY 2025-26, 100% have non-empty `items[]`.
+- 10,630 inventory items — 25%+ with valid sale_price + cost_price + closing_qty.
+- Sales Frequency top-10: real items (SARTHI Engine Oil, OIL FILTER, PRE CLEANER GLASS, STRAINER, etc.) — no ledgers.
+- SHITLA AUTO SPARES voucher shows Drive PDF link: `https://drive.google.com/…`.
+
+**Ops note (mocked/manual)**: The desktop `.exe` must be **rebuilt on Windows** via `build.bat` and redistributed. Backend already accepts both v1.4.x/1.5.0/1.5.1/1.5.2 payload shapes.

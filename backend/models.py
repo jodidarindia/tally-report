@@ -44,6 +44,19 @@ class InventoryItem(BaseModel):
     opening_rate: Optional[float] = None
     opening_value: Optional[float] = None
     closing_value: Optional[float] = None
+    # v1.5.2 — Busy Agent enriched fields (iter-145 fix: were dropped
+    # by ConfigDict(extra='ignore') before being declared here).
+    sku_code: Optional[str] = None                # Master1.Name (alphanumeric SKU)
+    alias: Optional[str] = None                   # Master1.Alias (human name backup)
+    hsn_code: Optional[str] = None                # Master1.HSNCode
+    sale_price: Optional[float] = None            # last-sold rate from voucher lines
+    cost_price: Optional[float] = None            # last-purchased rate from voucher lines
+    last_sold_rate: Optional[float] = None
+    last_purchased_rate: Optional[float] = None
+    closing_qty: Optional[float] = None           # Folio1 last non-zero quantity slot
+    stock_group_code: Optional[str] = None        # Busy parent stock group code
+    created_at: Optional[str] = None              # Busy CreationTime
+    modified_at: Optional[str] = None             # Busy ModificationTime
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SalesVoucher(BaseModel):
@@ -60,6 +73,12 @@ class SalesVoucher(BaseModel):
     ledger_entries: Optional[List[Dict[str, Any]]] = []
     dispatch_through: Optional[str] = None
     destination: Optional[str] = None
+    # v1.5.2 — Busy Agent enriched fields
+    voucher_number: Optional[str] = None          # Human-visible invoice no.
+    party_code: Optional[str] = None              # Busy party master code
+    narration: Optional[str] = None
+    busy_doc_link: Optional[str] = None           # Google Drive URL to invoice PDF
+    busy_doc_name: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CustomerOutstanding(BaseModel):
