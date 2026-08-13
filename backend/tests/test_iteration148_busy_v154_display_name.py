@@ -225,8 +225,8 @@ def test_version_bumped_to_154():
     import importlib
     import flowra_busy_agent
     importlib.reload(flowra_busy_agent)
-    assert flowra_busy_agent.VERSION == "1.5.4"
-    assert flowra_busy_agent.AGENT_TAG.startswith("busy-1.5.4")
+    assert flowra_busy_agent.VERSION == "1.5.5"
+    assert flowra_busy_agent.AGENT_TAG.startswith("busy-1.5.5")
 
 
 # ─── 8) Retry backoff present in _post_chunk source ───

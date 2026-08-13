@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.4"
-AGENT_TAG = "busy-1.5.4-display-name-and-retry"
+VERSION = "1.5.5"
+AGENT_TAG = "busy-1.5.5-reader-pool"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -623,6 +623,33 @@ def _normalize_whatsapp(mobile: str, default_country_code: str = "91") -> str:
 # ---------------------------------------------------------------------------
 # Busy Data Extractor — converts Busy schema to FLOWRA format
 # ---------------------------------------------------------------------------
+class _PooledReader:
+    """v1.5.5 — thin no-op-close proxy over a shared BusyDBReader.
+
+    The 25+ extractor helpers each carry a `finally: reader.close()` line
+    from the pre-pool era. Rewiring all of them to skip close would be
+    error-prone; instead we hand out this proxy so those close() calls
+    become harmless (the pool owns the real lifecycle). Everything else
+    (iter_rows, count_rows) delegates straight through — zero behaviour
+    change for callers, ~25× fewer .bds file parses per sync tick.
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: "BusyDBReader"):
+        self._inner = inner
+
+    def iter_rows(self, *args, **kwargs):
+        return self._inner.iter_rows(*args, **kwargs)
+
+    def count_rows(self, *args, **kwargs):
+        return self._inner.count_rows(*args, **kwargs)
+
+    def close(self):
+        # Pool owns the underlying BusyDBReader; ignore per-helper close.
+        return None
+
+
 class BusyDataExtractor:
     """Extracts and transforms Busy data to FLOWRA-compatible format.
     
@@ -636,7 +663,33 @@ class BusyDataExtractor:
         self._code_map = {}      # code → name (lazy loaded, ~500 entries max ≈ 50KB)
         self._group_map = {}     # code → group category
         self._parent_map = {}    # code → parent group code
+        # v1.5.5 — Reader pool. Each .bds file is opened once per sync
+        # cycle instead of ~25 times. `close_readers()` at the end of
+        # run_full_sync frees memory (access_parser holds the whole file
+        # in RAM); helpers get a `_PooledReader` proxy so their existing
+        # `finally: reader.close()` blocks stay safe.
+        self._reader_pool: Dict[str, "BusyDBReader"] = {}
         self._detect_files()
+
+    def _get_reader(self, db_path: str) -> "_PooledReader":
+        """Return a pooled BusyDBReader proxy for `db_path`. Opens the
+        underlying reader on first call, reuses it on subsequent calls
+        within the same sync cycle."""
+        inner = self._reader_pool.get(db_path)
+        if inner is None:
+            inner = BusyDBReader(db_path)
+            self._reader_pool[db_path] = inner
+        return _PooledReader(inner)
+
+    def close_readers(self):
+        """Tear down every cached reader — call at the end of a full
+        sync tick to release access_parser's in-memory file caches."""
+        for path, r in list(self._reader_pool.items()):
+            try:
+                r.close()
+            except Exception as e:
+                logger.info(f"  Reader close error for {path}: {e}")
+        self._reader_pool.clear()
 
     def _detect_files(self):
         """Find .bds files in the data folder."""
@@ -709,7 +762,7 @@ class BusyDataExtractor:
         for db_path in candidate_dbs:
             reader = None
             try:
-                reader = BusyDBReader(db_path)
+                reader = self._get_reader(db_path)
                 for tbl, cols in table_probes:
                     try:
                         for row in reader.iter_rows(tbl):
@@ -755,7 +808,7 @@ class BusyDataExtractor:
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 code = row.get("Code", "")
@@ -799,7 +852,7 @@ class BusyDataExtractor:
             self._salesman_map_cache = result
             return result
         try:
-            reader = BusyDBReader(db_path)
+            reader = self._get_reader(db_path)
             try:
                 for row in reader.iter_rows("Master1"):
                     if row.get("MasterType") != "6":
@@ -836,7 +889,7 @@ class BusyDataExtractor:
             self._folio_bal_cache = result
             return result
         try:
-            reader = BusyDBReader(db_path)
+            reader = self._get_reader(db_path)
             try:
                 for row in reader.iter_rows("Folio1"):
                     if str(row.get("MasterType") or "") != "2":
@@ -878,7 +931,7 @@ class BusyDataExtractor:
             self._addr_info_cache = result
             return result
         try:
-            reader = BusyDBReader(db_path)
+            reader = self._get_reader(db_path)
             try:
                 for row in reader.iter_rows("MasterAddressInfo"):
                     code = str(row.get("MasterCode") or "").strip()
@@ -909,7 +962,7 @@ class BusyDataExtractor:
             return
         closing_bal_map = self._load_folio_closing_bal(fy)
         addr_info_map = self._load_address_info(fy)
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 if str(row.get("MasterType") or "") != "2":
@@ -1016,7 +1069,7 @@ class BusyDataExtractor:
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 if row.get("MasterType") != "2":
@@ -1061,7 +1114,7 @@ class BusyDataExtractor:
         item_qty_map = self._load_item_qty_map(fy)
         item_price_map = self._load_item_price_map(fy)
 
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 if str(row.get("MasterType") or "") != "6":
@@ -1117,7 +1170,7 @@ class BusyDataExtractor:
             self._item_qty_cache = result
             return result
         try:
-            reader = BusyDBReader(db_path)
+            reader = self._get_reader(db_path)
             try:
                 for row in reader.iter_rows("Folio1"):
                     if str(row.get("MasterType") or "") != "6":
@@ -1163,7 +1216,7 @@ class BusyDataExtractor:
             self._item_price_cache = result
             return result
         try:
-            reader = BusyDBReader(db_path)
+            reader = self._get_reader(db_path)
             try:
                 # Reader over Tran2 rows carrying stock-item lines
                 # (RecType=2) across sales (VchType=9) & purchases
@@ -1207,7 +1260,7 @@ class BusyDataExtractor:
             return
         # Get Folio1 closing balances
         folio_bal = {}
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Folio1"):
                 if row.get("MasterType") == "2":
@@ -1216,7 +1269,7 @@ class BusyDataExtractor:
         finally:
             reader.close()
 
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
                 if row.get("MasterType") != "2":
@@ -1260,7 +1313,7 @@ class BusyDataExtractor:
             return
 
         items_by_vch = defaultdict(list)
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Tran2"):
                 if str(row.get("VchType", "")) != str(vch_type):
@@ -1296,7 +1349,7 @@ class BusyDataExtractor:
         finally:
             reader.close()
 
-        reader = BusyDBReader(db_path)
+        reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Tran1"):
                 if str(row.get("VchType", "")) != str(vch_type):
@@ -1990,6 +2043,13 @@ class FlowraBusySyncAgent:
             raise
         finally:
             self.running = False
+            # v1.5.5 — Free the pooled BusyDBReader instances so
+            # access_parser can release the ~50-200 MB it keeps
+            # in RAM for large .bds files. Next tick reopens fresh.
+            try:
+                self.extractor.close_readers()
+            except Exception:
+                pass
             gc.collect()
 
     def run_quick_sales_sync(self, company_id: str, company_name: str, fy: str):
@@ -2018,6 +2078,11 @@ class FlowraBusySyncAgent:
                              financial_year=fy, source="busy", mode="quick")
         self.state.setdefault(company_id, {})["last_quick_sync"] = now_ist()
         save_sync_state(self.state)
+        # v1.5.5 — Release pooled readers between quick syncs too.
+        try:
+            self.extractor.close_readers()
+        except Exception:
+            pass
         gc.collect()
 
     def poll_commands(self, company_id: str, company_name: str, fy: str):

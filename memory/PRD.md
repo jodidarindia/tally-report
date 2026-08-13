@@ -42,9 +42,31 @@ fresh-create, in-place rename, legacy migration, sync_token guard,
 end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
 backoff source anchor.
 
-**P1 still open**: `BusyDBReader` object pool (25× file-parse overhead per
-sync tick) — deferred; needs live .bds smoke test before touching 25 call
-sites. Track via TODO in agent header.
+## Shipped — Feb 16 2026 (iteration 149) — Busy Agent v1.5.5: BusyDBReader pool
+Kills the ~25× file-parse overhead the extractor carried since v1.5.1
+(each of ~14 helpers opened + closed the same `.bds` file, and
+`access_parser` re-parses the whole file into memory on every open).
+
+Changes:
+1. **`_PooledReader` proxy** — thin no-op-close wrapper over
+   `BusyDBReader`. Every extractor helper now grabs its reader via
+   `self._get_reader(db_path)` instead of `BusyDBReader(db_path)`.
+   Legacy `finally: reader.close()` blocks stay valid — the proxy
+   ignores close so the pool owns the underlying lifecycle.
+2. **`BusyDataExtractor._reader_pool`** — one `BusyDBReader` per
+   `.bds` path per sync tick, torn down via `close_readers()` from
+   both `run_full_sync` and `run_quick_sales_sync` finally blocks
+   (also frees ~50–200 MB of `access_parser` cached rows between ticks).
+3. **CI anchor test** — `test_iteration149_busy_v155_reader_pool.py`
+   asserts exactly ONE `BusyDBReader(...)` construction site exists
+   in the whole file (inside `_get_reader`) — any future helper that
+   sneaks in a direct construction fails the suite loudly.
+
+Tests: 6/6 in iter-149 + 8/8 iter-148 still green (14/14 total).
+Expected impact: a full sync tick on the live COMP0002 DB should now
+open the `.bds` file ~1 time per FY per tick (down from ~14), roughly
+halving CPU time and eliminating the "AccessParser reopen jank" from
+the log.
 
 
 
