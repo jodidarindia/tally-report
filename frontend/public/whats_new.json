@@ -1,7 +1,8 @@
 {
-  "updated_at": "2026-07-13",
+  "updated_at": "2026-08-13",
   "note": "SINGLE SOURCE OF TRUTH for the What's New panel in the User Admin Dashboard AND for FLOWRA_Whats_New.pdf. Edit this file to update both surfaces at once. Regenerate PDF via `python /app/scripts/generate_whats_new_pdf.py`.",
   "entries": [
+    { "date": "2026-08-13", "tag": "FIX",     "title": "Busy Sync Agent v1.5.1 — Licensed Busy 21 Fully Supported",   "desc": "Root-cause fix for the '-1905 Not a valid password' + 'Temporary Ace DSN' errors on licensed Busy 21. Added a pure-Python JET4 reader that bypasses the Windows Access driver entirely — zero password prompts, zero registry writes. Corrected the schema: contact / GST / PAN / mobile / WhatsApp / PIN / station now pulled from MasterAddressInfo, closing balance from Folio1.D22. Validated end-to-end against a real 12-debtor NAVDURGA AUTO company DB." },
     { "date": "2026-07-13", "tag": "NEW",     "title": "Busy Sync Agent v1.5.0 — Enriched Customer Sync",             "desc": "Direct-ODBC extract now pulls party group hierarchy, WhatsApp-normalized mobile, email, GST/PAN, split address, station, city, state, price category, salesman link and closing balance. 100% our own — no dependency on any third-party Busy connector." },
     { "date": "2026-07-12", "tag": "FIX",     "title": "CA Corner — Bank & Investor Reports False 'No FY data' Error",  "desc": "Preview now correctly detects every FY present in Tally sales_vouchers (derived from voucher_date range instead of a non-existent scalar 'fy' field). Historicals also pull real per-FY sales/purchases via total_amount." },
     { "date": "2026-07-12", "tag": "IMPROVE", "title": "Analytics — Sales Frequency Readability",       "desc": "Increased row height and padding on the Sales Frequency table so item names, top customers and totals no longer feel cramped." },

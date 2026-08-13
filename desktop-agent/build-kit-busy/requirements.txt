@@ -24,3 +24,9 @@ pyodbc>=5.1.0
 # Windows-only; ignored on Linux dev machines.
 pywin32>=306; sys_platform == "win32"
 
+# v1.5.1 — pure-Python JET4 reader. Bypasses the entire Windows Access
+# driver + password + registry-temp-DSN mess. Confirmed to open licensed
+# Busy 21 .bds files with zero password (see test_iteration142_*).
+# Cross-platform, no C extensions — always safe to bundle in the EXE.
+access-parser>=0.0.6
+

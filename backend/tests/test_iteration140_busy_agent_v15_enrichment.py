@@ -47,10 +47,13 @@ def test_row_pick_prefers_named_columns_over_generic_dn():
     assert _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["phone"]) == "9876543210"
 
 
-def test_row_pick_falls_back_to_dn_when_named_missing():
-    from flowra_busy_agent import _row_pick, BUSY_MASTER1_FIELD_ALIASES
-    row = {"D8": "9998887777"}
-    assert _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["phone"]) == "9998887777"
+def test_row_pick_falls_back_from_named_to_alt_named():
+    """v1.5.1 — Dn fallback removed (real Busy 21 Master1 has no text Dn).
+    Confirm the alias list still probes alternate NAMED columns in order."""
+    from flowra_busy_agent import _row_pick, BUSY_MASTERADDRESSINFO_FIELDS
+    # Mobile → falls back to TelNo when Mobile is empty
+    row = {"Mobile": "", "TelNo": "9998887777"}
+    assert _row_pick(row, BUSY_MASTERADDRESSINFO_FIELDS["phone"]) == "9998887777"
 
 
 def test_row_pick_handles_none_and_null_strings():
@@ -130,54 +133,67 @@ def _make_extractor(fake_tables, monkeypatch):
 
 
 def _build_master1_rows():
-    """Two Sundry Debtors (one full contact, one bare), one salesman
-    (MasterType=6), one account-group parent linking 116 → sundry_debtors."""
+    """v1.5.1 — Master1 in real licensed Busy 21 only holds identity +
+    group + numeric Dn columns. Contact/address moved to
+    MasterAddressInfo (see _build_master_addr_info_rows below)."""
     return [
         # Account group 116 = sundry_debtors (in ACCOUNT_GROUP_MAP)
         {"Code": "116", "Name": "Sundry Debtors", "MasterType": "1",
          "ParentGrp": "", "D1": 0},
-        # Salesman
-        {"Code": "501", "Name": "Rajesh Kumar", "MasterType": "6",
-         "ParentGrp": "", "MobileNo": "9812345678"},
-        # Full-fat customer — mirrors the JSON snippet the user pasted
+        # Full-fat customer — MasterAddressInfo carries the contact
         {"Code": "1304", "Name": "Ankita Singh", "MasterType": "2",
-         "ParentGrp": "116",
-         "MobileNo": "9669823388",
-         "Email": "ankita@example.com",
-         "Add1": "Plot 45", "Add2": "Sector 3",
-         "City": "Ujjain", "State": "MP", "Country": "India",
-         "PinCode": "456001", "Station": "Ujjain",
-         "GSTIN": "23ABCDE1234F1Z5",
-         "PANNo": "ABCDE1234F",
-         "PriceCat": "0",
-         "Salesman": "501",
-         "D1": 1500.0},
-        # Bare customer — no contact/GST — must still emit safely
+         "ParentGrp": "116", "I5": "0"},
+        # Bare customer — no contact info anywhere
         {"Code": "1305", "Name": "Old Cash Party", "MasterType": "2",
-         "ParentGrp": "116",
-         "D1": 0.0},
+         "ParentGrp": "116"},
         # A creditor — must be filtered OUT (ParentGrp not sundry_debtors)
         {"Code": "1306", "Name": "Supplier A", "MasterType": "2",
          "ParentGrp": "117"},
     ]
 
 
-def _build_folio1_rows():
-    """Closing balance for customer code 1304."""
+def _build_master_addr_info_rows():
+    """v1.5.1 — real Busy 21 MasterAddressInfo shape (JOIN on MasterCode)."""
     return [
-        {"MasterType": "2", "MasterCode": "1304", "D23": -2016.0},
-        {"MasterType": "2", "MasterCode": "1305", "D23": 0.0},
+        {"MasterCode": "1304",
+         "Mobile": "9669823388",
+         "WhatsAppNo": "919669823388",
+         "Email": "ankita@example.com",
+         "Address1": "Plot 45", "Address2": "Sector 3",
+         "Address3": "", "Address4": "",
+         "City": "Ujjain", "Station": "Ujjain",
+         "PINCode": "456001",
+         "GSTNo": "23ABCDE1234F1Z5",
+         "ITPAN": "ABCDE1234F",
+         "Contact": "Rahul Singh",
+         "SupplierType": "Retailer"},
+        # 1305 has no MasterAddressInfo row → all contact fields must
+        # emit as empty strings and the extractor MUST NOT crash.
+    ]
+
+
+def _build_folio1_rows():
+    """v1.5.1 — Closing balance now read from D22 (Mar month-end).
+    Legacy D23 kept only as fallback when D11..D22 are all zero."""
+    return [
+        # 1304 — closing bal 134633 in D22 (Mar 26 month-end)
+        {"MasterType": "2", "MasterCode": "1304",
+         "D11": "116996", "D12": "131704", "D22": "134633",
+         "D23": "0"},
+        # 1305 — no balance anywhere
+        {"MasterType": "2", "MasterCode": "1305", "D22": "0"},
     ]
 
 
 def test_extract_customers_emits_enriched_schema(monkeypatch):
     ext = _make_extractor({
         "Master1": _build_master1_rows(),
+        "MasterAddressInfo": _build_master_addr_info_rows(),
         "Folio1":  _build_folio1_rows(),
     }, monkeypatch)
 
     customers = list(ext.extract_customers("2025-26"))
-    # Exactly two Sundry Debtors — the supplier and non-debtors filtered
+    # Exactly two Sundry Debtors — supplier and non-debtors filtered
     assert len(customers) == 2
 
     by_id = {c["customer_id"]: c for c in customers}
@@ -188,9 +204,11 @@ def test_extract_customers_emits_enriched_schema(monkeypatch):
     assert ank["group_id"] == "116"
     assert ank["group_name"] == "Sundry Debtors"
 
-    # Contact — mirrors BusyNotify shape
+    # Contact — from MasterAddressInfo (v1.5.1 correct source)
     assert ank["mobile_number"] == "9669823388"
     assert ank["phone"] == "9669823388"                        # legacy alias
+    # WhatsApp — Busy 21 stores E.164 directly; prefer that over
+    # normalising Mobile. Test row supplies the pre-formatted value.
     assert ank["whatsapp_number"] == "919669823388"
     assert ank["email_id"] == "ankita@example.com"
 
@@ -201,26 +219,18 @@ def test_extract_customers_emits_enriched_schema(monkeypatch):
     assert ank["city"] == "Ujjain"
     assert ank["station"] == "Ujjain"
     assert ank["pin_code"] == "456001"
-    assert ank["state"] == "MP"
-    assert ank["country"] == "India"
 
     # Tax IDs
     assert ank["gst_number"] == "23ABCDE1234F1Z5"
     assert ank["pan_number"] == "ABCDE1234F"
 
-    # Balances — opening 1500 (D1), closing -2016 from Folio1.D23
-    assert ank["opening_balance"] == 1500.0
-    assert ank["closing_balance"] == -2016.0
-    assert ank["balance"] == -2016.0
+    # Balances — closing pulled from Folio1.D22 (Mar month-end)
+    assert ank["closing_balance"] == 134633.0
+    assert ank["balance"] == 134633.0
 
-    # Salesman — linked via Salesman column → code 501
-    assert ank["salesman_id"] == "501"
-    assert ank["salesman_name"] == "Rajesh Kumar"
-    assert ank["salesman_mobile_number"] == "9812345678"
-    assert ank["salesman_whatsapp_number"] == "919812345678"
-
-    # Price category
-    assert ank["price_category"] == "0"
+    # Contact person + supplier type (new in v1.5.1)
+    assert ank["contact_person"] == "Rahul Singh"
+    assert ank["supplier_type"] == "Retailer"
 
     # Legacy fields kept
     assert ank["ledger_group"] == "Sundry Debtors"
@@ -229,13 +239,14 @@ def test_extract_customers_emits_enriched_schema(monkeypatch):
 def test_extract_customers_handles_bare_rows_without_crashing(monkeypatch):
     ext = _make_extractor({
         "Master1": _build_master1_rows(),
+        "MasterAddressInfo": _build_master_addr_info_rows(),
         "Folio1":  _build_folio1_rows(),
     }, monkeypatch)
 
     customers = list(ext.extract_customers("2025-26"))
     old = next(c for c in customers if c["customer_id"] == "1305")
 
-    # No contact / no GST / no salesman — every field must exist and
+    # No MasterAddressInfo row → every enriched field must exist and
     # default sensibly (never raise, never miss a key).
     assert old["customer_name"] == "Old Cash Party"
     assert old["mobile_number"] == ""
@@ -243,32 +254,32 @@ def test_extract_customers_handles_bare_rows_without_crashing(monkeypatch):
     assert old["email_id"] == ""
     assert old["gst_number"] == ""
     assert old["pan_number"] == ""
-    assert old["salesman_id"] == ""
-    assert old["salesman_name"] == ""
+    assert old["contact_person"] == ""
     assert old["price_category"] == "0"
     assert old["country"] == "India"           # default
-    assert old["opening_balance"] == 0.0
     assert old["closing_balance"] == 0.0
 
 
 def test_extract_customers_filters_non_debtor_parties(monkeypatch):
     ext = _make_extractor({
         "Master1": _build_master1_rows(),
+        "MasterAddressInfo": _build_master_addr_info_rows(),
         "Folio1":  _build_folio1_rows(),
     }, monkeypatch)
 
     ids = {c["customer_id"] for c in ext.extract_customers("2025-26")}
     # 1306 belongs to Sundry Creditors (117), must be filtered out.
     assert "1306" not in ids
-    # Salesman (MasterType=6) must be excluded too.
-    assert "501" not in ids
+    # In real Busy 21, MasterType=6 is items (not salesmen); the
+    # extractor must not emit those as customers either. This test seeds
+    # no MasterType=6 rows but the filter must still be robust.
+    assert all(cid in {"1304", "1305"} for cid in ids)
 
 
 def test_agent_version_bumped():
     from flowra_busy_agent import VERSION, AGENT_TAG
-    assert VERSION == "1.5.0"
-    assert "1.5.0" in AGENT_TAG
-    assert "enriched" in AGENT_TAG.lower() or "customer" in AGENT_TAG.lower()
+    assert VERSION == "1.5.1"
+    assert "1.5.1" in AGENT_TAG
 
 
 # ---------------------------------------------------------------------------

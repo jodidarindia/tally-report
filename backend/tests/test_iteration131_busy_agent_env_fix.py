@@ -132,8 +132,8 @@ def test_daemon_missing_env_message_lists_specifics():
 
 def test_agent_tag_reflects_v141():
     src = AGENT.read_text()
-    assert 'AGENT_TAG = "busy-1.5.0-enriched-customers"' in src, (
-        "AGENT_TAG must roll forward to v1.5.0 marker"
+    assert 'AGENT_TAG = "busy-1.5.1-licensed-jet4-fix"' in src, (
+        "AGENT_TAG must roll forward to v1.5.1 marker"
     )
 
 

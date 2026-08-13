@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.0"
-AGENT_TAG = "busy-1.5.0-enriched-customers"
+VERSION = "1.5.1"
+AGENT_TAG = "busy-1.5.1-licensed-jet4-fix"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -207,7 +207,88 @@ class BusyDBReader:
         self.bds_path = bds_path
         self.is_windows = sys.platform == "win32"
         self._conn = None
-        self._connection_method = None   # set on first successful connect: "OLE DB" or "ODBC"
+        self._connection_method = None   # "AccessParser" | "OLE DB" | "ODBC"
+        # v1.5.1 — access_parser is a pure-Python JET4 reader that
+        # bypasses the Access driver entirely. Confirmed to open licensed
+        # Busy 21 .bds files WITHOUT any password (the file structure is
+        # readable at the JET4 level; Busy's password enforcement lives
+        # only in the ODBC/OLE DB layer). Populated on first successful
+        # `_try_access_parser()` call and cached table-by-table thereafter.
+        self._ap = None                     # AccessParser instance
+        self._ap_row_cache: Dict[str, List[Dict]] = {}
+
+    def _try_access_parser(self):
+        """v1.5.1 — pure-Python JET4 read path. Runs on ANY OS, needs no
+        driver install, and works around Windows-side password / registry
+        temp-DSN errors ("Unable to open registry key Temporary (volatile)
+        Ace DSN", "Not a valid password -1905"). If the library isn't
+        bundled OR the file layout isn't parseable, returns None and the
+        caller falls through to OLE DB → ODBC."""
+        if self._ap is not None:
+            return self._ap
+        try:
+            from access_parser import AccessParser  # pip: access-parser
+        except ImportError:
+            logger.info("  access_parser unavailable — rebuild the EXE "
+                        "with the updated requirements.txt to enable "
+                        "the pure-Python JET4 reader")
+            return None
+        try:
+            self._ap = AccessParser(self.bds_path)
+            self._connection_method = "AccessParser"
+            logger.info(
+                "  Busy DB opened via pure-Python access_parser — no "
+                "driver / password needed")
+            return self._ap
+        except Exception as e:
+            logger.info(f"  access_parser open failed: {e}")
+            return None
+
+    def _load_table_via_ap(self, table: str) -> List[Dict]:
+        """Convert access_parser's columnar {col: [v0, v1, …]} shape into
+        an ordered list of row dicts, cached per table so repeated
+        iter_rows() calls stay O(1).
+
+        v1.5.1 — every value is stringified (or left None) to match the
+        mdb-export CSV shape the rest of the extractor was built for.
+        Numeric downstream users still work because `float("116996.0")`
+        and `int("6003")` succeed. This keeps the string comparisons in
+        `_load_code_map` (`mtype == "1"`) etc. working regardless of the
+        underlying driver."""
+        if table in self._ap_row_cache:
+            return self._ap_row_cache[table]
+        col_data = self._ap.parse_table(table)
+        if not col_data:
+            self._ap_row_cache[table] = []
+            return []
+        cols = list(col_data.keys())
+        row_count = max((len(col_data[c]) for c in cols), default=0)
+        rows: List[Dict] = []
+        for i in range(row_count):
+            row = {}
+            for c in cols:
+                col = col_data[c]
+                v = col[i] if i < len(col) else None
+                if v is None:
+                    row[c] = None
+                elif isinstance(v, (bytes, bytearray)):
+                    try:
+                        row[c] = v.decode("utf-8", errors="replace")
+                    except Exception:
+                        row[c] = ""
+                elif isinstance(v, float):
+                    # Preserve numeric strings without trailing zeros
+                    # that float("6003.0") would parse back to 6003.0 –
+                    # good for both string compare and float() consumers.
+                    if v.is_integer():
+                        row[c] = str(int(v))
+                    else:
+                        row[c] = str(v)
+                else:
+                    row[c] = str(v)
+            rows.append(row)
+        self._ap_row_cache[table] = rows
+        return rows
 
     # v1.3.1 — Busy encrypts every .bds file with a proprietary password.
     # Without PWD=... the Access ODBC driver returns error -1905
@@ -284,13 +365,23 @@ class BusyDBReader:
         return None
 
     def _get_connection(self):
-        """Lazy connection — OLE DB first (preferred), ODBC fallback."""
-        if self._conn:
-            return self._conn
+        """Lazy connection — access_parser first (v1.5.1 pure-Python
+        JET4, no driver / no password), then OLE DB, then ODBC."""
+        if self._conn or self._ap:
+            return self._conn or self._ap
+
+        # ── Try pure-Python access_parser first (v1.5.1) ─────────────
+        # This is now the preferred strategy because it side-steps the
+        # entire Windows driver + password + registry-DSN mess. It also
+        # runs on Linux for dev/testing without mdbtools installed.
+        ap = self._try_access_parser()
+        if ap is not None:
+            return ap
+
         if not self.is_windows:
             return None
 
-        # ── Try OLE DB first (v1.4) ─────────────────────────────
+        # ── Try OLE DB (v1.4) ────────────────────────────────────────
         oledb = self._try_oledb()
         if oledb is not None:
             self._conn = oledb
@@ -298,6 +389,10 @@ class BusyDBReader:
             return self._conn
 
         # ── Fall back to ODBC + password chain (v1.3.1) ──────────
+        # v1.5.1 — added `Exclusive=1;` to bypass "Unable to open
+        # registry key Temporary (volatile) Ace DSN" errors that hit
+        # when the ODBC driver can't write its temp DSN under HKLM
+        # (Windows Server / service accounts / restricted users).
         try:
             import pyodbc
         except ImportError as e:
@@ -318,6 +413,7 @@ class BusyDBReader:
                 r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
                 f"Dbq={self.bds_path};"
                 "ReadOnly=1;"
+                "Exclusive=1;"          # v1.5.1 — avoids temp-DSN registry error
             )
             if pwd:
                 conn_str += f"PWD={pwd};"
@@ -365,11 +461,23 @@ class BusyDBReader:
             except Exception:
                 pass
             self._conn = None
+        # access_parser has no explicit close — drop the reference so
+        # the underlying file handle / mmap gets GC'd.
+        self._ap = None
+        self._ap_row_cache.clear()
 
     def iter_rows(self, table: str, columns: str = "*", where: str = "") -> Generator[Dict, None, None]:
-        """Iterate rows one-by-one. NEVER loads full table into RAM."""
+        """Iterate rows one-by-one. NEVER loads full table into RAM
+        (except the access_parser path which caches per table)."""
+        # v1.5.1 — pure-Python JET4 path when access_parser succeeded.
+        # No password, no driver, works on any OS.
+        conn = self._get_connection()
+        if self._ap is not None:
+            for row in self._load_table_via_ap(table):
+                yield row
+            return
+
         if self.is_windows:
-            conn = self._get_connection()
             sql = f"SELECT {columns} FROM [{table}]"
             if where:
                 sql += f" WHERE {where}"
@@ -383,20 +491,22 @@ class BusyDBReader:
                 yield dict(zip(col_names, row))
             cursor.close()
         else:
-            # Linux: use mdb-export (streams CSV via pipe)
+            # Linux dev-mode fallback: mdb-export CLI
             cmd = ["mdb-export", self.bds_path, table]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             reader = csv.DictReader(proc.stdout)
             for row in reader:
                 if where:
-                    # Simple client-side filter for Linux dev mode
-                    pass  # All rows returned, filter in caller
+                    pass  # Simple client-side filter for Linux dev mode
                 yield row
             proc.wait()
 
     def count_rows(self, table: str, where: str = "") -> int:
+        # v1.5.1 — access_parser path
+        conn = self._get_connection()
+        if self._ap is not None:
+            return len(self._load_table_via_ap(table))
         if self.is_windows:
-            conn = self._get_connection()
             sql = f"SELECT COUNT(*) FROM [{table}]"
             if where:
                 sql += f" WHERE {where}"
@@ -427,22 +537,50 @@ class BusyDBReader:
 # Busy install only a subset will actually exist; missing columns are
 # silently ignored so we never crash on older schemas.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Busy real-schema mapping — validated iter-141 against a real licensed
+# Busy 21 database (COMP0002 live sample, 12 Sundry Debtors, 10,287
+# MasterAddressInfo rows).
+#
+# Corrections vs iter-140 assumptions:
+#   • Party contact/address/GST/PAN/mobile/email live in `MasterAddressInfo`,
+#     joined on `MasterCode = Master1.Code`. They are NOT on Master1.
+#     (Master1's `D1..D26` are Double columns — never text — so the
+#     v1.5.0 fallback aliases like "D8 for phone" could never work on
+#     licensed Busy 21 and were leftover assumptions from Busy Demo.)
+#   • Busy 21 has a dedicated `WhatsAppNo` column, already E.164-shaped
+#     (starts with country code, e.g. "919820074085"). Prefer it over
+#     re-normalizing `Mobile`.
+#   • MasterType=6 in Busy 21 = **items/stock master** (10,630 in sample),
+#     NOT salesman as in older builds. Salesman link is not directly on
+#     Master1 in licensed Busy — voucher-level or MasterSupport-level
+#     lookups are needed (deferred to a future iteration).
+#   • Folio1's per-party closing balance for FY is `D22` (last-month
+#     running balance), not `D23`. D11..D22 hold Apr..Mar monthly
+#     end-balances.
+# ---------------------------------------------------------------------------
+BUSY_MASTERADDRESSINFO_FIELDS: Dict[str, List[str]] = {
+    # Real Busy 21 columns first, legacy fallbacks after.
+    "phone":       ["Mobile", "TelNo", "MobileNo", "Phone"],
+    "email":       ["Email", "EmailId"],
+    "gstin":       ["GSTNo", "GSTIN", "TIN"],
+    "pan":         ["ITPAN", "PANNo", "PAN"],
+    "address_1":   ["Address1", "Add1", "AddLine1"],
+    "address_2":   ["Address2", "Add2", "AddLine2"],
+    "address_3":   ["Address3", "Add3", "AddLine3"],
+    "address_4":   ["Address4", "Add4", "AddLine4"],
+    "city":        ["City", "Town"],
+    "station":     ["Station", "StationName"],
+    "pincode":     ["PINCode", "PinCode", "Pin"],
+    "contact":     ["Contact", "ContactPerson"],
+    "whatsapp":    ["WhatsAppNo", "WhatsApp"],
+    "supplier_type": ["SupplierType", "PartyType"],
+}
+# Legacy alias kept for tests that still import it (iter-140 tests).
 BUSY_MASTER1_FIELD_ALIASES: Dict[str, List[str]] = {
-    "phone":       ["MobileNo", "Mobile", "PhoneNo", "Phone", "D8"],
-    "email":       ["Email", "EmailId", "EmailAddress", "D14"],
-    "gstin":       ["GSTIN", "GSTNo", "TIN", "D18"],
-    "pan":         ["PANNo", "PAN", "D19"],
-    "address_1":   ["Add1", "Address1", "AddLine1", "D3"],
-    "address_2":   ["Add2", "Address2", "AddLine2", "D4"],
-    "address_3":   ["Add3", "Address3", "AddLine3", "D5"],
-    "address_4":   ["Add4", "Address4", "AddLine4", "D6"],
-    "city":        ["City", "Town", "D7"],
-    "station":     ["Station", "StationName", "D12"],
-    "pincode":     ["PinCode", "Pin", "ZipCode", "D9"],
-    "state":       ["State", "StateName", "D10"],
-    "country":     ["Country", "CountryName", "D11"],
-    "price_cat":   ["PriceCat", "PriceCategory", "PC", "D24"],
-    "opening_bal": ["D1", "OpBal", "OpeningBalance"],
+    **BUSY_MASTERADDRESSINFO_FIELDS,
+    "price_cat":   ["PriceCat", "PriceCategory", "PC"],
+    "opening_bal": ["OpBal", "OpeningBalance"],
     "salesman_code_link": ["Salesman", "SalesmanCode", "AssociatedSalesman"],
 }
 
@@ -607,9 +745,12 @@ class BusyDataExtractor:
 
     def _load_folio_closing_bal(self, fy: str) -> Dict[str, float]:
         """Build code → closing_balance for MasterType=2 rows (parties).
-        Iter-140: same source Folio1.D23 we already read for the P&L
-        ledger extractor — reused here so both consumers see the same
-        closing figure and we don't re-read the file twice unnecessarily."""
+
+        v1.5.1 — verified against a real licensed Busy 21 DB: monthly
+        end-balances live in D11..D22 (Apr..Mar for Indian FY). The
+        year-end closing balance for the FY is therefore `D22` (or the
+        last non-zero of D11..D22 if the party had no March activity).
+        Legacy Busy Demo builds used `D23`; we keep it as a fallback."""
         if hasattr(self, "_folio_bal_cache") and self._folio_bal_cache is not None:
             return self._folio_bal_cache
         result: Dict[str, float] = {}
@@ -621,14 +762,25 @@ class BusyDataExtractor:
             reader = BusyDBReader(db_path)
             try:
                 for row in reader.iter_rows("Folio1"):
-                    if row.get("MasterType") != "2":
+                    if str(row.get("MasterType") or "") != "2":
                         continue
                     code = str(row.get("MasterCode") or "").strip()
-                    if code:
+                    if not code:
+                        continue
+                    # Prefer D22 (Mar month-end). Fall back to last
+                    # non-zero of D11..D22, then to legacy D23.
+                    bal = 0.0
+                    for key in ("D22", "D21", "D20", "D19", "D18",
+                                "D17", "D16", "D15", "D14", "D13",
+                                "D12", "D11", "D23"):
                         try:
-                            result[code] = float(row.get("D23") or 0)
+                            v = float(row.get(key) or 0)
                         except (TypeError, ValueError):
-                            result[code] = 0.0
+                            v = 0.0
+                        if v != 0:
+                            bal = v
+                            break
+                    result[code] = bal
             finally:
                 reader.close()
         except Exception as e:
@@ -636,24 +788,54 @@ class BusyDataExtractor:
         self._folio_bal_cache = result
         return result
 
-    def extract_customers(self, fy: str) -> Generator[Dict, None, None]:
-        """Yield Sundry Debtor records one by one, enriched with contact,
-        address, GST/PAN, salesman link, price category, and closing balance.
+    def _load_address_info(self, fy: str) -> Dict[str, Dict]:
+        """v1.5.1 — Load MasterAddressInfo, keyed by MasterCode. This is
+        where licensed Busy 21 keeps party contact / address / GST / PAN
+        / mobile / WhatsApp / station / PIN. Silently returns {} on
+        older builds that don't ship the table."""
+        if hasattr(self, "_addr_info_cache") and self._addr_info_cache is not None:
+            return self._addr_info_cache
+        result: Dict[str, Dict] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._addr_info_cache = result
+            return result
+        try:
+            reader = BusyDBReader(db_path)
+            try:
+                for row in reader.iter_rows("MasterAddressInfo"):
+                    code = str(row.get("MasterCode") or "").strip()
+                    if code:
+                        result[code] = row
+            finally:
+                reader.close()
+            logger.info(f"MasterAddressInfo loaded: {len(result)} rows")
+        except Exception as e:
+            logger.info(f"MasterAddressInfo unavailable ({e}) — "
+                        "falling back to Master1-only fields")
+        self._addr_info_cache = result
+        return result
 
-        Iter-140 — schema inspired by BusyNotify's public /v1/customers
-        response contract. Implementation is 100% our own direct ODBC —
-        no dependency on any BusyNotify endpoint or bridge.
+    def extract_customers(self, fy: str) -> Generator[Dict, None, None]:
+        """Yield Sundry Debtor records with enriched contact, address,
+        GST/PAN, price category and closing balance.
+
+        v1.5.1 — rewritten against a real licensed Busy 21 database.
+        Master1 holds only identity + `Dn` numerics; contact/address
+        lives in `MasterAddressInfo` joined on MasterCode. Older Busy
+        Demo builds that lack `MasterAddressInfo` degrade gracefully
+        (address/contact fields emit as empty strings).
         """
         self._load_code_map(fy)
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
-        salesman_map = self._load_salesman_map(fy)
         closing_bal_map = self._load_folio_closing_bal(fy)
+        addr_info_map = self._load_address_info(fy)
         reader = BusyDBReader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
-                if row.get("MasterType") != "2":
+                if str(row.get("MasterType") or "") != "2":
                     continue
                 parent_code = str(row.get("ParentGrp") or "").strip()
                 parent = self._resolve_category(parent_code)
@@ -663,77 +845,77 @@ class BusyDataExtractor:
                 code = str(row.get("Code") or "").strip()
                 customer_name = (row.get("Name") or "").strip()
 
-                # Address — join non-empty lines with commas (avoids dangling
-                # commas when only a couple of fields are populated).
+                # Join with MasterAddressInfo (v1.5.1 — real Busy 21 path)
+                addr = addr_info_map.get(code, {}) or {}
+
                 addr_lines = [
-                    _row_pick(row, BUSY_MASTER1_FIELD_ALIASES[k])
+                    _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS[k])
                     for k in ("address_1", "address_2", "address_3", "address_4")
                 ]
                 address_joined = ", ".join([a for a in addr_lines if a])
 
-                # Contact
-                phone = _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["phone"])
-                whatsapp = _normalize_whatsapp(phone)
+                # Contact — Mobile column may hold comma-separated numbers
+                # ("7458879984,9820074085"). Split and keep the first.
+                phone_raw = _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["phone"])
+                phone = phone_raw.split(",")[0].strip() if phone_raw else ""
+                # Prefer Busy 21's dedicated WhatsAppNo (already E.164).
+                whatsapp_raw = _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["whatsapp"])
+                whatsapp = whatsapp_raw or _normalize_whatsapp(phone)
 
-                # Balances — opening from D1 (existing convention), closing
-                # from Folio1 lookup we built above.
-                try:
-                    opening = float(row.get("D1") or 0)
-                except (TypeError, ValueError):
-                    opening = 0.0
                 closing = closing_bal_map.get(code, 0.0)
+                # Opening balance not reliably stored on Master1 in Busy 21
+                # — leave as 0.0 for now (voucher-level backfill later).
+                opening = 0.0
 
-                # Salesman link — best-effort. If the Salesman column is not
-                # populated we simply emit empty salesman fields (matches
-                # BusyNotify's convention of `null` — we use "" for JSON
-                # transport friendliness against our existing backend
-                # schema, which coalesces missing values to "").
-                salesman_code = _row_pick(
-                    row, BUSY_MASTER1_FIELD_ALIASES["salesman_code_link"])
-                sales_info = salesman_map.get(salesman_code, {}) if salesman_code else {}
+                # Salesman: Busy 21's MasterType=6 = items, NOT salesman.
+                # Party-level salesman link isn't in Master1/MasterAddressInfo
+                # here; deferred to a future voucher-level enrichment.
+                salesman_code = ""
+                sales_info: Dict[str, str] = {}
 
-                # Price category — 0 by default (BusyNotify emits "0" as
-                # string; we keep the same shape).
-                price_cat = _row_pick(
-                    row, BUSY_MASTER1_FIELD_ALIASES["price_cat"]) or "0"
+                # Price category — sometimes carried on Master1 as `I5`
+                # (per BSSData reference). Emit "" if unknown, matches
+                # BusyNotify's `null` convention (transported as "").
+                price_cat = str(row.get("I5") or row.get("PriceCat")
+                                or "").strip() or "0"
 
                 yield {
                     # Identity
                     "customer_id": code,
                     "customer_name": customer_name,
 
-                    # Group hierarchy (BusyNotify's group_id/group_name)
+                    # Group hierarchy
                     "group_id": parent_code,
                     "group_name": self._resolve_name(parent_code) if parent_code else "",
 
-                    # Contact
+                    # Contact (from MasterAddressInfo)
                     "mobile_number": phone,
-                    "phone": phone,                       # legacy — keep for backwards-compat
+                    "phone": phone,                       # legacy alias
                     "whatsapp_number": whatsapp,
-                    "email_id": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["email"]),
+                    "email_id": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["email"]),
 
-                    # Address — expose both split and joined shapes
+                    # Address
                     "address_line_1": addr_lines[0],
                     "address_line_2": addr_lines[1],
                     "address_line_3": addr_lines[2],
                     "address_line_4": addr_lines[3],
                     "address": address_joined,
-                    "city": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["city"]),
-                    "station": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["station"]),
-                    "pin_code": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["pincode"]),
-                    "state": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["state"]),
-                    "country": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["country"]) or "India",
+                    "city": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["city"]),
+                    "station": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["station"]),
+                    "pin_code": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["pincode"]),
+                    "state": "",                          # resolved via StateCodeLong (future)
+                    "country": "India",                   # default; StateCodeLong lookup future
 
                     # Tax IDs
-                    "gst_number": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["gstin"]),
-                    "pan_number": _row_pick(row, BUSY_MASTER1_FIELD_ALIASES["pan"]),
+                    "gst_number": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["gstin"]),
+                    "pan_number": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["pan"]),
 
                     # Balances
                     "opening_balance": opening,
                     "closing_balance": closing,
-                    "balance": closing,                   # BusyNotify convention alias
+                    "balance": closing,
 
-                    # Salesman (party-level link)
+                    # Salesman (party-level link — placeholder in v1.5.1)
                     "salesman_id": salesman_code or "",
                     "salesman_name": sales_info.get("name", ""),
                     "salesman_mobile_number": sales_info.get("mobile", ""),
@@ -742,8 +924,11 @@ class BusyDataExtractor:
                     # Price category
                     "price_category": price_cat,
 
-                    # Legacy fields kept for backwards-compat with v1.4.x
-                    # payloads that older tests / dashboards may still key on.
+                    # Contact person (v1.5.1 — new field, from MasterAddressInfo.Contact)
+                    "contact_person": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["contact"]),
+                    "supplier_type": _row_pick(addr, BUSY_MASTERADDRESSINFO_FIELDS["supplier_type"]),
+
+                    # Legacy
                     "ledger_group": "Sundry Debtors",
                 }
         finally:

@@ -1,0 +1,25 @@
+{
+  "summary": "Iter-143 backend ingest validation for Busy Agent v1.5.1 licensed COMP0002 payload. Generated the LIVE 12-customer enriched payload by running flowra_busy_agent.BusyDataExtractor('/tmp/comp0002/unpacked/COMP0002').extract_customers('2025-26') (pure-Python access_parser path) and POSTed it to the PUBLIC backend /api/agent/sync. All 4 real-payload tests + reachability sanity passed (5/5). Verified: (a) all 12 Sundry Debtors persist with full v1.5.1 enrichment (customer_id, mobile/whatsapp, gst/pan, station/pin, contact_person, closing_balance from Folio1.D22); (b) legacy v1.4.x shape still upserts with defaults; (c) /api/customers/outstanding surfaces all enriched fields to CRM; (d) tenant isolation holds. Spot-checked SHITLA AUTO SPARES RAIPUR: customer_id=6003, mobile=9300029026, whatsapp=919820074085, GST=22ACOFS7545J1ZN, PAN=ACOFS7545J, PIN=492001, station=BHATAGAON, contact=SUDHIR, closing_balance=134633.0 — all round-trip through sync and read endpoints unchanged.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration143_busy_v151_real_licensed_ingest.py",
+    "/app/test_reports/pytest/iter143.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "flowra_busy_agent access_parser path successfully opens the licensed JET4 DB with no ODBC driver / password (log line: 'Busy DB opened via pure-Python access_parser — no driver / password needed'). MasterAddressInfo loaded 10284 rows and joined correctly on MasterCode to yield the 12 Sundry Debtors with real mobile/GST/PAN/PIN data.",
+    "Folio1.D22 preference for March closing balance is validated end-to-end (SHITLA row = 134633.0).",
+    "Backend sync/upsert and /customers/outstanding projection are complete for v1.5.1 — no dropped enrichment fields observed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration143_busy_v151_real_licensed_ingest.py (new)"
+  ],
+  "success_rate": { "backend": "100% (5/5)", "frontend": "skipped per request" },
+  "test_credentials": "admin/admin123 (unused for these tests; sync_token HMAC used per spec). Forged JWT via services.auth_service.create_access_token for isolated test tenants.",
+  "seed_data_creation": "Ephemeral: 12+1+3+3 test customers under uuid tenants TENANT_A/TENANT_B, all deleted in test teardown. One minimal admin user seeded for /customers/outstanding subscription check, also deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter-143 validated the v1.5.1 licensed pipeline end-to-end against the REAL COMP0002 DB. Test file re-usable — will auto-skip if /tmp/comp0002/unpacked/COMP0002 or flowra_busy_agent import is unavailable. Older iter-141 tests (synthetic payload) remain green. No known backend regressions.",
+  "rca of the issue": "N/A — no bugs. The prior desktop-agent failures (pyodbc HY000 driver password / registry temp-DSN) are bypassed in v1.5.1 by the pure-Python access_parser primary strategy; this iteration confirms the enriched payload it emits is fully accepted and surfaced by the backend."
+}

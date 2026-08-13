@@ -1088,3 +1088,47 @@ even though **two FYs (2025-26 and 2026-27) of Tally data were live** in the ten
 **Tests**: `test_iteration141_busy_agent_v15_backend_ingest.py` — 5/5 now green (was 4/5). Includes the previously-failing `test_customers_outstanding_surfaces_enriched_fields`.
 
 **Combined suites (iter130-141)**: 90 passed, 1 skipped, 0 failed.
+
+## Shipped — Aug 13 2026 (iteration 142 + 143) — Busy Sync Agent v1.5.1 · Licensed Busy 21 Full Support
+
+**User trigger**: Uploaded a live LICENSED Busy 21 company DB (COMP0002 = NAVDURGA AUTO — 11,832 Master1 rows, 10,287 MasterAddressInfo rows, 12 Sundry Debtors) and pasted a runtime error from the Windows agent:
+```
+pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid password. (-1905)
+[HY000] Unable to open registry key Temporary (volatile) Ace DSN for process 0x55c…
+```
+
+**Two stacked root causes** — both fixed in v1.5.1:
+1. **Driver-side** — the Access ODBC driver on Windows Server / service accounts can't write its temp DSN under HKLM. Even a correct password would fail.
+2. **Password-side** — licensed Busy 21 uses a proprietary per-install `.bds` password not in any known fallback chain.
+
+**Fix strategy** (bypass both problems in one move):
+- Added **`access_parser`** (pure-Python JET4 reader) as the **PRIMARY** strategy in `BusyDBReader._get_connection`. Reads the file directly — no driver, no password, no OS-level requirements. Works on Windows AND Linux (also unblocks dev/CI without mdbtools).
+- Added `Exclusive=1` to the ODBC connection string as a belt-and-braces fix for the temp-DSN registry error, in case any downstream user disables access_parser.
+- Kept OLE DB and pyodbc as tertiary fallbacks.
+
+**Schema corrections** (validated against real licensed Busy 21 data):
+- Party contact / GST / PAN / mobile / WhatsApp / station / PIN live in **`MasterAddressInfo`**, NOT on Master1. New `_load_address_info(fy)` helper + `BUSY_MASTERADDRESSINFO_FIELDS` alias map + rewritten `extract_customers`.
+- Busy 21's `MasterType=6` is **items**, NOT salesmen. Removed the wrong `_load_salesman_map` usage (party-level salesman deferred to a voucher-level lookup in a future iteration).
+- Party closing balance for the FY is at **`Folio1.D22`** (Mar month-end), with D21…D11 fallback for parties without March activity. Legacy `D23` kept only as final fallback.
+- Busy 21's dedicated `WhatsAppNo` column already stores E.164; prefer it over normalising `Mobile`.
+
+**Files touched**:
+- `desktop-agent/build-kit-busy/flowra_busy_agent.py` — added `_try_access_parser`, `_load_table_via_ap`, `_load_address_info`; rewrote `extract_customers`; fixed `_load_folio_closing_bal` (D22 preference); added `Exclusive=1` to ODBC string; bumped VERSION/AGENT_TAG to 1.5.1.
+- `desktop-agent/build-kit-busy/flowra_busy_gui.py` — APP_VERSION → v1.5.1.
+- `desktop-agent/build-kit-busy/requirements.txt` — added `access-parser>=0.0.6`.
+- `backend/tests/test_iteration140_busy_agent_v15_enrichment.py` — mock updated to seed MasterAddressInfo + Folio1 correctly.
+- `backend/tests/test_iteration142_busy_agent_v151_licensed.py` — NEW (11 tests, includes 4 live-data e2e tests that run against the real COMP0002 DB via access_parser).
+- `backend/tests/test_iteration143_busy_v151_real_licensed_ingest.py` — NEW (written by testing agent, 5 tests, exercises the enriched real-data payload through /api/agent/sync + /api/customers/outstanding).
+- `backend/tests/test_iteration130_/131_/132_*` — version-fence assertions rolled to 1.5.1.
+
+**Regression tests**: **93 passed, 1 skipped** across all iter130 → iter143 suites (Busy + CA + GDrive). Testing agent reported **100% backend (5/5)**, zero bugs, `retest_needed=false`.
+
+**Live-data verification** (party 6003 SHITLA AUTO SPARES RAIPUR, hand-verified via mdb-tools):
+- Mobile: 9300029026 ✓
+- WhatsApp: 919820074085 ✓ (E.164 straight from Busy)
+- GSTIN: 22ACOFS7545J1ZN ✓ (regex-valid)
+- PAN: ACOFS7545J ✓
+- PIN: 492001 ✓ · Station: BHATAGAON ✓ · Contact: SUDHIR ✓
+- Closing balance: ₹1,34,633.00 ✓ (from Folio1.D22 – previously read as 0 from wrong D23)
+
+**Ops note (mocked/manual)**: The desktop `.exe` must be **rebuilt on Windows** via `desktop-agent/build-kit-busy/build.bat` and redistributed for the fix to reach customer PCs. `access-parser` is now bundled via requirements.txt so PyInstaller will pick it up automatically. Backend already accepts both v1.4.x and v1.5.1 payloads so existing customers keep syncing without disruption.
