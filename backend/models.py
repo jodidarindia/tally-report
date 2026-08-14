@@ -57,6 +57,10 @@ class InventoryItem(BaseModel):
     stock_group_code: Optional[str] = None        # Busy parent stock group code
     created_at: Optional[str] = None              # Busy CreationTime
     modified_at: Optional[str] = None             # Busy ModificationTime
+    # v1.5.7 — Optional FY tag for per-FY inventory snapshots. Tally
+    # payloads don't send it → stays None; Busy sends it and CA-Corner
+    # opening-stock widgets can filter accordingly.
+    fy: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SalesVoucher(BaseModel):
@@ -79,6 +83,10 @@ class SalesVoucher(BaseModel):
     narration: Optional[str] = None
     busy_doc_link: Optional[str] = None           # Google Drive URL to invoice PDF
     busy_doc_name: Optional[str] = None
+    # v1.5.7 — Financial year tag. Needed for CA-Corner per-FY splits.
+    # Optional so existing Tally payloads (which don't send fy) still
+    # validate cleanly.
+    fy: Optional[str] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class CustomerOutstanding(BaseModel):

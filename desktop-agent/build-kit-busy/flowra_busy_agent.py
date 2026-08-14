@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.6"
-AGENT_TAG = "busy-1.5.6-data-parity"
+VERSION = "1.5.7"
+AGENT_TAG = "busy-1.5.7-invoice-fields"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -993,9 +993,14 @@ class BusyDataExtractor:
                 whatsapp = whatsapp_raw or _normalize_whatsapp(phone)
 
                 closing = closing_bal_map.get(code, 0.0)
-                # Opening balance not reliably stored on Master1 in Busy 21
-                # — leave as 0.0 for now (voucher-level backfill later).
-                opening = 0.0
+                # v1.5.7 — Opening balance IS stored on Master1.D1 for
+                # MasterType=2 (verified against extract_all_ledgers which
+                # already reads it). The earlier "unreliable" comment was
+                # overly cautious.
+                try:
+                    opening = float(row.get("D1") or 0)
+                except (TypeError, ValueError):
+                    opening = 0.0
 
                 # Salesman: Busy 21's MasterType=6 = items, NOT salesman.
                 # Party-level salesman link isn't in Master1/MasterAddressInfo
@@ -1044,6 +1049,11 @@ class BusyDataExtractor:
                     "opening_balance": opening,
                     "closing_balance": closing,
                     "balance": closing,
+                    # v1.5.7 — Sundry Debtors: closing_balance IS the
+                    # outstanding receivable from that customer. The
+                    # CRM Outstanding tab reads `outstanding_amount`
+                    # explicitly, so emit it too instead of leaving it 0.
+                    "outstanding_amount": closing,
 
                     # Salesman (party-level link — placeholder in v1.5.1)
                     "salesman_id": salesman_code or "",
@@ -1060,15 +1070,21 @@ class BusyDataExtractor:
 
                     # Legacy
                     "ledger_group": "Sundry Debtors",
+                    # v1.5.7 — FY tag for CRM per-FY filters + CA-Corner
+                    # opening/closing snapshots.
+                    "fy": fy,
                 }
         finally:
             reader.close()
 
     def extract_creditors(self, fy: str) -> Generator[Dict, None, None]:
+        """v1.5.7 — emit closing_balance + outstanding_amount + fy so
+        the CRM Creditors tab shows real balances instead of blanks."""
         self._load_code_map(fy)
         db_path = self._fy_dbs.get(fy)
         if not db_path:
             return
+        closing_bal_map = self._load_folio_closing_bal(fy)
         reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
@@ -1077,11 +1093,20 @@ class BusyDataExtractor:
                 parent = self._resolve_category(row.get("ParentGrp", ""))
                 if parent != "sundry_creditors":
                     continue
+                code = row.get("Code", "")
+                try:
+                    opening = float(row.get("D1") or 0)
+                except (TypeError, ValueError):
+                    opening = 0.0
+                closing = closing_bal_map.get(code, 0.0)
                 yield {
                     "creditor_name": (row.get("Name") or "").strip(),
-                    "creditor_id": row.get("Code", ""),
-                    "opening_balance": float(row.get("D1") or 0),
+                    "creditor_id": code,
+                    "opening_balance": opening,
+                    "closing_balance": closing,
+                    "outstanding_amount": closing,
                     "ledger_group": "Sundry Creditors",
+                    "fy": fy,
                 }
         finally:
             reader.close()
@@ -1192,6 +1217,10 @@ class BusyDataExtractor:
                     "opening_rate": op_rate,
                     "opening_value": op_val,
                     "closing_value": close_val,
+
+                    # v1.5.7 — FY tag so CA-Corner opening-stock queries
+                    # can filter per FY (Tally-safe: field is optional).
+                    "fy": fy,
                 }
         finally:
             reader.close()
@@ -1418,16 +1447,37 @@ class BusyDataExtractor:
                 vch_code = row.get("VchCode", "")
                 rec_type = str(row.get("RecType") or "")
                 master_code = row.get("MasterCode1", "")
-                # For stock lines (RecType=2), D6 is the net amount; for
-                # ledger lines (RecType=1), Value1 is the posting amount.
                 if rec_type == "2":
-                    amount = abs(float(row.get("D6") or row.get("Value3") or 0))
+                    # v1.5.7 — Busy 21 empirical mapping (COMP0002):
+                    #   D1  = signed quantity
+                    #   D2  = rate/unit  (identical to D3 in the wild)
+                    #   D3  = rate/unit
+                    #   D4  = MRP
+                    #   D5  = internal amount slot (NOT plain discount — often
+                    #         holds "MRP*qty - net + GST" or similar, so
+                    #         storing it as `discount` gave nonsensical values)
+                    #   D6  = rate/unit again (SAME as D2 in every observed
+                    #         line — NOT net line amount as the v1.5.2
+                    #         comment claimed).
+                    #   D9  = tax code / GST% (raw)
+                    #   D10 = GST amount (₹)
+                    # → the *only* trustworthy line total is `qty × rate`.
                     quantity = abs(float(row.get("D1") or row.get("Value1") or 0))
-                    rate = abs(float(row.get("D2") or row.get("D3") or 0))
+                    rate     = abs(float(row.get("D2") or row.get("D3") or 0))
+                    line_amount = round(quantity * rate, 2)
+                    mrp = abs(float(row.get("D4") or 0))
+                    # Per-line discount recovered from MRP minus rate. If
+                    # MRP is 0 (item without a printed MRP) we can't infer
+                    # discount, so emit 0 rather than a spurious value.
+                    disc_per_unit = max(mrp - rate, 0.0) if mrp else 0.0
+                    line_discount = round(disc_per_unit * quantity, 2)
+                    amount = line_amount
                 else:
                     amount = abs(float(row.get("Value1") or row.get("Value3") or 0))
                     quantity = 0.0
                     rate = 0.0
+                    mrp = 0.0
+                    line_discount = 0.0
                 items_by_vch[vch_code].append({
                     "rec_type": rec_type,
                     "master_code": master_code,
@@ -1435,8 +1485,8 @@ class BusyDataExtractor:
                     "value": amount,
                     "quantity": quantity,
                     "rate": rate,
-                    "mrp": abs(float(row.get("D4") or 0)),
-                    "discount": abs(float(row.get("D5") or 0)),
+                    "mrp": mrp,
+                    "discount": line_discount,
                     "gst_pct": abs(float(row.get("D9") or 0)),
                     "gst_amount": abs(float(row.get("D10") or 0)),
                     "warehouse_code": row.get("MasterCode2", ""),
@@ -1458,11 +1508,20 @@ class BusyDataExtractor:
                 vch_date = self._parse_date(vch_date_raw)
                 # VchNo comes right-space-padded in the DB — strip aggressively.
                 vch_no = (row.get("VchNo") or row.get("AutoVchNo") or "").strip()
+                # v1.5.7 — Busy stores the *external* reference (customer
+                # PO / counterparty invoice) in RefNo / RefNoAlpha. When
+                # present, expose it separately from the printed invoice
+                # number so app columns labelled "Reference" and
+                # "Invoice #" stop showing the same value.
+                ref_no = (row.get("RefNoAlpha") or row.get("RefNo") or "").strip()
                 amount = abs(float(row.get("VchAmtBaseCur") or 0))
                 # v1.5.2 — Busy 21 stores a Drive link to the invoice PDF
                 # per voucher. Expose it so FLOWRA UI can open the source.
                 doc_link = (row.get("BusyDocLink") or "").strip()
                 doc_name = (row.get("BusyDocName") or "").strip()
+                # v1.5.7 — narration column varies by build.
+                narration = (row.get("Narration") or row.get("LongNar")
+                             or row.get("Nar") or "").strip()
 
                 line_items = items_by_vch.pop(vch_code, [])
                 # v1.5.2 — CORRECTED mapping (was inverted in v1.5.1):
@@ -1473,8 +1532,9 @@ class BusyDataExtractor:
                 voucher = {
                     "voucher_id": f"BUSY-{fy}-{vch_code}-{vch_type}",   # v1.5.2 — FY-scoped so multi-FY syncs don't overwrite
                     "voucher_date": vch_date,
-                    "voucher_number": vch_no,
-                    "reference_number": vch_no,
+                    "voucher_number": vch_no,          # printed invoice number ("NAV/628/26-27")
+                    "reference_number": ref_no or vch_no,  # external ref if present, else fall back to VchNo
+                    "fy": fy,                          # v1.5.7 — required for CA-Corner FY-picker
                     "party_name": party_name,
                     "party_code": party_code,
                     "total_amount": amount,
@@ -1497,7 +1557,7 @@ class BusyDataExtractor:
                         "ledger_code": e["master_code"],
                         "amount": e["value"],
                     } for e in ledger_entries],
-                    "narration": "",
+                    "narration": narration,
                     "busy_doc_link": doc_link,      # v1.5.2 — Google Drive URL to invoice PDF
                     "busy_doc_name": doc_name,
                     "synced_at": now_ist(),

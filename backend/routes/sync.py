@@ -236,6 +236,10 @@ async def receive_agent_sync(request: dict):
                     doc['last_updated'] = doc['last_updated'].isoformat()
                     doc['tenant_id'] = req_tenant_id
                     doc['company_id'] = req_company_id
+                    # v1.5.7 — carry FY through the pydantic wall so
+                    # CA-Corner opening-stock widgets can filter per FY.
+                    if item.get('fy') or financial_year:
+                        doc['fy'] = item.get('fy') or financial_year
                     # Re-apply user-managed fields
                     saved_abc = abc_map.get(item_id)
                     if saved_abc:
@@ -267,6 +271,11 @@ async def receive_agent_sync(request: dict):
                     doc.pop('id', None)
                     doc['tenant_id'] = req_tenant_id
                     doc['company_id'] = req_company_id
+                    # v1.5.7 — pass FY through explicitly (SalesVoucher
+                    # now accepts optional `fy`, but keep the belt-and-
+                    # braces assignment so old model builds don't drop it).
+                    if voucher.get('fy') or financial_year:
+                        doc['fy'] = voucher.get('fy') or financial_year
                     operations.append(
                         UpdateOne(
                             {"voucher_id": v_id, "tenant_id": req_tenant_id, "company_id": req_company_id},
@@ -387,8 +396,14 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": receipt.get('voucher_type', 'receipt'),
                                 "voucher_date": receipt.get('voucher_date', ''),
+                                # v1.5.7 — expose invoice/reference fields
+                                # so the app doesn't display voucher_id.
+                                "voucher_number": receipt.get('voucher_number', ''),
+                                "reference_number": receipt.get('reference_number', ''),
                                 "party_name": receipt.get('party_name', ''),
+                                "party_code": receipt.get('party_code', ''),
                                 "amount": receipt.get('amount', 0),
+                                "total_amount": receipt.get('total_amount', receipt.get('amount', 0)),
                                 "bill_allocations": receipt.get('bill_allocations', []),
                                 # v9.8: capture full ledger breakdown so prev-FY P&L
                                 # can pick up indirect-expense postings (salary, rent,
@@ -396,6 +411,7 @@ async def receive_agent_sync(request: dict):
                                 # payment vouchers, not just journals.
                                 "ledger_entries": receipt.get('ledger_entries', []),
                                 "narration": receipt.get('narration', ''),
+                                "fy": receipt.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -425,12 +441,14 @@ async def receive_agent_sync(request: dict):
                                 "voucher_type": "payment",
                                 "voucher_date": pv.get('voucher_date', ''),
                                 "voucher_number": pv.get('voucher_number', ''),
+                                "reference_number": pv.get('reference_number', ''),
                                 "party_name": pv.get('party_name', ''),
                                 "party_code": pv.get('party_code', ''),
                                 "amount": pv.get('total_amount', pv.get('amount', 0)),
                                 "total_amount": pv.get('total_amount', 0),
                                 "ledger_entries": pv.get('ledger_entries', []),
                                 "narration": pv.get('narration', ''),
+                                "fy": pv.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id,
@@ -461,12 +479,14 @@ async def receive_agent_sync(request: dict):
                                 "voucher_type": "sundry_journal",
                                 "voucher_date": sj.get('voucher_date', ''),
                                 "voucher_number": sj.get('voucher_number', ''),
+                                "reference_number": sj.get('reference_number', ''),
                                 "party_name": sj.get('party_name', ''),
                                 "party_code": sj.get('party_code', ''),
                                 "amount": sj.get('total_amount', 0),
                                 "total_amount": sj.get('total_amount', 0),
                                 "ledger_entries": sj.get('ledger_entries', []),
                                 "narration": sj.get('narration', ''),
+                                "fy": sj.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id,
@@ -493,12 +513,14 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": "credit_note",
                                 "voucher_date": cn.get('voucher_date', ''),
+                                "voucher_number": cn.get('voucher_number', ''),
                                 "party_name": cn.get('party_name', ''),
                                 "total_amount": cn.get('total_amount', 0),
                                 "items": cn.get('items', []),
                                 "ledger_entries": cn.get('ledger_entries', []),
                                 "narration": cn.get('narration', ''),
                                 "reference_number": cn.get('reference_number', ''),
+                                "fy": cn.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -525,11 +547,14 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": "journal",
                                 "voucher_date": jv.get('voucher_date', ''),
+                                "voucher_number": jv.get('voucher_number', ''),
+                                "reference_number": jv.get('reference_number', ''),
                                 "party_name": jv.get('party_name', ''),
                                 "debit_amount": jv.get('debit_amount', 0),
                                 "credit_amount": jv.get('credit_amount', 0),
                                 "narration": jv.get('narration', ''),
                                 "ledger_entries": jv.get('ledger_entries', []),
+                                "fy": jv.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -556,8 +581,10 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": "stock_journal",
                                 "voucher_date": sj.get('voucher_date', ''),
+                                "voucher_number": sj.get('voucher_number', ''),
                                 "items": sj.get('items', []),
                                 "narration": sj.get('narration', ''),
+                                "fy": sj.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -584,11 +611,13 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": pv.get('voucher_type', 'purchase'),
                                 "voucher_date": pv.get('voucher_date', ''),
+                                "voucher_number": pv.get('voucher_number', ''),
                                 "party_name": pv.get('party_name', ''),
                                 "total_amount": pv.get('total_amount', 0),
                                 "items": pv.get('items', []),
                                 "reference_number": pv.get('reference_number', ''),
                                 "ledger_entries": pv.get('ledger_entries', []),
+                                "fy": pv.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -615,11 +644,13 @@ async def receive_agent_sync(request: dict):
                                 "voucher_id": v_id,
                                 "voucher_type": dn.get('voucher_type', 'debit_note'),
                                 "voucher_date": dn.get('voucher_date', ''),
+                                "voucher_number": dn.get('voucher_number', ''),
                                 "party_name": dn.get('party_name', ''),
                                 "total_amount": dn.get('total_amount', 0),
                                 "items": dn.get('items', []),
                                 "reference_number": dn.get('reference_number', ''),
                                 "ledger_entries": dn.get('ledger_entries', []),
+                                "fy": dn.get('fy') or financial_year or '',
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
                                 "company_id": req_company_id
@@ -647,6 +678,7 @@ async def receive_agent_sync(request: dict):
                                 "ledger_group": _clean_tally_val(cr.get('ledger_group', 'Sundry Creditors')),
                                 "outstanding_amount": cr.get('outstanding_amount', 0),
                                 "opening_balance": cr.get('opening_balance', 0),
+                                "closing_balance": cr.get('closing_balance', cr.get('outstanding_amount', 0)),
                                 "phone": _clean_tally_val(cr.get('phone', '')),
                                 "contact_person": _clean_tally_val(cr.get('contact_person', '')),
                                 "state": _clean_tally_val(cr.get('state', '')),
