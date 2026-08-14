@@ -242,8 +242,21 @@ async def ensure_indexes(db):
                                           name='tcid_vdate', background=True)
             await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('voucher_number', 1)],
                                           name='tcid_vnum', background=True)
+        # v1.5.6 — Migrate legacy `tcid_iname` UNIQUE index (on
+        # tenant+company+item_name) to `tcid_iid` UNIQUE (on
+        # tenant+company+item_id). Busy legitimately ships multiple SKUs
+        # sharing an Alias/PrintName ("Widget A" vs "Widget A" with
+        # different codes), and the v1.5.5 sync upserts by item_id — so
+        # the old name-based unique constraint drops rows every tick.
+        try:
+            await db.inventory_items.drop_index('tcid_iname')
+        except Exception:
+            pass  # index may not exist on fresh DBs / already dropped
+        await db.inventory_items.create_index([('tenant_id', 1), ('company_id', 1), ('item_id', 1)],
+                                                name='tcid_iid', background=True, unique=True)
+        # Keep the item_name index for search — NON-unique.
         await db.inventory_items.create_index([('tenant_id', 1), ('company_id', 1), ('item_name', 1)],
-                                                name='tcid_iname', background=True, unique=True)
+                                                name='tcid_iname', background=True)
         await db.inventory_items.create_index([('tenant_id', 1), ('company_id', 1), ('stock_group', 1)],
                                                 name='tcid_sgrp', background=True)
         await db.customers.create_index([('tenant_id', 1), ('company_id', 1), ('customer_name', 1)],
