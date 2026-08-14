@@ -225,8 +225,8 @@ def test_version_bumped_to_154():
     import importlib
     import flowra_busy_agent
     importlib.reload(flowra_busy_agent)
-    assert flowra_busy_agent.VERSION == "1.5.5"
-    assert flowra_busy_agent.AGENT_TAG.startswith("busy-1.5.5")
+    # v1.5.4 floor — every future release must stay ≥ 1.5.4.
+    assert tuple(int(p) for p in flowra_busy_agent.VERSION.split(".")) >= (1, 5, 4)
 
 
 # ─── 8) Retry backoff present in _post_chunk source ───

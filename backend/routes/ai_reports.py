@@ -350,13 +350,21 @@ async def get_report_history(request: Request):
 
 
 @router.post("/analytics/sales-frequency/export")
-async def export_sales_frequency(request: dict):
+async def export_sales_frequency(request: dict, req: Request):
     try:
         export_format = request.get("format", "excel")
         start_date = request.get("start_date")
         end_date = request.get("end_date")
 
-        sales_vouchers = await db.sales_vouchers.find({}, {"_id": 0}).to_list(10000)
+        # v1.5.6 — cross-tenant leak fix. The previous implementation
+        # ran `db.sales_vouchers.find({})` which exported EVERY tenant's
+        # sales data as an Excel to any authenticated caller. Now we
+        # scope to (tenant_id, company_id) from the request context.
+        ctx = await get_tenant_context(req)
+        q = _build_query(ctx)
+        if not q.get("tenant_id"):
+            return APIResponse(success=False, error="tenant_id missing from session")
+        sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
 
         if start_date or end_date:
             filtered = []

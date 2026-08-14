@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Busy Sync Agent"
-APP_VERSION = "v1.5.5"
+APP_VERSION = "v1.5.6"
 AGENT_SCRIPT = "flowra_busy_agent.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -643,10 +643,16 @@ class FlowraBusyAgentGUI:
                  font=("Segoe UI", 10, "bold"), fg="#F87171",
                  bg="#0F172A").pack(side="right", padx=20, pady=14)
 
-        # Bottom action bar (packed BEFORE the notebook so Tk reserves height)
-        bar = tk.Frame(self.root, bg="#F1F5F9", height=56)
+        # Bottom action bar (packed BEFORE the notebook so Tk reserves height).
+        # v1.5.6 — Removed hard-coded `height=56` + `pack_propagate(False)`.
+        # The Start/Stop buttons render ~68 px tall (padx=18 pady=10 +
+        # container pady=8) which exceeded the frozen 56 px. In a
+        # maximized window the notebook expanded and pushed the bar's
+        # visible-area upward, clipping the "■ Stop" button. Now the
+        # bar auto-sizes to fit its children, so both buttons stay
+        # visible at any window size.
+        bar = tk.Frame(self.root, bg="#F1F5F9")
         bar.pack(fill="x", side="bottom")
-        bar.pack_propagate(False)
         self.btn_start = tk.Button(bar, text="▶  Start Sync Service",
                                    command=self.start_agent,
                                    bg="#2563EB", fg="white", relief="flat",
@@ -970,55 +976,24 @@ class FlowraBusyAgentGUI:
                   foreground="#94A3B8", wraplength=720).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        # v1.4 — Busy Solutions' official OLE DB provider (BSSData) uses
-        # the user's regular Busy LOGIN credentials, not the file-level
-        # encryption password. Fill these three fields if you use a
-        # licensed Busy install with Data Connectivity enabled — FLOWRA
-        # will prefer this path automatically. If the provider isn't
-        # available (Basic / Demo build) we fall back to the legacy
-        # encryption-password path further below.
-        ttk.Label(sec2, text="Busy login username",
-                  foreground="#38BDF8").grid(
-            row=3, column=0, sticky="w", padx=(0, 12), pady=(14, 6))
-        self.busy_user_entry = ttk.Entry(sec2, width=44)
-        self.busy_user_entry.insert(0, self.config.get("busy_user", ""))
-        self.busy_user_entry.grid(row=3, column=1, sticky="w", pady=(14, 6))
-        self.entries["busy_user"] = self.busy_user_entry
-
-        ttk.Label(sec2, text="Busy login password").grid(
-            row=4, column=0, sticky="w", padx=(0, 12), pady=(0, 6))
-        self.busy_login_pwd_entry = ttk.Entry(sec2, width=44, show="•")
-        self.busy_login_pwd_entry.insert(0, self.config.get("busy_login_password", ""))
-        self.busy_login_pwd_entry.grid(row=4, column=1, sticky="w", pady=(0, 6))
-        self.entries["busy_login_password"] = self.busy_login_pwd_entry
-
-        ttk.Label(sec2,
-                  text=("Preferred path — uses BSSData OLE DB provider "
-                        "(no encryption-password guessing). Leave blank on "
-                        "Busy Demo / Basic — FLOWRA will fall back to ODBC. "
-                        "The Busy company is auto-detected from the folder above."),
-                  foreground="#94A3B8", wraplength=720).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(2, 12))
-
-        # Legacy encryption password (ODBC fallback path)
-        ttk.Label(sec2, text="Busy DB password (fallback)").grid(
-            row=6, column=0, sticky="w", padx=(0, 12), pady=(10, 6))
-        self.busy_pwd_entry = ttk.Entry(sec2, width=44, show="•")
-        self.busy_pwd_entry.insert(0, self.config.get("busy_db_password", ""))
-        self.busy_pwd_entry.grid(row=6, column=1, sticky="w", pady=(10, 6))
-        self.entries["busy_db_password"] = self.busy_pwd_entry
-        ttk.Label(sec2,
-                  text=("Only needed if the OLE DB fields above are empty "
-                        "AND your Busy install uses a custom file-encryption "
-                        "password. FLOWRA auto-tries the standard passwords "
-                        "first (Busy 21 / 18 / older)."),
-                  foreground="#94A3B8", wraplength=720).grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        # v1.5.6 — Busy username / password / DB-password fields removed.
+        # Since v1.5.1 the agent reads .bds files via pure-Python
+        # `access_parser` (no ODBC / OLE DB driver, no file password),
+        # so these three inputs never do anything useful. `self.entries`
+        # still needs the keys so `_save_config()` doesn't KeyError on
+        # old configs — populate them with the persisted value (empty
+        # for fresh installs) and store as invisible tk vars.
+        for _k in ("busy_user", "busy_login_password", "busy_db_password"):
+            _v = tk.StringVar(value=self.config.get(_k, ""))
+            self.entries[_k] = _v  # type: ignore[assignment]
 
         # v1.4.2 — one-click connection diagnostic. Reports which drivers
         # are installed BEFORE the user spends time on a full sync.
+        # v1.5.6 — Was row=8 while the removed username/password fields
+        # occupied rows 3-7. Now row=3 so the Test button sits directly
+        # under the folder selector.
         test_row = tk.Frame(sec2)
-        test_row.grid(row=8, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        test_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
         self.test_conn_btn = tk.Button(
             test_row, text="🧪  Test Busy Connection",
             command=self._test_busy_connection,
@@ -1029,8 +1004,8 @@ class FlowraBusyAgentGUI:
         )
         self.test_conn_btn.pack(side="left")
         tk.Label(test_row,
-                 text=("Checks BSSData OLE DB provider + Access ODBC driver + "
-                       "opens a live .bds file — no sync started."),
+                 text=("Opens your live .bds file via pure-Python "
+                       "access_parser — no driver, no password required."),
                  fg="#64748B", font=("Segoe UI", 9)
                  ).pack(side="left", padx=12)
 

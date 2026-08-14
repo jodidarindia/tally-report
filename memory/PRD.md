@@ -42,6 +42,64 @@ fresh-create, in-place rename, legacy migration, sync_token guard,
 end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
 backoff source anchor.
 
+## Shipped — Feb 16 2026 (iteration 150) — Busy Agent v1.5.6: data parity
+Full root-cause fix set for the live `COMP0002 → NAVDURGA AUTO SPARES
+JABALPUR` sync where 24 k inventory items shrank to 182, P&L stored 0
+net profit, and CA-Corner rendered blank.
+
+Backend (helps Tally too):
+1. **`data_type=='inventory'`** — chunked `UpdateOne+upsert` by `item_id`
+   replaces the old `delete_many(t_filter) + insert_many` per-chunk
+   pattern that wiped every prior chunk. 22 k+ items now persist.
+   User-managed `abc_category` still preserved via a snapshot done ONCE
+   before the chunks start (not per-chunk).
+2. **`data_type=='profit_loss'`** — key expanded to
+   `(tenant_id, company_id, fy)` so multi-FY P&L rows coexist. Backend
+   also accepts either `net_profit_loss` or legacy `net_profit`.
+3. **`data_type=='all_ledgers'`** — key expanded to include `fy` for
+   the same reason (opening/closing balances stay per-FY).
+4. **Cross-tenant leak fixed** — `/api/analytics/sales-frequency/export`
+   was running `db.sales_vouchers.find({})` (empty filter → EVERY
+   tenant's data as Excel). Now scoped to the caller's context via
+   `get_tenant_context`.
+
+Busy agent (`flowra_busy_agent.py` v1.5.6):
+5. **`extract_inventory_items`** — now emits `opening_quantity`,
+   `opening_rate`, `opening_value`, `closing_value` sourced from the
+   new `_load_item_opening_map()` (reads `Folio1` MasterType=6, D1/D2/D3).
+6. **Sale/cost price fallback ladder** — when the txn-derived rate map
+   has 0 for an item, we probe `Master1.SPrice/SalePrice/SaleRate/MRP/
+   PrintPrice/D3/D4` for sale and `Master1.PPrice/PurchasePrice/
+   PurchaseRate/CostRate/D2` for cost.
+7. **`compute_profit_loss`** — payload now carries `net_profit_loss`
+   (backend read key) in addition to legacy `net_profit`, and stamps
+   `fy` on the doc for the new FY-scoped key.
+8. **Extractor cache invalidated per FY** — added `_item_opening_cache`
+   alongside the existing qty/price caches.
+
+Busy GUI (`flowra_busy_gui.py`):
+9. **Removed unused Busy Username / Login-Password / DB-Password
+   entries** — `access_parser` bypasses ODBC / OLE DB entirely since
+   v1.5.1, those three fields have been decorative. `self.entries`
+   still carries the keys as invisible `StringVar`s so old configs
+   don't KeyError on save.
+10. **Stop-Sync button hidden in maximized frame** — bottom bar had a
+    hard-coded `height=56` + `pack_propagate(False)` which clipped
+    the ~68 px tall Start/Stop buttons. Removed both — frame now
+    auto-sizes to fit its children.
+
+Data cleanup:
+11. **Purged stale COMP0002 mapping** in the live `1524ec0e-…` tenant
+    (v1.5.3 leftover mapping keyed on `name_hash("COMP0002")` with no
+    `folder_id_hash`; the correct `NAVDURGA…` mapping already owns
+    every data row).
+
+Tests: `test_iteration150_busy_v156_data_parity.py` (9 new tests,
+25/25 green across iter-148/149/150). Locks the inventory chunk
+upsert, abc_category preservation, per-FY P&L, per-FY ledgers, and
+extractor opening-balance ladder against future regressions.
+
+
 ## Shipped — Feb 16 2026 (iteration 149) — Busy Agent v1.5.5: BusyDBReader pool
 Kills the ~25× file-parse overhead the extractor carried since v1.5.1
 (each of ~14 helpers opened + closed the same `.bds` file, and

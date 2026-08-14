@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.5"
-AGENT_TAG = "busy-1.5.5-reader-pool"
+VERSION = "1.5.6"
+AGENT_TAG = "busy-1.5.6-data-parity"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -1113,6 +1113,7 @@ class BusyDataExtractor:
         # Build item quantity and price maps once (streamed, cached).
         item_qty_map = self._load_item_qty_map(fy)
         item_price_map = self._load_item_price_map(fy)
+        item_opening_map = self._load_item_opening_map(fy)  # v1.5.6
 
         reader = self._get_reader(db_path)
         try:
@@ -1126,6 +1127,40 @@ class BusyDataExtractor:
                 sku_code = (row.get("Name") or "").strip()
                 item_name = alias or sku_code
                 price_row = item_price_map.get(code, {})
+                opening = item_opening_map.get(code, {})
+                closing_qty = item_qty_map.get(code, 0.0)
+                # v1.5.6 — sale/cost price fallback ladder: transaction
+                # rate → Master1 built-in rate columns (SPrice/PPrice
+                # exist on newer Busy builds; on older builds we probe
+                # D-columns that historically carried the sale rate).
+                sale_price = price_row.get("sale_price", 0.0)
+                if not sale_price:
+                    for col in ("SPrice", "SalePrice", "SaleRate", "MRP", "PrintPrice", "D3", "D4"):
+                        try:
+                            v = float(row.get(col) or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if 0 < v < 1_000_000:
+                            sale_price = v
+                            break
+                cost_price = price_row.get("cost_price", 0.0)
+                if not cost_price:
+                    for col in ("PPrice", "PurchasePrice", "PurchaseRate", "CostRate", "D2"):
+                        try:
+                            v = float(row.get(col) or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if 0 < v < 1_000_000:
+                            cost_price = v
+                            break
+
+                # Opening rate/value — fall back to cost_price × opening_qty
+                # when Folio1 didn't have an explicit rate row.
+                op_qty  = opening.get("opening_quantity", 0.0)
+                op_rate = opening.get("opening_rate", 0.0) or cost_price
+                op_val  = opening.get("opening_value",
+                                      round(op_qty * op_rate, 2))
+                close_val = round(closing_qty * (sale_price or cost_price or op_rate), 2)
 
                 yield {
                     # Legacy keys — kept for backwards-compat with v1.5.1
@@ -1133,26 +1168,88 @@ class BusyDataExtractor:
                     "item_name": item_name,
                     "item_id": code,
                     "part_number": (row.get("PrintName") or alias or sku_code).strip(),
-                    "quantity": item_qty_map.get(code, 0.0),
-                    "price": price_row.get("sale_price", 0.0),
+                    "quantity": closing_qty,
+                    "price": sale_price,
                     "unit": "",     # unit code resolves via CM master later
                     "stock_group": self._resolve_name(row.get("ParentGrp", "")),
 
-                    # v1.5.2 — new enriched fields
+                    # v1.5.2 — enriched fields
                     "sku_code": sku_code,
                     "alias": alias,
                     "hsn_code": (row.get("HSNCode") or "").strip(),
-                    "sale_price": price_row.get("sale_price", 0.0),
-                    "cost_price": price_row.get("cost_price", 0.0),
+                    "sale_price": sale_price,
+                    "cost_price": cost_price,
                     "last_sold_rate": price_row.get("last_sold_rate", 0.0),
                     "last_purchased_rate": price_row.get("last_purchased_rate", 0.0),
-                    "closing_qty": item_qty_map.get(code, 0.0),
+                    "closing_qty": closing_qty,
                     "stock_group_code": (row.get("ParentGrp") or "").strip(),
                     "created_at": (row.get("CreationTime") or "").strip(),
                     "modified_at": (row.get("ModificationTime") or "").strip(),
+
+                    # v1.5.6 — opening balance snapshot for CA-Corner
+                    # balance-sheet + Dashboard opening-stock widgets.
+                    "opening_quantity": op_qty,
+                    "opening_rate": op_rate,
+                    "opening_value": op_val,
+                    "closing_value": close_val,
                 }
         finally:
             reader.close()
+
+    def _load_item_opening_map(self, fy: str) -> Dict[str, Dict[str, float]]:
+        """v1.5.6 — Opening quantity/rate/value per item from Folio1.
+
+        Busy 21 stores per-item opening balance snapshots in Folio1
+        MasterType=6 rows using D-slot columns *before* the qty-snapshot
+        range (D11..D50 are period-end snapshots — see
+        `_load_item_qty_map`). Empirically D1/D2/D3 hold opening qty /
+        rate / value for MasterType=6 in newer Busy releases. On older
+        builds those slots may be zero — the fallback ladder in
+        `extract_inventory_items` derives opening_rate from cost_price
+        and opening_value from qty×rate so the UI never shows blanks.
+        """
+        if hasattr(self, "_item_opening_cache") and self._item_opening_cache is not None:
+            return self._item_opening_cache
+        result: Dict[str, Dict[str, float]] = {}
+        db_path = self._fy_dbs.get(fy)
+        if not db_path:
+            self._item_opening_cache = result
+            return result
+        try:
+            reader = self._get_reader(db_path)
+            try:
+                for row in reader.iter_rows("Folio1"):
+                    if str(row.get("MasterType") or "") != "6":
+                        continue
+                    code = str(row.get("MasterCode") or "").strip()
+                    if not code:
+                        continue
+                    def _fnum(col):
+                        try:
+                            return float(row.get(col) or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    op_qty  = _fnum("D1")
+                    op_rate = _fnum("D2")
+                    op_val  = _fnum("D3")
+                    # Sanity: opening qty rarely exceeds 1e7; if D1 looks
+                    # more like a value (₹ 10 lakh+), swap slots.
+                    if abs(op_qty) > 1_000_000 and abs(op_val) < 100_000:
+                        op_qty, op_val = op_val, op_qty
+                    if op_val == 0 and op_qty and op_rate:
+                        op_val = round(op_qty * op_rate, 2)
+                    if op_qty or op_rate or op_val:
+                        result[code] = {
+                            "opening_quantity": op_qty,
+                            "opening_rate": op_rate,
+                            "opening_value": op_val,
+                        }
+            finally:
+                reader.close()
+        except Exception as e:
+            logger.warning(f"Item opening map skipped: {e}")
+        self._item_opening_cache = result
+        return result
 
     def _load_item_qty_map(self, fy: str) -> Dict[str, float]:
         """v1.5.2 — Closing quantity per item, read from Folio1.
@@ -1518,10 +1615,17 @@ class BusyDataExtractor:
         return {
             "gross_profit": round(total_income - sum(e["amount"] for e in expense_ledgers if e["parent_group"] in ("Expenses (Direct/Mfg.)", "Purchase")), 2),
             "net_profit": round(total_income - total_expense, 2),
+            # v1.5.6 — Backend `/api/agent/sync` (data_type='profit_loss')
+            # reads `net_profit_loss`. The pre-1.5.6 payload only carried
+            # `net_profit`, so the P&L doc's `net_profit_loss` column
+            # always ended up stored as 0. Emit BOTH to avoid a fresh
+            # regression while the field name is finalised.
+            "net_profit_loss": round(total_income - total_expense, 2),
             "total_income": round(total_income, 2),
             "total_expense": round(total_expense, 2),
             "income": income_ledgers,
             "expense": expense_ledgers,
+            "fy": fy,
             "computed_at": now_ist(),
         }
 

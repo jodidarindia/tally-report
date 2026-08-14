@@ -86,8 +86,8 @@ def test_version_bumped_to_155():
     import importlib
     import flowra_busy_agent
     importlib.reload(flowra_busy_agent)
-    assert flowra_busy_agent.VERSION == "1.5.5"
-    assert flowra_busy_agent.AGENT_TAG.startswith("busy-1.5.5")
+    # v1.5.5 floor — every future release must stay ≥ 1.5.5.
+    assert tuple(int(p) for p in flowra_busy_agent.VERSION.split(".")) >= (1, 5, 5)
 
 
 def test_gui_and_agent_versions_stay_in_sync():

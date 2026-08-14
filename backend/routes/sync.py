@@ -109,6 +109,10 @@ async def receive_agent_sync(request: dict):
         req_company_id = request.get('company_id', '')
         sync_token = request.get('sync_token', '')
         company_name_raw = request.get('company_name', '') or req_company_id
+        # v1.5.6 — needed inside inventory / P&L / all_ledgers branches
+        # for the FY-scoped keys (was declared much further down before,
+        # causing a NameError once the P&L branch started reading it).
+        financial_year = request.get('financial_year', '')
 
         # HARD-ENFORCE sync auth — production posture as of v9.8.20.
         # No anonymous writes ever. tenant_id MUST be provided and the
@@ -194,22 +198,34 @@ async def receive_agent_sync(request: dict):
             t_filter["company_id"] = req_company_id
 
         if data_type == 'inventory':
-            # Preserve user-set fields (abc_category, etc.) across syncs by
-            # snapshotting them before the delete-and-reinsert.
-            existing = await db.inventory_items.find(t_filter, {"_id": 0, "item_name": 1, "abc_category": 1}).to_list(50000)
-            user_field_map = {(e.get("item_name") or "").lower().strip(): {
-                "abc_category": e.get("abc_category"),
-            } for e in existing if e.get("abc_category")}
-
-            await db.inventory_items.delete_many(t_filter)
+            # v1.5.5 — Chunked upsert. The old delete_many + insert_many
+            # pattern was catastrophically wrong for chunked syncs: with
+            # CHUNK_SIZE=500 and 24 k items, the agent posts ~48 chunks,
+            # and each backend call wiped every prior chunk's inserts —
+            # only the LAST chunk (~130 items) survived. Now each item
+            # is upserted by (tenant_id, company_id, item_id) with the
+            # user-managed abc_category preserved. Orphan cleanup runs
+            # via /api/agent/reconcile after the agent posts the full
+            # manifest at the end of the phase.
             if data:
-                docs = []
+                from pymongo import UpdateOne
+                # Snapshot user-managed fields ONCE (not per chunk) —
+                # cheap because the collection is company-scoped.
+                existing = await db.inventory_items.find(
+                    t_filter, {"_id": 0, "item_id": 1, "abc_category": 1}
+                ).to_list(50000)
+                abc_map = {
+                    (e.get("item_id") or ""): e.get("abc_category")
+                    for e in existing if e.get("abc_category")
+                }
+
+                operations = []
                 for item in data:
-                    # Sanity guard (v9.8.2): if standard_price equals the cost
-                    # rate (`price`), it's the v9.7.x→v9.8.1 buggy fallback —
-                    # reset to 0 so the UI shows "Set in Tally" instead of
-                    # mis-displaying cost as sale price. v9.8.2 agents do not
-                    # set this fallback, but old/cached agents might.
+                    item_id = str(item.get('item_id') or '').strip()
+                    if not item_id:
+                        continue
+                    # Sanity guard (v9.8.2): reset standard_price when it
+                    # accidentally equals cost — see legacy note.
                     sp = item.get('standard_price') or 0
                     pr = item.get('price') or 0
                     if sp > 0 and pr > 0 and abs(sp - pr) < 0.01:
@@ -221,13 +237,21 @@ async def receive_agent_sync(request: dict):
                     doc['tenant_id'] = req_tenant_id
                     doc['company_id'] = req_company_id
                     # Re-apply user-managed fields
-                    saved = user_field_map.get((doc.get("item_name") or "").lower().strip())
-                    if saved and saved.get("abc_category"):
-                        doc["abc_category"] = saved["abc_category"]
-                    docs.append(doc)
-                if docs:
-                    await db.inventory_items.insert_many(docs)
-            logger.info(f"Synced {len(data)} inventory items")
+                    saved_abc = abc_map.get(item_id)
+                    if saved_abc:
+                        doc['abc_category'] = saved_abc
+                    operations.append(
+                        UpdateOne(
+                            {"item_id": item_id,
+                             "tenant_id": req_tenant_id,
+                             "company_id": req_company_id},
+                            {"$set": doc},
+                            upsert=True,
+                        )
+                    )
+                if operations:
+                    await db.inventory_items.bulk_write(operations, ordered=False)
+            logger.info(f"Synced {len(data)} inventory items (upsert)")
 
         elif data_type == 'sales':
             if data:
@@ -688,45 +712,75 @@ async def receive_agent_sync(request: dict):
         elif data_type == 'profit_loss':
             if data:
                 pl = data[0] if isinstance(data, list) else data
+                # v1.5.5 — Include FY in the P&L key. Previously two FYs
+                # sharing (tenant, company) overwrote each other; the
+                # CA-Corner reader at ca_reports.py already looks up
+                # (tenant, company, fy) first (with a legacy fallback),
+                # so storing per-FY unlocks multi-FY balance-sheet
+                # comparisons.
+                pl_fy = financial_year or pl.get("fy", "") or ""
+                pl_filter = {"tenant_id": req_tenant_id,
+                             "company_id": req_company_id}
+                if pl_fy:
+                    pl_filter["fy"] = pl_fy
                 await db.profit_loss.update_one(
-                    {"tenant_id": req_tenant_id, "company_id": req_company_id},
+                    pl_filter,
                     {"$set": {
                         "income": pl.get("income", []),
                         "expense": pl.get("expense", []),
                         "total_income": pl.get("total_income", 0),
                         "total_expense": pl.get("total_expense", 0),
-                        "net_profit_loss": pl.get("net_profit_loss", 0),
+                        "net_profit_loss": (
+                            pl.get("net_profit_loss")
+                            if pl.get("net_profit_loss") is not None
+                            else pl.get("net_profit", 0)
+                        ),
+                        "gross_profit": pl.get("gross_profit", 0),
+                        "fy": pl_fy,
                         "last_synced": sync_time,
                         "tenant_id": req_tenant_id,
                         "company_id": req_company_id
                     }},
                     upsert=True
                 )
-            logger.info("Synced P&L data")
+            logger.info(f"Synced P&L data (fy={financial_year})")
 
         elif data_type == 'all_ledgers':
             if data:
                 from pymongo import UpdateOne
+                # v1.5.5 — Add FY to the ledger identity key so opening
+                # / closing balances stay separate per FY. Legacy rows
+                # (no `fy` field) remain readable; new inserts always
+                # carry `fy`, and reconcile scopes by fy for cleanup.
+                fy_key = financial_year or ""
                 operations = []
                 for led in data:
                     name = led.get('ledger_name', '')
                     if not name:
                         continue
+                    match = {
+                        "ledger_name": name,
+                        "tenant_id": req_tenant_id,
+                        "company_id": req_company_id,
+                    }
+                    if fy_key:
+                        match["fy"] = fy_key
                     operations.append(
                         UpdateOne(
-                            {"ledger_name": name, "tenant_id": req_tenant_id, "company_id": req_company_id},
+                            match,
                             {"$set": {
                                 **{k: v_val for k, v_val in led.items() if k != '_id'},
+                                "fy": fy_key,
                                 "last_synced": sync_time,
                                 "tenant_id": req_tenant_id,
-                                "company_id": req_company_id
+                                "company_id": req_company_id,
                             }},
                             upsert=True
                         )
                     )
                 if operations:
                     await db.all_ledgers.bulk_write(operations)
-            logger.info(f"Synced {len(data)} ledgers")
+            logger.info(f"Synced {len(data)} ledgers (fy={financial_year})")
 
         elif data_type == 'balance_sheet_snapshot':
             # Per-FY balance sheet snapshot from agent (uses Tally's FY-scoped CLOSINGBALANCE)
@@ -758,8 +812,7 @@ async def receive_agent_sync(request: dict):
                     await db.balance_sheets.bulk_write(operations)
             logger.info(f"Synced {len(data)} balance-sheet snapshots")
 
-        # Update last sync time
-        financial_year = request.get('financial_year', '')
+        # Update last sync time (financial_year already parsed at top of handler)
         # Normalize sync_time to always have timezone info (UTC)
         if sync_time:
             try:
