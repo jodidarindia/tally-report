@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Busy Sync Agent"
-APP_VERSION = "v1.5.3"
+APP_VERSION = "v1.5.5"
 AGENT_SCRIPT = "flowra_busy_agent.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)

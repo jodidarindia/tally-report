@@ -90,6 +90,26 @@ def test_version_bumped_to_155():
     assert flowra_busy_agent.AGENT_TAG.startswith("busy-1.5.5")
 
 
+def test_gui_and_agent_versions_stay_in_sync():
+    """build.bat reads APP_VERSION from flowra_busy_gui.py to name the
+    output EXE (FlowraBusyAgent_v1.5.5.exe). If the GUI's APP_VERSION
+    drifts from flowra_busy_agent.VERSION we ship a v1.5.5 binary named
+    v1.5.3 — exactly the bug that just bit us in v1.5.4/1.5.5.
+    """
+    import re
+    import flowra_busy_agent
+    gui_src = Path("/app/desktop-agent/build-kit-busy/flowra_busy_gui.py").read_text()
+    m = re.search(r'^APP_VERSION\s*=\s*"v([\d.]+)"', gui_src, re.M)
+    assert m, "APP_VERSION missing from flowra_busy_gui.py"
+    gui_ver = m.group(1)
+    assert gui_ver == flowra_busy_agent.VERSION, (
+        f"Version drift: flowra_busy_gui.py APP_VERSION='v{gui_ver}' vs "
+        f"flowra_busy_agent.VERSION='{flowra_busy_agent.VERSION}'. "
+        "build.bat reads APP_VERSION for the EXE filename — keep both "
+        "in lockstep."
+    )
+
+
 def test_full_sync_calls_close_readers_source_anchor():
     """Guard against a future refactor accidentally dropping the
     `close_readers()` call from run_full_sync's `finally:` block."""
