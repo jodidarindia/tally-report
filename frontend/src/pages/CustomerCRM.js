@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { toast } from 'sonner';
 import SearchableSelect from '../components/SearchableSelect';
 import { fuzzyMatchAny, fuzzyMatch } from '../utils/fuzzySearch';
+import { getErpLabel, getErpLabelMarked } from '../utils/agentSource';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -454,10 +455,10 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                           {verified && (
                             <span
                               className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap"
-                              title={`Tally Verified — closing balance reconciles with Tally master (Rs.${(customer.tally_outstanding||customer.tally_master_ob||0).toLocaleString('en-IN', {maximumFractionDigits: 0})})`}
-                              data-testid={`tally-verified-${idx}`}
+                              title={`${getErpLabel()} Verified — closing balance reconciles with ${getErpLabel()} master (Rs.${(customer.tally_outstanding||customer.tally_master_ob||0).toLocaleString('en-IN', {maximumFractionDigits: 0})})`}
+                              data-testid={`erp-verified-${idx}`}
                             >
-                              <span className="text-[8px]">✓</span> Tally
+                              <span className="text-[8px]">✓</span> {getErpLabel()}
                             </span>
                           )}
                         </td>
@@ -829,7 +830,7 @@ const CustomerCRM = ({ user, selectedFY, excludeBranches }) => {
                           className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-500 cursor-not-allowed"
                           data-testid="last-fy-sales-input"
                         />
-                        <p className="text-xs text-slate-400 mt-1">Previous FY actual sales (read-only from Tally* data)</p>
+                        <p className="text-xs text-slate-400 mt-1">Previous FY actual sales (read-only from {getErpLabelMarked()} data)</p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Target Amount (Rs.)</label>

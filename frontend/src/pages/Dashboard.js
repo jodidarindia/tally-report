@@ -4,6 +4,7 @@ import { Package, TrendingUp, AlertCircle, Activity, RefreshCw, Bell, Calendar, 
 import { useSyncWebSocket } from '../hooks/useSyncWebSocket';
 import { useAuth } from '../hooks/useAuth';
 import SyncStatusBar from '../components/SyncStatusBar';
+import { setAgentSourceFromVersion, getErpLabelMarked } from '../utils/agentSource';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -123,6 +124,9 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
         last_sync: latestSync || syncData.last_sync,
         company_name: tallyData.company_name || syncData.company_name
       });
+      // v1.5.7 — cache agent source (busy | tally) so all pages can
+      // dynamically flip "Tally" ↔ "Busy" in their labels.
+      setAgentSourceFromVersion(syncData.agent_version || tallyData.agent_version);
     } catch (error) {
       console.error('Error fetching sync status:', error);
     }
@@ -225,8 +229,8 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center" data-testid="not-synced-banner">
               <Database size={28} className="mx-auto text-amber-500 mb-3" />
               <h3 className="text-lg font-semibold text-amber-900 mb-1">Data Not Synced Yet</h3>
-              <p className="text-sm text-amber-700 mb-3">Your data has not been synced from Tally* yet. Please download and run the FLOWRA Desktop Agent to connect with Tally*.</p>
-              <p className="text-xs text-amber-600">Go to <strong>Setup</strong> menu to configure your Tally* connection and download the Desktop Agent.</p>
+              <p className="text-sm text-amber-700 mb-3">Your data has not been synced from {getErpLabelMarked()} yet. Please download and run the FLOWRA Desktop Agent to connect with {getErpLabelMarked()}.</p>
+              <p className="text-xs text-amber-600">Go to <strong>Setup</strong> menu to configure your {getErpLabelMarked()} connection and download the Desktop Agent.</p>
             </div>
           )}
           {syncStatus?.last_sync && (salesSummary?.total_sales || 0) === 0 && (inventorySummary?.total_items || 0) === 0 && (
@@ -235,7 +239,7 @@ const Dashboard = ({ selectedFY, companyId, excludeBranches }) => {
               <h3 className="text-lg font-semibold text-blue-900 mb-1">No Data Available for FY {selectedFY}</h3>
               <p className="text-sm text-blue-700 mb-3">No transactions were found for the selected financial year. This could mean:</p>
               <ul className="text-sm text-blue-700 text-left max-w-md mx-auto space-y-1 mb-3">
-                <li>- The selected FY has no transactions in Tally*</li>
+                <li>- The selected FY has no transactions in {getErpLabelMarked()}</li>
                 <li>- Data for this FY has not been synced yet from the Desktop Agent</li>
                 <li>- The company was not active during this financial year</li>
               </ul>

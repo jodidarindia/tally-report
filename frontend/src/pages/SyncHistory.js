@@ -3,6 +3,7 @@ import axios from 'axios';
 import { RefreshCw, Clock, Database, CheckCircle, AlertCircle, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import AgentBadge from '../components/AgentBadge';
+import { getErpLabelMarked } from '../utils/agentSource';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -80,7 +81,7 @@ const SyncHistory = () => {
         <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
           Sync History
         </h1>
-        <p className="mt-2 text-base text-slate-600">Timeline of all data sync cycles from Tally*</p>
+        <p className="mt-2 text-base text-slate-600">Timeline of all data sync cycles from {getErpLabelMarked()}</p>
       </div>
 
       {/* Current Status Card */}
@@ -117,7 +118,7 @@ const SyncHistory = () => {
         <div className="text-center py-16 text-slate-500">
           <Database size={48} className="mx-auto mb-4 opacity-30" />
           <p className="text-lg">No sync history yet</p>
-          <p className="text-sm mt-2">Run the desktop agent to start syncing data from Tally*</p>
+          <p className="text-sm mt-2">Run the desktop agent to start syncing data from {getErpLabelMarked()}</p>
         </div>
       ) : (
         <div className="space-y-3" data-testid="sync-timeline">

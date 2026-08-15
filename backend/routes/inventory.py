@@ -520,15 +520,18 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
-        items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        # v1.5.7 — Fast, exact count via count_documents. Previously we
+        # did `.to_list(10000)` then `len(items)`, which capped the
+        # Dashboard tile at 10 K for Busy tenants with 13.6 K+ items.
+        total_items = await db.inventory_items.count_documents(q)
+
+        items = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
 
         if not items:
             return APIResponse(
                 success=True,
                 data={"total_items": 0, "total_value": 0, "low_stock_items": 0, "categories": []}
             )
-
-        total_items = len(items)
 
         # Compute total value: prefer closing_value, then qty*price
         total_value = 0.0

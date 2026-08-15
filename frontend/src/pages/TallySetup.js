@@ -3,6 +3,7 @@ import axios from 'axios';
 import { CheckCircle, XCircle, Settings as SettingsIcon, Wifi, WifiOff, Clock, Monitor, Building2, RefreshCw, Download, Trash2, RotateCcw, AlertTriangle, ArrowUpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import CreditorGroupsPanel from '../components/CreditorGroupsPanel';
+import { getAgentSource, getErpLabel, getErpLabelMarked, setAgentSourceFromVersion } from '../utils/agentSource';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -75,6 +76,8 @@ const TallySetup = ({ companyId }) => {
       });
       if (response.data?.success) {
         setSyncStatus(response.data.data);
+        // v1.5.7 — refresh cached agent source from latest sync record
+        setAgentSourceFromVersion(response.data.data?.agent_version);
       }
     } catch (error) {
       console.error('Error fetching sync status:', error);
@@ -97,13 +100,13 @@ const TallySetup = ({ companyId }) => {
 
       if (response.data?.success) {
         setIsConnected(true);
-        toast.success('Successfully connected to Tally*!');
+        toast.success(`Successfully connected to ${getErpLabelMarked()}!`);
       } else {
         toast.error(response.data?.error || 'Connection failed');
       }
     } catch (error) {
       console.error('Error connecting:', error);
-      toast.error('Failed to connect to Tally*');
+      toast.error(`Failed to connect to ${getErpLabelMarked()}`);
     } finally {
       setLoading(false);
     }
@@ -150,9 +153,9 @@ const TallySetup = ({ companyId }) => {
     <div data-testid="setup-page">
       <div className="mb-8">
         <h1 className="text-4xl font-light tracking-tight text-slate-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
-          Tally* Setup
+          {getErpLabelMarked()} Setup
         </h1>
-        <p className="mt-2 text-base text-slate-600">Configure your Tally* connection</p>
+        <p className="mt-2 text-base text-slate-600">Configure your {getErpLabelMarked()} connection</p>
       </div>
 
       <div className="max-w-2xl space-y-6">
@@ -164,7 +167,7 @@ const TallySetup = ({ companyId }) => {
             </div>
             <div className="flex-1">
               <h2 className="text-base font-semibold text-slate-900">
-                FLOWRA Tally Sync Agent (Windows)
+                FLOWRA {getErpLabel()} Sync Agent (Windows)
                 {latestRelease?.version && (
                   <span className="ml-2 inline-block text-[10px] font-semibold bg-blue-600 text-white px-1.5 py-0.5 rounded">
                     v{latestRelease.version}
@@ -172,7 +175,7 @@ const TallySetup = ({ companyId }) => {
                 )}
               </h2>
               <p className="text-xs text-slate-600 mt-1">
-                Latest: v{latestRelease?.version || '9.8.23'} · Native Windows GUI · system tray · auto-start · for Tally Prime on Windows 10/11.
+                Latest: v{latestRelease?.version || '9.8.23'} · Native Windows GUI · system tray · auto-start · for {getErpLabel()} Prime on Windows 10/11.
               </p>
 
               {/* Update banner — visible when the agent currently syncing
@@ -191,8 +194,8 @@ const TallySetup = ({ companyId }) => {
                     <div className="text-[11px] text-amber-700 mt-0.5">
                       Your desktop agent will offer a one-click update on its
                       next 24-hour check, or open the agent now and click
-                      "Update available" in the status bar. Sync data and
-                      Tally are not affected.
+                      &ldquo;Update available&rdquo; in the status bar. Sync data and
+                      {getErpLabel()} are not affected.
                     </div>
                   </div>
                 </div>
@@ -204,14 +207,15 @@ const TallySetup = ({ companyId }) => {
                   className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                   data-testid="download-agent-exe-btn"
                 >
-                  <Download size={14} /> Download FLOWRA Tally Sync Agent (.exe)
+                  <Download size={14} /> Download FLOWRA {getErpLabel()} Sync Agent (.exe)
                 </button>
               </div>
               <p className="text-[11px] text-slate-500 mt-3">
                 Single-file installer for Windows 10/11. No Python or other
-                runtime required on the customer's PC — just double-click and run.
-                The agent connects to Tally over ODBC port 9000 and syncs only
-                the company you choose, encrypted end-to-end.
+                runtime required on the customer&apos;s PC — just double-click and run.
+                {getAgentSource() === 'busy'
+                  ? ' The agent reads your Busy .bds files directly (pure-Python access_parser — no ODBC / OLE DB driver install) and syncs only the company you choose, encrypted end-to-end.'
+                  : ' The agent connects to Tally over ODBC port 9000 and syncs only the company you choose, encrypted end-to-end.'}
               </p>
             </div>
           </div>
@@ -345,6 +349,38 @@ const TallySetup = ({ companyId }) => {
           </div>
 
           <form onSubmit={handleConnect} className="space-y-6">
+            {getAgentSource() === 'busy' ? (
+              /* ── v1.5.7 Busy branch — no XML/REST needed: pure-Python
+                    access_parser reads .bds directly from the data folder. */
+              <div className="space-y-4">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="text-emerald-600 flex-shrink-0 mt-0.5" size={18} />
+                    <div className="text-sm text-emerald-800">
+                      <div className="font-semibold mb-1">No ODBC, No REST — direct file access</div>
+                      The FLOWRA Busy Sync Agent v1.5.1+ reads your <code className="px-1 py-0.5 rounded bg-white text-xs">.bds</code> files
+                      via pure-Python <code className="px-1 py-0.5 rounded bg-white text-xs">access_parser</code>. No Busy Data Connectivity
+                      licence, no OLE DB provider install, no file password.
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Busy Data Folder</label>
+                  <input
+                    type="text" readOnly
+                    value="Set inside the Desktop Agent → Settings tab"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-500"
+                    data-testid="busy-data-folder-hint"
+                  />
+                  <p className="text-xs text-slate-500 mt-1.5">
+                    Point the agent at your Busy install&apos;s data root (e.g. <code>C:\Busy21\Data\</code>).
+                    The folder holds <code>COMP0001</code> / <code>COMP0002</code> sub-folders — the agent
+                    auto-detects every company and every FY.
+                  </p>
+                </div>
+              </div>
+            ) : (
+            <>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Connection Type
@@ -361,7 +397,7 @@ const TallySetup = ({ companyId }) => {
                   }`}
                 >
                   <div className="font-medium">XML/HTTP API</div>
-                  <div className="text-xs mt-1">Local Tally*</div>
+                  <div className="text-xs mt-1">Local {getErpLabelMarked()}</div>
                 </button>
                 <button
                   type="button"
@@ -422,29 +458,46 @@ const TallySetup = ({ companyId }) => {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
-                  placeholder="Enter your Tally* API key"
+                  placeholder={`Enter your ${getErpLabelMarked()} API key`}
                 />
               </div>
             )}
+            </>
+            )}
 
+            {getAgentSource() !== 'busy' && (
             <button
               type="submit"
               data-testid="connect-button"
               disabled={loading}
               className="w-full btn-primary py-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Connecting...' : 'Connect to Tally*'}
+              {loading ? 'Connecting...' : `Connect to ${getErpLabelMarked()}`}
             </button>
+            )}
           </form>
 
           <div className="mt-6 p-4 bg-[#F0F4FF] rounded-lg">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">Setup Instructions</h3>
-            <ul className="text-sm text-slate-600 space-y-1">
-              <li>• For XML/HTTP: Ensure Tally* is running on your local machine</li>
-              <li>• Default port is 9000 (can be configured in Tally* settings)</li>
-              <li>• For REST API: Obtain your API key from Tally* Developer portal</li>
-              <li>• This demo uses mock data for testing purposes</li>
-            </ul>
+            {getAgentSource() === 'busy' ? (
+              <ol className="text-sm text-slate-600 space-y-1.5 list-decimal list-inside">
+                <li>Download <strong>FlowraBusyAgent_v1.5.7.exe</strong> from the release panel above.</li>
+                <li>Right-click → <em>Run as Administrator</em>. Windows SmartScreen may warn &ldquo;Unknown publisher&rdquo; — click <em>More info</em> → <em>Run anyway</em>.</li>
+                <li>In the agent GUI: go to <strong>Settings</strong> → browse to your Busy data folder (usually <code>C:\Busy21\Data\</code>).</li>
+                <li>Sign in with your FLOWRA email + password (same as the web app).</li>
+                <li>Pick a starting Financial Year — the agent will sync that FY and every newer FY automatically.</li>
+                <li>Hit <strong>Start Sync</strong>. First full sync takes 5-15 min depending on data size; quick sales sync every 5 min after that.</li>
+                <li>Retry backoff (5s / 30s / 60s) auto-recovers from network hiccups. Failed batches show up as <code>[SYNC-LOST]</code> in the log and re-attempt on the next tick.</li>
+                <li>Agent log lives at <code>%APPDATA%\Flowra\logs\</code> — attach it if you raise a support ticket.</li>
+              </ol>
+            ) : (
+              <ul className="text-sm text-slate-600 space-y-1">
+                <li>• For XML/HTTP: Ensure {getErpLabelMarked()} is running on your local machine</li>
+                <li>• Default port is 9000 (can be configured in {getErpLabelMarked()} settings)</li>
+                <li>• For REST API: Obtain your API key from {getErpLabelMarked()} Developer portal</li>
+                <li>• This demo uses mock data for testing purposes</li>
+              </ul>
+            )}
           </div>
         </div>
       </div>
@@ -534,14 +587,14 @@ const TallySetup = ({ companyId }) => {
             </div>
             <div className="p-5 space-y-3 text-sm text-slate-700">
               <p>
-                You're about to download <span className="font-semibold text-slate-900">FLOWRA Tally Sync Agent {latestRelease?.version ? `v${latestRelease.version}` : ''}</span>.
+                You&apos;re about to download <span className="font-semibold text-slate-900">FLOWRA {getErpLabel()} Sync Agent {latestRelease?.version ? `v${latestRelease.version}` : ''}</span>.
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <p className="font-semibold text-amber-900 mb-1">Important — please do this in order:</p>
                 <ol className="text-xs text-amber-800 list-decimal pl-4 space-y-1">
                   <li>If the FLOWRA agent is open, click <span className="font-mono bg-amber-100 px-1 rounded">Stop Sync</span> → File menu → <span className="font-mono bg-amber-100 px-1 rounded">Quit</span> (or right-click the system-tray icon → Exit).</li>
-                  <li>Save the new <code>FlowraTallyAgent.exe</code> to the SAME folder as the old one and choose <span className="font-semibold">"Replace"</span> when Windows asks. Otherwise both versions will sit side-by-side and the wrong one may launch.</li>
-                  <li>Double-click the new file to launch — your login, Tally settings and selected company are preserved.</li>
+                  <li>Save the new <code>FlowraTallyAgent.exe</code> to the SAME folder as the old one and choose <span className="font-semibold">&ldquo;Replace&rdquo;</span> when Windows asks. Otherwise both versions will sit side-by-side and the wrong one may launch.</li>
+                  <li>Double-click the new file to launch — your login, {getErpLabel()} settings and selected company are preserved.</li>
                 </ol>
               </div>
               <p className="text-xs text-slate-500">
@@ -566,7 +619,7 @@ const TallySetup = ({ companyId }) => {
                 className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
                 data-testid="download-modal-confirm"
               >
-                <Download size={14} /> I've Quit the Old Agent — Download Now
+                <Download size={14} /> I&apos;ve Quit the Old Agent — Download Now
               </a>
             </div>
           </div>

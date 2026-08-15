@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Download, Search, Filter, Sparkles, ChevronDown, RefreshCw, Edit2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { fuzzyMatchAny } from '../utils/fuzzySearch';
+import { getErpLabel, getErpLabelMarked } from '../utils/agentSource';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -460,9 +461,9 @@ const Inventory = ({ selectedFY, excludeBranches }) => {
                           return (
                             <span
                               className="text-amber-500 text-xs font-medium"
-                              title="No Tally STANDARDPRICE master AND no past sale on record. Set it in Tally → Stock Item → Standard Selling Rate, or sell it once to populate Last Sale price."
+                              title={`No ${getErpLabel()} STANDARDPRICE master AND no past sale on record. Set it in ${getErpLabel()} → Stock Item → Standard Selling Rate, or sell it once to populate Last Sale price.`}
                             >
-                              Set in Tally
+                              Set in ERP
                             </span>
                           );
                         })()}

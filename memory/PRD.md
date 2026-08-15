@@ -42,6 +42,56 @@ fresh-create, in-place rename, legacy migration, sync_token guard,
 end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
 backoff source anchor.
 
+## Shipped — Feb 16 2026 (iteration 153) — App-side ERP-label + count fixes
+Followup on user feedback from the live NAV Busy tenant.
+
+1. **Dashboard inventory count 10K → 13.6K**. `get_inventory_summary`
+   was doing `.to_list(10000)` then `len(items)` — capped the tile at
+   10 k for tenants with 13.6 k items. Replaced with `count_documents(q)`
+   (fast, exact).
+2. **Inventory "Set in Tally" pill → "Set in ERP"**. Now uses the new
+   `getErpLabel()` helper so the label reads "Set in ERP" for both
+   tenants but the tooltip mentions the actual ERP name.
+3. **CRM Outstanding "Tally ✓" tag → dynamic "Tally ✓" or "Busy ✓"**.
+   Reads the cached agent source (fetched from `sync-status.agent_version`
+   on Dashboard/Setup mount).
+4. **SPIP Analysis total 14 061 → 13 682**. The `analysis` list was
+   built off `union(inventory master keys, sales-voucher item keys)`,
+   inflating the count by ~379 items that were sold historically then
+   deleted from Busy master. Switched to `set(inv_map.keys())` — master
+   is the source of truth. Count now matches Inventory menu exactly.
+5. **Customer Lifecycle "all lost" bug**. `voucher_date` from the Busy
+   agent is `"YYYY-MM-DD 00:00:00"` (with time). The old
+   `last_date.split("-")` fed `int("01 00:00:00")` → ValueError →
+   `days_since = 999` → every customer bucketed as LOST. Fixed by
+   normalising to `last_date[:10]` before parsing.
+6. **Sync History header** — `"Timeline of all data sync cycles from
+   Tally*"` → dynamic `"…from ERP name*"`.
+7. **Setup page (`TallySetup.js`) split by agent source**:
+   - Page title "Tally* Setup" → dynamic ("Tally* Setup" or "Busy* Setup").
+   - Download card shows "FLOWRA {Tally|Busy} Sync Agent" dynamically.
+   - Busy branch replaces the XML/HTTP + REST connection form with a
+     data-folder info panel (no ODBC, no REST — pure-Python
+     `access_parser`).
+   - Busy branch renders 8-step ordered instructions (download →
+     SmartScreen bypass → point at data folder → login → pick starting
+     FY → Start Sync → retry backoff behaviour → log file location).
+   - Tally branch untouched (existing XML port 9000 / REST API key
+     form + 4-line instruction block, but "Tally" → `getErpLabelMarked()`).
+   - Footer disclaimer and `<CreditorGroupsPanel />` UNTOUCHED per user
+     instruction.
+
+**Helper**: `/app/frontend/src/utils/agentSource.js` — tiny module.
+Reads `agent_version` (e.g. `busy-1.5.7-invoice-fields`) from
+sync-status responses, caches "busy" | "tally" in localStorage, exposes
+`getErpLabel()` / `getErpLabelMarked()` / `getAgentSource()` for any
+component that needs the current ERP name. Dashboard.js and
+TallySetup.js both call `setAgentSourceFromVersion` on load.
+
+Tests: iter-148..152 (36/36) still green — no regression on Busy/Tally
+data extraction, model validation, or per-FY ingest.
+
+
 ## Shipped — Feb 16 2026 (iteration 150) — Busy Agent v1.5.6: data parity
 Full root-cause fix set for the live `COMP0002 → NAVDURGA AUTO SPARES
 JABALPUR` sync where 24 k inventory items shrank to 182, P&L stored 0

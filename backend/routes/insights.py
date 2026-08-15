@@ -80,7 +80,13 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
             days_since = 999
             if last_date:
                 try:
-                    parts = last_date.split("-")
+                    # v1.5.7 — Busy agent stores voucher_date as
+                    # "YYYY-MM-DD 00:00:00" (with time suffix). The old
+                    # split('-') pattern turned "01 00:00:00" into a
+                    # non-numeric third part → ValueError → days_since
+                    # stayed 999 → every customer flipped to LOST for
+                    # every Busy tenant. Normalise to the first 10 chars.
+                    parts = last_date[:10].split("-")
                     ld = date_type(int(parts[0]), int(parts[1]), int(parts[2]))
                     days_since = (today - ld).days
                 except (ValueError, IndexError):
@@ -466,9 +472,14 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
                     "purchase_price": inv.get("purchase_price") or inv.get("price") or 0,
                 }
 
-        # Cross-reference: items in stock but not selling, items selling but low stock
+        # v1.5.7 — Only analyse items that exist in the inventory master.
+        # The union with `item_sales.keys()` was inflating the total
+        # count (14,061 vs 13,682 actual master items) whenever a
+        # historic sales voucher referenced an item deleted from the
+        # Busy master afterwards. Master-only keeps the SPIP tile's
+        # total consistent with the Inventory menu total.
         analysis = []
-        all_keys = set(list(item_sales.keys()) + list(inv_map.keys()))
+        all_keys = set(inv_map.keys())
         for k in all_keys:
             s = item_sales.get(k, {"qty_sold": 0, "revenue": 0, "months_active": set(), "display_name": ""})
             inv = inv_map.get(k, {"stock_qty": 0, "stock_group": "", "purchase_price": 0, "display_name": "", "part_number": "", "aliases": []})
