@@ -92,7 +92,7 @@ const CreditorGroupsPanel = () => {
       <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4 flex gap-2 items-start">
         <Info size={14} className="text-blue-600 mt-0.5 shrink-0" />
         <p className="text-xs text-blue-900 leading-relaxed">
-          Pick which Tally <span className="font-medium">parent groups</span> should count as creditors.
+          Pick which Tally/Busy <span className="font-medium">parent groups</span> should count as creditors.
           Defaults work for most setups. If your Tally uses custom names like <span className="font-mono text-[11px] bg-white px-1 rounded">Dealer Deposit</span> or
           <span className="font-mono text-[11px] bg-white px-1 rounded ml-1">Local Vendor</span>, add them here. Updates apply instantly — no re-sync needed.
         </p>

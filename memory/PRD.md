@@ -42,6 +42,33 @@ fresh-create, in-place rename, legacy migration, sync_token guard,
 end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
 backoff source anchor.
 
+## Shipped — Feb 16 2026 (iteration 154) — Per-source release manifests + Setup label polish
+Followup on Setup-page usability feedback for Busy tenants.
+
+1. **Per-source release manifest**: new `/app/backend/agent_release_busy.json`
+   (v1.5.7 → `/FlowraBusyAgent.exe`) alongside the existing Tally
+   manifest. `/api/agent/latest-version` and `/api/agent/check-update`
+   now accept `?source=tally|busy` and route to the matching manifest.
+   Backwards-compat: no `source` param → Tally.
+2. **In-process cache** slotted per-source (`data_tally` / `data_busy`)
+   so both manifests stay hot for 5 min.
+3. **Setup page fetches with `source`**: `TallySetup.js` now calls
+   `axios.get('/api/agent/latest-version', { params: { source }})` and
+   re-fetches whenever `syncStatus.agent_version` changes so first-paint
+   Busy tenants never see a Tally v9.8.28 chip.
+4. **Removed two "pure-Python access_parser" blurbs** per user request —
+   the details are now hidden from the customer-facing Setup page. Kept
+   the friendly "Direct file access — no extra setup" panel.
+5. **CreditorGroupsPanel** label reads "Tally/Busy parent groups" (was
+   Tally-only).
+
+Tests: `tests/test_iteration154_per_source_release_manifest.py` — 6/6
+green — locks the manifest files on disk, the per-source routing on
+`/api/agent/latest-version` + `/api/agent/check-update`, the removal
+of the two info blurbs, and the source-driven re-fetch on the Setup
+page.
+
+
 ## Shipped — Feb 16 2026 (iteration 153) — App-side ERP-label + count fixes
 Followup on user feedback from the live NAV Busy tenant.
 

@@ -17,27 +17,42 @@ router = APIRouter()
 
 
 # ── Agent release manifest (24h cache) ────────────────────────────────
-_AGENT_RELEASE_CACHE: dict = {"data": None, "loaded_at": 0.0}
+_AGENT_RELEASE_CACHE: dict = {
+    "data_tally": None, "loaded_at_tally": 0.0,
+    "data_busy": None,  "loaded_at_busy": 0.0,
+}
 
 
-def _load_agent_release() -> dict:
-    """Read /app/backend/agent_release.json with a small in-process cache.
+def _load_agent_release(source: str = "tally") -> dict:
+    """Read /app/backend/agent_release[_busy].json with a small
+    in-process cache. `source` picks the release manifest: `tally`
+    (default) reads `agent_release.json`, `busy` reads
+    `agent_release_busy.json`. Backwards-compatible — pre-1.5.7 callers
+    that pass nothing still get the Tally manifest.
     No DB writes. Safe to call from any public endpoint."""
     import os as _os
     import time as _time
+    src = (source or "tally").lower()
+    if src not in ("busy", "tally"):
+        src = "tally"
+    cache_slot = f"data_{src}"
+    loaded_slot = f"loaded_at_{src}"
     now = _time.time()
-    if _AGENT_RELEASE_CACHE["data"] and (now - _AGENT_RELEASE_CACHE["loaded_at"] < 300):
-        return _AGENT_RELEASE_CACHE["data"]
-    path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "agent_release.json")
+    if _AGENT_RELEASE_CACHE.get(cache_slot) and (now - _AGENT_RELEASE_CACHE.get(loaded_slot, 0) < 300):
+        return _AGENT_RELEASE_CACHE[cache_slot]
+    filename = "agent_release_busy.json" if src == "busy" else "agent_release.json"
+    path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), filename)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception as e:
-        logger.warning(f"agent_release.json read failed: {e}")
-        data = {"version": "0.0.0", "download_url": "/FlowraTallyAgent.exe",
+        logger.warning(f"{filename} read failed: {e}")
+        # v1.5.7 — fallback URL matches the source.
+        fallback_url = "/FlowraBusyAgent.exe" if src == "busy" else "/FlowraTallyAgent.exe"
+        data = {"version": "0.0.0", "download_url": fallback_url,
                 "min_supported_version": "0.0.0", "release_notes": "", "released_at": ""}
-    _AGENT_RELEASE_CACHE["data"] = data
-    _AGENT_RELEASE_CACHE["loaded_at"] = now
+    _AGENT_RELEASE_CACHE[cache_slot] = data
+    _AGENT_RELEASE_CACHE[loaded_slot] = now
     return data
 
 
@@ -58,20 +73,25 @@ def _ver_tuple(v: str) -> tuple:
 
 
 @router.get("/agent/latest-version")
-async def get_latest_agent_version():
+async def get_latest_agent_version(source: str = "tally"):
     """Public endpoint. The desktop agent + frontend Setup page poll this
     every 24h to detect if a newer agent build is available.
 
+    v1.5.7 — accepts `?source=busy` or `?source=tally` so Busy tenants
+    see the Busy release manifest (v1.5.7) instead of the Tally one
+    (v9.8.28). Default remains `tally` for backwards-compat with the
+    older desktop agents still hitting the un-parameterised endpoint.
+
     Read-only — never touches the DB. Cached in memory for 5 min."""
-    rel = _load_agent_release()
+    rel = _load_agent_release(source)
     return APIResponse(success=True, data=rel)
 
 
 @router.get("/agent/check-update")
-async def check_update(current: str = ""):
-    """Convenience: agent passes ?current=9.8.18 and we tell it whether
-    an upgrade is available. No auth required."""
-    rel = _load_agent_release()
+async def check_update(current: str = "", source: str = "tally"):
+    """Convenience: agent passes ?current=9.8.18&source=tally and we
+    tell it whether an upgrade is available. No auth required."""
+    rel = _load_agent_release(source)
     latest = rel.get("version", "0.0.0")
     update_available = _ver_tuple(current) < _ver_tuple(latest)
     return APIResponse(success=True, data={

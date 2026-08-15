@@ -47,9 +47,21 @@ const TallySetup = ({ companyId }) => {
     return () => clearInterval(id);
   }, []);
 
+  // v1.5.7 — Once syncStatus arrives (and pins the ERP source in
+  // localStorage), re-fetch the release so Busy tenants see the Busy
+  // manifest even on the first paint.
+  useEffect(() => {
+    if (syncStatus?.agent_version) fetchLatestRelease();
+  }, [syncStatus?.agent_version]);
+
   const fetchLatestRelease = async () => {
     try {
-      const r = await axios.get(`${API}/agent/latest-version`);
+      // v1.5.7 — send `source` so Busy tenants get the Busy manifest
+      // (v1.5.x) and Tally tenants get the Tally one (v9.8.x). Without
+      // this the Busy Setup page showed "Update available — v1.5.7 →
+      // v9.8.28" nonsense.
+      const src = getAgentSource();
+      const r = await axios.get(`${API}/agent/latest-version`, { params: { source: src } });
       if (r.data?.success) setLatestRelease(r.data.data);
     } catch (_) {
       // Silent — never block the page if release manifest is unreachable.
@@ -214,7 +226,7 @@ const TallySetup = ({ companyId }) => {
                 Single-file installer for Windows 10/11. No Python or other
                 runtime required on the customer&apos;s PC — just double-click and run.
                 {getAgentSource() === 'busy'
-                  ? ' The agent reads your Busy .bds files directly (pure-Python access_parser — no ODBC / OLE DB driver install) and syncs only the company you choose, encrypted end-to-end.'
+                  ? ' The agent reads your Busy data directly and syncs only the company you choose, encrypted end-to-end.'
                   : ' The agent connects to Tally over ODBC port 9000 and syncs only the company you choose, encrypted end-to-end.'}
               </p>
             </div>
@@ -357,10 +369,9 @@ const TallySetup = ({ companyId }) => {
                   <div className="flex items-start gap-3">
                     <CheckCircle className="text-emerald-600 flex-shrink-0 mt-0.5" size={18} />
                     <div className="text-sm text-emerald-800">
-                      <div className="font-semibold mb-1">No ODBC, No REST — direct file access</div>
-                      The FLOWRA Busy Sync Agent v1.5.1+ reads your <code className="px-1 py-0.5 rounded bg-white text-xs">.bds</code> files
-                      via pure-Python <code className="px-1 py-0.5 rounded bg-white text-xs">access_parser</code>. No Busy Data Connectivity
-                      licence, no OLE DB provider install, no file password.
+                      <div className="font-semibold mb-1">Direct file access — no extra setup</div>
+                      Point the FLOWRA Busy Sync Agent at your Busy data folder and it starts syncing.
+                      No driver install, no config file to edit.
                     </div>
                   </div>
                 </div>

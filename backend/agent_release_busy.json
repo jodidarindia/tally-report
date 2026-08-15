@@ -1,0 +1,9 @@
+{
+  "version": "1.5.7",
+  "download_url": "/FlowraBusyAgent.exe",
+  "min_supported_version": "1.5.1",
+  "release_notes": "v1.5.7 — Sales-voucher line-item amount is now qty×rate (fixes the '~7x low avg sale price' regression that dogged Busy tenants); reference_number reads Tran1.RefNo/RefNoAlpha separately from the printed VchNo; every voucher/inventory/customer/creditor row now carries an `fy` tag so CA-Corner per-FY selectors work; customer opening_balance sourced from Master1.D1 and outstanding_amount emitted for the CRM Outstanding tab; creditors get the same treatment. v1.5.6: chunked inventory upsert (was delete_many-per-chunk wiping ~24 K items to 182); P&L + all_ledgers keyed by FY; net_profit_loss emitted correctly; opening qty/rate/value from Folio1; sale/cost fallback ladder. v1.5.5: BusyDBReader object pool cuts ~14x file-open overhead per sync tick. v1.5.4: real company name from Cmpny.BDEPName + folder-keyed mapping + 3-tier retry backoff.",
+  "released_at": "2026-02-16T18:00:00+05:30",
+  "sha256": "",
+  "size_bytes": 0
+}
