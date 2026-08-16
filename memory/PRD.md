@@ -42,6 +42,78 @@ fresh-create, in-place rename, legacy migration, sync_token guard,
 end-to-end folder-keyed sync, extractor fallback, VERSION bump, retry
 backoff source anchor.
 
+## Shipped — Feb 16 2026 (iteration 155) — Inventory Demand Forecast tab
+New Analytics-menu tab. Admin-only, tenant + company isolated, uses all
+synced FYs, considers **only the tenant's own inventory master** (no
+external SKU references from voucher lines).
+
+Backend (`/api/analytics/forecast/*` — 5 endpoints):
+1. **`/overview`** — KPI band + consolidated buy list (up to 500 SKUs
+   ranked by projected revenue, stockout risk, and forecast-vs-stock
+   ratio).
+2. **`/sku/{item_id}`** — per-SKU deep dive with confidence bands +
+   ROP / safety-stock.
+3. **`/season`** — top-N SKUs × 12-month past × horizon future for the
+   demand heatmap.
+4. **`/cohort`** — top customers' projected same-month-last-year demand.
+5. **`/export`** — CSV export of the full analysis (PO-ready shape).
+
+Engine (`services/forecast_engine.py` — no LLM, no heavy deps):
+- **Velocity classifier** partitions each SKU into A/B/C/new based on
+  history depth + non-zero density.
+- **Holt-Winters triple-exp** (add trend + add season, p=12) for
+  A-class steady sellers.
+- **Simple exponential smoothing** for B-class.
+- **Croston + SBA correction** for C-class intermittent demand (the
+  purpose-built method — normal forecasts wildly over-predict on
+  sparse series).
+- **Cold-start** for new SKUs = median month across cohort peers of
+  the same `stock_group`.
+- **Reorder point + safety stock** via z-score × lead-time (default
+  15 days, 95 % service level).
+- **Confidence bands** (P25/P75) from residual std.
+- **Curated Indian festival + monsoon calendar** — optional lens
+  applies month-specific multipliers to auto-parts demand.
+
+Security:
+- Admin-only guard at every endpoint (rejects employee / salesman /
+  dispatch / super_admin with 403).
+- Every DB query scoped to `(tenant_id, company_id)` from
+  `get_tenant_context` — no cross-tenant leaks.
+- Analysis restricted to inventory master items — voucher lines that
+  reference items deleted from Busy master are dropped (per user spec).
+- 12 h in-process cache per (tenant, company, horizon, festival,
+  growth) so re-opening the tab returns in ms.
+
+Frontend (`/app/frontend/src/pages/analytics/DemandForecast.js` +
+tab wired into `InventoryAnalytics.js`):
+- Controls: horizon selector (1-12 months), what-if growth-% slider,
+  festival-lens toggle, refresh, CSV export.
+- 5-tile KPI band (SKUs analysed, projected units, projected revenue,
+  stockout SKUs, excess SKUs).
+- Consolidated buy-list table with velocity pill, confidence chip,
+  "Buy by" date, and hi/lo range.
+- Season heatmap (past 12 months + forecast months) — shading
+  intensity encodes demand density.
+- Top-customers cohort table with projected next-horizon revenue.
+
+Dependencies added: `statsmodels==0.14.6` + `scipy==1.17.1` +
+`patsy==1.0.2` (installed + `pip freeze` appended to
+`requirements.txt`).
+
+Verified on live `busydemo@flowralive.in` (NAV Busy tenant):
+- 13 696 SKUs analysed in ~8 s
+- ₹57.74 L projected revenue (3-month horizon)
+- 226 stockout-risk + 650 excess-stock SKUs flagged
+- Both FYs (2025-26 + 2026-27) contribute to the historical series
+
+Tests: `test_iteration155_demand_forecast.py` — 8/8 green
+(classifier boundaries, Croston non-negative on sparse, HW fallback,
+ROP math, `forecast_sku` payload shape, admin-only 403 for salesman,
+NAV overview e2e, NAV season heatmap e2e). Full iter 148-152 + 154 +
+155 combined batch: 33/33 green.
+
+
 ## Shipped — Feb 16 2026 (iteration 154) — Per-source release manifests + Setup label polish
 Followup on Setup-page usability feedback for Busy tenants.
 

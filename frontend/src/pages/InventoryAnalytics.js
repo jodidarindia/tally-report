@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { TrendingUp, TrendingDown, AlertTriangle, BarChart3, Download, Filter as FilterIcon, Users, Search } from 'lucide-react';
+import { TrendingUp, TrendingDown, AlertTriangle, BarChart3, Download, Filter as FilterIcon, Users, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { fuzzyMatch, fuzzyMatchAny } from '../utils/fuzzySearch';
+import DemandForecast from './analytics/DemandForecast';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -237,7 +238,8 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
     { id: 'category-sales', label: 'Category Sales', icon: BarChart3 },
     { id: 'below-cost', label: 'Below Cost Sales', icon: AlertTriangle },
     { id: 'sales-frequency', label: 'Sales Frequency', icon: BarChart3 },
-    { id: 'customer-items', label: 'Customer Items', icon: Users }
+    { id: 'customer-items', label: 'Customer Items', icon: Users },
+    { id: 'forecast', label: 'Demand Forecast', icon: Sparkles }
   ];
 
   return (
@@ -743,6 +745,11 @@ const InventoryAnalytics = ({ selectedFY, excludeBranches }) => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* Demand Forecast Tab (iter-155) */}
+          {activeTab === 'forecast' && (
+            <DemandForecast />
           )}
 
         </>
