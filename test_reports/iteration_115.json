@@ -1,0 +1,41 @@
+{
+  "summary": "Verified iter-155 Demand Forecast bug fix (../utils → ../../utils). App compiles cleanly (only pre-existing eslint warnings). Full end-to-end admin flow works on NAV Busy tenant with real data (13,696 SKUs). Admin-only guard (403) confirmed at API level for all 4 forecast endpoints when hit as salesman.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration155_demand_forecast.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DemandForecast.js line 53 useEffect has missing 'load' dep (ESLint warning). Not blocking but should either include load in deps or wrap load in useCallback to avoid stale-closure edge cases when growth/horizon/festival change rapidly.",
+    "Cosmetic-only: browser console shows a hydration warning 'In HTML, <span> cannot be a child of <option>' originating from AppNavbar line 83 (FY selector). Pre-existing, unrelated to this fix."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: busydemo@flowralive.in / demo2026 (NAV tenant); Salesman: ravi@test.com / ravi1234",
+  "seed_data_creation": "None (used existing NAV tenant data — 13,696 SKUs).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview URL app is a SPA that uses state-based routing (no react-router paths). To reach Analytics, first login via header 'Login' button, then click 'Analytics' in top nav. Direct URL like /analytics is meaningless. Login also works via POST /api/auth/login and seeding localStorage['flowra_token'] followed by page.reload().",
+  "test_results_detail": {
+    "compile_error_gone": true,
+    "kpi_baseline_h3": {"skus": "13,696", "units": "11,683", "revenue": "Rs.57,74,839", "stockout": "226 SKUs", "excess": "650 SKUs"},
+    "kpi_h6": {"units": "23,366", "revenue": "Rs.1,15,49,678", "stockout": "227", "excess": "615"},
+    "kpi_h6_festival_on": {"units": "25,889", "revenue": "Rs.1,27,83,240"},
+    "kpi_h6_festival_growth20": {"units": "31,064", "revenue": "Rs.1,53,35,127"},
+    "buy_list_rows": 500,
+    "buy_list_amber_stockout_risk_rows": 87,
+    "cohort_rows": 15,
+    "heatmap_rendered": true,
+    "csv_download_filename": "forecast_2026-08-22.csv",
+    "horizon_dropdown_triggers_refetch": true,
+    "growth_input_triggers_refetch": true,
+    "festival_toggle_triggers_refetch": true,
+    "salesman_api_forbidden_status_codes": {"overview": 403, "season": 403, "cohort": 403, "export": 403},
+    "pytest_backend": "8/8 passed (test_iteration155_demand_forecast.py)"
+  }
+}
