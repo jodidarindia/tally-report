@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import uuid as _uuid
 from typing import Optional
 import json
 import logging
@@ -895,18 +896,64 @@ async def receive_agent_sync(request: dict):
             upsert=True
         )
 
-        # Store sync history entry
-        await db.sync_history.insert_one({
-            'timestamp': sync_time_val,
-            'data_type': data_type,
-            'count': len(data),
-            'financial_year': financial_year,
-            'company_name': company_name_raw,
-            'agent_version': request.get('agent_version', ''),
-            'sync_mode': request.get('sync_mode', 'full'),
+        # v1.5.8 — Resolve display name for sync_history when the agent
+        # sent us the raw UUID (Tally agent path that doesn't include
+        # `company_name` in payload). Otherwise Sync-History page shows
+        # `03f638d1-eab0-…` for Tally or `COMP0002` for legacy Busy.
+        display_name_for_history = company_name_raw
+        try:
+            _looks_uuid = False
+            try:
+                _uuid.UUID(company_name_raw)
+                _looks_uuid = True
+            except (ValueError, AttributeError, NameError):
+                pass
+            if _looks_uuid or company_name_raw.startswith("COMP"):
+                from services.id_mapping_service import get_company_name as _gcn
+                resolved = await _gcn(req_tenant_id, req_company_id)
+                if resolved and resolved.strip():
+                    display_name_for_history = resolved
+        except Exception:
+            pass
+
+        # v1.5.8 — Aggregate sync_history per phase instead of per chunk.
+        # Chunked data types (sales, inventory, all_ledgers, contras…)
+        # used to leave ~4 rows each showing 500-record slices; the UI
+        # then displayed the tail chunk (`500`) as the phase total.
+        # Now we upsert on (tenant, company, data_type, fy, sync_mode)
+        # within a 30-min rolling window and $inc the count.
+        _from_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _hist_filter = {
             'tenant_id': req_tenant_id,
-            'company_id': req_company_id
-        })
+            'company_id': req_company_id,
+            'data_type': data_type,
+            'financial_year': financial_year,
+            'sync_mode': request.get('sync_mode', 'full'),
+            'timestamp': {'$gte': _from_ts},
+        }
+        _existing = await db.sync_history.find_one(_hist_filter, sort=[('timestamp', -1)])
+        if _existing:
+            await db.sync_history.update_one(
+                {'_id': _existing['_id']},
+                {'$inc': {'count': len(data)},
+                 '$set': {'timestamp': sync_time_val,
+                          'company_name': display_name_for_history,
+                          'agent_version': request.get('agent_version', ''),
+                          'chunks': _existing.get('chunks', 1) + 1}}
+            )
+        else:
+            await db.sync_history.insert_one({
+                'timestamp': sync_time_val,
+                'data_type': data_type,
+                'count': len(data),
+                'chunks': 1,
+                'financial_year': financial_year,
+                'company_name': display_name_for_history,
+                'agent_version': request.get('agent_version', ''),
+                'sync_mode': request.get('sync_mode', 'full'),
+                'tenant_id': req_tenant_id,
+                'company_id': req_company_id
+            })
 
         # Recompute overdue digest after sync of relevant data types
         if data_type in ('sales', 'receipts', 'customers', 'credit_notes', 'journal_vouchers'):
@@ -1025,13 +1072,23 @@ async def reconcile_deleted_records(request: dict):
                         f"[tenant={req_tenant_id}, company={req_company_id}, "
                         f"fy={financial_year}{scope}]")
 
-            # Log the reconciliation event
+            # v1.5.8 — Log reconcile event with resolved display name
+            # (was showing the raw UUID for Tally).
+            _cn_reconcile = (request.get("company_name") or "").strip()
+            if not _cn_reconcile or _cn_reconcile == req_company_id:
+                try:
+                    from services.id_mapping_service import get_company_name as _gcn2
+                    resolved_r = await _gcn2(req_tenant_id, req_company_id)
+                    if resolved_r:
+                        _cn_reconcile = resolved_r
+                except Exception:
+                    pass
             await db.sync_history.insert_one({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data_type": f"{data_type}_reconcile",
                 "count": deleted,
                 "financial_year": financial_year,
-                "company_name": request.get("company_name", ""),
+                "company_name": _cn_reconcile,
                 "agent_version": request.get("agent_version", ""),
                 "sync_mode": "reconcile",
                 "tenant_id": req_tenant_id,

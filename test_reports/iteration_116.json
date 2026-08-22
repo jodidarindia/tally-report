@@ -1,0 +1,39 @@
+{
+  "summary": "Verified iter-116 Sync History fixes (Bug A: company_name resolution; Bug B: chunk aggregation). Backend pytest 5/7 pass on preview URL; the 2 failures on preview URL are Cloudflare 502s on /api/agent/sync with 250-item payloads (infra timeout, NOT code). Re-ran the failing tests via localhost with full payloads: aggregation works perfectly (3x250 sales chunks -> ONE sync_history row with count=750, chunks=3, company_name='NAVDURGA AUTO SPARES JABALPUR'). Frontend Sync History page renders NAV data with the correct display name and true aggregated counts. Tenant isolation verified (demo tenant sees zero NAV rows even with X-Company-ID override).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/agent/sync", "issue": "On preview Cloudflare URL, POST with 250-voucher payloads intermittently 502s (Cloudflare host timeout). Same call succeeds instantly on localhost. Preview infra concern only — code path is correct."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AppNavbar FY selector", "issues": ["Pre-existing hydration warning: <span> cannot be a child of <option> (unrelated to this iteration)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration116_sync_history_aggregation.py",
+    "/app/test_reports/pytest/iter116_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "test_iteration116_sync_history_aggregation.py::EXPECTED_MIN is miscalibrated — it expects big totals under FY '2025-26' but the real NAV NAVDURGA data lives under FY '2026-27' (Indian FY notation swap). Actual aggregates (verified via /api/sync/history): sales/2026-27=14974, inventory/2026-27=96748, receipts/2026-27=7314, all_ledgers/2026-27=4681. Recommend updating EXPECTED_MIN to key off '2026-27' so this regression test tracks the true data.",
+    "sync.py chunk-aggregation upsert uses a 30-min rolling window keyed on (tenant, company, data_type, financial_year, sync_mode) — sensible, but if an agent legitimately splits a sync across >30 min it will create a second row. Consider basing window on last_updated instead of fixed 30 min if user reports mismatched counts."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (functional; 2 preview-URL infra 502s reproduced+bypassed locally)", "frontend": "100%"},
+  "test_credentials": "busydemo@flowralive.in / demo2026 (NAV tenant); demo@flowralive.in / demo2026 (isolation check)",
+  "seed_data_creation": "Created & cleaned up 3-chunk forward-fix test data (750 TEST_ sales vouchers under FY 2099-00). All test rows deleted from sales_vouchers, sync_history, sync_status.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview URL (Cloudflare) 502s on any /api/agent/sync POST with >~200 items. Always retry once and/or fall back to localhost:8001 (same supervisor-run backend) for large agent payloads. Backend /api/sync/history endpoint groups sync_history rows into 'cycles' — Bug B verification must aggregate per-cycle data_type counts (not raw rows). Frontend page.evaluate approach worked well: login via /api/auth/login, seed localStorage keys flowra_token/flowra_active_company, then reload — bypasses the SPA login form.",
+  "verified_evidence": {
+    "bugA_company_name_resolution": "All 11 sync/history cycles for NAV tenant return company_name='NAVDURGA AUTO SPARES JABALPUR'. Zero UUID or COMPxxx strings found in frontend DOM.",
+    "bugB_no_stuck_at_500": "Zero rows with count==500 for chunked data types (sales/inventory/receipts/contra_vouchers/credit_notes/all_ledgers) in NAV sync_history.",
+    "bugB_forward_fix_aggregation": "3x250-item sales POSTs -> 1 sync_history row with count=750, chunks=3, company_name='NAVDURGA AUTO SPARES JABALPUR' (verified directly against db.sync_history collection).",
+    "tenant_isolation": "demo@flowralive.in with X-Company-ID: <NAV company UUID> -> /api/sync/history returns 0 cycles. No cross-tenant leak.",
+    "regression_forecast_and_reconcile": "PASS — /api/analytics/forecast/overview 200 for busydemo; /api/agent/reconcile with empty manifest 200."
+  }
+}
