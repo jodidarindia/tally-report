@@ -16,17 +16,24 @@ router = APIRouter()
 
 
 def _build_query(ctx, company_id=None):
-    """Build tenant+company filter."""
-    if not ctx:
-        return {}
-    f = {}
-    tid = ctx.get("tenant_id")
-    if tid:
-        f["tenant_id"] = tid
+    """Build tenant+company filter. Callers MUST have already asserted
+    ctx is authenticated (see `_ensure_tenant`); this function refuses to
+    build an empty filter which would leak cross-tenant data."""
+    if not ctx or not ctx.get("tenant_id"):
+        # Defensive — should never reach here if the endpoint guarded ctx.
+        raise ValueError("tenant_id required for insights query")
+    f = {"tenant_id": ctx["tenant_id"]}
     cid = company_id or ctx.get("company_id")
     if cid:
         f["company_id"] = cid
     return f
+
+
+def _ensure_tenant(ctx):
+    """Return (ok, error_response). Reject unauthenticated / no-tenant callers."""
+    if not ctx or not ctx.get("tenant_id"):
+        return False, APIResponse(success=False, error="Authentication required.")
+    return True, None
 
 
 async def _get_branch_exclusion(request, ctx):
@@ -51,6 +58,9 @@ async def get_customer_lifecycle(request: Request, fy: Optional[str] = None, com
     """Classify customers as Active/Inactive/Lost based on last transaction date."""
     try:
         ctx = await get_tenant_context(request)
+        ok, err = _ensure_tenant(ctx)
+        if not ok:
+            return err
         q = _build_query(ctx, company_id)
         today = date_type.today()
 
@@ -161,6 +171,9 @@ async def get_sales_forecast(request: Request, fy: Optional[str] = None, company
     """
     try:
         ctx = await get_tenant_context(request)
+        ok, err = _ensure_tenant(ctx)
+        if not ok:
+            return err
         q = _build_query(ctx, company_id)
 
         # Pull ALL vouchers (no FY filter) — we need cross-FY data for
@@ -372,6 +385,9 @@ async def get_spip_analysis(request: Request, fy: Optional[str] = None, company_
     """
     try:
         ctx = await get_tenant_context(request)
+        ok, err = _ensure_tenant(ctx)
+        if not ok:
+            return err
         q = _build_query(ctx, company_id)
 
         # Pull all sales (no FY filter yet) so we can detect the last
@@ -549,6 +565,9 @@ async def get_concentration_risk(request: Request, fy: Optional[str] = None, com
     """Pareto analysis — customer revenue concentration risk."""
     try:
         ctx = await get_tenant_context(request)
+        ok, err = _ensure_tenant(ctx)
+        if not ok:
+            return err
         q = _build_query(ctx, company_id)
 
         vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1, "amount": 1, "total_amount": 1}).to_list(20000)

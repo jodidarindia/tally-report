@@ -10,6 +10,42 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 23 2026 — P0 Security & Reliability Fixes (post-code-review)
+
+Code review flagged two HIGH-severity issues; both fixed and regression-tested
+(iteration_117.json — 12/12 backend tests passing at 100 %).
+
+**1. Cross-tenant data leak in `/api/insights/*` (HIGH → fixed).**
+Four endpoints (`customer-lifecycle`, `sales-forecast`, `spip-analysis`,
+`concentration-risk`) were returning voucher/party data across ALL tenants
+when called without an Authorization header. Root cause:
+`_build_query(ctx=None)` returned `{}`, then `db.sales_vouchers.find({})`
+scanned every tenant's docs. Fix in `routes/insights.py`:
+- `_build_query` now raises if `tenant_id` missing (never returns `{}`).
+- New `_ensure_tenant(ctx)` helper returns `(ok, err)`; every endpoint
+  short-circuits with `APIResponse(success=False, error="Authentication required.")`
+  before touching Mongo.
+
+**2. Demand-forecast event-loop stall (HIGH → fixed).**
+The async `/analytics/forecast/overview` handler ran sync `statsmodels.fit()`
+per SKU in the async task itself, blocking the event loop for every tenant
+(logins, sync, health) during the ~seconds-long compute. `?fresh=1` also
+had no coalescing so concurrent callers stampeded statsmodels. Fix in
+`routes/forecast.py`:
+- Split `_compute_snapshot` into async IO wrapper + pure-CPU
+  `_compute_snapshot_sync`, invoked via `asyncio.to_thread`.
+- Per-key `asyncio.Lock` single-flight in `_get_or_compute` (double-checked
+  cache read inside the lock) — same-key concurrent requests coalesce,
+  different-tenant requests parallel-compute freely.
+- `/analytics/forecast/season` now reads `past_12` piggybacked on the
+  snapshot instead of re-running `_load_dataset` (removed the second full
+  Mongo scan).
+- Also tightened `_admin_only` to guard against `ctx is None`.
+
+Concurrency probe (aiohttp): while `?fresh=1` forecast was computing,
+5 concurrent `/api/health` calls all returned 200 within ~1–2 s each —
+event loop no longer stalls.
+
 ## Shipped — Feb 23 2026 — Production Captcha Fail-Open Fix
 User migrated live app to Emergent hosting (`https://tally-report-ai.emergent.host/`).
 Login was blocked on production because the new domain was not whitelisted for

@@ -23,6 +23,7 @@ from typing import Optional
 import io
 import csv
 import time
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request, HTTPException
@@ -42,12 +43,27 @@ router = APIRouter()
 _CACHE: dict = {}
 _TTL_SEC = 12 * 60 * 60
 
+# Per-key single-flight locks so N concurrent requests for the same
+# (tenant, company, horizon, ...) don't each recompute the forecast and
+# stampede statsmodels. First request computes, others await.
+_COMPUTE_LOCKS: dict = {}
+_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _get_compute_lock(key: str) -> asyncio.Lock:
+    async with _LOCKS_GUARD:
+        lk = _COMPUTE_LOCKS.get(key)
+        if lk is None:
+            lk = asyncio.Lock()
+            _COMPUTE_LOCKS[key] = lk
+        return lk
+
 
 async def _admin_only(request: Request) -> dict:
     """Reject any caller that isn't the tenant's admin. `useradmin` in
     the user's spec = the tenant admin role."""
     ctx = await get_tenant_context(request)
-    if not ctx.get("tenant_id"):
+    if not ctx or not ctx.get("tenant_id"):
         raise HTTPException(status_code=401, detail="tenant context missing")
     role = ctx.get("role", "")
     if role != "admin":
@@ -127,8 +143,27 @@ def _series_window(all_fys: list) -> tuple:
 async def _compute_snapshot(ctx: dict, horizon: int,
                             festival: bool, growth_pct: float,
                             lead_time_days: int) -> dict:
+    """Load the dataset (async, IO) then hand off the CPU-bound
+    per-SKU forecast fits to a worker thread so the event loop stays
+    responsive for other tenants during the ~seconds-long compute."""
     ds = await _load_dataset(ctx["tenant_id"], ctx["company_id"])
     from_month, to_month = _series_window(ds["fys"])
+    return await asyncio.to_thread(
+        _compute_snapshot_sync, ds, from_month, to_month,
+        horizon, festival, growth_pct, lead_time_days,
+    )
+
+
+def _compute_snapshot_sync(ds: dict, from_month: date, to_month: date,
+                           horizon: int, festival: bool,
+                           growth_pct: float, lead_time_days: int) -> dict:
+    """Pure-CPU. Do NOT await; do NOT touch DB. Called via to_thread."""
+    from datetime import timedelta
+
+    # Past-12 window for /season endpoint (piggybacked onto snapshot so
+    # we don't have to reload the dataset later).
+    today = date.today()
+    past_start = date(today.year - 1, today.month, 1)
 
     # Cohort peers by stock_group for cold-start SKUs.
     peers_by_group: dict = {}
@@ -172,7 +207,11 @@ async def _compute_snapshot(ctx: dict, horizon: int,
         if stockout and f["monthly_mean"] > 0:
             days_of_cover = (current_stock / (f["monthly_mean"] / 30.0)) if f["monthly_mean"] else 0
             days_left = max(0, int(days_of_cover) - lead_time_days)
-            buy_by = (date.today() + __import__("datetime").timedelta(days=days_left)).isoformat()
+            buy_by = (date.today() + timedelta(days=days_left)).isoformat()
+        # Actuals for past 12 months — piggybacked here so /season
+        # doesn't need to reload the dataset from Mongo.
+        past_12 = build_monthly_series(lines, past_start,
+                                       date(today.year, today.month, 1))
         per_sku.append({
             "item_id": iid,
             "item_name": item.get("item_name", ""),
@@ -201,6 +240,7 @@ async def _compute_snapshot(ctx: dict, horizon: int,
                        5 if f["velocity_class"] == "B" else 0))
             )),
             "monthly_forecast": f["forecast"],
+            "past_12": [round(v, 2) for v in past_12],
         })
     # Sort — highest projected revenue first
     per_sku.sort(key=lambda x: -x["forecast_revenue"])
@@ -217,7 +257,8 @@ async def _compute_snapshot(ctx: dict, horizon: int,
         "growth_pct": growth_pct,
     }
     return {"kpi": kpi, "skus": per_sku, "computed_at": time.time(),
-            "from_month": from_month.isoformat(), "to_month": to_month.isoformat()}
+            "from_month": from_month.isoformat(), "to_month": to_month.isoformat(),
+            "past_start": past_start.isoformat()}
 
 
 async def _get_or_compute(ctx: dict, horizon: int, festival: bool,
@@ -230,9 +271,19 @@ async def _get_or_compute(ctx: dict, horizon: int, festival: bool,
         cached = _CACHE.get(key)
         if cached and (now - cached["computed_at"] < _TTL_SEC):
             return cached
-    snap = await _compute_snapshot(ctx, horizon, festival, growth_pct, lead_time_days)
-    _CACHE[key] = snap
-    return snap
+    # Single-flight: coalesce concurrent recomputes for the same key so
+    # a burst of requests doesn't stampede statsmodels. The lock is
+    # per-key so different tenants/companies still compute in parallel.
+    lock = await _get_compute_lock(key)
+    async with lock:
+        # Re-check cache — another awaiter may have just filled it.
+        if not fresh:
+            cached = _CACHE.get(key)
+            if cached and (time.time() - cached["computed_at"] < _TTL_SEC):
+                return cached
+        snap = await _compute_snapshot(ctx, horizon, festival, growth_pct, lead_time_days)
+        _CACHE[key] = snap
+        return snap
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────
@@ -301,30 +352,20 @@ async def get_season_heatmap(request: Request,
         ctx = await _admin_only(request)
         snap = await _get_or_compute(ctx, horizon_months, festival_lens,
                                      float(growth_pct), 15, False)
-        # Load actuals for top SKUs (past 12 months)
-        top_ids = [s["item_id"] for s in snap["skus"][:top]]
-        ds = await _load_dataset(ctx["tenant_id"], ctx["company_id"])
-        today = date.today()
-        past_start = date(today.year - 1, today.month, 1)
+        # Reuse past_12 + monthly_forecast already computed in the
+        # snapshot — no second _load_dataset() (was doubling Mongo IO).
         rows = []
-        for iid in top_ids:
-            item = ds["inv_by_id"].get(iid)
-            if not item:
-                continue
-            actual = build_monthly_series(ds["per_item_lines"].get(iid, []),
-                                          past_start, date(today.year, today.month, 1))
-            sku_row = next((s for s in snap["skus"] if s["item_id"] == iid), None)
-            fcst = sku_row.get("monthly_forecast", []) if sku_row else []
+        for sku_row in snap["skus"][:top]:
             rows.append({
-                "item_id": iid,
-                "item_name": item.get("item_name", ""),
-                "stock_group": item.get("stock_group", ""),
-                "past_12": [round(v, 2) for v in actual],
-                "forecast": fcst,
+                "item_id": sku_row["item_id"],
+                "item_name": sku_row["item_name"],
+                "stock_group": sku_row["stock_group"],
+                "past_12": sku_row.get("past_12", []),
+                "forecast": sku_row.get("monthly_forecast", []),
             })
         return APIResponse(success=True, data={
             "rows": rows,
-            "past_start": past_start.isoformat(),
+            "past_start": snap.get("past_start"),
             "horizon_months": horizon_months,
             "festival_calendar": {str(k): v[1] for k, v in FESTIVAL_MONTHS.items()},
         })
