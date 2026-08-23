@@ -4,6 +4,7 @@ import { Bot, Send, Sparkles } from 'lucide-react';
 import {
   renderStructuredInsight,
   renderStructuredRecommendation,
+  renderStructuredSummary,
   renderMetricValue,
 } from '../components/AIInsightRenderers';
 
@@ -118,7 +119,7 @@ const AIQueryBuilder = () => {
             <h3 className="text-xl font-medium text-slate-900 mb-3" style={{ fontFamily: 'Outfit, sans-serif' }}>
               Summary
             </h3>
-            <p className="text-base text-slate-700 leading-relaxed">{report.summary}</p>
+            <div className="text-base text-slate-700 leading-relaxed">{renderStructuredSummary(report.summary)}</div>
           </div>
 
           {report.key_insights && report.key_insights.length > 0 && (

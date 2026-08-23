@@ -10,6 +10,39 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 23 2026 — AI Reports UX cleanup (readable Summary + Recommendations)
+
+Field-reported: the `Enhanced AI Reports` page was dumping raw JSON in two
+places when the LLM returned structured objects instead of plain strings:
+
+- **Summary**: `{"request":"…","definition_used":"…","snapshot_limitations":"…"}`
+  printed verbatim (via `JSON.stringify(report.summary)` at
+  `EnhancedAIReports.js:267`).
+- **Recommendations**: the `actions: ["…", "…", "…"]` array was rendered as a
+  literal JSON string because `renderStructuredRecommendation`'s `...rest`
+  fallback called `JSON.stringify(v)` on any non-string value.
+
+**Fix (frontend-only)**:
+- Added `renderStructuredSummary(v)` in `components/AIInsightRenderers.jsx` —
+  handles string / stringified-JSON / array / object with a friendly-label
+  map (`request → "What was asked"`, `definition_used → "How we defined it"`,
+  `snapshot_limitations → "Data caveats"`, etc.).
+- Rewrote `renderStructuredRecommendation` to destructure `actions` from
+  `rest` and render it as a bulleted list; every other array value falls
+  back to a comma-joined string or a nested list of objects. Objects render
+  through a small left-border nested block instead of `JSON.stringify`.
+- Wired the new helper into both `pages/EnhancedAIReports.js` and
+  `pages/AIQueryBuilder.js` (the two consumers of these renderers).
+
+**Verification**: server-side render smoke test with the exact response body
+observed from `POST /api/ai/advanced-query` (LLM returned summary object with
+`request/definition_used/headline` keys, plus recommendation with
+`priority/action/expected_impact` and one with an `actions` array of three
+purchase-order sentences). 12/12 DOM assertions green:
+- summary no longer contains raw JSON braces,
+- recommendation `actions` render as `<ul><li>` with each PO instruction on
+  its own row (no `["...","..."]` leakage).
+
 ## Shipped — Feb 23 2026 — Demand Forecast Wave 2 (per-SKU deep dive)
 
 Added the Wave-2 per-SKU deep dive to the admin-only Demand Forecast tab.

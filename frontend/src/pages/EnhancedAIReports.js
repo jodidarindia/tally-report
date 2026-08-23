@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   renderStructuredInsight,
   renderStructuredRecommendation,
+  renderStructuredSummary,
   renderMetricValue,
   renderDetailedAnalysis,
 } from '../components/AIInsightRenderers';
@@ -263,9 +264,9 @@ const EnhancedAIReports = () => {
         <div className="space-y-6" data-testid="report-results">
           <div className="bg-white border border-slate-200 rounded-xl p-6">
             <h3 className="text-xl font-medium text-slate-900 mb-3">Summary</h3>
-            <p className="text-base text-slate-700 leading-relaxed">
-              {typeof report.summary === 'object' ? JSON.stringify(report.summary) : report.summary}
-            </p>
+            <div className="text-base text-slate-700 leading-relaxed" data-testid="ai-summary">
+              {renderStructuredSummary(report.summary)}
+            </div>
           </div>
 
           {report.key_insights && report.key_insights.length > 0 && (
