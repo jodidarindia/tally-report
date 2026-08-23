@@ -165,6 +165,11 @@ def _compute_snapshot_sync(ds: dict, from_month: date, to_month: date,
     today = date.today()
     past_start = date(today.year - 1, today.month, 1)
 
+    # Build month labels for the past-12 window and the forecast horizon
+    # so the UI can render axis tick labels and festival markers.
+    past_labels = _month_labels(past_start, count=12)
+    forecast_labels = _forecast_month_labels(today, horizon)
+
     # Cohort peers by stock_group for cold-start SKUs.
     peers_by_group: dict = {}
     for iid, item in ds["inv_by_id"].items():
@@ -210,8 +215,10 @@ def _compute_snapshot_sync(ds: dict, from_month: date, to_month: date,
             buy_by = (date.today() + timedelta(days=days_left)).isoformat()
         # Actuals for past 12 months — piggybacked here so /season
         # doesn't need to reload the dataset from Mongo.
+        # build_monthly_series is inclusive on both bounds so slice to
+        # exactly 12 entries to keep the array aligned with past_labels.
         past_12 = build_monthly_series(lines, past_start,
-                                       date(today.year, today.month, 1))
+                                       date(today.year, today.month, 1))[:12]
         per_sku.append({
             "item_id": iid,
             "item_name": item.get("item_name", ""),
@@ -240,6 +247,9 @@ def _compute_snapshot_sync(ds: dict, from_month: date, to_month: date,
                        5 if f["velocity_class"] == "B" else 0))
             )),
             "monthly_forecast": f["forecast"],
+            # Wave 2 additions: per-month bands + labels for deep-dive chart.
+            "monthly_forecast_low": f["forecast_low"],
+            "monthly_forecast_high": f["forecast_high"],
             "past_12": [round(v, 2) for v in past_12],
         })
     # Sort — highest projected revenue first
@@ -258,7 +268,42 @@ def _compute_snapshot_sync(ds: dict, from_month: date, to_month: date,
     }
     return {"kpi": kpi, "skus": per_sku, "computed_at": time.time(),
             "from_month": from_month.isoformat(), "to_month": to_month.isoformat(),
-            "past_start": past_start.isoformat()}
+            "past_start": past_start.isoformat(),
+            # Shared axes for every SKU chart in the UI.
+            "past_month_labels": past_labels,
+            "forecast_month_labels": forecast_labels}
+
+
+def _month_labels(start: date, count: int) -> list:
+    """Return count consecutive month labels [{'y','m','label','festival_tag'}, …]."""
+    out = []
+    y, m = start.year, start.month
+    for _ in range(count):
+        tag = FESTIVAL_MONTHS.get(m, (1.0, ""))[1]
+        out.append({
+            "y": y, "m": m,
+            "label": f"{_MONTH_ABBR[m - 1]} '{str(y)[-2:]}",
+            "festival_tag": tag or None,
+        })
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
+
+
+def _forecast_month_labels(today: date, horizon: int) -> list:
+    """Forecast months start next month after `today`."""
+    y = today.year
+    m = today.month + 1
+    if m > 12:
+        m = 1
+        y += 1
+    return _month_labels(date(y, m, 1), horizon)
+
+
+_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 async def _get_or_compute(ctx: dict, horizon: int, festival: bool,
@@ -334,7 +379,14 @@ async def get_sku_forecast(
         row = next((s for s in snap["skus"] if s["item_id"] == item_id), None)
         if not row:
             return APIResponse(success=False, error="item not found in this tenant/company")
-        return APIResponse(success=True, data=row)
+        # Include shared axis labels + festival calendar so the deep-dive
+        # modal can render bands + festival markers without another round-trip.
+        return APIResponse(success=True, data={
+            "sku": row,
+            "past_month_labels": snap.get("past_month_labels", []),
+            "forecast_month_labels": snap.get("forecast_month_labels", []),
+            "festival_calendar": {str(k): v[1] for k, v in FESTIVAL_MONTHS.items()},
+        })
     except HTTPException:
         raise
     except Exception as e:

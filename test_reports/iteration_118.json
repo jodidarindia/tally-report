@@ -1,0 +1,47 @@
+{
+  "summary": "Wave 2 forecast deep-dive tested end-to-end. Backend: 5/7 pytest passed. Bug: past_12 array returns 13 entries (build_monthly_series is inclusive on both bounds) while past_month_labels returns 12 — chart x-axis + festival bands misalign with actuals. All other endpoints ok: /sku/{item_id} valid returns success:true with sku (monthly_forecast/low/high arrays len==horizon, past_12 present) + past_month_labels + forecast_month_labels + festival_calendar; unknown item returns success:false with 'not found' error; no-auth returns 401; regression /overview /season /cohort all success:true. Frontend E2E on busydemo@flowralive.in (13 696 SKUs): login → Analytics → Demand Forecast loads Consolidated Buy List (500 rows). Clicking first row opens forecast-deepdive-modal, forecast-deepdive-content + forecast-deepdive-chart visible, forecast-deepdive-month-0/1/2 all render for horizon=3, close button hides the modal. Festival lens toggle re-triggers load and buy-list re-renders (KPIs change 14,016 → 11,683 units). Chart renders past-line + dashed forecast + P25-P75 band + amber festival month bands.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/analytics/forecast/sku/{item_id} + /overview buy_list",
+        "issue": "past_12 array has 13 entries (build_monthly_series in services/forecast_engine.py uses inclusive `while cur <= stop`) but past_month_labels array has 12 entries — the DeepDive chart in DemandForecast.js pairs past[i] with pastLabels[i], so the 13th actual data point has no festival band, no axis tick, and misaligns the whole past-vs-forecast x-axis by one month.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Deep-dive chart axis alignment",
+        "issue": "past series length (13) != past_month_labels length (12); chart shows an extra past data point beyond the last labeled month, festival bands (rendered per pastLabels index) don't align with underlying past series.",
+        "affected_selectors": ["[data-testid=\"forecast-deepdive-chart\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_forecast_wave2.py",
+    "/app/test_reports/pytest/forecast_wave2.xml"
+  ],
+  "action_items": [
+    "Fix past_12 length: either (a) trim past_12 to 12 entries in _compute_snapshot_sync (slice [-12:] or use past_start=today-12mo exclusive of current month + stop=current-1); or (b) generate 13-entry past_month_labels to match. Option (a) is preferred so the label array count remains 12 as spec'd. Change is one line — replace `past_12 = build_monthly_series(lines, past_start, date(today.year, today.month, 1))` with an exclusive end, or slice `[-12:]` after computing.",
+    "Consider adding a unit test in test_forecast_wave2.py::test_sku_endpoint_valid asserting len(sku['past_12']) == len(past_month_labels) (currently loosened to document the bug)."
+  ],
+  "critical_code_review_comments": [
+    "forecast.py L218-219: `past_12 = build_monthly_series(lines, past_start, date(today.year, today.month, 1))` — this stop-date is the current month (Feb 1 2026 when past_start = Feb 1 2025); build_monthly_series's `while cur <= stop` produces 13 months. Fix by using stop = last-completed-month or slicing `[-12:]`.",
+    "forecast.py cache TTL 12h: growing per-tenant snapshot dict is never evicted — for a multi-tenant deployment with many companies + horizons, memory will grow unbounded. Consider LRU or explicit TTL cleanup task.",
+    "DemandForecast.js DeepDiveContent (L400-416): silently pairs past[i]<->pastLabels[i]; add an assert/console.warn if lengths differ so backend regressions are caught in dev."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_forecast_wave2.py (new)"
+  ],
+  "success_rate": {"backend": "71% (5/7 pytest — 2 assertions caught the past_12 length bug)", "frontend": "100% (all Wave 2 UI flows passed)"},
+  "test_credentials": "busydemo@flowralive.in / demo2026 (company b21b291b-afcd-4152-b166-85be751d94bb, 13 696 SKUs)",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Wave 2 pytest suite is at /app/backend/tests/test_forecast_wave2.py. Only the past_12 length assertion (12 vs actual 13) fails — fix is one line in forecast.py (or forecast_engine.build_monthly_series). Frontend Playwright login uses direct POST to /api/auth/login with captcha_token='' then seeds flowra_token + flowra_company in localStorage and reloads — bypasses reCAPTCHA v3. All Wave 2 data-testid attributes are present and correctly wired (forecast-buy-row-N, forecast-deepdive-modal, forecast-deepdive-content, forecast-deepdive-chart, forecast-deepdive-month-N, forecast-deepdive-close).",
+  "rca of the issue": "build_monthly_series in /app/backend/services/forecast_engine.py:87-95 walks from from_month to to_month using `while cur <= stop` (inclusive on both bounds). In _compute_snapshot_sync (L218-219) past_start = date(today.year-1, today.month, 1) and stop = date(today.year, today.month, 1) — those two dates are exactly 12 months apart, so the inclusive loop yields 13 entries. Meanwhile _month_labels(past_start, count=12) yields 12 labels. Reproduction: GET /api/analytics/forecast/sku/{any_id}?horizon_months=3 → len(data.sku.past_12) == 13 vs len(data.past_month_labels) == 12. Mitigation: in forecast.py replace the past_12 line with `past_12 = build_monthly_series(lines, past_start, date(today.year, today.month, 1))[-12:]`, or shift stop to the previous month."
+}

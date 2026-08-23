@@ -6,7 +6,7 @@
 // header set by the shared axios interceptor.
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { Loader2, Download, TrendingUp, AlertTriangle, PackageX, Sparkles } from 'lucide-react';
+import { Loader2, Download, TrendingUp, AlertTriangle, PackageX, Sparkles, X, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { getErpLabel } from '../../utils/agentSource';
 
@@ -24,6 +24,8 @@ const DemandForecast = () => {
   const [season, setSeason] = useState(null);
   const [cohort, setCohort] = useState(null);
   const [error, setError] = useState('');
+  // Wave 2 — per-SKU deep dive
+  const [deepDive, setDeepDive] = useState(null); // { loading, data, error }
 
   const load = async () => {
     setLoading(true);
@@ -69,6 +71,24 @@ const DemandForecast = () => {
       toast.error('Export failed');
     }
   };
+
+  const openDeepDive = async (itemId) => {
+    setDeepDive({ loading: true, data: null, error: '' });
+    try {
+      const r = await axios.get(`${API}/analytics/forecast/sku/${encodeURIComponent(itemId)}`, {
+        params: { horizon_months: horizon, festival_lens: festival, growth_pct: growth },
+      });
+      if (r.data?.success) {
+        setDeepDive({ loading: false, data: r.data.data, error: '' });
+      } else {
+        setDeepDive({ loading: false, data: null, error: r.data?.error || 'Failed to load SKU details' });
+      }
+    } catch (e) {
+      setDeepDive({ loading: false, data: null,
+        error: e?.response?.data?.error || e?.response?.data?.detail || e.message });
+    }
+  };
+  const closeDeepDive = () => setDeepDive(null);
 
   const heatmapMax = useMemo(() => {
     if (!season?.rows) return 0;
@@ -192,9 +212,16 @@ const DemandForecast = () => {
             </thead>
             <tbody>
               {buyList.map((r, i) => (
-                <tr key={r.item_id} className={`border-t border-slate-100 ${r.stockout_risk ? 'bg-amber-50/30' : ''}`}
+                <tr key={r.item_id}
+                    className={`border-t border-slate-100 cursor-pointer hover:bg-blue-50/40 transition-colors ${r.stockout_risk ? 'bg-amber-50/30' : ''}`}
+                    onClick={() => openDeepDive(r.item_id)}
                     data-testid={`forecast-buy-row-${i}`}>
-                  <Td className="max-w-[260px] truncate" title={r.item_name}>{r.item_name}</Td>
+                  <Td className="max-w-[260px] truncate" title={r.item_name}>
+                    <span className="inline-flex items-center gap-1">
+                      <ChevronRight size={12} className="text-slate-400" />
+                      {r.item_name}
+                    </span>
+                  </Td>
                   <Td className="text-xs text-slate-500 max-w-[140px] truncate">{r.stock_group}</Td>
                   <Td className="text-right">{NUM(r.current_stock)}</Td>
                   <Td className="text-right font-semibold">{NUM(r.forecast_units, { maximumFractionDigits: 1 })}</Td>
@@ -300,6 +327,10 @@ const DemandForecast = () => {
       <p className="text-xs text-slate-400 text-center pt-4">
         Analysed only your own SKUs across all synced FYs. Every request scoped to tenant + company. Admin access only.
       </p>
+
+      {deepDive && (
+        <DeepDiveModal payload={deepDive} onClose={closeDeepDive} horizon={horizon} />
+      )}
     </div>
   );
 };
@@ -329,5 +360,245 @@ const ConfPill = ({ pct }) => {
     </span>
   );
 };
+
+/* ─── Wave 2: Per-SKU Deep Dive Modal ────────────────────────────────── */
+const DeepDiveModal = ({ payload, onClose, horizon }) => {
+  const { loading, data, error } = payload;
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start md:items-center justify-center p-4 overflow-y-auto"
+         onClick={onClose} data-testid="forecast-deepdive-modal">
+      <div className="bg-white rounded-lg shadow-2xl max-w-5xl w-full my-8 border border-slate-200"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">Per-SKU Deep Dive</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100"
+                  data-testid="forecast-deepdive-close">
+            <X size={16} className="text-slate-500" />
+          </button>
+        </div>
+        <div className="p-5">
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="animate-spin text-slate-400" size={24} />
+              <span className="ml-3 text-slate-500 text-sm">Loading details…</span>
+            </div>
+          )}
+          {error && !loading && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded text-rose-800 text-sm">
+              {error}
+            </div>
+          )}
+          {data && !loading && (
+            <DeepDiveContent data={data} horizon={horizon} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DeepDiveContent = ({ data, horizon }) => {
+  const sku = data.sku || {};
+  const pastLabels = data.past_month_labels || [];
+  const fcstLabels = data.forecast_month_labels || [];
+  const past = sku.past_12 || [];
+  const fcst = sku.monthly_forecast || [];
+  const low = sku.monthly_forecast_low || [];
+  const high = sku.monthly_forecast_high || [];
+
+  // Chart dimensions
+  const W = 780, H = 220, PAD_L = 40, PAD_R = 20, PAD_T = 16, PAD_B = 30;
+  const totalMonths = past.length + fcst.length;
+  const allVals = [...past, ...fcst, ...high];
+  const yMax = Math.max(1, ...allVals) * 1.15;
+
+  const xAt = (i) => PAD_L + (i * (W - PAD_L - PAD_R)) / Math.max(1, totalMonths - 1);
+  const yAt = (v) => H - PAD_B - ((v || 0) / yMax) * (H - PAD_T - PAD_B);
+
+  // Build path strings
+  const pastPath = past.map((v, i) => `${i === 0 ? 'M' : 'L'}${xAt(i)},${yAt(v)}`).join(' ');
+  const fcstStart = past.length; // first forecast column
+  // Connect the last actual to the first forecast for visual continuity
+  const fcstPath = fcst.length
+    ? `M${xAt(fcstStart - 1)},${yAt(past[past.length - 1] || 0)} ` +
+      fcst.map((v, i) => `L${xAt(fcstStart + i)},${yAt(v)}`).join(' ')
+    : '';
+  // P25 / P75 band as a closed polygon
+  const bandTop = low.map((_, i) => `${xAt(fcstStart + i)},${yAt(high[i] || 0)}`).join(' ');
+  const bandBot = low.map((_, i) => `${xAt(fcstStart + low.length - 1 - i)},${yAt(low[low.length - 1 - i] || 0)}`).join(' ');
+  const bandPoly = fcst.length ? `${bandTop} ${bandBot}` : '';
+
+  return (
+    <div className="space-y-5" data-testid="forecast-deepdive-content">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-lg font-semibold text-slate-800">{sku.item_name}</div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            {sku.stock_group ? <>Group: <span className="font-medium">{sku.stock_group}</span> · </> : null}
+            History: {sku.history_months || 0} mo ({sku.non_zero_months || 0} with sales) ·
+            Velocity: <VelocityPill cls={sku.velocity_class} />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Chip label="Current stock" value={NUM(sku.current_stock)} tint="bg-slate-100 text-slate-700" />
+          <Chip label={`Forecast (${horizon}mo)`} value={NUM(sku.forecast_units, { maximumFractionDigits: 1 })}
+                tint="bg-blue-100 text-blue-800" />
+          <Chip label="Reorder point" value={NUM(sku.reorder_point, { maximumFractionDigits: 1 })}
+                tint="bg-amber-100 text-amber-800" />
+          <Chip label="Safety stock" value={NUM(sku.safety_stock, { maximumFractionDigits: 1 })}
+                tint="bg-slate-100 text-slate-700" />
+          <Chip label="Confidence" value={`${sku.confidence_pct || 0}%`} tint="bg-emerald-100 text-emerald-800" />
+        </div>
+      </div>
+
+      {sku.buy_by && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded text-rose-800 text-sm">
+          <AlertTriangle size={14} className="inline mr-1.5 -mt-0.5" />
+          Stockout risk — reorder by <span className="font-semibold">{sku.buy_by}</span>
+        </div>
+      )}
+
+      {/* SVG chart */}
+      <div className="border border-slate-200 rounded bg-slate-50/60 p-3">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" data-testid="forecast-deepdive-chart">
+          {/* Y-axis grid */}
+          {[0, 0.25, 0.5, 0.75, 1].map((f) => {
+            const y = yAt(yMax * f);
+            return (
+              <g key={f}>
+                <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y}
+                      stroke="#E2E8F0" strokeWidth="1" strokeDasharray="2 4" />
+                <text x={PAD_L - 6} y={y + 3} fontSize="9" fill="#94A3B8" textAnchor="end">
+                  {Math.round(yMax * f)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Forecast region divider */}
+          {fcst.length > 0 && (
+            <line x1={xAt(fcstStart - 0.5)} y1={PAD_T} x2={xAt(fcstStart - 0.5)} y2={H - PAD_B}
+                  stroke="#CBD5E1" strokeWidth="1" strokeDasharray="3 3" />
+          )}
+
+          {/* Festival month backgrounds (past + future) */}
+          {pastLabels.map((lbl, i) =>
+            lbl.festival_tag ? (
+              <rect key={`fp-${i}`} x={xAt(i) - 10} y={PAD_T} width="20" height={H - PAD_T - PAD_B}
+                    fill="#FDE68A" opacity="0.35" />
+            ) : null,
+          )}
+          {fcstLabels.map((lbl, i) =>
+            lbl.festival_tag ? (
+              <rect key={`ff-${i}`} x={xAt(fcstStart + i) - 10} y={PAD_T} width="20" height={H - PAD_T - PAD_B}
+                    fill="#FDE68A" opacity="0.55" />
+            ) : null,
+          )}
+
+          {/* Confidence band (P25 – P75) */}
+          {bandPoly && (
+            <polygon points={bandPoly} fill="#3B82F6" opacity="0.15" />
+          )}
+
+          {/* Past actuals line */}
+          {pastPath && <path d={pastPath} stroke="#64748B" strokeWidth="1.75" fill="none" />}
+          {past.map((v, i) => (
+            <circle key={`p-${i}`} cx={xAt(i)} cy={yAt(v)} r="2.5" fill="#64748B" />
+          ))}
+
+          {/* Forecast line (dashed) */}
+          {fcstPath && (
+            <path d={fcstPath} stroke="#2563EB" strokeWidth="2" fill="none" strokeDasharray="5 3" />
+          )}
+          {fcst.map((v, i) => (
+            <circle key={`f-${i}`} cx={xAt(fcstStart + i)} cy={yAt(v)} r="3" fill="#2563EB" />
+          ))}
+
+          {/* X-axis labels — every other month to avoid crowding */}
+          {[...pastLabels, ...fcstLabels].map((lbl, i) => {
+            if (totalMonths > 10 && i % 2 !== 0 && i !== totalMonths - 1) return null;
+            return (
+              <text key={`xl-${i}`} x={xAt(i)} y={H - PAD_B + 14} fontSize="9"
+                    fill={i >= fcstStart ? '#2563EB' : '#94A3B8'}
+                    textAnchor="middle" fontWeight={i >= fcstStart ? '600' : '400'}>
+                {lbl?.label}
+              </text>
+            );
+          })}
+        </svg>
+        <div className="flex items-center gap-4 text-xs text-slate-500 mt-2 flex-wrap">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-3 h-0.5 bg-slate-500" /> Actual (past 12mo)
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-3 border-t-2 border-dashed border-blue-600" /> Forecast
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-3 h-2 bg-blue-500/20 border border-blue-500/30" /> P25 – P75 band
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-3 h-2 bg-amber-200/70" /> Festival / monsoon month
+          </span>
+        </div>
+      </div>
+
+      {/* Monthly forecast breakdown */}
+      <div>
+        <div className="text-xs uppercase tracking-wide text-slate-500 mb-2 font-semibold">
+          Monthly forecast breakdown
+        </div>
+        <div className="overflow-x-auto border border-slate-200 rounded">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <Th>Month</Th>
+                <Th className="text-right">Forecast</Th>
+                <Th className="text-right">Low (P25)</Th>
+                <Th className="text-right">High (P75)</Th>
+                <Th>Notes</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {fcst.map((v, i) => {
+                const lbl = fcstLabels[i] || {};
+                const tag = lbl.festival_tag;
+                return (
+                  <tr key={i} className="border-t border-slate-100"
+                      data-testid={`forecast-deepdive-month-${i}`}>
+                    <Td>{lbl.label || `+${i + 1}`}</Td>
+                    <Td className="text-right font-semibold">{NUM(v, { maximumFractionDigits: 1 })}</Td>
+                    <Td className="text-right text-slate-500">{NUM(low[i], { maximumFractionDigits: 1 })}</Td>
+                    <Td className="text-right text-slate-500">{NUM(high[i], { maximumFractionDigits: 1 })}</Td>
+                    <Td className="text-xs">
+                      {tag ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
+                          <Sparkles size={10} /> {tag}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </Td>
+                  </tr>
+                );
+              })}
+              {!fcst.length && (
+                <tr><td colSpan={5} className="p-4 text-center text-slate-400 text-sm">
+                  No forecast data available for this SKU.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Chip = ({ label, value, tint }) => (
+  <div className={`px-2.5 py-1.5 rounded ${tint}`}>
+    <div className="text-[10px] uppercase font-semibold opacity-70">{label}</div>
+    <div className="text-sm font-bold">{value}</div>
+  </div>
+);
 
 export default DemandForecast;

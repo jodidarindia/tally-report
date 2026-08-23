@@ -1,0 +1,24 @@
+{
+  "summary": "Wave 2 forecast deep-dive regression retest after past_12 length fix. Backend: 7/7 pytest passed (was 5/7 in iter-118). Added new assertion `len(sku['past_12']) == len(past_month_labels) == 12` — passes. Fix at forecast.py L220-221 (`build_monthly_series(...)[:12]`) correctly trims the inclusive-loop 13th entry. All other Wave 2 assertions still pass — 401 unauth, valid SKU returns bands + labels, unknown SKU 'not found', /overview /season /cohort success:true. Frontend E2E on busydemo@flowralive.in: login → Analytics → Demand Forecast → buy list rendered → clicked forecast-buy-row-0 → forecast-deepdive-modal opened → content + chart + forecast-deepdive-month-0/1/2 visible → close hides modal. Chart shows aligned 12-month past line (Aug '25 → Jul '26) + 3-month forecast dashed + P25-P75 band + festival month bands (Dussehra+Diwali). No console errors about array length mismatch.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_forecast_wave2.py",
+    "/app/test_reports/pytest/forecast_wave2.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "forecast.py cache TTL (12h) still growing unbounded per-tenant — carried over from iter-118, not yet addressed. Consider LRU eviction for multi-tenant memory hygiene.",
+    "DemandForecast.js DeepDiveContent still lacks defensive length-check between past[] and pastLabels[] — recommend adding a console.warn to catch future backend regressions in dev."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_forecast_wave2.py (added len(past_12)==len(plabels)==12 assertion)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100%"},
+  "test_credentials": "busydemo@flowralive.in / demo2026 (company b21b291b-afcd-4152-b166-85be751d94bb)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Wave 2 forecast deep-dive is now fully green: 7/7 pytest + frontend E2E confirmed. past_12 length bug closed via [:12] slice in forecast.py. Test suite at /app/backend/tests/test_forecast_wave2.py.",
+  "rca of the issue": "N/A — bug fixed and verified."
+}

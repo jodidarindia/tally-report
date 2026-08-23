@@ -10,6 +10,42 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 23 2026 — Demand Forecast Wave 2 (per-SKU deep dive)
+
+Added the Wave-2 per-SKU deep dive to the admin-only Demand Forecast tab.
+Confirmed live on the busydemo tenant (13,696 SKUs, ~₹4 Cr sales). Tests:
+iteration_119.json — 7/7 backend pytest + full frontend E2E green (100 %).
+
+**Backend (`routes/forecast.py`)**
+- New `_month_labels(start, count)` and `_forecast_month_labels(today, horizon)`
+  helpers produce `[{y, m, label ("Mmm 'YY"), festival_tag}, …]` — festival tag
+  is pulled from the curated `FESTIVAL_MONTHS` map.
+- Each per-SKU snapshot dict now carries `monthly_forecast_low`,
+  `monthly_forecast_high` (per-month P25/P75 bands) and a length-12 `past_12`
+  actuals array (sliced `[:12]` because `build_monthly_series` is inclusive
+  on both bounds — off-by-one caught in the first retest and fixed).
+- `/analytics/forecast/sku/{item_id}` now returns
+  `{sku, past_month_labels, forecast_month_labels, festival_calendar}` so the
+  UI needs a single round-trip to render the whole deep dive.
+
+**Frontend (`pages/analytics/DemandForecast.js`)**
+- Every buy-list row is clickable — `onClick={() => openDeepDive(r.item_id)}`
+  with a leading chevron and blue hover state.
+- New `<DeepDiveModal>` + `<DeepDiveContent>` (self-contained, no chart lib
+  dependency — pure SVG). Chart layers:
+  - Grey polyline: past-12 actuals with dots.
+  - Dashed blue polyline: forecast horizon, connected to the last actual.
+  - Blue-tint polygon: P25–P75 confidence band across the forecast region.
+  - Amber vertical bands: months tagged in `FESTIVAL_MONTHS` (past + forecast).
+  - Y-axis dashed gridlines + auto-scaled labels; x-axis Mmm 'YY labels.
+- KPI chip row (current stock, forecast, ROP, safety stock, confidence %) +
+  a rose-highlighted "buy by <date>" callout when stockout risk fires.
+- Monthly breakdown table below the chart: forecast, low, high, and a
+  festival-tag pill per month.
+
+**Screenshot proof**: SARTHI Engine Oil deep-dive rendered Aug '25 → Nov '26
+with Diwali+wedding-season markers on the forecast tail.
+
 ## Shipped — Feb 23 2026 — P0 Security & Reliability Fixes (post-code-review)
 
 Code review flagged two HIGH-severity issues; both fixed and regression-tested
