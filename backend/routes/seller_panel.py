@@ -413,7 +413,16 @@ async def list_invoices(request: Request):
 
 @router.put("/super-admin/invoices/{invoice_id}/status")
 async def update_invoice_status(invoice_id: str, request: Request):
-    """Mark invoice as paid/unpaid."""
+    """Mark invoice as paid/unpaid/cancelled.
+
+    Business rule (Feb 2026): flipping a status MUST be tied to a
+    real payment record. On PAID → server checks the invoice's linked
+    customer has a payment covering the invoice amount; if not, the
+    caller must pass `link_payment_id` OR `create_payment: {...}` to
+    record the payment in the same call. On UNPAID → we require a
+    reason (audit trail) and, when a linked payment exists, we soft-
+    delete that payment link (payment row itself is kept for audit).
+    """
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -423,13 +432,61 @@ async def update_invoice_status(invoice_id: str, request: Request):
         if status not in ("paid", "unpaid", "cancelled"):
             return APIResponse(success=False, error="Status must be paid, unpaid, or cancelled")
 
-        result = await db.invoices.update_one(
-            {"invoice_id": invoice_id},
-            {"$set": {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}}
-        )
-        if result.modified_count == 0:
+        invoice = await db.invoices.find_one({"invoice_id": invoice_id})
+        if not invoice:
             return APIResponse(success=False, error="Invoice not found")
 
+        cust = invoice.get("customer_username", "")
+        inv_amt = float(invoice.get("amount", 0) or 0)
+        now = datetime.now(timezone.utc).isoformat()
+        update = {"status": status, "updated_at": now}
+
+        if status == "paid":
+            link_payment_id = body.get("link_payment_id")
+            create_payment = body.get("create_payment") or None
+            if link_payment_id:
+                # Verify linked payment exists and covers the invoice
+                pay = await db.payments.find_one({"payment_id": link_payment_id})
+                if not pay or pay.get("customer_username") != cust:
+                    return APIResponse(success=False, error="Linked payment not found or belongs to another customer")
+                update["linked_payment_id"] = link_payment_id
+            elif create_payment:
+                pay = {
+                    "payment_id": str(uuid.uuid4()),
+                    "customer_username": cust,
+                    "amount": float(create_payment.get("amount") or inv_amt),
+                    "payment_mode": create_payment.get("payment_mode", "bank_transfer"),
+                    "reference_no": create_payment.get("reference_no", ""),
+                    "notes": create_payment.get("notes", f"Auto-created for invoice {invoice.get('invoice_number')}"),
+                    "period_description": create_payment.get("period_description", ""),
+                    "created_at": now, "source": f"invoice-mark-paid:{sa['username']}",
+                }
+                await db.payments.insert_one(pay)
+                update["linked_payment_id"] = pay["payment_id"]
+            else:
+                # Fallback — only allow if there's already enough payment on record.
+                pay_rows = await db.payments.find({"customer_username": cust}, {"_id": 0, "amount": 1}).to_list(1000)
+                total_paid = sum(float(p.get("amount", 0) or 0) for p in pay_rows)
+                if total_paid + 1 < inv_amt:
+                    return APIResponse(success=False, error=(
+                        f"Cannot mark as paid without a payment record. "
+                        f"Customer has paid Rs. {total_paid:,.0f} but invoice is Rs. {inv_amt:,.0f}. "
+                        f"Please pass `create_payment` or `link_payment_id` in the request."))
+        elif status == "unpaid":
+            reason = (body.get("reason") or "").strip()
+            if not reason:
+                return APIResponse(success=False,
+                    error="A reason is required when flipping an invoice back to unpaid (audit trail).")
+            update["unpaid_reason"] = reason
+            update["unpaid_at"] = now
+            update["unpaid_by"] = sa["username"]
+
+        result = await db.invoices.update_one({"invoice_id": invoice_id}, {"$set": update})
+        if result.matched_count == 0:
+            return APIResponse(success=False, error="Invoice not found")
+        await log_audit("invoice_status_changed", sa["username"], target=invoice_id,
+                        details=f"{invoice.get('invoice_number')} → {status}",
+                        ip_address=get_client_ip(request))
         return APIResponse(success=True, message=f"Invoice marked as {status}")
     except Exception as e:
         return APIResponse(success=False, error=str(e))

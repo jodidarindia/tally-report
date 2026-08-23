@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 121 SuperAdmin follow-up ship — Razorpay billing (config/create-order/verify/webhook/super-convert-trial), in-app Support tickets (widget + inbox + webhooks), invoice paid/unpaid enforcement with linked-payment/reason, edit_admin billing_delta with proration, list_admins enrichment (is_trial/total_billed/total_paid/balance_due). Backend: 16/16 pytest passed (test_iteration121_billing_and_support.py). Frontend E2E on preview URL: (a) SuperAdmin Subscriptions tab → sub-summary-cards renders 5 counts (Total=8, Active=3, Trial=5, Expiring=0, Expired=0), 8 payment-status badges, 5 convert-trial buttons on trial rows; (b) Tenant SupportWidget (busydemo) → floating headphones toggle visible, panel opens, New Ticket form submits, ticket appears in list; (c) Trial user (fresh) → ProfileModal → Subscription tab → 'Upgrade Now' opens UpgradeModal (data-testid=upgrade-modal) with starter/professional/enterprise tiles (no trial), monthly/annual cycles, 'Pay ₹37,990 securely' CTA loads Razorpay Checkout (window.Razorpay defined, iframe rendered with FLOWRA branding + Test Mode badge). Backend proration: change enterprise→starter with unused days returns credit=36845.1, net clamps at ₹1 (Razorpay minimum) — correct behaviour. Signature verification correctly rejects bogus payloads. Convert-trial flips is_trial=false, stamps converted_at, resets subscription_start, creates payment row.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SuperAdmin dashboard initial load", "issues": ["/api/super-admin/admins enrichment loop (resolve_company_names + count_documents + payments.find per admin) makes first paint of SA layout take 10-20 seconds on preview; SA layout shows only a spinner during that time. Consider projecting `companies` differently or batching the enrichment to keep first paint <3 s."]},
+      {"screen": "ProfileModal Subscription tab", "issues": ["Trial banner + Upgrade Now button live under the Subscription tab (activeTab==='subscription'). The default active tab is Profile, so a trial user opening ProfileModal does not immediately see the CTA. Consider auto-selecting the Subscription tab for is_trial users, or duplicating the Upgrade Now button onto the Profile tab near the 'Plan: Trial' chip so it is one click away."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration121_billing_and_support.py",
+    "/app/test_reports/pytest/iteration121.xml"
+  ],
+  "action_items": [
+    "MINOR (design): Auto-focus the Subscription tab in ProfileModal for is_trial users (or hoist the Upgrade Now CTA to the Profile tab) so the trial banner + Upgrade button are visible without a tab switch.",
+    "MINOR (perf): Speed up /api/super-admin/admins first paint — the per-admin resolve_company_names + payments.find loop blocks SA layout ~10-20 s in the preview env."
+  ],
+  "critical_code_review_comments": [
+    "billing.py _compute_amount clamps `net = max(1, new_total - credit)` — good, prevents Razorpay ₹0 rejection. But the returned breakdown['net'] then no longer equals new_total-credit; frontend should show old_total/credit/net separately (not net = new_total - credit) — currently only used server-side so OK.",
+    "billing.py verify_payment idempotency: _apply_billing_success guards `if order_row.get('status')=='captured': return` — good. Consider a MongoDB unique index on billing_orders.order_id (currently a plain field) to protect against concurrent /verify + /webhook.",
+    "billing.py super_convert_trial calls _apply_billing_success (which sends welcome mail synchronously). Preview RESEND is stale so the mail may error — best-effort try/except is in place, no impact on the convert flow.",
+    "seller_panel.py update_invoice_status: the `total_paid + 1 < inv_amt` fallback allows a mark-paid without create_payment when the customer has accumulated enough payments — this bypasses the explicit linkage design goal. Consider requiring link_payment_id or create_payment always, and using the accumulated-payments check only as an advisory when both are absent.",
+    "support_tickets.py _fire_webhook: uses httpx.AsyncClient(timeout=3.0) per event — good. But it iterates hooks serially inside a single AsyncClient; a slow hook still blocks the response by up to 3 s. Consider asyncio.gather over the hook list, or fire-and-forget via background task.",
+    "super_admin.py list_admins performs N+1 queries (resolve_company_names + count_documents + payments.find per admin) — measurable slowdown as tenants grow. Recommend a single aggregation pipeline or Redis-cached rows keyed on updated_at."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration121_billing_and_support.py (new — 16 tests, all green)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (Subscriptions tab, Support widget, Upgrade modal + Razorpay checkout all verified end-to-end)"},
+  "test_credentials": "superadmin/superadmin123 · busydemo@flowralive.in/demo2026 (untouched) · Razorpay TEST rzp_test_TTCKqwUQ9cwsxZ (verified live via /api/billing/config)",
+  "seed_data_creation": "Ephemeral trial/scratch admins created per test and deleted on teardown. NOTE: I noticed ~4-5 leftover 'Trial UI'/'Trial View'/'E2E Trial'/'Expired Trial' rows from prior iterations still in the DB (visible in the Subscriptions tab screenshot) — main agent may want to purge these.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite at /app/backend/tests/test_iteration121_billing_and_support.py is 16/16 green. The frontend flows for Razorpay Checkout, SupportWidget, and SA Subscriptions tab are all verified live. Two minor UX polish suggestions in action_items (auto-focus Subscription tab for trial users; speed up SA first paint) — neither is blocking. Preview /auth/login sometimes ReadTimeouts on first call; retry once. There are stale trial rows in the DB from prior iterations that inflate the 'Trial Users' count (currently 5) — worth cleaning up.",
+  "rca of the issue": "No production bugs found. Two design/perf polish items only: (1) Trial user opening ProfileModal lands on the Profile tab, not the Subscription tab, so the Upgrade Now CTA is one click away instead of front-and-centre. Auto-selecting the Subscription tab for is_trial users would surface the CTA immediately. (2) /api/super-admin/admins does N+1 lookups per admin, adding 10-20 s to the SuperAdmin first paint in the preview env — an aggregation pipeline or short cache would fix it."
+}

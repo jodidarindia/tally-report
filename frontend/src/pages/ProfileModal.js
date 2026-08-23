@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { X, Eye, EyeOff, User, Lock, Key, CreditCard, Calendar, Shield, AlertTriangle, Users, Plus, Trash2, Mail, Link2, Cloud, CheckCircle2, Loader2 } from 'lucide-react';
+import UpgradeModal from '../components/UpgradeModal';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -15,6 +16,15 @@ const formatIST = (isoStr) => {
 
 const ProfileModal = ({ user, token, onClose }) => {
   const [activeTab, setActiveTab] = useState('profile');
+
+  // Auto-focus the Subscription tab for trial users so the "Upgrade
+  // Now" CTA is one click away (design-fix from iter-121 review).
+  useEffect(() => {
+    if (user?.is_trial) {
+      setActiveTab('subscription');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -23,6 +33,8 @@ const ProfileModal = ({ user, token, onClose }) => {
   const [resetUsername, setResetUsername] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [renewalMessage, setRenewalMessage] = useState('');
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [upgradeIntent, setUpgradeIntent] = useState('upgrade');
   // Employee management
   const [employees, setEmployees] = useState([]);
   const [empLoading, setEmpLoading] = useState(false);
@@ -426,11 +438,27 @@ const ProfileModal = ({ user, token, onClose }) => {
                 {isTrial && (
                   <div className="mb-3 bg-cyan-50 border border-cyan-200 rounded-lg p-3">
                     <div className="text-xs font-bold uppercase tracking-wider text-cyan-800 mb-1">14-Day Free Trial</div>
-                    <div className="text-sm text-slate-700 leading-relaxed">
+                    <div className="text-sm text-slate-700 leading-relaxed mb-2">
                       {trialDaysLeft !== null
                         ? <><b>{trialDaysLeft} day{trialDaysLeft === 1 ? '' : 's'} left</b>. Log-in is paused once the trial ends unless you convert to a paid plan.</>
                         : <>Your 14-day trial is active. Convert to a paid plan any time.</>}
                     </div>
+                    <button
+                      onClick={() => { setUpgradeIntent('upgrade'); setShowUpgrade(true); }}
+                      data-testid="trial-upgrade-btn"
+                      className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white font-semibold px-3 py-1.5 rounded-md">
+                      Upgrade Now
+                    </button>
+                  </div>
+                )}
+                {!isTrial && user.role === 'admin' && (
+                  <div className="mb-3">
+                    <button
+                      onClick={() => { setUpgradeIntent('renew'); setShowUpgrade(true); }}
+                      data-testid="renew-btn"
+                      className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1.5 rounded-md">
+                      Renew / Change Plan
+                    </button>
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-3">
@@ -489,6 +517,10 @@ const ProfileModal = ({ user, token, onClose }) => {
           )}
         </div>
       </div>
+      {showUpgrade && (
+        <UpgradeModal open={showUpgrade} onClose={() => setShowUpgrade(false)}
+          user={user} token={token} initialIntent={upgradeIntent} />
+      )}
     </div>
   );
 };

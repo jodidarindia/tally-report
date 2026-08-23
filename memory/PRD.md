@@ -10,6 +10,85 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 24 2026 — SuperAdmin Follow-Up + Razorpay + Support Tickets
+
+Second SuperAdmin overhaul in the same week per direct user brief. Tests:
+iteration_121 — 16/16 backend + full frontend E2E green (100 %). Two
+minor design nits caught in review (trial ProfileModal auto-tab, SA
+first-paint perf) — auto-tab fix shipped in-session, perf deferred to
+follow-up sprint.
+
+**Razorpay integration** (`routes/billing.py`)
+- Test keys (`rzp_test_TTCKqwUQ9cwsxZ`) in `backend/.env`; `razorpay==2.0.1`
+  added to `requirements.txt`.
+- Endpoints: `GET /billing/config`, `POST /billing/create-order` (with
+  proration when intent=change), `POST /billing/verify` (signature
+  verification), `POST /billing/webhook` (async fallback).
+- `POST /super-admin/admins/{u}/convert-trial` — SuperAdmin one-click
+  offline conversion that reuses the same `_apply_billing_success`
+  code path as Razorpay success.
+- `UpgradeModal.jsx` — pure-SDK Razorpay Checkout (no `react-razorpay`
+  dependency). Wired into ProfileModal for trial (Upgrade Now) and paid
+  users (Renew / Change Plan). Auto-selects Subscription tab for trial
+  admins so the CTA is 0-clicks.
+
+**Support Tickets** (`routes/support_tickets.py` + `SupportWidget.jsx`)
+- In-app: tenant users get a floating headphones button bottom-right,
+  slide-out panel lists their tickets + inline thread + "New Ticket"
+  form. Priority (low/normal/high/urgent) + auto status transitions
+  (user reply → open, super_admin reply → pending).
+- SuperAdmin inbox: `GET /super-admin/support/tickets` with counts
+  (open/pending/resolved).
+- Outbound webhooks: `POST /super-admin/support/webhooks` — Slack /
+  Discord / Teams etc. HMAC-signed payloads via `X-FLOWRA-Signature`.
+  Events: `ticket.created`, `ticket.replied`, `ticket.<status>`.
+- Inbound (`POST /support/inbound-email`) — logging stub; email → ticket
+  parsing scoped for v2 alongside Zendesk/Freshdesk 2-way sync.
+
+**Subscription tab overhaul** (`SubscriptionsTab.jsx`)
+- Five summary cards: Total Customers, Active Subs, Trial Users,
+  Expiring Soon (≤30 d), Expired.
+- New **Payment** column with badges (Paid / Partially Paid / Pending /
+  Unpaid), auto-derived server-side from `total_billed` vs `total_paid`
+  (both are now returned by `GET /super-admin/admins`).
+- Convert-Trial arrow icon in the Actions column for trial rows.
+- `PUT /super-admin/admins/{u}/edit` — new endpoint that atomically
+  updates plan, cycle, months, features, contact fields and returns a
+  `billing_delta` block with proration credit. Fixes the old "Failed to
+  save changes" bug (endpoint didn't exist). Frontend now prompts the
+  SuperAdmin to record the delta on the Payments tab.
+
+**Invoice paid/unpaid enforcement** (`seller_panel.py`)
+- `PUT /super-admin/invoices/{id}/status`:
+  - `status=paid` requires either an existing payment covering the
+    invoice OR a `create_payment` block (or an explicit
+    `link_payment_id`). Creates the payment record + stamps
+    `linked_payment_id` on the invoice.
+  - `status=unpaid` requires a `reason` (audit trail — stored as
+    `unpaid_reason`, `unpaid_at`, `unpaid_by`).
+- Frontend `markInvoiceStatus` walks the SuperAdmin through
+  `window.prompt` flows for mode/ref/notes on paid and reason on
+  unpaid.
+
+**Small fixes shipped in this run**
+- Favicon: FLOWRA logo converted to `.ico` + `png` sizes; wired into
+  `public/index.html` (`favicon-16/32.png`, `apple-touch-icon.png`).
+- Landing page: plans refreshed — Starter 1 co / 2 emp, Professional
+  1 co / 5 emp + salesman, Enterprise 1 co / 10 emp + demand forecast +
+  confidence bands + AI reports + CA Corner. Removed the "Tally Agent
+  v9.8.30 + Busy Agent v1.3.1" line per user request. Added a Free
+  Trial (14 days) tile.
+- Leads (`QuestionnaireLeads`) crash guard: `Array.isArray()` before
+  `.map()` on `pain_points` / `next_steps` — legacy rows with a string
+  value no longer crash the tab.
+- Prospects status dropdown: optimistic UI update + toast on failure
+  + `fetchData()` reconcile so the change is always visible.
+
+**Env vars added to `backend/.env` (placeholders — user fills prod values):**
+`INVOICE_SELLER_NAME`, `INVOICE_SELLER_GSTIN`, `INVOICE_SELLER_ADDRESS`,
+`INVOICE_SELLER_EMAIL`, `INVOICE_SELLER_PHONE`, `INVOICE_LOGO_URL`,
+`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+
 ## Shipped — Feb 23 2026 — SuperAdmin Overhaul (4 phases)
 
 Massive multi-phase update to the SuperAdmin Command Center per direct user brief.

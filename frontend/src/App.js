@@ -17,6 +17,7 @@ import CompanySelector from './pages/CompanySelector';
 import ProfileModal from './pages/ProfileModal';
 import RenewalPopup from './components/RenewalPopup';
 import OnboardingTour from './components/OnboardingTour';
+import SupportWidget from './components/SupportWidget';
 
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
 
@@ -241,6 +242,8 @@ function App() {
       )}
       {idleWarning && <IdleWarningModal onDismiss={dismissWarning} />}
       {showOnboarding && <OnboardingTour run={showOnboarding} onComplete={() => setShowOnboarding(false)} />}
+      {/* Floating support widget — only for tenant users (not super_admin). */}
+      {user && user.role !== 'super_admin' && <SupportWidget token={token} />}
     </div>
   );
 }

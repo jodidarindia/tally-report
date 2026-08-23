@@ -213,16 +213,54 @@ const SuperAdminDashboard = ({ token, user }) => {
         name: editAdmin.name, plan: editAdmin.plan, billing_cycle: editAdmin.billing_cycle, subscription_months: editAdmin.subscription_months,
         features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
       }, { headers });
-      if (res.data?.success) { toast.success(res.data.message); setShowEditModal(null); setEditAdmin(null); fetchData(); }
-      else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Failed to save changes'); }
+      if (res.data?.success) {
+        const bd = res.data.data?.billing_delta;
+        toast.success(res.data.message);
+        setShowEditModal(null); setEditAdmin(null); fetchData();
+        // If the plan change created a billing delta, prompt the SuperAdmin
+        // to record the difference on the Payments tab (or refund).
+        if (bd && bd.direction !== 'none' && bd.amount > 0) {
+          const goRecord = window.confirm(
+            `${bd.narrative}\n\nOld total: ₹${(bd.old_total||0).toLocaleString('en-IN')}\n` +
+            `Refund credit (unused): ₹${(bd.refund_credit||0).toLocaleString('en-IN')}\n` +
+            `New total: ₹${(bd.new_total||0).toLocaleString('en-IN')}\n\n` +
+            `Net ${bd.direction.toUpperCase()}: ₹${bd.amount.toLocaleString('en-IN')}\n\n` +
+            `Click OK to jump to Record Payment now, or Cancel to skip.`
+          );
+          if (goRecord) {
+            setActiveTab('payments');
+            setPaymentForm(f => ({ ...f, customer_username: editAdmin.username, amount: String(bd.amount), notes: bd.narrative, period_description: `Adjustment for plan change (${bd.direction})` }));
+            // Refresh preview for the picker
+            try {
+              const c = await axios.get(`${API}/super-admin/customers/search`, { headers, params: { q: editAdmin.username } });
+              const match = (c.data?.data?.customers || []).find(x => x.username === editAdmin.username);
+              if (match) { setPaymentCustomer(match); setCustomerSearchTerm(`${match.name || match.company_name || match.username} (${match.username})`); }
+            } catch { /* non-fatal */ }
+            setShowPaymentModal(true);
+          }
+        }
+      } else toast.error(res.data?.error || 'Failed to save changes');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to save changes'); }
   };
 
   const updateProspectStatus = async (prospectId, status) => {
+    // Optimistic update — snap the dropdown to the new value immediately
+    // so the SuperAdmin sees the change reflected even before the API
+    // round-trip completes.
+    setProspects((prev) => prev.map((p) => p.prospect_id === prospectId ? { ...p, status } : p));
     try {
       const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status }, { headers });
-      if (res.data?.success) { toast.success(`Status updated`); fetchData(); }
-    } catch { toast.error('Failed to update status'); }
+      if (res.data?.success) {
+        toast.success('Status updated');
+        fetchData();
+      } else {
+        toast.error(res.data?.error || 'Failed to update status');
+        fetchData();     // reconcile from server
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update status');
+      fetchData();
+    }
   };
 
   const convertProspect = async () => {
@@ -319,11 +357,36 @@ const SuperAdminDashboard = ({ token, user }) => {
   };
 
   const markInvoiceStatus = async (invoiceId, status) => {
+    const inv = (invoices || []).find(i => i.invoice_id === invoiceId);
+    const invNo = inv?.invoice_number || invoiceId;
+    const amt = inv?.amount || 0;
+    let payload = { status };
+
+    if (status === 'paid') {
+      const ok = window.confirm(
+        `Mark invoice ${invNo} (₹${amt.toLocaleString('en-IN')}) as PAID?\n\n` +
+        `This will create a payment record for the customer.\n\nClick OK to continue and enter payment details.`);
+      if (!ok) return;
+      const mode = window.prompt('Payment mode? (bank_transfer / upi / cash / cheque / razorpay)', 'bank_transfer');
+      if (!mode) return;
+      const ref = window.prompt('Reference no. (UTR / Cheque / etc.)?', '') || '';
+      const notes = window.prompt('Notes (optional)', `Payment for invoice ${invNo}`) || '';
+      payload.create_payment = { amount: amt, payment_mode: mode, reference_no: ref, notes,
+                                 period_description: inv?.description || '' };
+    } else if (status === 'unpaid') {
+      const reason = window.prompt(
+        `Flip invoice ${invNo} back to UNPAID.\n\nReason for the change (required — audit trail):`, '');
+      if (!reason?.trim()) { toast.error('Reason required to flip an invoice back to unpaid'); return; }
+      payload.reason = reason.trim();
+    } else if (status === 'cancelled') {
+      if (!window.confirm(`Cancel invoice ${invNo}?`)) return;
+    }
+
     try {
-      await axios.put(`${API}/super-admin/invoices/${invoiceId}/status`, { status }, { headers });
-      toast.success(`Invoice marked as ${status}`);
-      fetchData();
-    } catch { toast.error('Failed to update'); }
+      const r = await axios.put(`${API}/super-admin/invoices/${invoiceId}/status`, payload, { headers });
+      if (r.data?.success) { toast.success(r.data.message); fetchData(); }
+      else toast.error(r.data?.error || 'Failed to update');
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed to update'); }
   };
 
   const openLedger = async (username) => {
@@ -454,7 +517,24 @@ const SuperAdminDashboard = ({ token, user }) => {
       )}
 
       {activeTab === 'subscriptions' && (
-        <SubscriptionsTab admins={admins} onOpenLedger={openLedger} onEditAdmin={openEditAdmin} />
+        <SubscriptionsTab admins={admins} onOpenLedger={openLedger} onEditAdmin={openEditAdmin}
+          onConvertTrial={(admin) => {
+            const plan = window.prompt(`Convert '${admin.username}' to which paid plan? (starter / professional / enterprise)`, 'enterprise');
+            if (!plan || !['starter','professional','enterprise'].includes(plan.toLowerCase())) return;
+            const cycle = window.prompt('Billing cycle? (monthly / annual)', 'annual') || 'annual';
+            const months = parseInt(window.prompt('Duration in months?', '12') || '12');
+            const pricing = PLANS[plan.toLowerCase()] || PLANS.enterprise;
+            const total = cycle === 'annual' ? pricing.annual * (months/12) : pricing.monthly * months;
+            const amount = parseFloat(window.prompt(`Amount received (in ₹)? Default = full plan cost.`, String(total)) || total);
+            const mode = window.prompt('Payment mode? (bank_transfer / upi / cash / cheque / razorpay)', 'bank_transfer') || 'bank_transfer';
+            const ref = window.prompt('Reference no. (UTR/Cheque/etc.)?', '') || '';
+            axios.post(`${API}/super-admin/admins/${admin.username}/convert-trial`,
+              { plan: plan.toLowerCase(), billing_cycle: cycle, subscription_months: months, amount, payment_mode: mode, reference_no: ref },
+              { headers }).then((r) => {
+                if (r.data?.success) { toast.success(r.data.message); fetchData(); }
+                else toast.error(r.data?.error || 'Failed to convert');
+              }).catch((e) => toast.error(e.response?.data?.error || 'Convert failed'));
+          }} />
       )}
 
       {activeTab === 'payments' && (
@@ -1571,20 +1651,20 @@ const QuestionnaireLeads = ({ headers }) => {
                     <div><span className="text-slate-500">Decision Maker:</span> <span className="text-slate-900">{q.decision_maker || '—'}</span></div>
                     <div><span className="text-slate-500">Heard From:</span> <span className="text-slate-900">{q.heard_from || '—'}</span></div>
                   </div>
-                  {(q.pain_points || []).length > 0 && (
+                  {(Array.isArray(q.pain_points) ? q.pain_points : []).length > 0 && (
                     <div className="mb-2">
                       <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Pain Points:</span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {q.pain_points.map((p, i) => <span key={i} className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-[10px]">{p.slice(0, 50)}</span>)}
+                        {q.pain_points.map((p, i) => <span key={i} className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-[10px]">{String(p).slice(0, 50)}</span>)}
                       </div>
                     </div>
                   )}
                   {q.biggest_challenge && <p className="text-xs text-slate-600 mb-2"><span className="font-semibold text-slate-500">Challenge:</span> {q.biggest_challenge}</p>}
-                  {(q.next_steps || []).length > 0 && (
+                  {(Array.isArray(q.next_steps) ? q.next_steps : []).length > 0 && (
                     <div className="mb-3">
                       <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Requested:</span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {q.next_steps.map((n, i) => <span key={i} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">{n}</span>)}
+                        {q.next_steps.map((n, i) => <span key={i} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">{String(n)}</span>)}
                       </div>
                     </div>
                   )}

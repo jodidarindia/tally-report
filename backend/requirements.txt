@@ -163,3 +163,4 @@ zopfli==0.4.1
 patsy==1.0.2
 scipy==1.17.1
 statsmodels==0.14.6
+razorpay==2.0.1

@@ -244,6 +244,7 @@ async def list_admins(request: Request):
 
         # Enrich with employee count and data stats
         from services.id_mapping_service import resolve_company_names
+        from routes.seller_panel import PLAN_PRICING
         result = []
         for admin in admins:
             tid = admin.get("tenant_id", "")
@@ -259,6 +260,24 @@ async def list_admins(request: Request):
             company_uuids = admin.get("companies", [])
             name_map = await resolve_company_names(tid, company_uuids)
             companies_display = [name_map.get(c, c) for c in company_uuids]
+
+            # Compute total_billed and total_paid so the SuperAdmin UI can
+            # derive a Paid / Partially Paid / Pending / Unpaid label per
+            # customer without additional round-trips.
+            plan_id = admin.get("plan", "starter")
+            cycle = admin.get("billing_cycle", "annual")
+            months = int(admin.get("subscription_months", 12) or 12)
+            is_trial = bool(admin.get("is_trial"))
+            pricing = PLAN_PRICING.get(plan_id, PLAN_PRICING.get("starter", {"monthly": 0, "annual": 0}))
+            unit = pricing.get("annual" if cycle == "annual" else "monthly", 0) or 0
+            total_billed = 0.0 if is_trial else (
+                round(unit * (months / 12.0), 2) if cycle == "annual" else round(unit * months, 2)
+            )
+            pay_rows = await db.payments.find(
+                {"customer_username": admin["username"]}, {"_id": 0, "amount": 1}
+            ).to_list(1000)
+            total_paid = round(sum(float(p.get("amount", 0) or 0) for p in pay_rows), 2)
+
             result.append({
                 "username": admin["username"],
                 "name": admin.get("name", ""),
@@ -267,14 +286,27 @@ async def list_admins(request: Request):
                 "companies": companies_display,
                 "active": admin.get("active", True),
                 "employee_count": emp_count,
-                "plan": admin.get("plan", "enterprise"),
-                "max_companies": admin.get("max_companies", 10),
-                "max_employees": admin.get("max_employees", 20),
-                "billing_cycle": admin.get("billing_cycle", "annual"),
-                "subscription_months": admin.get("subscription_months", 12),
+                "plan": plan_id,
+                "max_companies": admin.get("max_companies", 1),
+                "max_employees": admin.get("max_employees", 10),
+                "billing_cycle": cycle,
+                "subscription_months": months,
                 "subscription_start": admin.get("subscription_start", admin.get("created_at", "")),
                 "created_at": admin.get("created_at", ""),
-                "last_sync": sync_status.get("last_sync") if sync_status else None
+                "last_sync": sync_status.get("last_sync") if sync_status else None,
+                # Rich profile echoed so SuperAdmin table can show it
+                "company_name": admin.get("company_name", ""),
+                "mobile": admin.get("mobile", ""),
+                "gst": admin.get("gst", ""),
+                "city": admin.get("city", ""),
+                "industry": admin.get("industry", ""),
+                # Trial + payment status
+                "is_trial": is_trial,
+                "trial_end": admin.get("trial_end", ""),
+                "converted_at": admin.get("converted_at") or "",
+                "total_billed": total_billed,
+                "total_paid": total_paid,
+                "balance_due": round(max(0.0, total_billed - total_paid), 2),
             })
 
         return APIResponse(success=True, data={
@@ -487,6 +519,137 @@ async def update_admin_features(username: str, request: Request):
     except Exception as e:
         logger.error(f"Error updating features: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+@router.put("/super-admin/admins/{username}/edit")
+async def edit_admin_full(username: str, request: Request):
+    """Edit an admin's plan, cycle, subscription months, features and
+    contact fields in one call. Returns a `billing_delta` block so the
+    UI can prompt the SuperAdmin to record the incremental payment
+    (or refund) that comes from the change.
+
+    billing_delta.direction ∈ {'charge', 'refund', 'none'}
+    billing_delta.amount    = price paid at NEW settings − price paid at OLD settings
+                              (only the not-yet-consumed portion of the OLD
+                              subscription is refunded, prorated by days used).
+    """
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        target = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "password_hash": 0})
+        if not target:
+            return APIResponse(success=False, error="Admin not found")
+
+        # Compose the update — accept partial payloads so front-end can
+        # patch a single field or the whole record.
+        from routes.prospects import SUBSCRIPTION_PLANS
+        from routes.seller_panel import PLAN_PRICING
+        from services.ist_utils import subscription_expires_at
+        from datetime import datetime as dt
+
+        old_plan = target.get("plan", "starter")
+        old_cycle = target.get("billing_cycle", "annual")
+        old_months = int(target.get("subscription_months", 12) or 12)
+        old_start = target.get("subscription_start", "") or dt.now(timezone.utc).isoformat()
+
+        new_plan = body.get("plan", old_plan)
+        new_cycle = body.get("billing_cycle", old_cycle)
+        new_months = int(body.get("subscription_months", old_months) or old_months)
+        new_name = body.get("name", target.get("name", ""))
+        features = body.get("features")
+        max_companies = body.get("max_companies")
+        max_employees = body.get("max_employees")
+
+        plan_config = SUBSCRIPTION_PLANS.get(new_plan, SUBSCRIPTION_PLANS["starter"])
+        update = {
+            "name": new_name,
+            "plan": new_plan,
+            "billing_cycle": new_cycle,
+            "subscription_months": new_months,
+            "max_companies": max_companies if max_companies is not None else plan_config["max_companies"],
+            "max_employees": max_employees if max_employees is not None else plan_config["max_employees"],
+        }
+        if isinstance(features, list):
+            update["features"] = [f for f in features if f in ALL_FEATURES]
+
+        # If plan or cycle changed, reset the subscription window so the
+        # new billing runs cleanly from today.
+        plan_changed = (new_plan != old_plan) or (new_cycle != old_cycle) or (new_months != old_months)
+        if plan_changed:
+            update["subscription_start"] = dt.now(timezone.utc).isoformat()
+
+        await db.users.update_one({"username": username, "role": "admin"}, {"$set": update})
+
+        # ---- Billing delta calculation (proration) ----------------------
+        billing_delta = {"direction": "none", "amount": 0.0,
+                         "old_total": 0.0, "new_total": 0.0,
+                         "refund_credit": 0.0, "narrative": ""}
+        if plan_changed and old_plan != "trial" and new_plan != "trial":
+            old_price = PLAN_PRICING.get(old_plan, PLAN_PRICING["starter"])
+            new_price = PLAN_PRICING.get(new_plan, PLAN_PRICING["starter"])
+            old_unit = old_price["annual"] if old_cycle == "annual" else old_price["monthly"]
+            new_unit = new_price["annual"] if new_cycle == "annual" else new_price["monthly"]
+
+            def _total(unit, months, cycle):
+                if cycle == "annual":
+                    return round(unit * (months / 12.0), 2)
+                return round(unit * months, 2)
+
+            old_total = _total(old_unit, old_months, old_cycle)
+            new_total = _total(new_unit, new_months, new_cycle)
+
+            # How much of the OLD subscription is refunded? Proportional
+            # to unused days (never below 0, never above old_total).
+            try:
+                old_expires = subscription_expires_at(old_start, old_months)
+                exp_dt = dt.fromisoformat(old_expires.replace("Z", "+00:00"))
+                total_days = (exp_dt - dt.fromisoformat(old_start.replace("Z", "+00:00"))).days or 1
+                unused_days = max(0, (exp_dt - dt.now(timezone.utc)).days)
+                refund_credit = round(old_total * (unused_days / total_days), 2)
+            except Exception:
+                refund_credit = 0.0
+
+            delta = round(new_total - refund_credit, 2)
+            if abs(delta) < 1:
+                direction = "none"
+            elif delta > 0:
+                direction = "charge"
+            else:
+                direction = "refund"
+                delta = abs(delta)
+            billing_delta = {
+                "direction": direction, "amount": delta,
+                "old_total": old_total, "new_total": new_total,
+                "refund_credit": refund_credit,
+                "narrative": (
+                    f"Plan changed from {old_plan.title()} ({old_cycle}, {old_months}m) "
+                    f"to {new_plan.title()} ({new_cycle}, {new_months}m). "
+                    + (f"Charge Rs. {delta:.2f}" if direction == "charge"
+                       else f"Refund Rs. {delta:.2f} (unused prorated credit)" if direction == "refund"
+                       else "No net billing change.")
+                ),
+            }
+
+        await log_audit(
+            "admin_edited", sa["username"], target=username,
+            details=(f"plan={new_plan}, cycle={new_cycle}, months={new_months}, "
+                     f"billing_delta={billing_delta['direction']}:{billing_delta['amount']}"),
+            ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, message=f"Admin '{username}' updated", data={
+            "username": username,
+            "plan": new_plan, "billing_cycle": new_cycle,
+            "subscription_months": new_months,
+            "features": update.get("features", target.get("features", [])),
+            "billing_delta": billing_delta,
+        })
+    except Exception as e:
+        logger.error(f"Error editing admin: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 
 
 @router.put("/super-admin/admins/{username}/toggle-active")

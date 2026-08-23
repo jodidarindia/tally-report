@@ -32,6 +32,8 @@ from routes.ca_corner import router as ca_corner_router
 from routes.ca_reports import router as ca_reports_router
 from routes.gdrive import router as gdrive_router
 from routes.questionnaire import router as questionnaire_router
+from routes.billing import router as billing_router
+from routes.support_tickets import router as support_tickets_router
 from routes.dispatch import router as dispatch_router
 from routes.salesman_orders import router as salesman_orders_router
 from routes.backups import router as backups_router
@@ -72,6 +74,8 @@ api_router.include_router(ca_corner_router)
 api_router.include_router(ca_reports_router)
 api_router.include_router(gdrive_router)
 api_router.include_router(questionnaire_router)
+api_router.include_router(billing_router)
+api_router.include_router(support_tickets_router)
 api_router.include_router(dispatch_router)
 api_router.include_router(salesman_orders_router)
 api_router.include_router(backups_router)

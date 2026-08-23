@@ -13,12 +13,24 @@ const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
 const PLANS = [
   {
+    id: 'trial',
+    name: 'Free Trial',
+    monthly: 0,
+    annual: 0,
+    desc: 'Full Enterprise access for 14 days · no card required',
+    features: ['Every Enterprise feature — no restrictions', 'Full desktop-agent sync (Tally + Busy)', 'Live demand forecast + AI reports', 'Priority onboarding help', 'Convert to a paid plan any time'],
+    maxCompanies: 1,
+    maxEmployees: 10,
+    popular: false,
+    trialDays: 14
+  },
+  {
     id: 'starter',
     name: 'Starter',
     monthly: 999,
     annual: 9990,
     desc: 'Perfect for small businesses getting started',
-    features: ['Dashboard & Overview', 'Sales Voucher Tracking', 'Inventory Management', 'Tally* / Busy* Sync', 'Setup & Configuration', 'Daily MongoDB Backups'],
+    features: ['Dashboard & Sales Overview', 'Voucher-level Sales Tracking', 'Inventory Movement Reports', 'Auto-Sync from Tally or Busy', 'Setup & Onboarding Help', 'Daily encrypted backups', '1 Company · 2 Employees'],
     maxCompanies: 1,
     maxEmployees: 2,
     popular: false
@@ -28,9 +40,9 @@ const PLANS = [
     name: 'Professional',
     monthly: 2499,
     annual: 24990,
-    desc: 'For growing businesses needing deeper insights',
-    features: ['Everything in Starter', 'Customer CRM & Outstanding', 'Inventory Movement Analytics', 'A/B/C/D Pareto Categorisation', 'Multi-Company Support (3)', 'Excel & PDF Exports', 'DPDP Data Export (.zip)'],
-    maxCompanies: 3,
+    desc: 'For growing businesses needing CRM + salesman ordering',
+    features: ['Everything in Starter', 'Customer CRM + Outstanding Ledger', 'A/B/C Inventory Pareto', 'Analytics Deep-Dive', 'Salesman Order System (Mobile)', 'Beat Plans + Beat Run tracker', 'Excel + PDF Exports', 'DPDP Data Export', '1 Company · 5 Employees'],
+    maxCompanies: 1,
     maxEmployees: 5,
     popular: true
   },
@@ -39,10 +51,10 @@ const PLANS = [
     name: 'Enterprise',
     monthly: 3799,
     annual: 37990,
-    desc: 'Full suite with AI and unlimited features',
-    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR, Docs)', 'Salesman Order System (Mobile)', 'Beat Plans + Beat Run — mandatory order/payment tracking', 'Close-of-Day PDF & Excel reports', 'Salesman Copy-From (one-click onboarding)', 'Employee Activate/Deactivate toggle', 'AI-Powered Reports (GPT-5.2)', 'Insider Result BI Analytics', 'CA Corner — 100% Tally/Busy Parity', 'Tally Agent v9.8.30 (forward-dated safe) + Busy Agent v1.3.1', 'Multi-Company Support (10)', 'Priority Support & Training'],
-    maxCompanies: 10,
-    maxEmployees: 20,
+    desc: 'Every FLOWRA capability — for teams that want the full suite',
+    features: ['Everything in Professional', 'Dispatch Terminal (Kanban, LR docs)', 'Inventory Demand Forecast (Holt-Winters + festival lens)', 'Per-SKU deep-dive with P25–P75 confidence bands', 'AI Reports powered by GPT-5.2', 'Insider Result BI Analytics', 'CA Corner — 100% Tally/Busy parity for CMA, GST, P&L', 'Close-of-Day PDF + Excel reports', 'Google Drive integration for backups', 'Priority support + custom onboarding', '1 Company · 10 Employees'],
+    maxCompanies: 1,
+    maxEmployees: 10,
     popular: false
   }
 ];
