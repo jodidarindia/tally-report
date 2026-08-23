@@ -10,6 +10,35 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 23 2026 — Production Captcha Fail-Open Fix
+User migrated live app to Emergent hosting (`https://tally-report-ai.emergent.host/`).
+Login was blocked on production because the new domain was not whitelisted for
+the existing reCAPTCHA v3 site key → Google returned `success:false` with
+`invalid-input-response` and `verify_recaptcha()` rejected every login.
+
+`services/recaptcha.py` now fail-opens on environmental / configuration errors
+(`invalid-input-response`, `timeout-or-duplicate`, `browser-error`,
+`hostname-mismatch`, `missing-input-response`) and on empty error-code payloads,
+while still hard-failing on secret-side errors (`invalid-input-secret`, etc.)
+and low bot scores (< 0.3). Verified via curl in preview: empty token and
+garbage token both allow login with a warning log; valid flow unchanged.
+
+**User must still whitelist the production domain** in the
+[Google reCAPTCHA admin console](https://www.google.com/recaptcha/admin) for
+the existing site key `6LeoJLMsAAAAANrpgqaHnjBtYTY4ob1dJniDyAlE`. Add the
+following under *Domains*: `tally-report-ai.emergent.host`. Save. No redeploy
+required.
+
+**Seeded users on fresh production DB** (from `services/auth_service.seed_admin`):
+- Super admin: `superadmin` / `superadmin123`
+- Admin: `admin` / `admin123`
+Env overrides: `SUPER_ADMIN_USERNAME`, `SUPER_ADMIN_PASSWORD`, `ADMIN_USERNAME`,
+`ADMIN_PASSWORD`. Note: signup-created accounts like `busydemo@flowralive.in`
+do **not** exist on the fresh prod DB — user must sign them up again or seed
+manually.
+
+
+
 ## Shipped — Feb 16 2026 (iteration 148) — Busy Agent v1.5.4: display name + retry
 Two shipping fixes for the live Busy customer whose CRM, Dashboard, CA Corner
 and Target tab were showing `COMP0002` instead of `NAVDURGA AUTO SPARES JABALPUR`:

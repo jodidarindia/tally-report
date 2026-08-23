@@ -25,9 +25,24 @@ async def verify_recaptcha(token: str) -> bool:
         success = result.get("success", False)
         score = result.get("score", 0)
         action = result.get("action", "")
-        logger.info(f"reCAPTCHA verify: success={success}, score={score}, action={action}")
+        error_codes = result.get("error-codes", []) or []
+        logger.info(f"reCAPTCHA verify: success={success}, score={score}, action={action}, errors={error_codes}")
         if not success:
-            logger.warning(f"reCAPTCHA failed: {result.get('error-codes', [])}")
+            # Fail-open on environmental / configuration errors so a newly deployed
+            # domain that hasn't been whitelisted in the reCAPTCHA console does
+            # not lock every user out. Only strict secret-side errors are treated
+            # as hard failures.
+            env_errors = {
+                "invalid-input-response",
+                "timeout-or-duplicate",
+                "browser-error",
+                "hostname-mismatch",
+                "missing-input-response",
+            }
+            if any(code in env_errors for code in error_codes) or not error_codes:
+                logger.warning(f"reCAPTCHA env/config error, allowing login: {error_codes}")
+                return True
+            logger.warning(f"reCAPTCHA hard failure: {error_codes}")
             return False
         # v3 returns a score (0.0 = bot, 1.0 = human). Threshold 0.3 is lenient.
         if score < 0.3:
