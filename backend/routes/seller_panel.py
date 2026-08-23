@@ -20,7 +20,27 @@ PLAN_PRICING = {
     "starter": {"monthly": 999, "annual": 9990, "name": "Starter"},
     "professional": {"monthly": 2499, "annual": 24990, "name": "Professional"},
     "enterprise": {"monthly": 3799, "annual": 37990, "name": "Enterprise"},
+    "trial": {"monthly": 0, "annual": 0, "name": "Free Trial (14 days)"},
 }
+
+INDIAN_INDUSTRIES = [
+    "Automotive & Auto Parts", "Agriculture & Agri-Tech",
+    "Chemicals & Fertilizers", "Construction Materials",
+    "Consumer Electronics", "Dairy & Food Processing",
+    "E-Commerce & Retail", "Education & EdTech",
+    "Electrical & Electronics", "FMCG",
+    "Garments & Textiles", "Hardware & Tools",
+    "Healthcare & Pharma", "Hospitality & Travel",
+    "Iron & Steel", "IT Services & Software",
+    "Jewellery & Bullion", "Logistics & Transportation",
+    "Machinery & Industrial Goods", "Paints & Coatings",
+    "Paper & Packaging", "Plastics & Polymers",
+    "Printing & Publishing", "Real Estate & Infra",
+    "Rubber & Tyres", "Solar & Renewable Energy",
+    "Sports & Fitness", "Stationery",
+    "Tiles & Sanitaryware", "Wholesale & Distribution",
+    "Other",
+]
 
 
 async def _require_super_admin(request: Request):
@@ -266,46 +286,83 @@ async def customer_ledger(username: str, request: Request):
 
 @router.post("/super-admin/invoices/generate")
 async def generate_invoice(request: Request):
-    """Generate an invoice for a customer."""
+    """Generate an invoice for a customer. Accepts an optional
+    `discount_pct` (0-20). Final billed = base * (1 - discount_pct/100).
+    Base amount MUST come from the customer's plan for consistency —
+    the frontend disables the amount field."""
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
         body = await request.json()
         customer_username = body.get("customer_username", "")
-        amount = float(body.get("amount", 0))
         description = body.get("description", "")
         period_from = body.get("period_from", "")
         period_to = body.get("period_to", "")
         items = body.get("items", [])
+        try:
+            discount_pct = float(body.get("discount_pct", 0) or 0)
+        except (TypeError, ValueError):
+            discount_pct = 0.0
+        # Cap at 20 % (business rule from SuperAdmin spec).
+        discount_pct = max(0.0, min(20.0, discount_pct))
 
-        if not customer_username or amount <= 0:
-            return APIResponse(success=False, error="Customer and valid amount required")
+        if not customer_username:
+            return APIResponse(success=False, error="Customer required")
 
         customer = await db.users.find_one(
             {"username": customer_username, "role": "admin"},
-            {"_id": 0, "name": 1, "plan": 1, "tenant_id": 1, "billing_cycle": 1}
+            {"_id": 0, "name": 1, "plan": 1, "tenant_id": 1, "billing_cycle": 1,
+             "company_name": 1, "mobile": 1, "gst": 1, "address": 1, "city": 1}
         )
         if not customer:
             return APIResponse(success=False, error="Customer not found")
 
+        # Base amount is derived from the customer's plan — SuperAdmin
+        # doesn't type an amount anymore.
+        plan_id = customer.get("plan", "starter")
+        cycle = customer.get("billing_cycle", "annual")
+        pricing = PLAN_PRICING.get(plan_id, PLAN_PRICING["starter"])
+        base_amount = float(pricing[cycle] if cycle in ("monthly", "annual") else pricing["annual"])
+        # A caller can still override for one-off items (e.g. onboarding
+        # fees) via body["amount"], but the default is plan-driven.
+        override = body.get("amount")
+        if override is not None:
+            try:
+                base_amount = float(override)
+            except (TypeError, ValueError):
+                pass
+        discount_amount = round(base_amount * discount_pct / 100.0, 2)
+        final_amount = round(base_amount - discount_amount, 2)
+
         # Generate invoice number
         count = await db.invoices.count_documents({}) + 1
         invoice_number = f"FLW-{datetime.now().strftime('%Y%m')}-{count:04d}"
+
+        default_desc = description or f"{pricing['name']} Plan Subscription ({cycle})"
+        line_items = items if items else [{"description": default_desc, "amount": base_amount}]
 
         invoice = {
             "invoice_id": str(uuid.uuid4()),
             "invoice_number": invoice_number,
             "customer_username": customer_username,
             "customer_name": customer.get("name", customer_username),
+            "customer_company": customer.get("company_name", ""),
+            "customer_gst": customer.get("gst", ""),
+            "customer_address": customer.get("address", ""),
+            "customer_city": customer.get("city", ""),
+            "customer_mobile": customer.get("mobile", ""),
             "tenant_id": customer.get("tenant_id", ""),
-            "amount": amount,
-            "description": description,
+            "amount": final_amount,           # <-- what the customer owes
+            "base_amount": base_amount,
+            "discount_pct": discount_pct,
+            "discount_amount": discount_amount,
+            "description": default_desc,
             "period_from": period_from,
             "period_to": period_to,
-            "items": items if items else [{"description": description or f"{PLAN_PRICING.get(customer.get('plan','enterprise'),{}).get('name','Enterprise')} Plan Subscription", "amount": amount}],
-            "plan": customer.get("plan", ""),
-            "billing_cycle": customer.get("billing_cycle", "annual"),
+            "items": line_items,
+            "plan": plan_id,
+            "billing_cycle": cycle,
             "invoice_date": now_ist_iso(),
             "status": "unpaid",
             "generated_by": sa["username"],
@@ -316,11 +373,16 @@ async def generate_invoice(request: Request):
         await log_audit(
             "invoice_generated", sa["username"],
             target=customer_username,
-            details=f"Invoice {invoice_number}, Amount: Rs.{amount}",
+            details=f"Invoice {invoice_number}, Base: Rs.{base_amount}, Discount: {discount_pct}%, Final: Rs.{final_amount}",
             ip_address=get_client_ip(request)
         )
 
-        return APIResponse(success=True, message=f"Invoice {invoice_number} generated", data={"invoice_id": invoice["invoice_id"], "invoice_number": invoice_number})
+        return APIResponse(success=True, message=f"Invoice {invoice_number} generated",
+                           data={"invoice_id": invoice["invoice_id"],
+                                 "invoice_number": invoice_number,
+                                 "base_amount": base_amount,
+                                 "discount_pct": discount_pct,
+                                 "final_amount": final_amount})
     except Exception as e:
         logger.error(f"Generate invoice error: {e}")
         return APIResponse(success=False, error=str(e))
@@ -375,7 +437,20 @@ async def update_invoice_status(invoice_id: str, request: Request):
 
 @router.get("/super-admin/invoices/{invoice_id}/pdf")
 async def download_invoice_pdf(invoice_id: str, request: Request):
-    """Generate and download invoice PDF."""
+    """Generate and download invoice PDF.
+
+    Redesigned per SuperAdmin brief:
+      - Header: "FLOWRA" in a large font with sub-line "(A brand owned
+        by JODIDAR INDIA)".
+      - Right-side seller block: registered GSTIN + registered address
+        pulled from env (INVOICE_SELLER_GSTIN / INVOICE_SELLER_ADDRESS)
+        with sensible placeholders — user configures once in prod.
+      - Optional FLOWRA logo top-left (INVOICE_LOGO_URL env).
+      - Discount row shown on the totals table when > 0.
+      - PDF metadata /Title = invoice number → browser tab shows the
+        invoice number instead of "anonymous".
+      - Filename = "<invoice_number>.pdf".
+    """
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -384,87 +459,200 @@ async def download_invoice_pdf(invoice_id: str, request: Request):
         if not invoice:
             return APIResponse(success=False, error="Invoice not found")
 
+        import os
+        import urllib.request
+        import tempfile
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
         from reportlab.lib.units import mm
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm, leftMargin=20*mm, rightMargin=20*mm)
-        styles = getSampleStyleSheet()
+        # Seller identity — configurable via env so JODIDAR INDIA GST /
+        # address can be set once in prod without a redeploy.
+        seller_name = os.environ.get("INVOICE_SELLER_NAME", "JODIDAR INDIA")
+        seller_gstin = os.environ.get("INVOICE_SELLER_GSTIN", "GSTIN to be configured")
+        seller_addr = os.environ.get("INVOICE_SELLER_ADDRESS",
+                                     "Registered address to be configured — set INVOICE_SELLER_ADDRESS in env")
+        seller_email = os.environ.get("INVOICE_SELLER_EMAIL", "support@flowralive.in")
+        seller_phone = os.environ.get("INVOICE_SELLER_PHONE", "+91 81204 70018")
+        logo_url = os.environ.get(
+            "INVOICE_LOGO_URL",
+            "https://customer-assets.emergentagent.com/job_tally-report-ai/artifacts/pk69kw8u_IMG-20260407-WA0022.jpg"
+        )
 
-        title_style = ParagraphStyle('InvoiceTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor('#1e40af'), spaceAfter=4*mm)
-        subtitle_style = ParagraphStyle('Subtitle', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#64748b'), spaceAfter=8*mm)
-        heading_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontSize=12, textColor=colors.HexColor('#1e293b'), spaceBefore=6*mm, spaceAfter=3*mm)
-        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#334155'))
+        buffer = io.BytesIO()
+        inv_num = invoice.get("invoice_number", "invoice")
+        # `title` here becomes the PDF's /Title metadata so browser tabs
+        # display the invoice number instead of "anonymous".
+        doc = SimpleDocTemplate(
+            buffer, pagesize=A4,
+            topMargin=15 * mm, bottomMargin=18 * mm,
+            leftMargin=18 * mm, rightMargin=18 * mm,
+            title=inv_num,
+            author=seller_name,
+            subject=f"Tax Invoice {inv_num}",
+        )
+        styles = getSampleStyleSheet()
+        brand_style = ParagraphStyle('Brand',   parent=styles['Heading1'], fontSize=34, textColor=colors.HexColor('#0f172a'), leading=36, spaceAfter=0)
+        brand_sub_style = ParagraphStyle('BrandSub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#64748b'), spaceAfter=0)
+        seller_style = ParagraphStyle('Seller', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#334155'), alignment=2, leading=12)  # 2 = right
+        h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor('#1e293b'), spaceBefore=4 * mm, spaceAfter=2 * mm)
+        normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#334155'), leading=13)
+        muted_style = ParagraphStyle('Muted', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#94a3b8'))
 
         elements = []
 
-        # Header
-        elements.append(Paragraph("FLOWRA", title_style))
-        elements.append(Paragraph("Tally Prime Analytics Platform | Jodidar India", subtitle_style))
+        # ── Header row: logo + brand block on left, seller block on right ──
+        logo_flowable = None
+        try:
+            if logo_url:
+                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                urllib.request.urlretrieve(logo_url, tmp.name)
+                logo_flowable = Image(tmp.name, width=20 * mm, height=20 * mm)
+        except Exception as le:
+            logger.warning(f"invoice logo fetch failed: {le}")
 
-        # Invoice details table
-        inv_date = invoice.get("invoice_date", "")[:10] if invoice.get("invoice_date") else ""
-        inv_data = [
-            ["Invoice Number:", invoice.get("invoice_number", ""), "Date:", inv_date],
-            ["Status:", invoice.get("status", "unpaid").upper(), "Plan:", invoice.get("plan", "").capitalize()],
+        brand_block = [
+            Paragraph("FLOWRA", brand_style),
+            Paragraph("(A brand owned by JODIDAR INDIA)", brand_sub_style),
         ]
-        inv_table = Table(inv_data, colWidths=[80, 160, 50, 160])
-        inv_table.setStyle(TableStyle([
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+        left_cell = [logo_flowable, ""] if logo_flowable else brand_block
+        # If logo present, put brand text below/right of it
+        if logo_flowable:
+            header_left = Table([[logo_flowable, brand_block]], colWidths=[24 * mm, None])
+            header_left.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ]))
+        else:
+            header_left = brand_block
+
+        seller_html = (
+            f"<b>{seller_name}</b><br/>"
+            f"GSTIN: {seller_gstin}<br/>"
+            f"{seller_addr}<br/>"
+            f"{seller_email} · {seller_phone}"
+        )
+        header_right = Paragraph(seller_html, seller_style)
+
+        header_table = Table(
+            [[header_left, header_right]],
+            colWidths=[100 * mm, 74 * mm],
+        )
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(header_table)
+        # Divider
+        divider = Table([[""]], colWidths=[174 * mm], rowHeights=[1])
+        divider.setStyle(TableStyle([('LINEABOVE', (0, 0), (-1, 0), 1, colors.HexColor('#e2e8f0'))]))
+        elements.append(divider)
+        elements.append(Spacer(1, 4 * mm))
+
+        # ── TAX INVOICE title band ──
+        title_band = ParagraphStyle('InvBand', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1e40af'), alignment=1, spaceAfter=4 * mm)
+        elements.append(Paragraph("TAX INVOICE", title_band))
+
+        # ── Invoice meta table ──
+        inv_date_iso = invoice.get("invoice_date", "")
+        inv_date = inv_date_iso[:10] if inv_date_iso else ""
+        meta_rows = [
+            ["Invoice #", inv_num, "Date", inv_date],
+            ["Plan", (invoice.get("plan") or "").title(), "Billing", (invoice.get("billing_cycle") or "").title()],
+            ["Status", (invoice.get("status") or "unpaid").upper(), "Period",
+             f"{invoice.get('period_from', '') or '—'} → {invoice.get('period_to', '') or '—'}"],
+        ]
+        meta_table = Table(meta_rows, colWidths=[22 * mm, 62 * mm, 22 * mm, 68 * mm])
+        meta_table.setStyle(TableStyle([
+            ('FONTSIZE', (0, 0), (-1, -1), 9.5),
             ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#64748b')),
             ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#64748b')),
             ('FONTNAME', (1, 0), (1, -1), 'Helvetica-Bold'),
             ('FONTNAME', (3, 0), (3, -1), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
         ]))
-        elements.append(inv_table)
-        elements.append(Spacer(1, 6*mm))
+        elements.append(meta_table)
+        elements.append(Spacer(1, 6 * mm))
 
-        # Bill To
-        elements.append(Paragraph("Bill To", heading_style))
-        elements.append(Paragraph(f"<b>{invoice.get('customer_name', '')}</b>", normal_style))
-        elements.append(Paragraph(f"{invoice.get('customer_username', '')}", normal_style))
-        if invoice.get("period_from") or invoice.get("period_to"):
-            elements.append(Paragraph(f"Period: {invoice.get('period_from', '')} to {invoice.get('period_to', '')}", normal_style))
-        elements.append(Spacer(1, 6*mm))
+        # ── Bill To block ──
+        elements.append(Paragraph("Bill To", h2_style))
+        bt_lines = [
+            f"<b>{invoice.get('customer_company') or invoice.get('customer_name') or ''}</b>",
+        ]
+        if invoice.get("customer_name") and invoice.get("customer_company"):
+            bt_lines.append(f"Attn: {invoice['customer_name']}")
+        addr_bits = [b for b in [invoice.get('customer_address', ''), invoice.get('customer_city', '')] if b]
+        if addr_bits:
+            bt_lines.append(", ".join(addr_bits))
+        if invoice.get("customer_gst"):
+            bt_lines.append(f"GSTIN: {invoice['customer_gst']}")
+        bt_lines.append(invoice.get('customer_username', ''))
+        if invoice.get("customer_mobile"):
+            bt_lines.append(invoice['customer_mobile'])
+        elements.append(Paragraph("<br/>".join(bt_lines), normal_style))
+        elements.append(Spacer(1, 6 * mm))
 
-        # Items table
-        elements.append(Paragraph("Items", heading_style))
+        # ── Items table ──
+        elements.append(Paragraph("Items", h2_style))
         table_data = [["#", "Description", "Amount (Rs.)"]]
         items = invoice.get("items", [])
         for idx, item in enumerate(items, 1):
-            table_data.append([str(idx), item.get("description", ""), f"Rs.{item.get('amount', 0):,.2f}"])
-        table_data.append(["", "TOTAL", f"Rs.{invoice.get('amount', 0):,.2f}"])
+            table_data.append([str(idx), item.get("description", ""), f"{item.get('amount', 0):,.2f}"])
+        base_amount = float(invoice.get("base_amount", invoice.get("amount", 0)))
+        discount_pct = float(invoice.get("discount_pct", 0))
+        discount_amount = float(invoice.get("discount_amount", 0))
+        final_amount = float(invoice.get("amount", 0))
 
-        item_table = Table(table_data, colWidths=[30, 330, 100])
-        item_table.setStyle(TableStyle([
+        table_data.append(["", "Subtotal", f"{base_amount:,.2f}"])
+        if discount_pct > 0:
+            table_data.append(["", f"Discount ({discount_pct:.1f}%)", f"-{discount_amount:,.2f}"])
+        table_data.append(["", "TOTAL PAYABLE", f"{final_amount:,.2f}"])
+
+        item_table = Table(table_data, colWidths=[12 * mm, 128 * mm, 34 * mm])
+        style_cmds = [
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 9.5),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('TOPPADDING', (0, 0), (-1, -1), 7),
             ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0f9ff')),
             ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
             ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
-        ]))
+        ]
+        # Grey the discount row if present
+        if discount_pct > 0:
+            style_cmds.append(('TEXTCOLOR', (0, -2), (-1, -2), colors.HexColor('#dc2626')))
+        item_table.setStyle(TableStyle(style_cmds))
         elements.append(item_table)
-        elements.append(Spacer(1, 10*mm))
+        elements.append(Spacer(1, 10 * mm))
 
-        # Footer
-        footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#94a3b8'), alignment=1)
-        elements.append(Paragraph("Thank you for your business!", normal_style))
-        elements.append(Spacer(1, 4*mm))
-        elements.append(Paragraph("FLOWRA by Jodidar India | Tally is the trademark of its respective owner", footer_style))
+        # ── Footer ──
+        elements.append(Paragraph("Thank you for choosing FLOWRA.", normal_style))
+        elements.append(Spacer(1, 3 * mm))
+        elements.append(Paragraph(
+            "Payment terms: Due on receipt. Reply to this invoice for bank details or UPI. "
+            "This is a computer-generated invoice and does not require a signature.",
+            muted_style))
+        elements.append(Spacer(1, 3 * mm))
+        elements.append(Paragraph(
+            "FLOWRA is a brand owned and operated by JODIDAR INDIA. "
+            "Tally and Busy are trademarks of their respective owners.",
+            muted_style))
 
         doc.build(elements)
         buffer.seek(0)
 
-        filename = f"Invoice_{invoice.get('invoice_number', 'draft')}.pdf"
+        # File name = invoice number (spec).
+        filename = f"{inv_num}.pdf"
         return StreamingResponse(
             buffer,
             media_type="application/pdf",
@@ -585,3 +773,87 @@ async def customer_health(request: Request):
     except Exception as e:
         logger.error(f"Customer health error: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+
+@router.get("/super-admin/customers/search")
+async def customer_search(request: Request, q: str = "", limit: int = 20):
+    """Type-ahead customer picker for SuperAdmin's Record Payment and
+    Generate Invoice modals. Also returns each customer's current
+    balance / due (base contract value − total received) so the UI can
+    render live pre-fill data without a second round-trip.
+
+    Returns customers whose `username`, `name` or `company_name` contain
+    the query (case-insensitive). Limited to 20 results by default."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        q = (q or "").strip()
+        limit = max(1, min(50, int(limit or 20)))
+        filt = {"role": "admin"}
+        if q:
+            import re as _re
+            regex = _re.escape(q)
+            filt["$or"] = [
+                {"username":    {"$regex": regex, "$options": "i"}},
+                {"name":        {"$regex": regex, "$options": "i"}},
+                {"company_name":{"$regex": regex, "$options": "i"}},
+            ]
+        admins = await db.users.find(filt, {
+            "_id": 0, "username": 1, "name": 1, "company_name": 1,
+            "plan": 1, "billing_cycle": 1, "subscription_months": 1,
+            "active": 1, "is_trial": 1, "trial_end": 1,
+        }).limit(limit).to_list(limit)
+
+        out = []
+        for a in admins:
+            plan = a.get("plan", "starter")
+            cycle = a.get("billing_cycle", "annual")
+            months = int(a.get("subscription_months", 12) or 12)
+            pricing = PLAN_PRICING.get(plan, PLAN_PRICING["starter"])
+            base_price = float(pricing[cycle] if cycle in ("monthly", "annual") else pricing["annual"])
+            if cycle == "annual":
+                total_billed = base_price * (months / 12.0)
+            elif cycle == "monthly":
+                total_billed = base_price * months
+            else:
+                total_billed = base_price
+            # Sum payments — cheap because payments collection is small.
+            payments = await db.payments.find(
+                {"customer_username": a["username"]}, {"_id": 0, "amount": 1}
+            ).to_list(1000)
+            total_paid = sum(float(p.get("amount", 0) or 0) for p in payments)
+            balance_due = round(max(0.0, total_billed - total_paid), 2)
+            out.append({
+                "username": a["username"],
+                "name": a.get("name", ""),
+                "company_name": a.get("company_name", ""),
+                "plan": plan,
+                "plan_name": pricing["name"],
+                "billing_cycle": cycle,
+                "active": a.get("active", True),
+                "is_trial": bool(a.get("is_trial")),
+                "trial_end": a.get("trial_end", ""),
+                # base_price is the price PER cycle (monthly OR annual) —
+                # the Generate Invoice modal uses this to render the
+                # fixed amount that a super-admin can then discount.
+                "base_price": round(base_price, 2),
+                "total_billed": round(total_billed, 2),
+                "total_paid": round(total_paid, 2),
+                "balance_due": balance_due,
+            })
+        return APIResponse(success=True, data={"customers": out, "count": len(out)})
+    except Exception as e:
+        logger.error(f"customer search error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/super-admin/industries")
+async def list_industries(request: Request):
+    """Static curated list of Indian-market industries for the New
+    Customer form dropdown."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    return APIResponse(success=True, data={"industries": INDIAN_INDUSTRIES})

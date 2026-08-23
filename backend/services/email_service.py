@@ -632,3 +632,263 @@ async def send_lead_requirements_notification(prospect: dict, requirements, note
         cc=GLOBAL_ADMIN_CC,
         tag="insights-requirements",
     )
+
+
+
+# ─── Rich Welcome + 14-day Trial Reminder Templates (Phase A) ────────────
+
+def _fmt_kv_row(label: str, value: str) -> str:
+    """Small helper to render one row inside the details table."""
+    safe = "" if value is None else str(value)
+    return (
+        f'<tr>'
+        f'<td style="padding:6px 0;font-size:13px;color:#64748b;">{label}</td>'
+        f'<td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;">{safe}</td>'
+        f'</tr>'
+    )
+
+
+async def send_welcome_admin_rich(
+    to_email: str, name: str, password: str, plan: str,
+    plan_price_display: str, billing_cycle: str, subscription_display: str,
+    company_name: str = "", mobile: str = "", gst: str = "",
+    address: str = "", city: str = "", industry: str = "",
+    sales_count: int = 0, dispatch_count: int = 0,
+    is_trial: bool = False, trial_end_display: str = "",
+):
+    """Rich welcome mail sent when a Super Admin creates a customer.
+
+    Includes ALL the details captured on the form so the recipient can
+    verify what was recorded, plus their login credentials and the plan
+    details. When ``is_trial`` is True, adds a prominent trial countdown
+    banner and a 'convert now' CTA."""
+    trial_banner = ""
+    if is_trial:
+        trial_banner = f"""
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#ecfeff;border:1px solid #67e8f9;border-radius:8px;padding:14px 18px;margin-bottom:24px;">
+        <tr><td>
+          <div style="font-size:12px;color:#0e7490;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">14-Day Free Trial</div>
+          <div style="font-size:14px;color:#0f172a;line-height:1.55;">You have <strong>full Enterprise access</strong> until <strong>{trial_end_display}</strong>. Convert to a paid plan any time before then to keep your data and dashboards.</div>
+        </td></tr>
+      </table>"""
+
+    company_row  = _fmt_kv_row("Company",           company_name) if company_name else ""
+    mobile_row   = _fmt_kv_row("Mobile / WhatsApp", mobile)       if mobile else ""
+    gst_row      = _fmt_kv_row("GST",               gst)          if gst else ""
+    city_row     = _fmt_kv_row("City",              city)         if city else ""
+    address_row  = _fmt_kv_row("Address",           address)      if address else ""
+    industry_row = _fmt_kv_row("Industry",          industry)     if industry else ""
+    team_row     = _fmt_kv_row("Team split",
+                               f"{sales_count} sales · {dispatch_count} dispatch") if (sales_count or dispatch_count) else ""
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">Welcome to FLOWRA, {name.split()[0] if name else 'there'}!</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 24px;line-height:1.55;">
+        We've set up your FLOWRA workspace with the details you shared. Below is a copy for your records &mdash; please verify and reply to this email if anything looks off.
+      </p>
+
+      {trial_banner}
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <div style="font-size:12px;color:#1e40af;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Your Plan</div>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {_fmt_kv_row("Plan",           plan)}
+            {_fmt_kv_row("Price",          plan_price_display)}
+            {_fmt_kv_row("Billing cycle",  billing_cycle.title())}
+            {_fmt_kv_row("Subscription",   subscription_display)}
+          </table>
+        </td></tr>
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <div style="font-size:12px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Account Details</div>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {_fmt_kv_row("Name",  name)}
+            {_fmt_kv_row("Email", to_email)}
+            {company_row}
+            {mobile_row}
+            {gst_row}
+            {city_row}
+            {address_row}
+            {industry_row}
+            {team_row}
+          </table>
+        </td></tr>
+      </table>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+        <tr><td>
+          <div style="font-size:12px;color:#854d0e;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Your Login Credentials</div>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">Login URL</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;"><a href="https://insights.flowralive.in" style="color:#2563EB;text-decoration:none;">insights.flowralive.in</a></td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">User ID</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{to_email}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-size:13px;color:#713f12;">Password</td>
+              <td style="padding:6px 0;font-size:13px;color:#1e293b;font-weight:600;text-align:right;font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{password}</td>
+            </tr>
+          </table>
+          <p style="font-size:11px;color:#854d0e;margin:10px 0 0;line-height:1.5;">
+            For your safety, please change this password right after your first login under <strong>Profile &rarr; Change Password</strong>.
+          </p>
+        </td></tr>
+      </table>
+
+      <h3 style="font-size:15px;color:#1e293b;margin:0 0 12px;">Get started in 3 steps</h3>
+      <ol style="margin:0 0 20px;padding-left:22px;font-size:14px;color:#334155;line-height:1.7;">
+        <li>Log in to <a href="https://insights.flowralive.in" style="color:#2563EB;text-decoration:none;">insights.flowralive.in</a> with the credentials above.</li>
+        <li>Open <strong>Setup</strong> and download the FLOWRA Desktop Agent for your ERP (Tally or Busy).</li>
+        <li>Run the agent once to sync your books &mdash; your dashboards populate within minutes.</li>
+      </ol>
+
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="https://insights.flowralive.in" style="display:inline-block;background:#2563EB;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">Log in to FLOWRA</a>
+        </td></tr>
+      </table>
+
+      <p style="font-size:13px;color:#94a3b8;margin:20px 0 0;text-align:center;">Questions? Reply to this email or WhatsApp us on +91 81204 70018.</p>
+    """
+    subject_prefix = "Your 14-day FLOWRA trial is live" if is_trial else "Welcome to FLOWRA"
+    subject = f"{subject_prefix} \u2014 {plan}"
+    # We DO cc the global admin here (business record) but suppress if
+    # you'd rather keep passwords private — callers get to choose via
+    # standard cc arg.
+    return await send_email(to_email, subject, _base_template(content), cc=None, tag="welcome-rich")
+
+
+# ─── 14-day trial reminder emails (Day 5 / 8 / 12 / 14) ─────────────────
+
+_TRIAL_CTA_URL = "https://insights.flowralive.in/profile?upgrade=1"
+
+
+def _trial_reminder_footer() -> str:
+    return (
+        '<p style="font-size:12px;color:#94a3b8;margin:24px 0 0;text-align:center;line-height:1.55;">'
+        'Not sure which plan fits? Reply to this email and we\'ll help you pick. '
+        '&mdash; The FLOWRA team.</p>'
+    )
+
+
+async def send_trial_reminder_day5(to_email: str, name: str, days_left: int, trial_end_display: str):
+    """Curiosity / education. Show them what to explore next."""
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">How's the first week going, {name.split()[0] if name else 'there'}?</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        You have <strong>{days_left} day{'s' if days_left != 1 else ''}</strong> left in your FLOWRA free trial (ends {trial_end_display}). Here's what most teams try in week 1 &mdash; if you haven't yet, now is a great time.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <tr><td>
+          <ol style="margin:0;padding-left:22px;font-size:14px;color:#334155;line-height:1.9;">
+            <li>Open the <strong>Dashboard</strong> and drill into a single-day sales trend.</li>
+            <li>Try the <strong>AI Reports</strong> tab &mdash; ask "Top 10 slow-moving items this quarter".</li>
+            <li>Head to <strong>Analytics &rarr; Demand Forecast</strong> and click any row for a per-SKU deep dive.</li>
+            <li>Add one <strong>employee</strong> under Profile so they can log in with you.</li>
+          </ol>
+        </td></tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="https://insights.flowralive.in" style="display:inline-block;background:#2563EB;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">Continue the tour</a>
+        </td></tr>
+      </table>
+      {_trial_reminder_footer()}
+    """
+    return await send_email(to_email,
+        f"Day 5 of your FLOWRA trial \u2014 explore these 4 things",
+        _base_template(content), cc="auto", tag="trial-d5")
+
+
+async def send_trial_reminder_day8(to_email: str, name: str, days_left: int, trial_end_display: str):
+    """Halfway mark / progress-nudge with social proof."""
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">You're past halfway, {name.split()[0] if name else 'there'}.</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        Only <strong>{days_left} day{'s' if days_left != 1 else ''}</strong> left in your free trial (ends {trial_end_display}). Most FLOWRA customers convert around this point &mdash; because by now they've caught at least one payment leak or slow-mover their spreadsheet missed.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#ecfdf5;border-left:4px solid #10b981;border-radius:6px;padding:16px 20px;margin-bottom:20px;">
+        <tr><td>
+          <div style="font-size:13px;color:#065f46;line-height:1.55;">
+            <strong>What our customers say:</strong> <em>"FLOWRA paid for itself in the first month &mdash; we spotted &#8377;3L stuck with a single party and reworked our payment cycle."</em> &mdash; A dealer in Raipur.
+          </div>
+        </td></tr>
+      </table>
+      <p style="color:#334155;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        Lock in your plan now and we'll port every dashboard, sync-history entry and forecast snapshot you've generated so far. Nothing to redo.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="{_TRIAL_CTA_URL}" style="display:inline-block;background:#2563EB;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">See plans &amp; upgrade</a>
+        </td></tr>
+      </table>
+      {_trial_reminder_footer()}
+    """
+    return await send_email(to_email,
+        f"{days_left} days left on your FLOWRA trial \u2014 pick your plan",
+        _base_template(content), cc="auto", tag="trial-d8")
+
+
+async def send_trial_reminder_day12(to_email: str, name: str, days_left: int, trial_end_display: str):
+    """Loss aversion / anchor. 2 days to go."""
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Two days left on your FLOWRA trial</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        Hi {name.split()[0] if name else 'there'} &mdash; your free trial ends on <strong>{trial_end_display}</strong> ({days_left} day{'s' if days_left != 1 else ''} to go). After that, log-in is paused until you pick a paid plan.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:18px 20px;margin-bottom:20px;">
+        <tr><td>
+          <div style="font-size:14px;color:#7f1d1d;line-height:1.6;">
+            <strong>Here's what stays on FLOWRA when you convert:</strong>
+            <ul style="margin:8px 0 0;padding-left:20px;">
+              <li>Every sync, forecast and report you've created.</li>
+              <li>Your desktop-agent connection &mdash; no re-install.</li>
+              <li>Employee logins you've already provisioned.</li>
+            </ul>
+          </div>
+        </td></tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="{_TRIAL_CTA_URL}" style="display:inline-block;background:#dc2626;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">Upgrade in 60 seconds</a>
+        </td></tr>
+      </table>
+      {_trial_reminder_footer()}
+    """
+    return await send_email(to_email,
+        f"48 hours left \u2014 keep your FLOWRA data",
+        _base_template(content), cc="auto", tag="trial-d12")
+
+
+async def send_trial_reminder_day14(to_email: str, name: str, trial_end_display: str):
+    """Final call. Urgency + lockout notice."""
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Your FLOWRA trial ends tonight</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        Hi {name.split()[0] if name else 'there'} &mdash; today is <strong>day 14 of your free FLOWRA trial</strong>. Log-in will be paused from {trial_end_display} onwards unless you convert to a paid plan.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef2f2;border:1px solid #f87171;border-radius:8px;padding:18px 20px;margin-bottom:20px;">
+        <tr><td>
+          <div style="font-size:14px;color:#7f1d1d;line-height:1.6;">
+            Your dashboards, syncs and forecasts are safe &mdash; we keep them ready to switch on the moment you upgrade. But sign-in stops working after today.
+          </div>
+        </td></tr>
+      </table>
+      <p style="color:#334155;font-size:14px;margin:0 0 20px;line-height:1.6;">
+        Take 60 seconds to pick a plan &mdash; Starter starts at &#8377;999/mo, Professional at &#8377;2,499/mo, Enterprise at &#8377;3,799/mo. Reply to this email if you'd like a walkthrough before deciding.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0;">
+          <a href="{_TRIAL_CTA_URL}" style="display:inline-block;background:#dc2626;color:#ffffff;padding:14px 40px;border-radius:8px;font-size:15px;font-weight:700;text-decoration:none;">Convert now &mdash; keep access</a>
+        </td></tr>
+      </table>
+      {_trial_reminder_footer()}
+    """
+    return await send_email(to_email,
+        "Final day \u2014 your FLOWRA trial ends tonight",
+        _base_template(content), cc="auto", tag="trial-d14")

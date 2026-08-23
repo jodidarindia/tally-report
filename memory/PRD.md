@@ -10,6 +10,102 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 23 2026 — SuperAdmin Overhaul (4 phases)
+
+Massive multi-phase update to the SuperAdmin Command Center per direct user brief.
+Testing agent iteration_120.json — 15/15 backend + 4/5 frontend E2E green;
+one HIGH frontend bug (`RenewalPopup` firing on trial users) caught & fixed
+in-session via a one-line guard in `App.js`.
+
+**Phase A — Backend foundations**
+- Extended user schema (accepts on Mongo, no migration needed): `mobile`,
+  `address`, `city`, `company_name`, `gst`, `industry`, `sales_count`,
+  `dispatch_count`, `is_trial`, `trial_start`, `trial_end`,
+  `trial_reminders_sent`, `converted_at`.
+- New `services/trial_service.py` — `compute_trial_window`,
+  `trial_days_remaining`, `is_trial_expired`,
+  `get_users_due_for_reminder`, `mark_reminder_sent`.
+- New rich welcome mail `send_welcome_admin_rich` — echoes every
+  captured field + plan details + login credentials with a big
+  cyan trial banner for trial customers.
+- Four different reminder-mail templates (`send_trial_reminder_day5/8/12/14`)
+  each with a distinct psychological angle: education → progress-nudge →
+  loss-aversion → final urgency.
+- `routes/auth.py` login guard: past-`trial_end` returns
+  `success:false, error:"14-day FLOWRA free trial ended…"`,
+  `data.trial_expired: true`. Old subscription-expired guard now skips
+  trial users (their `subscription_months=0` would false-positive).
+- `/auth/me` and `/auth/login` echo `is_trial` and `trial_end` so the
+  frontend can render banners without extra roundtrips.
+- Startup task `_trial_reminder_loop` runs every 6 h, matches users
+  hitting day 5/8/12/14, sends the appropriate mail, dedup'd via
+  `trial_reminders_sent`.
+
+**Phase B — SuperAdmin UI**
+- New Customer form now captures 8 additional fields: mobile
+  (WhatsApp), city, complete address, company name, GST (with URP
+  hint), business industry (dropdown of 31 curated Indian-market
+  industries fetched from `GET /super-admin/industries`), sales team
+  size, dispatch team size.
+- Plan grid grew from 3 to **4** buttons — Starter / Professional /
+  Enterprise / **Free Trial (14 days)**. Selecting trial hides the
+  monthly/annual toggle and duration select and shows a cyan info
+  banner explaining the lockout + reminder cadence.
+- Record Payment modal replaced with a **typeahead** customer picker
+  (`GET /super-admin/customers/search`) that pre-fills the amount with
+  the customer's live balance-due and shows a bordered preview
+  (plan, total billed, received, due) after selection.
+- Generate Invoice modal replaced with a typeahead picker + a
+  **live preview** panel: base amount is derived from the customer's
+  plan+cycle (frozen), a 0–20 % discount input recomputes the final
+  amount in real time, and the CTA label reads
+  "Generate Invoice · ₹<final>".
+- Invoice PDF fully redesigned in
+  `routes/seller_panel.download_invoice_pdf`:
+  - "FLOWRA" 34-pt masthead + "(A brand owned by JODIDAR INDIA)" sub-line
+  - FLOWRA logo top-left (from `INVOICE_LOGO_URL` env, default
+    points at the customer-supplied logo asset).
+  - Seller identity block right-side with GSTIN + registered address +
+    email + phone (all env-configurable — `INVOICE_SELLER_GSTIN`,
+    `INVOICE_SELLER_ADDRESS`, etc.; sensible placeholder text when
+    unset so the PDF never crashes).
+  - "TAX INVOICE" band, meta table (invoice #, date, plan, cycle,
+    status, period), Bill-To block that now uses the customer's
+    company_name/GST/address captured on the New Customer form.
+  - Line items table with **Discount** row shown when > 0 and a
+    prominent "TOTAL PAYABLE" bottom row.
+  - PDF `/Title` metadata set to the invoice number so browser tabs
+    show `FLW-202608-0001` instead of "anonymous".
+  - File download name = `<invoice_number>.pdf`.
+
+**Phase C — Feature gating & profile**
+- `SUBSCRIPTION_PLANS` (backend) + `PLANS` (frontend `utils.js`)
+  aligned to the new spec:
+  - Starter: 1 company / 2 employees / dashboard+sales+inventory+
+    sync_history+setup
+  - Professional: 1 company / 5 employees / + crm + analytics +
+    **salesman**
+  - Enterprise: 1 company / 10 employees / ALL features
+  - Trial: 1 company / 10 employees / ALL features (14 days)
+- `ProfileModal` now reads `is_trial`, `trial_end` from `/auth/me`
+  and renders a cyan "14-Day Free Trial · X days left" banner above
+  the plan grid; Max-Companies=1 / Max-Employees=10 for trial.
+- `App.js` guarded RenewalPopup with `!user.is_trial` so trial users
+  never see the paid "Subscription Expired" prompt.
+
+**Phase D — Background scheduler**
+Nightly loop (every 6 h) scans active trials, matches to reminder
+days (5/8/12/14), sends the appropriate templated mail, records the
+day in `trial_reminders_sent` to avoid duplicates. Runs inside the
+FastAPI startup event, staggered 90 s after boot.
+
+**Known deployment notes**
+- `RESEND_API_KEY` in preview is stale — `email_sent:false` is
+  expected. In production the user's real key must be present; the
+  API surfaces the flag so ops can catch failures immediately.
+- `INVOICE_SELLER_GSTIN` and `INVOICE_SELLER_ADDRESS` are placeholder
+  strings until the user sets them in the Emergent production env.
+
 ## Shipped — Feb 23 2026 — AI Reports UX cleanup (readable Summary + Recommendations)
 
 Field-reported: the `Enhanced AI Reports` page was dumping raw JSON in two

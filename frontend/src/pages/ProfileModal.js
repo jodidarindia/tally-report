@@ -40,7 +40,7 @@ const ProfileModal = ({ user, token, onClose }) => {
       if (res.data?.success) {
         setEmployees((res.data.data?.users || []).filter(u => u.role === 'employee' || u.role === 'dispatch' || u.role === 'salesman'));
       }
-    } catch {}
+    } catch { /* fetch failed — non-fatal */ }
     finally { setEmpLoading(false); }
   };
 
@@ -162,7 +162,18 @@ const ProfileModal = ({ user, token, onClose }) => {
   const daysLeft = user?.subscription_days_left ?? 999;
   const isExpired = daysLeft < 0;
   const isNearExpiry = daysLeft >= 0 && daysLeft <= 30;
-  const maxEmployees = user?.max_employees || 20;
+  const maxEmployees = user?.max_employees || 10;
+  const maxCompanies = user?.max_companies || 1;
+  // Trial banner data — for the 14-day Enterprise trial
+  const isTrial = !!user?.is_trial;
+  const trialEnd = user?.trial_end;
+  let trialDaysLeft = null;
+  if (isTrial && trialEnd) {
+    try {
+      const t = new Date(trialEnd) - new Date();
+      trialDaysLeft = Math.max(0, Math.ceil(t / (1000 * 60 * 60 * 24)));
+    } catch { /* ignore */ }
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="profile-modal" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -407,14 +418,25 @@ const ProfileModal = ({ user, token, onClose }) => {
                   <span className={`text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
                     user.plan === 'enterprise' ? 'bg-purple-100 text-purple-700' :
                     user.plan === 'professional' ? 'bg-blue-100 text-blue-700' :
+                    user.plan === 'trial' ? 'bg-cyan-100 text-cyan-800' :
                     'bg-slate-200 text-slate-700'
                   }`}>{(user.plan || 'enterprise').toUpperCase()} PLAN</span>
                   <Shield size={20} className="text-green-500" />
                 </div>
+                {isTrial && (
+                  <div className="mb-3 bg-cyan-50 border border-cyan-200 rounded-lg p-3">
+                    <div className="text-xs font-bold uppercase tracking-wider text-cyan-800 mb-1">14-Day Free Trial</div>
+                    <div className="text-sm text-slate-700 leading-relaxed">
+                      {trialDaysLeft !== null
+                        ? <><b>{trialDaysLeft} day{trialDaysLeft === 1 ? '' : 's'} left</b>. Log-in is paused once the trial ends unless you convert to a paid plan.</>
+                        : <>Your 14-day trial is active. Convert to a paid plan any time.</>}
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-white rounded-lg p-3">
                     <p className="text-[10px] text-slate-500 uppercase font-medium">Max Companies</p>
-                    <p className="text-lg font-bold text-slate-900">{user.max_companies || 10}</p>
+                    <p className="text-lg font-bold text-slate-900">{maxCompanies}</p>
                   </div>
                   <div className="bg-white rounded-lg p-3">
                     <p className="text-[10px] text-slate-500 uppercase font-medium">Max Employees</p>

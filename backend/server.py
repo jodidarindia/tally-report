@@ -230,6 +230,58 @@ async def startup_event():
 
     _asyncio.create_task(_cma_reminder_loop())
 
+    # Phase A.6 — Nightly trial reminder sweep. Every 6h we check for
+    # trial users hitting day 5/8/12/14 and fire the appropriate email
+    # (dedup via `trial_reminders_sent` on the user doc). We also mark
+    # accounts inactive on day 14+ so the /auth/me endpoint stops
+    # renewing their session.
+    from services.trial_service import (
+        get_users_due_for_reminder, mark_reminder_sent,
+        trial_days_remaining, parse_iso,
+    )
+    from services.email_service import (
+        send_trial_reminder_day5, send_trial_reminder_day8,
+        send_trial_reminder_day12, send_trial_reminder_day14,
+    )
+
+    _TRIAL_SENDERS = {
+        5: send_trial_reminder_day5,
+        8: send_trial_reminder_day8,
+        12: send_trial_reminder_day12,
+        14: send_trial_reminder_day14,
+    }
+
+    async def _trial_reminder_loop():
+        # Small stagger so we don't collide with the CMA sweep on boot.
+        await _asyncio.sleep(90)
+        while True:
+            try:
+                due = await get_users_due_for_reminder()
+                for user, day in due:
+                    sender = _TRIAL_SENDERS.get(day)
+                    if not sender:
+                        continue
+                    days_left = trial_days_remaining(user) or 0
+                    trial_end_disp = ""
+                    end_dt = parse_iso(user.get("trial_end", ""))
+                    if end_dt:
+                        trial_end_disp = end_dt.strftime("%d %b %Y")
+                    try:
+                        if day == 14:
+                            ok = await sender(user["username"], user.get("name", ""), trial_end_disp)
+                        else:
+                            ok = await sender(user["username"], user.get("name", ""), days_left, trial_end_disp)
+                        if ok:
+                            await mark_reminder_sent(user["username"], day)
+                            logger.info(f"trial reminder day-{day} sent to {user['username']}")
+                    except Exception as e:
+                        logger.warning(f"trial reminder day-{day} failed for {user.get('username')}: {e}")
+            except Exception as e:
+                logger.warning(f"trial reminder sweep errored: {e}")
+            await _asyncio.sleep(6 * 60 * 60)   # every 6h
+
+    _asyncio.create_task(_trial_reminder_loop())
+
 
 async def ensure_indexes(db):
     """Idempotent — safe to call on every startup. MongoDB will skip if already

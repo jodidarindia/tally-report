@@ -289,7 +289,10 @@ async def list_admins(request: Request):
 
 @router.post("/super-admin/admins")
 async def create_admin(request: Request):
-    """Create a new admin tenant."""
+    """Create a new admin tenant. Now accepts the rich customer form
+    (email, name, mobile/WhatsApp, address, city, company_name, gst,
+    sales_count, dispatch_count, industry) and, when plan=='trial',
+    stamps the 14-day trial window."""
     sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -301,7 +304,21 @@ async def create_admin(request: Request):
         plan_id = body.get("plan", "starter")
         billing_cycle = body.get("billing_cycle", "annual")
         features = body.get("features", [])
-        subscription_months = body.get("subscription_months", 12)
+        subscription_months = int(body.get("subscription_months", 12) or 12)
+
+        # Rich customer profile (all optional except the *starred* ones on
+        # the SuperAdmin form which the frontend now enforces).
+        mobile         = (body.get("mobile") or "").strip()
+        address        = (body.get("address") or "").strip()
+        city           = (body.get("city") or "").strip()
+        company_name   = (body.get("company_name") or "").strip()
+        gst            = (body.get("gst") or "").strip()
+        industry       = (body.get("industry") or "").strip()
+        try:
+            sales_count    = int(body.get("sales_count") or 0)
+            dispatch_count = int(body.get("dispatch_count") or 0)
+        except (TypeError, ValueError):
+            sales_count = dispatch_count = 0
 
         if not username or not password:
             return APIResponse(success=False, error="Email and password are required")
@@ -335,7 +352,20 @@ async def create_admin(request: Request):
         import uuid
         tenant_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
-        await db.users.insert_one({
+
+        # Trial handling — when plan is "trial" we stamp the trial window
+        # onto the user doc. The trial_service + login guard use these to
+        # (a) send reminder emails at day 5/8/12/14 and (b) block login
+        # after day 14 until the account converts.
+        from services.trial_service import compute_trial_window, TRIAL_DAYS
+        is_trial = (plan_id == "trial")
+        trial_start = trial_end = ""
+        if is_trial:
+            trial_start, trial_end = compute_trial_window()
+            # Trial subscription = 14 days regardless of what UI sent.
+            subscription_months = 0
+
+        user_doc = {
             "username": username,
             "password_hash": hash_password(password),
             "name": name,
@@ -350,29 +380,81 @@ async def create_admin(request: Request):
             "max_employees": plan_config["max_employees"],
             "subscription_months": subscription_months,
             "subscription_start": now,
-            "created_at": now
-        })
+            "created_at": now,
+            # Rich profile
+            "mobile": mobile,
+            "address": address,
+            "city": city,
+            "company_name": company_name,
+            "gst": gst,
+            "industry": industry,
+            "sales_count": sales_count,
+            "dispatch_count": dispatch_count,
+            # Trial fields (safe defaults for paid customers so UI code
+            # doesn't have to key-check).
+            "is_trial": is_trial,
+            "trial_start": trial_start,
+            "trial_end": trial_end,
+            "trial_reminders_sent": [],
+            "converted_at": None,
+        }
+        await db.users.insert_one(user_doc)
 
         sync_token = generate_sync_token(tenant_id)
 
-        await log_audit("admin_created", sa["username"], target=username, details=f"Tenant: {tenant_id}, Plan: {plan_id}, Features: {len(valid_features)}, Subscription: {subscription_months}mo", ip_address=get_client_ip(request))
+        await log_audit("admin_created", sa["username"], target=username,
+                        details=f"Tenant: {tenant_id}, Plan: {plan_id}, Trial: {is_trial}, Features: {len(valid_features)}, Subscription: {subscription_months}mo",
+                        ip_address=get_client_ip(request))
 
-        # Send subscription started email — includes login credentials
-        # so the new admin can sign in immediately without needing the
-        # super-admin to relay them separately.
+        # Rich welcome mail — includes ALL captured fields + plan details.
+        # We DO NOT silently swallow failures anymore; the response bubbles
+        # up an `email_sent` flag so SuperAdmin UI can flag it.
+        email_sent = False
+        email_error = ""
         try:
-            expires = subscription_expires_at(now, subscription_months)
+            from services.email_service import send_welcome_admin_rich
+            from services.ist_utils import subscription_expires_at
             from datetime import datetime as dt
-            exp_date = dt.fromisoformat(expires.replace("Z", "+00:00")).strftime("%d %b %Y")
-            await send_subscription_started(username, name or username, plan_id, subscription_months, exp_date, password=password)
+
+            if is_trial:
+                # Trial: subscription_display = "14-day free trial"
+                trial_end_dt = dt.fromisoformat(trial_end.replace("Z", "+00:00"))
+                trial_end_display = trial_end_dt.strftime("%d %b %Y")
+                plan_price_display = "Free"
+                subscription_display = f"14-day trial (ends {trial_end_display})"
+            else:
+                expires = subscription_expires_at(now, subscription_months)
+                exp_date = dt.fromisoformat(expires.replace("Z", "+00:00")).strftime("%d %b %Y")
+                # Format plan price
+                price = plan_config.get(f"{billing_cycle}_price", 0)
+                plan_price_display = f"₹{price:,.0f} / {billing_cycle}"
+                subscription_display = f"{subscription_months} month(s), valid until {exp_date}"
+                trial_end_display = ""
+
+            email_sent = await send_welcome_admin_rich(
+                to_email=username, name=name or username, password=password,
+                plan=plan_config.get("name", plan_id.title()),
+                plan_price_display=plan_price_display,
+                billing_cycle=billing_cycle,
+                subscription_display=subscription_display,
+                company_name=company_name, mobile=mobile, gst=gst,
+                address=address, city=city, industry=industry,
+                sales_count=sales_count, dispatch_count=dispatch_count,
+                is_trial=is_trial, trial_end_display=trial_end_display,
+            )
         except Exception as email_err:
+            email_error = str(email_err)
             logger.error(f"Failed to send welcome email: {email_err}")
 
         return APIResponse(success=True, message=f"Admin '{username}' created", data={
             "username": username,
             "tenant_id": tenant_id,
             "sync_token": sync_token,
-            "features": valid_features
+            "features": valid_features,
+            "is_trial": is_trial,
+            "trial_end": trial_end,
+            "email_sent": bool(email_sent),
+            "email_error": email_error,
         })
     except Exception as e:
         logger.error(f"Error creating admin: {e}")

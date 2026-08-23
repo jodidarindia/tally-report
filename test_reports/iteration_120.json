@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 120 SuperAdmin overhaul (rich customer form + trial plan + discount invoice + redesigned PDF + trial-expiry lockout). Backend: 15/15 pytest passed on new test_iteration120_superadmin_overhaul.py — trial creation stamps 14-day window, plan caps 1co/2-5-10emp verified, email_sent flag surfaced, future-trial login OK, past-trial login returns 14-day FLOWRA message + trial_expired:true, /auth/me carries is_trial, /customers/search returns busydemo with plan_name/base_price/balance_due, /industries returns 31 items (Automotive→Other), discount invoice math 15%→32291.5 exact, 25% clamps to 20% (30392), PDF /Title=invoice_number, filename matches, PDF text contains FLOWRA / JODIDAR INDIA / TAX INVOICE / Discount / TOTAL PAYABLE / brand sub-line. Frontend E2E on SuperAdmin dashboard: all rich admin fields + 4 plan buttons render, clicking new-plan-trial hides subscription-months select and shows cyan trial banner, Record Payment modal searches busy, shows preview, auto-fills ₹37,990 due; Generate Invoice modal shows Base/Discount/Final, 20% → ₹30,392, 25% clamps to ₹30,392, confirm-invoice label 'Generate Invoice · ₹30,392'. **HIGH-priority bug found**: trial admin dashboard displays legacy 'Subscription Expired' RenewalPopup because App.js:77 checks `subscription_days_left<=30` without `is_trial` guard — trial users get a scary red 'renew now' modal on first login. ProfileModal trial banner UI implemented correctly per code review (isTrial branch renders TRIAL PLAN pill + 14-Day Free Trial banner + Max Companies=1 / Max Employees=10) but couldn't visually verify because the Subscription-Expired popup covers the app before ProfileModal can be opened.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "App.js RenewalPopup guard", "issue": "Trial admins see 'Subscription Expired' modal on dashboard load because App.js:77-79 (`if (daysLeft !== null && daysLeft !== undefined && daysLeft <= 30) setShowRenewalPopup(true)`) doesn't skip trial users. Trial has subscription_months=0 so subscription_days_left is <=0 and the guard fires. Fix: `if (user.is_trial) return;` before the renewal popup check, or make RenewalPopup treat is_trial as non-expired.", "selector": "/app/frontend/src/App.js line 77-79 + /app/frontend/src/components/RenewalPopup.js", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration120_superadmin_overhaul.py",
+    "/app/test_reports/pytest/iteration120.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): Guard RenewalPopup mount in /app/frontend/src/App.js against is_trial. E.g. `const daysLeft = user.subscription_days_left; if (user.is_trial || daysLeft==null || daysLeft > 30) return; setShowRenewalPopup(true);`. Also consider passing isTrial to RenewalPopup so any future call site is safe. Once fixed, retest ProfileModal to visually confirm TRIAL PLAN pill + 14-Day Free Trial banner + Max Companies=1/Max Employees=10 render for a trial admin."
+  ],
+  "critical_code_review_comments": [
+    "prospects.py trial plan is defined with `max_employees:10` (same as enterprise), but review_request test for ProfileModal expected 'Max Employees = 10 (updated caps)' — matches. Confirm business intent: starter=2 / pro=5 / ent=10 / trial=10 (trial gets full enterprise caps).",
+    "super_admin.py delete_admin sends stale sync_token before re-issuing on renewal — the delete route also archives fine but does NOT delete deleted_users_deleted_at index; carried over.",
+    "seller_panel.py generate_invoice: base_amount is fetched using `pricing[cycle]` where cycle can be 'monthly'/'annual' — for the trial plan (both 0) an invoice would generate for ₹0 which may be undesirable; consider blocking invoice generation for trial customers or warning.",
+    "seller_panel.py download_invoice_pdf: `INVOICE_SELLER_GSTIN` / `INVOICE_SELLER_ADDRESS` placeholders live inside route body (env read on every request). Acceptable for now but not production hardened — moving to module-load env would save ~1 os.environ.get per PDF request.",
+    "auth.py trial-expiry guard correctly uses `is_trial_expired(trial_owner)` and returns `data.trial_expired:true`. But the frontend still shows the legacy RenewalPopup on ACTIVE trial (bug above). Both need to work together."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration120_superadmin_overhaul.py (new — 15 tests)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "80% (4/5 flows verified; ProfileModal trial banner not visually verified due to RenewalPopup blocker)"},
+  "test_credentials": "superadmin/superadmin123 · busydemo@flowralive.in/demo2026 (do not delete)",
+  "seed_data_creation": "Ephemeral trial users created & deleted per test. No persistent seed data added.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite at /app/backend/tests/test_iteration120_superadmin_overhaul.py — 15/15 green. Frontend confirmed for New Customer / Record Payment / Generate Invoice modals. Only blocker for full frontend green is the legacy RenewalPopup that fires for trial users because App.js:77 lacks an is_trial guard. Fix that one line, re-open ProfileModal as a trial admin, and verify TRIAL PLAN pill + 14-Day Free Trial banner + Max Companies=1 / Max Employees=10 render.",
+  "rca of the issue": "Trial admins get subscription_months=0 + subscription_start=now → subscription_days_left computed as 0 (i.e. ≤ 30). App.js's useEffect at line 74-80 sets showRenewalPopup=true whenever days_left is a number ≤ 30, without excluding is_trial. Result: the legacy red 'Subscription Expired · Renew Now' modal is shown even though the backend correctly identifies the user as an active trial. Reproduction: create a trial admin (POST /api/super-admin/admins plan=trial), log in as that user, land on /dashboard → modal appears immediately. Mitigation: add `if (user.is_trial) return;` at top of the days-left useEffect and/or pass isTrial into RenewalPopup so it self-guards."
+}

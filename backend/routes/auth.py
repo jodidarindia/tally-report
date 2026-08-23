@@ -61,19 +61,24 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
         tenant_id = user.get("tenant_id")
         sub_start = user.get("subscription_start", "")
         sub_months = user.get("subscription_months", 12)
+        # Detect trial upfront — trial users must not trigger the old
+        # subscription-expired check (their sub_months is 0). The trial
+        # guard below handles their expiry with a different message.
+        trial_flag = bool(user.get("is_trial"))
         if user.get("role") in ("employee", "dispatch", "salesman") and tenant_id:
             admin_for_sub = await db.users.find_one(
                 {"tenant_id": tenant_id, "role": "admin"},
-                {"_id": 0, "subscription_start": 1, "subscription_months": 1}
+                {"_id": 0, "subscription_start": 1, "subscription_months": 1, "is_trial": 1}
             )
             if admin_for_sub:
                 sub_start = admin_for_sub.get("subscription_start", "")
                 sub_months = admin_for_sub.get("subscription_months", 12)
+                trial_flag = bool(admin_for_sub.get("is_trial"))
 
         sub_expired = False
         sub_days_left = 999
         sub_expires_iso = None
-        if sub_start and user.get("role") != "super_admin":
+        if sub_start and user.get("role") != "super_admin" and not trial_flag:
             sub_expired = not is_subscription_active(sub_start, sub_months)
             sub_days_left = days_until_expiry(sub_start, sub_months)
             sub_expires_iso = subscription_expires_at(sub_start, sub_months)
@@ -108,6 +113,39 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                     + "Access will resume automatically once renewed."
                 )
             return APIResponse(success=False, error=msg)
+
+        # 14-day trial expiry — hard(er) lockout at login. We return a
+        # dedicated error code so the frontend can route them to the
+        # "trial expired, convert now" screen without extra roundtrips.
+        # Note: this fires for the admin AND every employee under a
+        # trial tenant (their admin's is_trial flag governs).
+        from services.trial_service import is_trial_expired
+        trial_owner = user
+        if user.get("role") in ("employee", "dispatch", "salesman") and tenant_id:
+            trial_owner = await db.users.find_one(
+                {"tenant_id": tenant_id, "role": "admin"},
+                {"_id": 0, "is_trial": 1, "trial_end": 1, "converted_at": 1}
+            ) or user
+        if trial_owner and is_trial_expired(trial_owner):
+            trial_end_disp = ""
+            try:
+                te = trial_owner.get("trial_end", "")
+                if te:
+                    trial_end_disp = datetime.fromisoformat(te.replace("Z", "+00:00")).strftime("%d %b %Y")
+            except Exception:
+                pass
+            if user.get("role") == "admin":
+                trial_msg = (
+                    f"Your 14-day FLOWRA free trial ended{f' on {trial_end_disp}' if trial_end_disp else ''}. "
+                    f"Please convert to a paid plan to keep your access. "
+                    f"Write to support@flowralive.in or WhatsApp us on +91 81204 70018 to convert."
+                )
+            else:
+                trial_msg = (
+                    "Your organisation's FLOWRA free trial has ended. "
+                    "Please ask your admin to convert to a paid plan to restore access."
+                )
+            return APIResponse(success=False, error=trial_msg, data={"trial_expired": True})
 
         token = create_access_token(user["username"], user["username"], user["role"], tenant_id)
         response.set_cookie(
@@ -167,6 +205,9 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "subscription_months": sub_months,
                 "subscription_expires": sub_expires_iso,
                 "subscription_days_left": sub_days_left,
+                "is_trial": bool(user.get("is_trial")) if user["role"] == "admin"
+                            else bool((await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "is_trial": 1}) or {}).get("is_trial")) if tenant_id else False,
+                "trial_end": (user.get("trial_end") if user["role"] == "admin" else "") or "",
                 "onboarding_completed": user.get("onboarding_completed", False)
             }
         )
@@ -218,6 +259,16 @@ async def get_me(request: Request):
         from services.id_mapping_service import get_all_company_mappings
         company_mappings = await get_all_company_mappings(tenant_id) if tenant_id else []
 
+        # Trial info — echoed to the frontend so the profile modal /
+        # dashboard can render a "X days left" banner without an extra
+        # roundtrip. Employees under a trial admin get the flag too.
+        trial_owner = user
+        if user["role"] in ("employee", "dispatch", "salesman") and tenant_id:
+            trial_owner = await db.users.find_one(
+                {"tenant_id": tenant_id, "role": "admin"},
+                {"_id": 0, "is_trial": 1, "trial_end": 1, "converted_at": 1}
+            ) or user
+
         return APIResponse(success=True, data={
             "username": user["username"],
             "name": user.get("name", ""),
@@ -227,12 +278,15 @@ async def get_me(request: Request):
             "companies": companies,
             "company_mappings": company_mappings,
             "plan": user.get("plan", "enterprise"),
-            "max_companies": user.get("max_companies", 10),
-            "max_employees": user.get("max_employees", 20),
+            "max_companies": user.get("max_companies", 1),
+            "max_employees": user.get("max_employees", 10),
             "subscription_start": sub_start or None,
             "subscription_months": sub_months,
             "subscription_expires": sub_expires_iso,
             "subscription_days_left": sub_days_left,
+            "is_trial": bool(trial_owner.get("is_trial")) if trial_owner else False,
+            "trial_end": (trial_owner.get("trial_end") if trial_owner else "") or "",
+            "converted_at": (trial_owner.get("converted_at") if trial_owner else "") or "",
             "onboarding_completed": user.get("onboarding_completed", False)
         })
     except Exception as e:

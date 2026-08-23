@@ -18,8 +18,9 @@ export const ALL_FEATURES = [
 
 export const PLANS = {
   starter: { name: 'Starter', monthly: 999, annual: 9990, maxCompanies: 1, maxEmployees: 2, features: ['dashboard', 'sales', 'inventory', 'sync_history', 'setup'] },
-  professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 3, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'sync_history', 'setup'] },
-  enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 10, maxEmployees: 20, features: ALL_FEATURES.map(f => f.id) },
+  professional: { name: 'Professional', monthly: 2499, annual: 24990, maxCompanies: 1, maxEmployees: 5, features: ['dashboard', 'sales', 'crm', 'inventory', 'analytics', 'salesman', 'sync_history', 'setup'] },
+  enterprise: { name: 'Enterprise', monthly: 3799, annual: 37990, maxCompanies: 1, maxEmployees: 10, features: ALL_FEATURES.map(f => f.id) },
+  trial: { name: 'Free Trial (14 days)', monthly: 0, annual: 0, maxCompanies: 1, maxEmployees: 10, trialDays: 14, features: ALL_FEATURES.map(f => f.id) },
 };
 
 export const STAFF_FEATURES_LIST = [

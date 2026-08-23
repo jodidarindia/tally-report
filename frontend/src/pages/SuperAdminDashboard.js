@@ -7,7 +7,7 @@ import {
   FileText, AlertTriangle,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart,
   BarChart3, Wallet, Calendar, Gift, Database,
-  Sparkles, Copy,
+  Sparkles, Copy, Download, Building2, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
 import SuperAdminBackups from './SuperAdminBackups';
@@ -56,7 +56,14 @@ const SuperAdminDashboard = ({ token, user }) => {
   const [showResetModal, setShowResetModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
   const [expandedAdmin, setExpandedAdmin] = useState(null);
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12, features: PLANS.starter.features });
+  const [newAdmin, setNewAdmin] = useState({
+    username: '', password: '', name: '',
+    plan: 'starter', billing_cycle: 'annual', subscription_months: 12,
+    features: PLANS.starter.features,
+    mobile: '', address: '', city: '',
+    company_name: '', gst: '', industry: '',
+    sales_count: 1, dispatch_count: 0,
+  });
   const [editAdmin, setEditAdmin] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -65,13 +72,28 @@ const SuperAdminDashboard = ({ token, user }) => {
   const [processModal, setProcessModal] = useState(null);
   const [processData, setProcessData] = useState({ action: 'approve', plan: '', subscription_months: 12, notes: '' });
 
-  // Payment modal
+  // Payment modal — searchable customer picker + auto-filled due amount
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' });
+  const [paymentForm, setPaymentForm] = useState({
+    customer_username: '', amount: '', payment_mode: 'bank_transfer',
+    reference_no: '', notes: '', period_description: '',
+  });
+  const [paymentCustomer, setPaymentCustomer] = useState(null);       // {plan, balance_due, base_price, ...}
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
 
-  // Invoice modal
+  // Invoice modal — searchable + fixed plan amount + discount (0-20 %)
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [invoiceForm, setInvoiceForm] = useState({ customer_username: '', amount: '', description: '', period_from: '', period_to: '' });
+  const [invoiceForm, setInvoiceForm] = useState({
+    customer_username: '', description: '', period_from: '', period_to: '',
+    discount_pct: 0,
+  });
+  const [invoiceCustomer, setInvoiceCustomer] = useState(null);
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
+  const [invoiceSuggestions, setInvoiceSuggestions] = useState([]);
+
+  // Industry dropdown data (loaded once on mount)
+  const [industries, setIndustries] = useState([]);
 
   // Customer ledger
   const [ledgerModal, setLedgerModal] = useState(null);
@@ -107,16 +129,50 @@ const SuperAdminDashboard = ({ token, user }) => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Load the curated Indian industry list once (Phase B — SuperAdmin
+  // new-customer form dropdown).
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    axios.get(`${API}/super-admin/industries`, { headers })
+      .then((r) => setIndustries(r.data?.data?.industries || []))
+      .catch(() => setIndustries([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, token]);
+
   // --- CRUD functions (kept from original) ---
   const createAdmin = async () => {
     if (!newAdmin.username || !newAdmin.password) { toast.error('Email and password are required'); return; }
+    if (!newAdmin.name?.trim()) { toast.error('Customer full name is required'); return; }
+    if (!newAdmin.mobile?.trim()) { toast.error('Mobile / WhatsApp is required'); return; }
+    if (!newAdmin.city?.trim()) { toast.error('City is required'); return; }
+    if (!newAdmin.company_name?.trim()) { toast.error('Company name is required'); return; }
+    if (!newAdmin.industry?.trim()) { toast.error('Please pick an industry'); return; }
     try {
       const plan = PLANS[newAdmin.plan];
       const res = await axios.post(`${API}/super-admin/admins`, {
-        ...newAdmin, features: newAdmin.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+        ...newAdmin,
+        features: newAdmin.features,
+        max_companies: plan.maxCompanies,
+        max_employees: plan.maxEmployees,
+        sales_count: parseInt(newAdmin.sales_count) || 0,
+        dispatch_count: parseInt(newAdmin.dispatch_count) || 0,
       }, { headers });
-      if (res.data?.success) { toast.success(res.data.message); setShowCreateModal(false); setNewAdmin({ username: '', password: '', name: '', plan: 'starter', billing_cycle: 'annual', subscription_months: 12 }); fetchData(); }
-      else toast.error(res.data?.error || 'Failed');
+      if (res.data?.success) {
+        const d = res.data.data || {};
+        toast.success(d.email_sent
+          ? `${res.data.message} · welcome email sent`
+          : `${res.data.message} · welcome email NOT sent (check RESEND_API_KEY)`);
+        setShowCreateModal(false);
+        setNewAdmin({
+          username: '', password: '', name: '',
+          plan: 'starter', billing_cycle: 'annual', subscription_months: 12,
+          features: PLANS.starter.features,
+          mobile: '', address: '', city: '',
+          company_name: '', gst: '', industry: '',
+          sales_count: 1, dispatch_count: 0,
+        });
+        fetchData();
+      } else toast.error(res.data?.error || 'Failed');
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to create admin'); }
   };
 
@@ -181,36 +237,80 @@ const SuperAdminDashboard = ({ token, user }) => {
     } catch { toast.error('Failed to convert'); }
   };
 
+  // --- Customer picker helpers used by Record Payment + Generate Invoice
+  const searchCustomers = async (term, setter) => {
+    try {
+      const res = await axios.get(`${API}/super-admin/customers/search`, {
+        headers, params: { q: term || '', limit: 20 },
+      });
+      setter(res.data?.data?.customers || []);
+    } catch {
+      setter([]);
+    }
+  };
+
+  const selectPaymentCustomer = (c) => {
+    setPaymentCustomer(c);
+    setPaymentForm(f => ({ ...f, customer_username: c.username, amount: String(c.balance_due || '') }));
+    setCustomerSearchTerm(`${c.name || c.company_name || c.username} (${c.username})`);
+    setCustomerSuggestions([]);
+  };
+
+  const selectInvoiceCustomer = (c) => {
+    setInvoiceCustomer(c);
+    setInvoiceForm(f => ({ ...f, customer_username: c.username }));
+    setInvoiceSearchTerm(`${c.name || c.company_name || c.username} (${c.username})`);
+    setInvoiceSuggestions([]);
+  };
+
   // --- NEW: Payment & Invoice functions ---
   const recordPayment = async () => {
     if (!paymentForm.customer_username || !paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
-      toast.error('Customer and valid amount required'); return;
+      toast.error('Pick a customer and enter a valid amount'); return;
     }
     try {
       const res = await axios.post(`${API}/super-admin/payments`, { ...paymentForm, amount: parseFloat(paymentForm.amount) }, { headers });
-      if (res.data?.success) { toast.success(res.data.message); setShowPaymentModal(false); setPaymentForm({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' }); fetchData(); }
-      else toast.error(res.data?.error || 'Failed');
+      if (res.data?.success) {
+        toast.success(res.data.message);
+        setShowPaymentModal(false);
+        setPaymentForm({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' });
+        setPaymentCustomer(null); setCustomerSearchTerm(''); setCustomerSuggestions([]);
+        fetchData();
+      } else toast.error(res.data?.error || 'Failed');
     } catch { toast.error('Failed to record payment'); }
   };
 
   const generateInvoice = async () => {
-    if (!invoiceForm.customer_username || !invoiceForm.amount || parseFloat(invoiceForm.amount) <= 0) {
-      toast.error('Customer and valid amount required'); return;
-    }
+    if (!invoiceForm.customer_username) { toast.error('Please pick a customer'); return; }
+    const disc = Math.max(0, Math.min(20, parseFloat(invoiceForm.discount_pct) || 0));
     try {
-      const res = await axios.post(`${API}/super-admin/invoices/generate`, { ...invoiceForm, amount: parseFloat(invoiceForm.amount) }, { headers });
-      if (res.data?.success) { toast.success(res.data.message); setShowInvoiceModal(false); setInvoiceForm({ customer_username: '', amount: '', description: '', period_from: '', period_to: '' }); fetchData(); }
-      else toast.error(res.data?.error || 'Failed');
+      const res = await axios.post(`${API}/super-admin/invoices/generate`, {
+        customer_username: invoiceForm.customer_username,
+        description: invoiceForm.description,
+        period_from: invoiceForm.period_from,
+        period_to: invoiceForm.period_to,
+        discount_pct: disc,
+      }, { headers });
+      if (res.data?.success) {
+        const d = res.data.data || {};
+        toast.success(`${res.data.message} · Final ₹${(d.final_amount || 0).toLocaleString('en-IN')}`);
+        setShowInvoiceModal(false);
+        setInvoiceForm({ customer_username: '', description: '', period_from: '', period_to: '', discount_pct: 0 });
+        setInvoiceCustomer(null); setInvoiceSearchTerm(''); setInvoiceSuggestions([]);
+        fetchData();
+      } else toast.error(res.data?.error || 'Failed');
     } catch { toast.error('Failed to generate invoice'); }
   };
 
-  const downloadInvoicePDF = async (invoiceId) => {
+  const downloadInvoicePDF = async (invoiceId, invoiceNumber) => {
     try {
       const res = await axios.get(`${API}/super-admin/invoices/${invoiceId}/pdf`, { headers, responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Invoice_${invoiceId}.pdf`);
+      // File name = invoice number (SuperAdmin spec — avoids the ugly
+      // "anonymous.pdf" that browsers used to show).
+      link.setAttribute('download', `${invoiceNumber || invoiceId}.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -427,7 +527,7 @@ const SuperAdminDashboard = ({ token, user }) => {
 
       {/* ===== MODALS ===== */}
 
-      {/* Record Payment Modal */}
+      {/* Record Payment Modal — searchable customer picker + due auto-fill */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowPaymentModal(false)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="payment-modal">
@@ -436,14 +536,46 @@ const SuperAdminDashboard = ({ token, user }) => {
               <button onClick={() => setShowPaymentModal(false)}><X size={20} className="text-slate-400" /></button>
             </div>
             <div className="space-y-4">
-              <div>
+              <div className="relative">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
-                <select value={paymentForm.customer_username} onChange={e => setPaymentForm(p => ({ ...p, customer_username: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="payment-customer-select">
-                  <option value="">Select customer</option>
-                  {admins.map(a => <option key={a.username} value={a.username}>{a.name || a.username} ({a.plan})</option>)}
-                </select>
+                <input
+                  type="text"
+                  value={customerSearchTerm}
+                  placeholder="Type name, email or company…"
+                  onChange={(e) => {
+                    setCustomerSearchTerm(e.target.value);
+                    setPaymentCustomer(null);
+                    setPaymentForm(f => ({ ...f, customer_username: '', amount: '' }));
+                    searchCustomers(e.target.value, setCustomerSuggestions);
+                  }}
+                  onFocus={() => searchCustomers(customerSearchTerm, setCustomerSuggestions)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  data-testid="payment-customer-search"
+                />
+                {customerSuggestions.length > 0 && !paymentCustomer && (
+                  <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                    {customerSuggestions.map((c) => (
+                      <button key={c.username} type="button"
+                        onClick={() => selectPaymentCustomer(c)}
+                        data-testid={`payment-cust-opt-${c.username}`}
+                        className="block w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 border-b border-slate-100 last:border-0">
+                        <div className="font-medium text-slate-800">{c.name || c.company_name || c.username}</div>
+                        <div className="text-[11px] text-slate-500">{c.username} · {c.plan_name} · Due <b className="text-rose-600">₹{(c.balance_due || 0).toLocaleString('en-IN')}</b></div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+
+              {paymentCustomer && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm space-y-1" data-testid="payment-customer-preview">
+                  <div className="flex justify-between"><span className="text-slate-500">Plan</span><span className="font-medium">{paymentCustomer.plan_name} · {paymentCustomer.billing_cycle}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Total billed</span><span className="font-medium">₹{(paymentCustomer.total_billed || 0).toLocaleString('en-IN')}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Total received</span><span className="font-medium text-emerald-700">₹{(paymentCustomer.total_paid || 0).toLocaleString('en-IN')}</span></div>
+                  <div className="flex justify-between border-t border-slate-200 pt-1 mt-1"><span className="text-slate-700 font-semibold">Balance due</span><span className="font-bold text-rose-600">₹{(paymentCustomer.balance_due || 0).toLocaleString('en-IN')}</span></div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Amount (Rs.) *</label>
@@ -477,7 +609,9 @@ const SuperAdminDashboard = ({ token, user }) => {
                 <textarea value={paymentForm.notes} onChange={e => setPaymentForm(p => ({ ...p, notes: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" rows={2} placeholder="Optional notes" />
               </div>
-              <button onClick={recordPayment} className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700" data-testid="confirm-payment">
+              <button onClick={recordPayment} disabled={!paymentForm.customer_username}
+                className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="confirm-payment">
                 Record Payment
               </button>
             </div>
@@ -485,8 +619,13 @@ const SuperAdminDashboard = ({ token, user }) => {
         </div>
       )}
 
-      {/* Generate Invoice Modal */}
-      {showInvoiceModal && (
+      {/* Generate Invoice Modal — searchable + fixed plan amount + 0-20% discount */}
+      {showInvoiceModal && (() => {
+        const disc = Math.max(0, Math.min(20, parseFloat(invoiceForm.discount_pct) || 0));
+        const base = invoiceCustomer?.base_price || 0;
+        const discAmt = Math.round(base * disc / 100 * 100) / 100;
+        const finalAmt = Math.round((base - discAmt) * 100) / 100;
+        return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && setShowInvoiceModal(false)}>
           <div className="bg-white rounded-xl w-full max-w-lg p-6" data-testid="invoice-modal">
             <div className="flex items-center justify-between mb-6">
@@ -494,29 +633,65 @@ const SuperAdminDashboard = ({ token, user }) => {
               <button onClick={() => setShowInvoiceModal(false)}><X size={20} className="text-slate-400" /></button>
             </div>
             <div className="space-y-4">
-              <div>
+              <div className="relative">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Customer *</label>
-                <select value={invoiceForm.customer_username} onChange={e => {
-                  const admin = admins.find(a => a.username === e.target.value);
-                  const plan = admin?.plan || 'enterprise'; const cycle = admin?.billing_cycle || 'annual';
-                  const pricing = PLANS[plan] || PLANS.enterprise;
-                  const amt = cycle === 'annual' ? pricing.annual : pricing.monthly;
-                  setInvoiceForm(p => ({ ...p, customer_username: e.target.value, amount: amt.toString(), description: `${pricing.name || 'Enterprise'} Plan - ${cycle === 'annual' ? 'Annual' : 'Monthly'} Subscription` }));
-                }}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-customer-select">
-                  <option value="">Select customer</option>
-                  {admins.map(a => <option key={a.username} value={a.username}>{a.name || a.username} ({a.plan})</option>)}
-                </select>
+                <input
+                  type="text"
+                  value={invoiceSearchTerm}
+                  placeholder="Type name, email or company…"
+                  onChange={(e) => {
+                    setInvoiceSearchTerm(e.target.value);
+                    setInvoiceCustomer(null);
+                    setInvoiceForm(f => ({ ...f, customer_username: '' }));
+                    searchCustomers(e.target.value, setInvoiceSuggestions);
+                  }}
+                  onFocus={() => searchCustomers(invoiceSearchTerm, setInvoiceSuggestions)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  data-testid="invoice-customer-search"
+                />
+                {invoiceSuggestions.length > 0 && !invoiceCustomer && (
+                  <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+                    {invoiceSuggestions.map((c) => (
+                      <button key={c.username} type="button"
+                        onClick={() => selectInvoiceCustomer(c)}
+                        data-testid={`invoice-cust-opt-${c.username}`}
+                        className="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b border-slate-100 last:border-0">
+                        <div className="font-medium text-slate-800">{c.name || c.company_name || c.username}</div>
+                        <div className="text-[11px] text-slate-500">{c.username} · {c.plan_name} · {c.billing_cycle} ₹{(c.base_price || 0).toLocaleString('en-IN')}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+
+              {invoiceCustomer && (
+                <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3 text-sm space-y-1" data-testid="invoice-customer-preview">
+                  <div className="flex justify-between"><span className="text-slate-600">Plan</span><span className="font-medium">{invoiceCustomer.plan_name} · {invoiceCustomer.billing_cycle}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Base amount (fixed)</span><span className="font-semibold">₹{base.toLocaleString('en-IN')}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Discount</span><span className="text-rose-600">−₹{discAmt.toLocaleString('en-IN')} ({disc.toFixed(1)}%)</span></div>
+                  <div className="flex justify-between border-t border-blue-200 pt-1 mt-1"><span className="text-slate-800 font-semibold">Final invoice</span><span className="font-bold text-blue-700" data-testid="invoice-final-amount">₹{finalAmt.toLocaleString('en-IN')}</span></div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Amount (Rs.) *</label>
-                <input type="number" value={invoiceForm.amount} onChange={e => setInvoiceForm(p => ({ ...p, amount: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-amount" />
+                <label className="block text-sm font-medium text-slate-700 mb-1">Discount % (0 – 20)</label>
+                <input
+                  type="number" min={0} max={20} step={0.5}
+                  value={invoiceForm.discount_pct}
+                  onChange={(e) => {
+                    const v = Math.max(0, Math.min(20, parseFloat(e.target.value) || 0));
+                    setInvoiceForm(p => ({ ...p, discount_pct: v }));
+                  }}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  placeholder="0"
+                  data-testid="invoice-discount-pct"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Capped at 20 %. Applied to this invoice only.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
                 <input type="text" value={invoiceForm.description} onChange={e => setInvoiceForm(p => ({ ...p, description: e.target.value }))}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="Subscription description" data-testid="invoice-description" />
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="Defaults to plan subscription" data-testid="invoice-description" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -530,13 +705,16 @@ const SuperAdminDashboard = ({ token, user }) => {
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="invoice-period-to" />
                 </div>
               </div>
-              <button onClick={generateInvoice} className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700" data-testid="confirm-invoice">
-                Generate Invoice
+              <button onClick={generateInvoice} disabled={!invoiceForm.customer_username}
+                className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="confirm-invoice">
+                Generate Invoice · ₹{finalAmt.toLocaleString('en-IN')}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Customer Ledger Modal */}
       {ledgerModal && ledgerData && (
@@ -592,7 +770,7 @@ const SuperAdminDashboard = ({ token, user }) => {
                       <div className="flex items-center gap-3">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{inv.status}</span>
                         <span className="text-sm font-bold">{formatINR(inv.amount)}</span>
-                        <button onClick={() => downloadInvoicePDF(inv.invoice_id)} className="p-1 text-slate-400 hover:text-blue-600"><Download size={14} /></button>
+                        <button onClick={() => downloadInvoicePDF(inv.invoice_id, inv.invoice_number)} className="p-1 text-slate-400 hover:text-blue-600"><Download size={14} /></button>
                       </div>
                     </div>
                   ))}
@@ -712,33 +890,99 @@ const SuperAdminDashboard = ({ token, user }) => {
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">Tip: this password is included in the welcome email sent to the new admin. Ask them to change it after first login.</p>
               </div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input type="text" value={newAdmin.name} onChange={e => setNewAdmin({ ...newAdmin, name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-name" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name *</label><input type="text" value={newAdmin.name} onChange={e => setNewAdmin({ ...newAdmin, name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-name" placeholder="Customer's full name" /></div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Mobile (WhatsApp) *</label>
+                  <input type="tel" value={newAdmin.mobile} onChange={e => setNewAdmin({ ...newAdmin, mobile: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-mobile" placeholder="+91…" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">City *</label>
+                  <input type="text" value={newAdmin.city} onChange={e => setNewAdmin({ ...newAdmin, city: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-city" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Complete Address</label>
+                <textarea value={newAdmin.address} onChange={e => setNewAdmin({ ...newAdmin, address: e.target.value })} rows={2}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-address"
+                  placeholder="Street, area, state, PIN" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Company Name *</label>
+                  <input type="text" value={newAdmin.company_name} onChange={e => setNewAdmin({ ...newAdmin, company_name: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-company" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">GST No.</label>
+                  <input type="text" value={newAdmin.gst} onChange={e => setNewAdmin({ ...newAdmin, gst: e.target.value.toUpperCase() })} placeholder='GSTIN or "URP"'
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono uppercase" data-testid="new-admin-gst" />
+                  <p className="text-[10px] text-slate-400 mt-1">Enter <b>URP</b> if the customer is unregistered.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Business Industry *</label>
+                <select value={newAdmin.industry} onChange={e => setNewAdmin({ ...newAdmin, industry: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-industry">
+                  <option value="">Select industry…</option>
+                  {industries.map((it) => <option key={it} value={it}>{it}</option>)}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Sales team size *</label>
+                  <input type="number" min={0} value={newAdmin.sales_count} onChange={e => setNewAdmin({ ...newAdmin, sales_count: Math.max(0, parseInt(e.target.value) || 0) })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-sales-count" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Dispatch team size *</label>
+                  <input type="number" min={0} value={newAdmin.dispatch_count} onChange={e => setNewAdmin({ ...newAdmin, dispatch_count: Math.max(0, parseInt(e.target.value) || 0) })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-dispatch-count" />
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 -mt-2">Informational only. Employee cap is enforced by the plan.</p>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Plan</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {Object.entries(PLANS).map(([id, plan]) => (
                     <button key={id} onClick={() => setNewAdmin({ ...newAdmin, plan: id, features: [...plan.features] })}
-                      className={`p-3 border rounded-lg text-left ${newAdmin.plan === id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200'}`} data-testid={`new-plan-${id}`}>
+                      className={`p-3 border rounded-lg text-left ${newAdmin.plan === id ? (id === 'trial' ? 'border-cyan-500 bg-cyan-50 ring-1 ring-cyan-500' : 'border-blue-500 bg-blue-50 ring-1 ring-blue-500') : 'border-slate-200'}`} data-testid={`new-plan-${id}`}>
                       <p className="text-sm font-bold">{plan.name}</p>
-                      <p className="text-xs text-blue-600">{formatINR(newAdmin.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly)}/mo</p>
+                      <p className={`text-xs ${id === 'trial' ? 'text-cyan-700 font-semibold' : 'text-blue-600'}`}>
+                        {id === 'trial' ? 'Free · 14 days' :
+                          formatINR(newAdmin.billing_cycle === 'annual' ? Math.round(plan.annual / 12) : plan.monthly) + '/mo'}
+                      </p>
                       <div className="text-[10px] text-slate-500 mt-1">{plan.maxCompanies} co | {plan.maxEmployees} emp</div>
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="flex gap-2">
-                {['monthly', 'annual'].map(c => (
-                  <button key={c} onClick={() => setNewAdmin({ ...newAdmin, billing_cycle: c })}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg border ${newAdmin.billing_cycle === c ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>
-                    {c === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
-                  </button>
-                ))}
-              </div>
-              <select value={newAdmin.subscription_months} onChange={e => setNewAdmin({ ...newAdmin, subscription_months: parseInt(e.target.value) })}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-subscription">
-                <option value={1}>1 Month</option><option value={3}>3 Months</option><option value={6}>6 Months</option>
-                <option value={12}>12 Months</option><option value={24}>24 Months</option><option value={36}>36 Months</option>
-              </select>
+              {newAdmin.plan !== 'trial' && (
+                <>
+                  <div className="flex gap-2">
+                    {['monthly', 'annual'].map(c => (
+                      <button key={c} onClick={() => setNewAdmin({ ...newAdmin, billing_cycle: c })}
+                        className={`flex-1 py-2 text-sm font-medium rounded-lg border ${newAdmin.billing_cycle === c ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>
+                        {c === 'annual' ? 'Annual (Save 17%)' : 'Monthly'}
+                      </button>
+                    ))}
+                  </div>
+                  <select value={newAdmin.subscription_months} onChange={e => setNewAdmin({ ...newAdmin, subscription_months: parseInt(e.target.value) })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-subscription">
+                    <option value={1}>1 Month</option><option value={3}>3 Months</option><option value={6}>6 Months</option>
+                    <option value={12}>12 Months</option><option value={24}>24 Months</option><option value={36}>36 Months</option>
+                  </select>
+                </>
+              )}
+              {newAdmin.plan === 'trial' && (
+                <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-xs text-cyan-900 leading-relaxed">
+                  <b>Free Trial (14 days)</b> · Full Enterprise features. Login is disabled on day 14 if not converted. Reminder emails go out on day 5, 8, 12 and 14 automatically.
+                </div>
+              )}
               {/* Feature Gating Checkboxes */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Features ({newAdmin.features?.length || 0}/{ALL_FEATURES.length})</label>

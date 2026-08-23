@@ -41,19 +41,33 @@ SUBSCRIPTION_PLANS = {
         "name": "Professional",
         "monthly_price": 2499,
         "annual_price": 24990,
-        "features": ["dashboard", "sales", "crm", "inventory", "analytics", "sync_history", "setup"],
-        "max_companies": 3,
+        "features": ["dashboard", "sales", "crm", "inventory", "analytics", "salesman", "sync_history", "setup"],
+        "max_companies": 1,
         "max_employees": 5,
-        "description": "For growing businesses needing CRM and advanced analytics"
+        "description": "For growing businesses that need CRM, analytics and salesman ordering"
     },
     "enterprise": {
         "name": "Enterprise",
         "monthly_price": 3799,
         "annual_price": 37990,
         "features": ALL_FEATURES,
-        "max_companies": 10,
-        "max_employees": 20,
-        "description": "Full suite with AI reports, insider analytics, and unlimited features"
+        "max_companies": 1,
+        "max_employees": 10,
+        "description": "Full suite with AI reports, insider analytics and every FLOWRA capability"
+    },
+    "trial": {
+        # 14-day free trial with FULL enterprise access. Enforced by the
+        # trial_service (trial_end + is_trial fields on the user). After
+        # day 14, login is blocked (soft lockout — user lands on a
+        # "trial expired, convert now" screen).
+        "name": "Free Trial (14 days)",
+        "monthly_price": 0,
+        "annual_price": 0,
+        "features": ALL_FEATURES,
+        "max_companies": 1,
+        "max_employees": 10,
+        "trial_days": 14,
+        "description": "14-day free trial with full Enterprise access. Convert before day 14 to keep your data."
     }
 }
 

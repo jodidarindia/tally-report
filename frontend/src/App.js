@@ -75,7 +75,11 @@ function App() {
     }
 
     const daysLeft = user.subscription_days_left;
-    if (daysLeft !== undefined && daysLeft !== null && daysLeft <= 30) {
+    // Trial users have subscription_months=0 (which makes daysLeft ≤ 0)
+    // by design — their expiry is managed by trial_end. Skip the paid
+    // renewal popup entirely for them; the ProfileModal trial banner
+    // is their upgrade prompt.
+    if (!user.is_trial && daysLeft !== undefined && daysLeft !== null && daysLeft <= 30) {
       setShowRenewalPopup(true);
     }
 
