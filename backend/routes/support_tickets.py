@@ -247,19 +247,124 @@ async def delete_webhook(webhook_id: str, request: Request):
     return APIResponse(success=True, data={"deleted": r.deleted_count})
 
 
-# ─── Inbound placeholder (Resend Inbound → auto-create ticket) ──────
+import re
+
+# ─── Inbound (Resend Inbound → auto-create tickets) ────────────────
+
+_TICKET_ID_RE = re.compile(r"\[FLOWRA-([0-9a-f-]{8,})\]", re.IGNORECASE)
+
+
+def _strip_html(html: str) -> str:
+    return re.sub(r"<[^>]+>", " ", html or "").strip()
+
+
+def _parse_email_addr(raw: str) -> str:
+    """Pull the bare address out of "Name <addr@x.y>" or just addr@x.y."""
+    if not raw:
+        return ""
+    m = re.search(r"<([^>]+)>", raw)
+    email = (m.group(1) if m else raw).strip().lower()
+    return email
+
 
 @router.post("/support/inbound-email")
-async def inbound_email_stub(request: Request):
-    """Placeholder for Resend Inbound emails at support@flowralive.in.
-    v2 will parse the payload and auto-create/append tickets. Right
-    now we just log the payload so ops can see traffic."""
+async def inbound_email(request: Request):
+    """Resend Inbound webhook — parses the email, matches the sender to
+    an admin (or falls back to a shared 'inbound' tenant), and either
+    creates a new ticket OR appends to an existing thread when the
+    subject contains a `[FLOWRA-<id>]` marker.
+
+    Payload shape (Resend Inbound):
+      { "type": "email.received", "data": {
+          "from": "Customer <c@x.com>", "subject": "...",
+          "text": "...", "html": "...", ... } }
+    """
     try:
-        body = await request.body()
+        raw = await request.body()
+        # Always log raw to inbound_log for ops visibility.
         await db.support_inbound_log.insert_one({
             "received_at": _now_iso(),
-            "raw_body_sample": body[:2000].decode(errors="ignore"),
+            "raw_body_sample": raw[:4000].decode(errors="ignore"),
         })
-    except Exception:
-        pass
-    return APIResponse(success=True, message="logged (v1 stub — parsing coming in v2)")
+        payload = json.loads(raw or b"{}")
+        # Resend nests useful fields under `data`. We also accept a flat
+        # dict for other providers (e.g. Mailgun forward test).
+        data = payload.get("data", payload)
+        sender = _parse_email_addr(data.get("from") or "")
+        subject = (data.get("subject") or "").strip()[:200] or "(no subject)"
+        text = (data.get("text") or "").strip() or _strip_html(data.get("html", ""))[:8000]
+
+        if not sender:
+            return APIResponse(success=False, error="No sender email in payload")
+
+        # ─── Match sender → tenant admin ────────────────────────────
+        admin = await db.users.find_one(
+            {"username": sender, "role": "admin"},
+            {"_id": 0, "tenant_id": 1, "name": 1, "username": 1},
+        )
+        creator_role = "admin" if admin else "guest"
+        creator_name = (admin or {}).get("name", "") or sender
+        tenant_id = (admin or {}).get("tenant_id", "guest-inbound")
+
+        # ─── Reply thread detection ────────────────────────────────
+        m = _TICKET_ID_RE.search(subject)
+        if m:
+            ticket_id_prefix = m.group(1)
+            existing = await db.support_tickets.find_one(
+                {"ticket_id": {"$regex": f"^{re.escape(ticket_id_prefix)}"}},
+                {"_id": 0},
+            )
+            if existing:
+                new_msg = {
+                    "message_id": str(uuid.uuid4()),
+                    "author_role": creator_role,
+                    "author_username": sender,
+                    "author_name": creator_name,
+                    "body": text,
+                    "source": "inbound-email",
+                    "created_at": _now_iso(),
+                }
+                await db.support_tickets.update_one(
+                    {"ticket_id": existing["ticket_id"]},
+                    {"$push": {"messages": new_msg},
+                     "$set": {"updated_at": _now_iso(), "status": "open"}},
+                )
+                updated = await db.support_tickets.find_one(
+                    {"ticket_id": existing["ticket_id"]}, {"_id": 0}
+                )
+                await _fire_webhook("ticket.replied", updated, {"message": new_msg, "via": "email"})
+                return APIResponse(success=True, data={"action": "appended",
+                                                       "ticket_id": existing["ticket_id"]})
+
+        # ─── Otherwise create a new ticket ─────────────────────────
+        ticket = {
+            "ticket_id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "created_by": sender,
+            "creator_name": creator_name,
+            "creator_role": creator_role,
+            "subject": subject,
+            "status": "open",
+            "priority": "normal",
+            "source": "inbound-email",
+            "messages": [{
+                "message_id": str(uuid.uuid4()),
+                "author_role": creator_role,
+                "author_username": sender,
+                "author_name": creator_name,
+                "body": text,
+                "source": "inbound-email",
+                "created_at": _now_iso(),
+            }],
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "assignee_username": "",
+        }
+        await db.support_tickets.insert_one(ticket)
+        ticket.pop("_id", None)
+        await _fire_webhook("ticket.created", ticket, {"via": "email"})
+        return APIResponse(success=True, data={"action": "created",
+                                               "ticket_id": ticket["ticket_id"]})
+    except Exception as e:
+        logger.exception("inbound_email failed")
+        return APIResponse(success=False, error=str(e))

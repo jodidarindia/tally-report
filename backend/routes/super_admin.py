@@ -1106,3 +1106,56 @@ async def dedup_companies(request: Request):
     except Exception as e:
         logger.error(f"dedup_companies error: {e}", exc_info=True)
         return APIResponse(success=False, error=str(e))
+
+
+@router.get("/super-admin/trial-reminder-preview/{username}/{day}")
+async def preview_trial_reminder(username: str, day: int, request: Request):
+    """Return the exact HTML + subject that would be sent for one of
+    the four trial reminder days (5, 8, 12, 14). Lets the SuperAdmin
+    eyeball the copy from inside FLOWRA without hitting Resend."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    if day not in (5, 8, 12, 14):
+        return APIResponse(success=False, error="Day must be one of 5, 8, 12, 14")
+    try:
+        # Sample data: use the target admin if they're a trial, otherwise
+        # synthesise a preview payload so we can still render.
+        admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "password_hash": 0})
+        name = (admin or {}).get("name", "there")
+        # Compute days_left / trial_end_display defensively.
+        from services.trial_service import parse_iso, trial_days_remaining
+        end_dt = parse_iso((admin or {}).get("trial_end", ""))
+        if end_dt:
+            trial_end_disp = end_dt.strftime("%d %b %Y")
+            days_left = trial_days_remaining(admin) or (14 - day)
+        else:
+            from datetime import timedelta
+            trial_end_disp = (datetime.now(timezone.utc) + timedelta(days=14 - day)).strftime("%d %b %Y")
+            days_left = 14 - day
+
+        from services.email_service import (
+            send_trial_reminder_day5, send_trial_reminder_day8,
+            send_trial_reminder_day12, send_trial_reminder_day14,
+        )
+        if day == 5:
+            rendered = await send_trial_reminder_day5(username, name, days_left, trial_end_disp, preview_only=True)
+        elif day == 8:
+            rendered = await send_trial_reminder_day8(username, name, days_left, trial_end_disp, preview_only=True)
+        elif day == 12:
+            rendered = await send_trial_reminder_day12(username, name, days_left, trial_end_disp, preview_only=True)
+        else:  # day == 14
+            rendered = await send_trial_reminder_day14(username, name, trial_end_disp, preview_only=True)
+        return APIResponse(success=True, data={
+            "day": day,
+            "subject": rendered["subject"],
+            "html": rendered["html"],
+            "sample_name": name,
+            "sample_days_left": days_left if day != 14 else 0,
+            "sample_trial_end": trial_end_disp,
+            "recipient_preview": username,
+        })
+    except Exception as e:
+        logger.error(f"trial reminder preview failed: {e}")
+        return APIResponse(success=False, error=str(e))
+

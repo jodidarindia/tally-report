@@ -776,7 +776,7 @@ def _trial_reminder_footer() -> str:
     )
 
 
-async def send_trial_reminder_day5(to_email: str, name: str, days_left: int, trial_end_display: str):
+async def send_trial_reminder_day5(to_email: str, name: str, days_left: int, trial_end_display: str, preview_only: bool = False):
     """Curiosity / education. Show them what to explore next."""
     content = f"""
       <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">How's the first week going, {name.split()[0] if name else 'there'}?</h2>
@@ -802,10 +802,13 @@ async def send_trial_reminder_day5(to_email: str, name: str, days_left: int, tri
     """
     return await send_email(to_email,
         f"Day 5 of your FLOWRA trial \u2014 explore these 4 things",
-        _base_template(content), cc="auto", tag="trial-d5")
+        _base_template(content), cc="auto", tag="trial-d5") if not preview_only else {
+        "subject": "Day 5 of your FLOWRA trial \u2014 explore these 4 things",
+        "html":    _base_template(content),
+    }
 
 
-async def send_trial_reminder_day8(to_email: str, name: str, days_left: int, trial_end_display: str):
+async def send_trial_reminder_day8(to_email: str, name: str, days_left: int, trial_end_display: str, preview_only: bool = False):
     """Halfway mark / progress-nudge with social proof."""
     content = f"""
       <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">You're past halfway, {name.split()[0] if name else 'there'}.</h2>
@@ -831,10 +834,13 @@ async def send_trial_reminder_day8(to_email: str, name: str, days_left: int, tri
     """
     return await send_email(to_email,
         f"{days_left} days left on your FLOWRA trial \u2014 pick your plan",
-        _base_template(content), cc="auto", tag="trial-d8")
+        _base_template(content), cc="auto", tag="trial-d8") if not preview_only else {
+        "subject": f"{days_left} days left on your FLOWRA trial \u2014 pick your plan",
+        "html":    _base_template(content),
+    }
 
 
-async def send_trial_reminder_day12(to_email: str, name: str, days_left: int, trial_end_display: str):
+async def send_trial_reminder_day12(to_email: str, name: str, days_left: int, trial_end_display: str, preview_only: bool = False):
     """Loss aversion / anchor. 2 days to go."""
     content = f"""
       <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Two days left on your FLOWRA trial</h2>
@@ -862,10 +868,13 @@ async def send_trial_reminder_day12(to_email: str, name: str, days_left: int, tr
     """
     return await send_email(to_email,
         f"48 hours left \u2014 keep your FLOWRA data",
-        _base_template(content), cc="auto", tag="trial-d12")
+        _base_template(content), cc="auto", tag="trial-d12") if not preview_only else {
+        "subject": "48 hours left \u2014 keep your FLOWRA data",
+        "html":    _base_template(content),
+    }
 
 
-async def send_trial_reminder_day14(to_email: str, name: str, trial_end_display: str):
+async def send_trial_reminder_day14(to_email: str, name: str, trial_end_display: str, preview_only: bool = False):
     """Final call. Urgency + lockout notice."""
     content = f"""
       <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Your FLOWRA trial ends tonight</h2>
@@ -891,4 +900,7 @@ async def send_trial_reminder_day14(to_email: str, name: str, trial_end_display:
     """
     return await send_email(to_email,
         "Final day \u2014 your FLOWRA trial ends tonight",
-        _base_template(content), cc="auto", tag="trial-d14")
+        _base_template(content), cc="auto", tag="trial-d14") if not preview_only else {
+        "subject": "Final day \u2014 your FLOWRA trial ends tonight",
+        "html":    _base_template(content),
+    }

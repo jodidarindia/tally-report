@@ -10,6 +10,49 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 24 2026 — Trial Reminder Preview + Resend Inbound
+
+Small but high-leverage follow-up from iter-121's backlog.
+
+**Trial Reminder Preview** (SuperAdmin → Subscriptions tab)
+- New endpoint `GET /api/super-admin/trial-reminder-preview/{u}/{day}`
+  where day ∈ {5, 8, 12, 14}. Returns the exact `subject + html` that
+  would go out, rendered with the user's own `trial_end` when they're
+  a trial admin (else sample data).
+- The four `send_trial_reminder_day{5,8,12,14}` helpers now accept a
+  `preview_only=True` kwarg that returns the payload dict instead of
+  hitting Resend — same code path, zero drift risk.
+- Frontend: every trial row now has a small envelope icon (data-testid
+  `preview-reminder-<username>`) opening a full-screen preview modal
+  with a Day-5/8/12/14 switcher and an iframed HTML render (sandbox
+  attribute set so nothing inside the preview can escape).
+
+**Resend Inbound → auto-create tickets** (`routes/support_tickets.py`)
+- `POST /support/inbound-email` upgraded from stub to a real parser:
+  - Extracts bare address from `"Name <addr@x.y>"` payloads.
+  - Matches sender against `users` — if there's a tenant admin with
+    that email, ticket is filed under their `tenant_id`; otherwise it
+    lands in a shared `guest-inbound` bucket (still visible to the
+    SuperAdmin inbox).
+  - Regex `\[FLOWRA-<id>\]` in the subject → the message is appended
+    to the matching existing ticket instead of creating a new one, and
+    the status flips back to `open` (customer replied).
+  - Emits `ticket.created` / `ticket.replied` webhooks with a
+    `via: "email"` marker so downstream Slack/Discord integrations know
+    the channel.
+  - Always logs the raw payload to `support_inbound_log` for ops
+    visibility even when parsing fails.
+- Verified end-to-end via curl: create → append flow uses the ticket
+  ID marker correctly, action="created" and action="appended" both
+  return the same ticket_id.
+
+**User production checklist to activate inbound**
+1. In Resend → **Inbound** tab, add `support@flowralive.in`.
+2. Point its webhook to
+   `https://<PRODUCTION_URL>/api/support/inbound-email`.
+3. That's it — no additional keys needed; the endpoint is stateless
+   and idempotent.
+
 ## Shipped — Feb 24 2026 — SuperAdmin Follow-Up + Razorpay + Support Tickets
 
 Second SuperAdmin overhaul in the same week per direct user brief. Tests:

@@ -518,6 +518,7 @@ const SuperAdminDashboard = ({ token, user }) => {
 
       {activeTab === 'subscriptions' && (
         <SubscriptionsTab admins={admins} onOpenLedger={openLedger} onEditAdmin={openEditAdmin}
+          token={token}
           onConvertTrial={(admin) => {
             const plan = window.prompt(`Convert '${admin.username}' to which paid plan? (starter / professional / enterprise)`, 'enterprise');
             if (!plan || !['starter','professional','enterprise'].includes(plan.toLowerCase())) return;

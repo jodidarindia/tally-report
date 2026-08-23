@@ -1,6 +1,9 @@
-import React, { useMemo } from 'react';
-import { FileText, Pencil, ArrowUpCircle } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import axios from 'axios';
+import { FileText, Pencil, ArrowUpCircle, Mail, X, Loader2 } from 'lucide-react';
 import { PLANS, formatINR, formatDate } from '../utils';
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /* ── Payment-status helper ───────────────────────────────────────────
  * Derives a Paid / Partially Paid / Pending / Unpaid label per admin
@@ -36,7 +39,20 @@ const SummaryCards = ({ counts }) => {
   );
 };
 
-export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertTrial }) => {
+export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertTrial, token }) => {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [preview, setPreview] = useState(null);       // {username, day, subject, html, loading}
+
+  const openPreview = async (username, day) => {
+    setPreview({ username, day, loading: true });
+    try {
+      const r = await axios.get(`${API}/super-admin/trial-reminder-preview/${encodeURIComponent(username)}/${day}`, { headers });
+      if (r.data?.success) setPreview({ username, day, ...r.data.data, loading: false });
+      else setPreview({ username, day, loading: false, error: r.data?.error || 'Failed to load' });
+    } catch (e) {
+      setPreview({ username, day, loading: false, error: e.response?.data?.error || e.message });
+    }
+  };
   const counts = useMemo(() => {
     let active = 0, trial = 0, expiring = 0, expired = 0;
     (admins || []).forEach((a) => {
@@ -141,11 +157,18 @@ export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertT
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-1">
                         {isTrial && (
-                          <button onClick={() => onConvertTrial && onConvertTrial(admin)}
-                            className="p-1.5 text-cyan-600 hover:text-cyan-800 hover:bg-cyan-50 rounded-lg"
-                            title="Convert Trial → Paid" data-testid={`convert-trial-${admin.username}`}>
-                            <ArrowUpCircle size={14} />
-                          </button>
+                          <>
+                            <button onClick={() => onConvertTrial && onConvertTrial(admin)}
+                              className="p-1.5 text-cyan-600 hover:text-cyan-800 hover:bg-cyan-50 rounded-lg"
+                              title="Convert Trial → Paid" data-testid={`convert-trial-${admin.username}`}>
+                              <ArrowUpCircle size={14} />
+                            </button>
+                            <button onClick={() => openPreview(admin.username, 8)}
+                              className="p-1.5 text-slate-400 hover:text-cyan-700 hover:bg-cyan-50 rounded-lg"
+                              title="Preview reminder mail" data-testid={`preview-reminder-${admin.username}`}>
+                              <Mail size={14} />
+                            </button>
+                          </>
                         )}
                         <button onClick={() => onOpenLedger(admin.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View Ledger" data-testid={`ledger-${admin.username}`}>
                           <FileText size={14} />
@@ -162,6 +185,63 @@ export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertT
           </table>
         </div>
       </div>
+
+      {/* Trial Reminder Preview modal — day 5 / 8 / 12 / 14 toggle */}
+      {preview && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
+             onClick={(e) => e.target === e.currentTarget && setPreview(null)}
+             data-testid="reminder-preview-modal">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col border border-slate-200">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Preview reminder mail</h3>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Rendered for <b>{preview.username}</b> · Day <b>{preview.day}</b>
+                </div>
+              </div>
+              <button onClick={() => setPreview(null)} className="p-1 rounded hover:bg-slate-100"
+                data-testid="reminder-preview-close">
+                <X size={16} className="text-slate-500" />
+              </button>
+            </div>
+
+            <div className="px-5 py-2 border-b border-slate-100 flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Switch day:</span>
+              {[5, 8, 12, 14].map((d) => (
+                <button key={d}
+                  onClick={() => openPreview(preview.username, d)}
+                  className={`text-xs px-3 py-1 rounded-full border ${d === preview.day ? 'bg-cyan-600 text-white border-cyan-600' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                  data-testid={`preview-day-${d}`}>
+                  Day {d}
+                </button>
+              ))}
+              {preview.subject && (
+                <div className="ml-auto text-xs text-slate-600 truncate max-w-[50%]" title={preview.subject}>
+                  <span className="text-slate-400">Subject:</span> {preview.subject}
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-hidden bg-slate-50">
+              {preview.loading ? (
+                <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                  <Loader2 className="animate-spin mr-2" size={16} /> Rendering…
+                </div>
+              ) : preview.error ? (
+                <div className="p-6 text-rose-700 text-sm">{preview.error}</div>
+              ) : (
+                <iframe
+                  title="Reminder preview"
+                  srcDoc={preview.html}
+                  className="w-full h-full min-h-[540px] bg-white"
+                  sandbox=""
+                  data-testid="reminder-preview-iframe"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
