@@ -10,6 +10,59 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
 
+## Shipped — Feb 24 2026 (iter-122) — SuperAdmin Batch 2 (9-point sweep)
+
+Follow-up to iter-121's massive SuperAdmin overhaul. All items from the
+user's Msg 824 punch-list are now live and E2E-verified by iteration_122.
+
+**Backend** (`routes/super_admin.py`, `routes/auth.py`, `routes/prospects.py`)
+- **Auto-generated password reset**: `POST /super-admin/admins/{u}/reset-password`
+  no longer accepts a body — server generates a strong password, emails
+  it to the tenant admin, and returns only `{email_sent, expires_at}`
+  (no plaintext leak). SuperAdmin no longer types passwords.
+- **OTP-guarded admin deletion**: two-step delete. `request-delete-otp`
+  emails a 6-digit code to the requesting SuperAdmin (10-min expiry via
+  new `admin_delete_otps` collection); `confirm-delete-otp` verifies
+  before archive+delete runs.
+- **Kritika trial-in-expired P0 bug fixed**: `get_renewals` now buckets
+  trial admins by `trial_end` instead of `sub_start + sub_months`. New
+  `active_trials[]` array and `stats.active_trials_count` returned;
+  trials never land in `expired[]` until their trial_end has passed.
+- **Enhanced staff creation**: `POST /super-admin/staff` accepts
+  `department` (from a fixed 7-item list: Support, Sales, Finance,
+  Onboarding, Product, Engineering, Operations) + `mobile`, and fires
+  a Resend welcome email with the login URL, credentials, and enabled
+  tab pills. `list_staff` now returns `departments`.
+- **Employee login features inheritance P0 fixed**: at `/auth/login`,
+  employees now inherit their tenant admin's `features` array (same
+  logic `/auth/me` uses). Bug was returning `[]` at login → app opened
+  with every module disabled. Fixed via inline lookup.
+- **Prospect demo-given date**: `PUT /prospects/{id}/status` accepts
+  optional `demo_given_at` and flips `demo_completed=true`.
+
+**Frontend** (`SuperAdminDashboard.js`, all `super-admin/tabs/*.jsx`)
+- Reset-password modal removed (confirm dialog only).
+- New OTP delete modal (data-testid `delete-otp-modal`) with
+  6-digit numeric input.
+- Staff modal now has Department dropdown + Mobile input; table shows
+  a department pill column.
+- **Clickable summary cards** on Subscriptions / Invoices / Prospects /
+  Renewals — clicking a card filters the table below (toggle again to
+  reset). Active state shows a "● Filtered" badge + blue ring.
+- Prospects: cards now expand for drill-down; status → "Demo Given"
+  opens a date picker modal that stamps `demo_given_at` server-side.
+- Renewals: new "Active Trials" section with Convert button and
+  countdown so trial pipeline is visible next to renewals.
+- AdminsTab: action button row uses `flex-wrap` — no more mobile
+  overlap.
+
+**Testing**
+- `test_iteration122_superadmin_batch2.py`: 8/8 backend passes.
+- Playwright E2E on preview: 13 SuperAdmin tabs render, all card
+  filters toggle correctly, 10 trial rows visible in the new bucket.
+- Report: `/app/test_reports/iteration_122.json`. `retest_needed=false`.
+
+
 ## Shipped — Feb 24 2026 — Trial Reminder Preview + Resend Inbound
 
 Small but high-leverage follow-up from iter-121's backlog.

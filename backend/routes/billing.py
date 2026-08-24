@@ -138,6 +138,11 @@ async def create_order(request: Request):
         months = int(body.get("months", 12) or 12)
         if plan not in _plan_prices() or plan == "trial":
             return APIResponse(success=False, error="Invalid plan")
+        # A paid customer cannot buy the trial plan (guard duplicated at
+        # /billing entrypoint so Razorpay self-serve honours the same rule
+        # as SuperAdmin edit / renewal).
+        if intent in ("renew", "change") and plan == "trial":
+            return APIResponse(success=False, error="Trial plan is only available for brand-new customers.")
         if cycle not in ("monthly", "annual"):
             return APIResponse(success=False, error="Invalid billing cycle")
         admin = await db.users.find_one({"tenant_id": ctx["tenant_id"], "role": "admin"}, {"_id": 0, "password_hash": 0})
@@ -263,6 +268,16 @@ async def _apply_billing_success(order_row: dict, payment_id: str) -> None:
     await db.users.update_one({"username": username, "role": "admin"}, {"$set": update})
 
     # Record the payment against the admin's account.
+    from routes.seller_panel import create_service_reference
+    try:
+        service_ref = await create_service_reference(
+            customer_username=username,
+            event="upgrade" if intent == "upgrade" else ("renewal" if intent == "renew" else "plan_change"),
+            plan=plan, cycle=cycle, months=months,
+            created_by="razorpay-self-serve",
+        )
+    except Exception:
+        service_ref = ""
     await db.payments.insert_one({
         "payment_id": str(uuid.uuid4()),
         "razorpay_payment_id": payment_id,
@@ -273,6 +288,7 @@ async def _apply_billing_success(order_row: dict, payment_id: str) -> None:
         "reference_no": payment_id,
         "notes": f"{intent} to {plan} ({cycle}, {months}m)",
         "period_description": f"{intent.title()} · {plan} · {cycle}",
+        "service_reference": service_ref,
         "created_at": now,
         "source": "razorpay-self-serve",
     })

@@ -192,7 +192,18 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "role": user["role"],
                 "token": token,
                 "tenant_id": tenant_id,
-                "features": user.get("features", ALL_FEATURES if user["role"] == "admin" else (["dispatch"] if user["role"] == "dispatch" else (["salesman"] if user["role"] == "salesman" else []))),
+                # iter-122 bug fix: for role=employee, inherit `features`
+                # from the admin doc (employees never carry their own
+                # features array — they get whatever their tenant admin
+                # has enabled). Without this, employee logins were
+                # rendering the app with EVERY feature disabled.
+                "features": (
+                    user.get("features") if user["role"] == "admin"
+                    else (["dispatch"] if user["role"] == "dispatch"
+                    else (["salesman"] if user["role"] == "salesman"
+                    else ((await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "features": 1}) or {}).get("features", []) if user["role"] == "employee" and tenant_id
+                    else [])))
+                ) or (ALL_FEATURES if user["role"] == "admin" else []),
                 # FLOWRA staff control-panel feature list — only set for
                 # role==flowra_staff. Frontend uses this to show/hide tabs.
                 "staff_features": user.get("staff_features", []),

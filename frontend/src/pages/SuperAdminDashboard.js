@@ -3,7 +3,7 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import {
   Users, Shield, RefreshCw, Activity,
-  Eye, EyeOff, X, UserPlus,
+  X, UserPlus,
   FileText, AlertTriangle,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart,
   BarChart3, Wallet, Calendar, Gift, Database,
@@ -53,9 +53,12 @@ const SuperAdminDashboard = ({ token, user }) => {
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showResetModal, setShowResetModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
   const [expandedAdmin, setExpandedAdmin] = useState(null);
+  // OTP delete-admin flow (iter-122): 2-step guard. `null` when idle,
+  // { username, step: 'request'|'verify' } while an OTP is in flight.
+  const [deleteOtpModal, setDeleteOtpModal] = useState(null);
+  const [deleteOtpCode, setDeleteOtpCode] = useState('');
   const [newAdmin, setNewAdmin] = useState({
     username: '', password: '', name: '',
     plan: 'starter', billing_cycle: 'annual', subscription_months: 12,
@@ -65,8 +68,6 @@ const SuperAdminDashboard = ({ token, user }) => {
     sales_count: 1, dispatch_count: 0,
   });
   const [editAdmin, setEditAdmin] = useState(null);
-  const [resetPassword, setResetPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [convertModal, setConvertModal] = useState(null);
   const [convertData, setConvertData] = useState({ password: '', plan: 'professional', billing_cycle: 'annual', subscription_months: 12 });
   const [processModal, setProcessModal] = useState(null);
@@ -184,21 +185,77 @@ const SuperAdminDashboard = ({ token, user }) => {
   };
 
   const deleteAdmin = async (username) => {
-    if (!window.confirm(`DELETE admin '${username}' and ALL their data?`)) return;
+    // iter-122: OTP-guarded delete. Step 1: ask backend to email an OTP
+    // to the SuperAdmin's mailbox. Step 2: verify the code before the
+    // archive+delete workflow runs.
+    if (!window.confirm(
+      `Send OTP to your email to confirm deletion of '${username}'?\n\n` +
+      `A 6-digit code will be sent to your registered email. This is required to prevent accidental deletes.`
+    )) return;
     try {
-      const res = await axios.delete(`${API}/super-admin/admins/${username}`, { headers });
-      if (res.data?.success) { toast.success(res.data.message); fetchData(); }
-      else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Failed to delete admin'); }
+      const r = await axios.post(`${API}/super-admin/admins/${username}/request-delete-otp`, {}, { headers });
+      if (r.data?.success) {
+        const to = r.data.data?.sent_to;
+        toast.success(`OTP sent to ${to}. Enter it to confirm.`);
+        setDeleteOtpModal({ username, sent_to: to });
+        setDeleteOtpCode('');
+      } else {
+        toast.error(r.data?.error || 'Failed to send OTP');
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to send OTP');
+    }
   };
 
-  const handleResetPassword = async () => {
-    if (!resetPassword || resetPassword.length < 4) { toast.error('Password must be at least 4 characters'); return; }
+  const confirmDeleteOtp = async () => {
+    if (!deleteOtpModal?.username) return;
+    if (!deleteOtpCode || deleteOtpCode.length !== 6) {
+      toast.error('Enter the 6-digit code emailed to you');
+      return;
+    }
     try {
-      const res = await axios.post(`${API}/super-admin/admins/${showResetModal}/reset-password`, { new_password: resetPassword }, { headers });
-      if (res.data?.success) { toast.success(res.data.message); setShowResetModal(null); setResetPassword(''); }
-      else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Failed to reset password'); }
+      const r = await axios.post(
+        `${API}/super-admin/admins/${deleteOtpModal.username}/confirm-delete-otp`,
+        { otp: deleteOtpCode },
+        { headers },
+      );
+      if (r.data?.success) {
+        toast.success(r.data.message);
+        setDeleteOtpModal(null);
+        setDeleteOtpCode('');
+        fetchData();
+      } else {
+        toast.error(r.data?.error || 'Verification failed');
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Verification failed');
+    }
+  };
+
+  const handleResetPassword = async (targetUsername) => {
+    // iter-122: no more manual password typing. Backend auto-generates
+    // and emails a secure password. SuperAdmin just confirms and clicks.
+    if (!targetUsername) return;
+    if (!window.confirm(
+      `Reset password for ${targetUsername}?\n\n` +
+      `A new secure password will be generated and emailed to ${targetUsername}. ` +
+      `They should change it after first login.`
+    )) return;
+    try {
+      const res = await axios.post(`${API}/super-admin/admins/${targetUsername}/reset-password`, {}, { headers });
+      if (res.data?.success) {
+        const emailed = res.data.data?.email_sent;
+        toast.success(
+          emailed
+            ? `Password reset and emailed to ${targetUsername}`
+            : `Password reset — email delivery failed. Check Resend logs.`
+        );
+      } else {
+        toast.error(res.data?.error || 'Failed to reset password');
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to reset password');
+    }
   };
 
   const openEditAdmin = (admin) => {
@@ -243,13 +300,14 @@ const SuperAdminDashboard = ({ token, user }) => {
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to save changes'); }
   };
 
-  const updateProspectStatus = async (prospectId, status) => {
+  const updateProspectStatus = async (prospectId, status, extras = {}) => {
     // Optimistic update — snap the dropdown to the new value immediately
     // so the SuperAdmin sees the change reflected even before the API
-    // round-trip completes.
-    setProspects((prev) => prev.map((p) => p.prospect_id === prospectId ? { ...p, status } : p));
+    // round-trip completes. iter-122: accept `extras` (e.g. demo_given_at)
+    // captured from the ProspectsTab date picker.
+    setProspects((prev) => prev.map((p) => p.prospect_id === prospectId ? { ...p, status, ...extras } : p));
     try {
-      const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status }, { headers });
+      const res = await axios.put(`${API}/super-admin/prospects/${prospectId}/status`, { status, ...extras }, { headers });
       if (res.data?.success) {
         toast.success('Status updated');
         fetchData();
@@ -410,7 +468,7 @@ const SuperAdminDashboard = ({ token, user }) => {
 
   const submitStaffForm = async () => {
     if (!staffEditing) return;
-    const { username, name, password, features, _isNew } = staffEditing;
+    const { username, name, password, features, department, mobile, _isNew } = staffEditing;
     if (!name?.trim()) { toast.error('Name is required'); return; }
     if (_isNew) {
       if (!username || !username.includes('@')) { toast.error('Valid email is required'); return; }
@@ -420,9 +478,14 @@ const SuperAdminDashboard = ({ token, user }) => {
       if (_isNew) {
         const res = await axios.post(`${API}/super-admin/staff`, {
           username: username.trim().toLowerCase(), name: name.trim(), password, features: features || [],
+          department: (department || '').trim(),
+          mobile: (mobile || '').trim(),
         }, { headers });
-        if (res.data?.success) { toast.success('Staff account created'); setStaffEditing(null); fetchStaff(); }
-        else toast.error(res.data?.error || 'Failed');
+        if (res.data?.success) {
+          const emailed = res.data.data?.email_sent;
+          toast.success(emailed ? 'Staff account created — welcome email sent' : 'Staff account created (welcome email failed — check Resend logs)');
+          setStaffEditing(null); fetchStaff();
+        } else toast.error(res.data?.error || 'Failed');
       } else {
         const res = await axios.put(`${API}/super-admin/staff/${username}/features`, {
           features: features || [],
@@ -575,7 +638,7 @@ const SuperAdminDashboard = ({ token, user }) => {
           onCreateAdmin={() => setShowCreateModal(true)}
           onToggleActive={toggleActive}
           onEditAdmin={openEditAdmin}
-          onResetPassword={(u) => setShowResetModal(u)}
+          onResetPassword={(u) => handleResetPassword(u)}
           onDeleteAdmin={deleteAdmin}
         />
       )}
@@ -1161,25 +1224,36 @@ const SuperAdminDashboard = ({ token, user }) => {
         </div>
       )}
 
-      {/* Reset Password Modal */}
-      {showResetModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="reset-password-modal">
-          <div className="bg-white rounded-xl p-6 w-full max-w-sm mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900">Reset Password</h3>
-              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }}><X size={20} className="text-slate-400" /></button>
+      {/* Reset Password Modal removed (iter-122): resets now auto-generate
+          and email the new password server-side. No SuperAdmin typing. */}
+
+      {/* OTP-guarded admin delete modal (iter-122) */}
+      {deleteOtpModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" data-testid="delete-otp-modal"
+             onClick={e => e.target === e.currentTarget && setDeleteOtpModal(null)}>
+          <div className="bg-white rounded-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold text-red-700">Confirm Admin Deletion</h3>
+              <button onClick={() => setDeleteOtpModal(null)} data-testid="delete-otp-close"><X size={18} className="text-slate-400" /></button>
             </div>
-            <p className="text-sm text-slate-500 mb-4">Reset for <strong>{showResetModal}</strong></p>
-            <div className="relative">
-              <input type={showPassword ? "text" : "password"} value={resetPassword} onChange={e => setResetPassword(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg pr-10" placeholder="New password" data-testid="reset-password-input" />
-              <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => { setShowResetModal(null); setResetPassword(''); }} className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
-              <button onClick={handleResetPassword} className="px-4 py-2 text-sm bg-[#2563EB] text-white rounded-lg" data-testid="confirm-reset-password">Reset</button>
+            <p className="text-sm text-slate-600 mb-4">
+              A 6-digit code was sent to <b>{deleteOtpModal.sent_to}</b>. Enter it below to permanently
+              delete <b>{deleteOtpModal.username}</b>. This archives all of their staff and business data.
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoFocus
+              maxLength={6}
+              value={deleteOtpCode}
+              onChange={e => setDeleteOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="6-digit code"
+              className="w-full px-4 py-3 border border-slate-200 rounded-lg text-center text-2xl font-mono tracking-widest"
+              data-testid="delete-otp-input"
+            />
+            <div className="flex justify-end gap-3 mt-5">
+              <button onClick={() => setDeleteOtpModal(null)} className="px-4 py-2 text-sm border border-slate-200 rounded-lg" data-testid="delete-otp-cancel">Cancel</button>
+              <button onClick={confirmDeleteOtp} className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700" data-testid="delete-otp-confirm">Confirm Delete</button>
             </div>
           </div>
         </div>
@@ -1212,6 +1286,27 @@ const SuperAdminDashboard = ({ token, user }) => {
                       onChange={e => setStaffEditing(p => ({ ...p, name: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
                       placeholder="Riya Sharma" data-testid="staff-name-input" />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Department</label>
+                      <select value={staffEditing.department || ''}
+                        onChange={e => setStaffEditing(p => ({ ...p, department: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                        data-testid="staff-department-select">
+                        <option value="">Select department…</option>
+                        {['Support', 'Sales', 'Finance', 'Onboarding', 'Product', 'Engineering', 'Operations'].map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Mobile / WhatsApp</label>
+                      <input type="tel" value={staffEditing.mobile || ''}
+                        onChange={e => setStaffEditing(p => ({ ...p, mobile: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                        placeholder="+91 98xxxxxxxx" data-testid="staff-mobile-input" />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Initial Password *</label>

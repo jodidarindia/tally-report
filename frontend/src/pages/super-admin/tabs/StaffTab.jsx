@@ -10,7 +10,7 @@ export const StaffTab = ({ staffList, onNewStaff, onEditStaff, onResetPassword, 
         <p className="text-xs text-slate-500 mt-0.5">Delegate command-center access. Tick the tabs each employee needs — they only see what's enabled.</p>
       </div>
       <button
-        onClick={() => onNewStaff({ _isNew: true, username: '', name: '', password: generateStrongPassword(), features: ['overview'] })}
+        onClick={() => onNewStaff({ _isNew: true, username: '', name: '', password: generateStrongPassword(), features: ['overview'], department: '', mobile: '' })}
         className="px-3 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1D4ED8] flex items-center gap-1.5"
         data-testid="staff-new-btn">
         <UserPlus size={14} /> New Staff
@@ -23,6 +23,7 @@ export const StaffTab = ({ staffList, onNewStaff, onEditStaff, onResetPassword, 
           <thead>
             <tr className="bg-slate-50 text-xs text-slate-500 uppercase">
               <th className="py-3 px-4 text-left">Name / Email</th>
+              <th className="py-3 px-4 text-left">Dept</th>
               <th className="py-3 px-4 text-left">Tabs Enabled</th>
               <th className="py-3 px-4 text-left">Created</th>
               <th className="py-3 px-4 text-center">Status</th>
@@ -31,13 +32,19 @@ export const StaffTab = ({ staffList, onNewStaff, onEditStaff, onResetPassword, 
           </thead>
           <tbody>
             {staffList.length === 0 && (
-              <tr><td colSpan={5} className="py-12 text-center text-sm text-slate-400">No staff accounts yet. Click "New Staff" to delegate access.</td></tr>
+              <tr><td colSpan={6} className="py-12 text-center text-sm text-slate-400">No staff accounts yet. Click "New Staff" to delegate access.</td></tr>
             )}
             {staffList.map(s => (
               <tr key={s.username} className="border-t border-slate-100 hover:bg-slate-50/50" data-testid={`staff-row-${s.username}`}>
                 <td className="py-3 px-4">
                   <div className="font-medium text-slate-900">{s.name || s.username}</div>
                   <div className="text-xs text-slate-500">{s.username}</div>
+                  {s.mobile && <div className="text-[11px] text-slate-400 mt-0.5">{s.mobile}</div>}
+                </td>
+                <td className="py-3 px-4">
+                  {s.department ? (
+                    <span className="text-[11px] px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded font-medium">{s.department}</span>
+                  ) : <span className="text-xs text-slate-300">—</span>}
                 </td>
                 <td className="py-3 px-4">
                   <div className="flex flex-wrap gap-1">

@@ -90,6 +90,14 @@ async def _require_command_center(request: Request, feature: str = "", *, mutati
     return None, APIResponse(success=False, error="Forbidden: control-panel role required")
 
 
+# FLOWRA staff departments — surfaced on the New Staff form so we can
+# route escalations correctly (e.g., billing questions → Finance staff).
+STAFF_DEPARTMENTS = [
+    "Support", "Sales", "Finance", "Onboarding",
+    "Product", "Engineering", "Operations",
+]
+
+
 # ── Staff CRUD ─────────────────────────────────────────────────────────
 @router.get("/super-admin/staff")
 async def list_staff(request: Request):
@@ -105,6 +113,7 @@ async def list_staff(request: Request):
         "staff": rows,
         "available_features": STAFF_FEATURES,
         "view_only_features": list(STAFF_VIEW_ONLY_FEATURES),
+        "departments": STAFF_DEPARTMENTS,
         "viewer_role": user.get("role"),
     })
 
@@ -119,6 +128,8 @@ async def create_staff(request: Request):
     name = (body.get("name") or "").strip()
     password = body.get("password") or ""
     features = body.get("features") or []
+    department = (body.get("department") or "").strip()
+    mobile = (body.get("mobile") or "").strip()
     if not username or "@" not in username:
         return APIResponse(success=False, error="Email is required and must be valid")
     if not password or len(password) < 6:
@@ -130,6 +141,8 @@ async def create_staff(request: Request):
     invalid = [f for f in features if f not in STAFF_FEATURES]
     if invalid:
         return APIResponse(success=False, error=f"Unknown feature(s): {invalid}")
+    if department and department not in STAFF_DEPARTMENTS:
+        return APIResponse(success=False, error=f"Unknown department. Pick one of: {', '.join(STAFF_DEPARTMENTS)}")
 
     if await db.users.find_one({"username": username}):
         return APIResponse(success=False, error="A user with this email already exists")
@@ -145,6 +158,8 @@ async def create_staff(request: Request):
         "tenant_id": None,
         "company_id": None,
         "staff_features": features,
+        "department": department,
+        "mobile": mobile,
         "active": True,
         "must_change_password": True,
         "created_at": now,
@@ -153,8 +168,52 @@ async def create_staff(request: Request):
     await db.users.insert_one(doc)
     await log_audit(db, "flowra_staff_created", user, {
         "staff_username": username, "features": features,
+        "department": department,
     }, request)
-    return APIResponse(success=True, data={"username": username}, message="Staff account created")
+
+    # Fire welcome email so the new staff can log in immediately.
+    email_sent = False
+    email_error = ""
+    try:
+        from services.email_service import send_email, _base_template
+        subj = "Welcome to the FLOWRA Command Center"
+        feat_pills = "".join(
+            f'<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;font-size:11px;padding:2px 8px;border-radius:9999px;margin:2px 4px 0 0;">{f.replace("_"," ").title()}</span>'
+            for f in features
+        ) or '<span style="color:#94a3b8;font-size:12px;">(none yet — ask super-admin to enable tabs)</span>'
+        content = f"""
+          <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">Welcome, {name}!</h2>
+          <p style="color:#334155;font-size:14px;margin:0 0 18px;line-height:1.6;">
+            You've been added as a FLOWRA Command Center staff member{f' in the <b>{department}</b> team' if department else ''}.
+            Use the credentials below to sign in and access the tabs your admin has enabled for you.
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:20px;">
+            <tr><td>
+              <div style="font-size:12px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Login Credentials</div>
+              <p style="font-size:13px;color:#1e293b;margin:2px 0;">Login URL: <a href="https://insights.flowralive.in" style="color:#2563EB;text-decoration:none;">insights.flowralive.in</a></p>
+              <p style="font-size:13px;color:#1e293b;margin:2px 0;">User ID: <b style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{username}</b></p>
+              <p style="font-size:13px;color:#1e293b;margin:2px 0;">Password: <b style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;">{password}</b></p>
+              <p style="font-size:11px;color:#64748b;margin:10px 0 0;line-height:1.5;">
+                Change this password after first login via <b>Profile → Change Password</b>.
+              </p>
+            </td></tr>
+          </table>
+          <div style="margin-bottom:18px;">
+            <div style="font-size:12px;color:#334155;font-weight:600;margin-bottom:6px;">Tabs enabled for you</div>
+            <div>{feat_pills}</div>
+          </div>
+          <p style="color:#94a3b8;font-size:12px;">Questions? Reply to this email or write to support@flowralive.in.</p>
+        """
+        email_sent = await send_email(username, subj, _base_template(content), tag="staff-welcome")
+    except Exception as e:
+        email_error = str(e)
+        logger.warning(f"staff welcome email failed: {e}")
+
+    return APIResponse(success=True, data={
+        "username": username,
+        "email_sent": bool(email_sent),
+        "email_error": email_error,
+    }, message="Staff account created")
 
 
 @router.put("/super-admin/staff/{username}/features")
@@ -434,6 +493,20 @@ async def create_admin(request: Request):
 
         sync_token = generate_sync_token(tenant_id)
 
+        # Auto-generate a service reference for this new signup so the
+        # first invoice can be tied back to it.
+        from routes.seller_panel import create_service_reference
+        try:
+            service_ref = await create_service_reference(
+                customer_username=username,
+                event="new_signup",
+                plan=plan_id, cycle=billing_cycle, months=subscription_months,
+                created_by=sa["username"],
+            )
+        except Exception as _re:
+            logger.warning(f"service ref generation failed for {username}: {_re}")
+            service_ref = ""
+
         await log_audit("admin_created", sa["username"], target=username,
                         details=f"Tenant: {tenant_id}, Plan: {plan_id}, Trial: {is_trial}, Features: {len(valid_features)}, Subscription: {subscription_months}mo",
                         ip_address=get_client_ip(request))
@@ -485,6 +558,7 @@ async def create_admin(request: Request):
             "features": valid_features,
             "is_trial": is_trial,
             "trial_end": trial_end,
+            "service_reference": service_ref,
             "email_sent": bool(email_sent),
             "email_error": email_error,
         })
@@ -557,6 +631,12 @@ async def edit_admin_full(username: str, request: Request):
         new_plan = body.get("plan", old_plan)
         new_cycle = body.get("billing_cycle", old_cycle)
         new_months = int(body.get("subscription_months", old_months) or old_months)
+        # Business rule (iter-122): a paid customer can NEVER be moved
+        # back onto the trial plan via edit or renewal. Trial is only for
+        # brand-new customer creation.
+        if new_plan == "trial" and old_plan != "trial":
+            return APIResponse(success=False,
+                error="A paid customer cannot be moved back to Free Trial. Pick a paid plan.")
         new_name = body.get("name", target.get("name", ""))
         features = body.get("features")
         max_companies = body.get("max_companies")
@@ -776,6 +856,171 @@ async def delete_admin(username: str, request: Request):
         return APIResponse(success=False, error=str(e))
 
 
+@router.post("/super-admin/admins/{username}/request-delete-otp")
+async def request_delete_admin_otp(username: str, request: Request):
+    """Generate a 6-digit OTP, store it (10-minute expiry) on the target
+    admin doc, and email it to the requesting SuperAdmin's inbox so the
+    delete action requires an out-of-band confirmation code before
+    proceeding. Prevents accidental / one-click destructive deletes."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "name": 1, "username": 1})
+        if not admin:
+            return APIResponse(success=False, error="Admin not found")
+        import secrets
+        code = f"{secrets.randbelow(1000000):06d}"
+        from datetime import timedelta
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        await db.admin_delete_otps.update_one(
+            {"target_username": username, "requested_by": sa["username"]},
+            {"$set": {
+                "target_username": username,
+                "requested_by": sa["username"],
+                "otp": code,
+                "expires_at": expires_at,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+
+        # Email the OTP to the SuperAdmin (they act as the second-factor
+        # holder). Fall back gracefully so the API still returns success.
+        email_sent = False
+        try:
+            from services.email_service import send_email, _base_template
+            subj = f"[FLOWRA] OTP to delete admin: {username}"
+            content = f"""
+              <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Confirm admin deletion</h2>
+              <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+                You requested to permanently delete the FLOWRA admin account
+                <b>{admin.get('name') or username}</b> (<code>{username}</code>).
+                This will archive all their staff and business data.
+              </p>
+              <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 18px;margin:0 0 18px;">
+                <div style="font-size:11px;color:#b91c1c;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">
+                  One-time confirmation code
+                </div>
+                <div style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:6px;color:#7f1d1d;">
+                  {code}
+                </div>
+                <p style="font-size:11px;color:#7f1d1d;margin:8px 0 0;">Valid for 10 minutes. Never share this code.</p>
+              </div>
+              <p style="color:#64748b;font-size:12px;">If you did not initiate this, ignore this email — no deletion will occur.</p>
+            """
+            email_sent = await send_email(sa["username"], subj, _base_template(content), tag="admin-delete-otp")
+        except Exception as e:
+            logger.warning(f"admin delete OTP email failed: {e}")
+
+        await log_audit(
+            "admin_delete_otp_requested", sa["username"], target=username,
+            details=f"OTP emailed to {sa['username']}", ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, data={
+            "email_sent": bool(email_sent),
+            "expires_at": expires_at,
+            "sent_to": sa["username"],
+        }, message="OTP sent to your registered email")
+    except Exception as e:
+        logger.error(f"request_delete_admin_otp error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/super-admin/admins/{username}/confirm-delete-otp")
+async def confirm_delete_admin_otp(username: str, request: Request):
+    """Verify the 6-digit OTP and, on success, perform the same archive
+    + delete workflow as the legacy DELETE endpoint. Two-factor guard
+    for a destructive action."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        otp = (body.get("otp") or "").strip()
+        if not otp or len(otp) != 6 or not otp.isdigit():
+            return APIResponse(success=False, error="Enter the 6-digit code emailed to you")
+        rec = await db.admin_delete_otps.find_one({
+            "target_username": username,
+            "requested_by": sa["username"],
+        })
+        if not rec:
+            return APIResponse(success=False, error="No OTP requested. Click Delete again to send one.")
+        if rec.get("otp") != otp:
+            return APIResponse(success=False, error="Incorrect code. Try again.")
+        try:
+            expires_dt = datetime.fromisoformat(rec.get("expires_at", "").replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > expires_dt:
+                return APIResponse(success=False, error="Code expired. Request a new one.")
+        except Exception:
+            return APIResponse(success=False, error="OTP validity check failed. Request a new code.")
+
+        # OTP passed → reuse the archive+delete workflow. To avoid code
+        # duplication we inline-call the same steps as `delete_admin`.
+        admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0})
+        if not admin:
+            return APIResponse(success=False, error="Admin not found")
+        tenant_id = admin.get("tenant_id")
+        now = now_ist_iso()
+
+        admin_archive = {
+            **{k: v for k, v in admin.items() if k != "password_hash"},
+            "deleted_at": now, "deleted_by": sa["username"],
+            "deletion_reason": "admin_deleted_by_superadmin_otp",
+            "original_tenant_id": tenant_id, "original_role": "admin",
+        }
+        await db.deleted_users.insert_one(admin_archive)
+
+        staff = await db.users.find(
+            {"tenant_id": tenant_id, "role": {"$in": ["employee", "dispatch", "salesman"]}},
+            {"_id": 0, "password_hash": 0}
+        ).to_list(500)
+        for emp in staff:
+            await db.deleted_users.insert_one({
+                **emp, "deleted_at": now, "deleted_by": sa["username"],
+                "deletion_reason": "parent_admin_deleted_otp",
+                "original_tenant_id": tenant_id, "original_role": emp.get("role", "employee"),
+            })
+        await db.users.delete_many({"tenant_id": tenant_id, "role": {"$in": ["employee", "dispatch", "salesman"]}})
+
+        data_collections = [
+            "inventory_items", "sales_vouchers", "receipt_vouchers",
+            "credit_notes", "journal_vouchers", "customers",
+            "sync_status", "sync_history", "stock_journals",
+            "customer_followups", "customer_targets",
+            "overdue_digest", "ai_query_history",
+        ]
+        total_archived = 0
+        for coll_name in data_collections:
+            docs = await db[coll_name].find({"tenant_id": tenant_id}, {"_id": 0}).to_list(50000)
+            if docs:
+                await db.archived_tenant_data.insert_one({
+                    "tenant_id": tenant_id, "admin_username": username,
+                    "collection": coll_name, "record_count": len(docs),
+                    "archived_at": now, "archived_by": sa["username"],
+                    "data_sample_count": min(len(docs), 5),
+                    "data_summary": f"{len(docs)} records from {coll_name}",
+                })
+                total_archived += len(docs)
+                await db[coll_name].delete_many({"tenant_id": tenant_id})
+
+        await db.renewal_requests.delete_many({"tenant_id": tenant_id})
+        await db.users.delete_one({"username": username})
+        await db.admin_delete_otps.delete_many({"target_username": username})
+
+        await log_audit(
+            "admin_deleted_via_otp", sa["username"], target=username,
+            details=f"Tenant: {tenant_id}, Staff: {len(staff)}, Records archived: {total_archived}",
+            ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, message=(
+            f"Admin '{username}' deleted. {len(staff)} staff and {total_archived} records archived."
+        ))
+    except Exception as e:
+        logger.error(f"confirm_delete_admin_otp error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.get("/super-admin/deleted-users")
 async def get_deleted_users(request: Request):
     """View archived/deleted users for audit purposes."""
@@ -805,26 +1050,63 @@ async def get_deleted_users(request: Request):
 
 @router.post("/super-admin/admins/{username}/reset-password")
 async def reset_admin_password(username: str, request: Request):
-    """Super admin resets an admin's password."""
+    """Super admin triggers a NEW auto-generated password for an admin.
+    The password is generated server-side (never seen by SuperAdmin) and
+    emailed to the admin — no user interference / typing required."""
     sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
-        body = await request.json()
-        new_password = body.get("new_password", "")
-        if len(new_password) < 4:
-            return APIResponse(success=False, error="Password must be at least 4 characters")
-
         admin = await db.users.find_one({"username": username, "role": "admin"})
         if not admin:
             return APIResponse(success=False, error="Admin not found")
 
+        # Cryptographically random 12-char password (letters + digits +
+        # a couple of symbols the customer can still type easily).
+        import secrets, string
+        alphabet = string.ascii_letters + string.digits + "@#!$%"
+        new_password = "".join(secrets.choice(alphabet) for _ in range(12))
+
         await db.users.update_one(
             {"username": username},
-            {"$set": {"password_hash": hash_password(new_password)}}
+            {"$set": {"password_hash": hash_password(new_password)}},
         )
-        await log_audit("password_reset", sa["username"], target=username, details="Admin password reset by super admin", ip_address=get_client_ip(request))
-        return APIResponse(success=True, message=f"Password reset for '{username}'")
+        await log_audit("password_reset", sa["username"], target=username,
+                        details="Auto-generated password emailed", ip_address=get_client_ip(request))
+
+        # Email new password. We surface `email_sent` in the response so
+        # the SuperAdmin UI can flag failures rather than silently claim
+        # success. The plaintext password NEVER leaves the server other
+        # than through this email.
+        email_sent = False
+        try:
+            from services.email_service import send_email, _base_template
+            subj = "Your FLOWRA password has been reset"
+            content = f"""
+              <h2 style=\"margin:0 0 8px;font-size:22px;color:#1e293b;\">Password reset</h2>
+              <p style=\"color:#334155;font-size:14px;margin:0 0 18px;line-height:1.6;\">
+                Hi {admin.get('name') or username.split('@')[0]}, your FLOWRA account password has been reset by our team.
+              </p>
+              <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:16px 20px;margin-bottom:20px;\">
+                <tr><td>
+                  <div style=\"font-size:12px;color:#854d0e;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;\">New Login Credentials</div>
+                  <p style=\"font-size:13px;color:#1e293b;margin:2px 0;\">Login URL: <a href=\"https://insights.flowralive.in\" style=\"color:#2563EB;text-decoration:none;\">insights.flowralive.in</a></p>
+                  <p style=\"font-size:13px;color:#1e293b;margin:2px 0;\">User ID: <b style=\"font-family:'SFMono-Regular',Consolas,Menlo,monospace;\">{username}</b></p>
+                  <p style=\"font-size:13px;color:#1e293b;margin:2px 0;\">New Password: <b style=\"font-family:'SFMono-Regular',Consolas,Menlo,monospace;\">{new_password}</b></p>
+                  <p style=\"font-size:11px;color:#854d0e;margin:10px 0 0;line-height:1.5;\">
+                    Please change this password immediately after logging in via <b>Profile → Change Password</b>.
+                  </p>
+                </td></tr>
+              </table>
+              <p style=\"color:#94a3b8;font-size:12px;\">If you didn't request this, contact support@flowralive.in immediately.</p>
+            """
+            email_sent = await send_email(username, subj, _base_template(content), tag="password-reset")
+        except Exception as e:
+            logger.warning(f"password reset email failed: {e}")
+
+        return APIResponse(success=True,
+                           message=f"New password generated and emailed to {username}",
+                           data={"email_sent": bool(email_sent)})
     except Exception as e:
         logger.error(f"Error resetting password: {e}")
         return APIResponse(success=False, error=str(e))
@@ -933,17 +1215,52 @@ async def get_renewals(request: Request):
         from services.id_mapping_service import resolve_company_names
         near_expiry = []
         expired = []
+        active_trials = []
         for admin in admins:
             sub_start = admin.get("subscription_start", "")
             sub_months = admin.get("subscription_months", 12)
             if not sub_start:
                 continue
-            days_left = days_until_expiry(sub_start, sub_months)
-            expires_at = subscription_expires_at(sub_start, sub_months)
             tid = admin.get("tenant_id", "")
             company_uuids = admin.get("companies", [])
             name_map = await resolve_company_names(tid, company_uuids)
             companies_display = [name_map.get(c, c) for c in company_uuids]
+
+            # iter-122: trial admins have subscription_months=0. Their
+            # true expiry is `trial_end`, not the classic subscription
+            # window. Bucket them via trial_end so an active trial like
+            # "Kritika" never shows up as EXPIRED in the Renewals menu.
+            is_trial = bool(admin.get("is_trial"))
+            if is_trial:
+                trial_end = admin.get("trial_end", "")
+                if not trial_end:
+                    continue
+                try:
+                    end_dt = datetime.fromisoformat(trial_end.replace("Z", "+00:00"))
+                    days_left = (end_dt - datetime.now(timezone.utc)).days
+                except Exception:
+                    continue
+                entry = {
+                    "username": admin["username"],
+                    "name": admin.get("name", ""),
+                    "tenant_id": tid,
+                    "plan": "trial",
+                    "billing_cycle": "trial",
+                    "subscription_start": admin.get("trial_start", sub_start),
+                    "subscription_expires": trial_end,
+                    "days_left": days_left,
+                    "active": admin.get("active", True),
+                    "companies": companies_display,
+                    "is_trial": True,
+                }
+                if days_left < 0:
+                    expired.append(entry)
+                else:
+                    active_trials.append(entry)
+                continue
+
+            days_left = days_until_expiry(sub_start, sub_months)
+            expires_at = subscription_expires_at(sub_start, sub_months)
             entry = {
                 "username": admin["username"],
                 "name": admin.get("name", ""),
@@ -955,6 +1272,7 @@ async def get_renewals(request: Request):
                 "days_left": days_left,
                 "active": admin.get("active", True),
                 "companies": companies_display,
+                "is_trial": False,
             }
             if days_left < 0:
                 expired.append(entry)
@@ -964,11 +1282,13 @@ async def get_renewals(request: Request):
         # Sort by urgency
         near_expiry.sort(key=lambda x: x["days_left"])
         expired.sort(key=lambda x: x["days_left"])
+        active_trials.sort(key=lambda x: x["days_left"])
 
         stats = {
             "pending_renewals": sum(1 for r in renewal_requests if r.get("status") == "pending"),
             "near_expiry_count": len(near_expiry),
             "expired_count": len(expired),
+            "active_trials_count": len(active_trials),
             "total_requests": len(renewal_requests)
         }
 
@@ -976,6 +1296,7 @@ async def get_renewals(request: Request):
             "renewal_requests": renewal_requests,
             "near_expiry": near_expiry,
             "expired": expired,
+            "active_trials": active_trials,
             "stats": stats
         })
     except Exception as e:

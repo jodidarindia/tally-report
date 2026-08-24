@@ -307,6 +307,23 @@ async def generate_invoice(request: Request):
         # Cap at 20 % (business rule from SuperAdmin spec).
         discount_pct = max(0.0, min(20.0, discount_pct))
 
+        # Business rule (iter-122): every invoice MUST be tied to a
+        # service reference number so accounting can trace which service
+        # activation the invoice relates to. Reference is auto-created
+        # on new signup / renewal / plan change (see service_references
+        # helper); SuperAdmin can also generate one on the fly if none
+        # exists yet for that customer.
+        service_reference = (body.get("service_reference") or "").strip()
+        if not service_reference:
+            return APIResponse(success=False, error=(
+                "A service reference number is required. Every invoice must be "
+                "linked to a service activation (new signup, renewal or plan change). "
+                "Pick or generate a reference from the customer's ledger first."))
+        ref_row = await db.service_references.find_one({"reference_no": service_reference})
+        if not ref_row or ref_row.get("customer_username") != customer_username:
+            return APIResponse(success=False, error=(
+                f"Service reference '{service_reference}' is not valid for this customer."))
+
         if not customer_username:
             return APIResponse(success=False, error="Customer required")
 
@@ -345,6 +362,7 @@ async def generate_invoice(request: Request):
         invoice = {
             "invoice_id": str(uuid.uuid4()),
             "invoice_number": invoice_number,
+            "service_reference": service_reference,
             "customer_username": customer_username,
             "customer_name": customer.get("name", customer_username),
             "customer_company": customer.get("company_name", ""),
@@ -914,3 +932,63 @@ async def list_industries(request: Request):
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     return APIResponse(success=True, data={"industries": INDIAN_INDUSTRIES})
+
+
+# ─── Service Reference Numbers (iter-122) ──────────────────────────────
+#
+# Every billable event on a customer (new signup, plan change, renewal)
+# generates a **service reference** that later invoices must cite. This
+# lets accounting trace an invoice back to a real service activation
+# rather than a free-typed line.
+
+async def create_service_reference(customer_username: str, event: str,
+                                   plan: str, cycle: str, months: int,
+                                   created_by: str = "system") -> str:
+    """Create + persist a reference. Returns the reference string.
+    event ∈ {new_signup, renewal, plan_change, manual}"""
+    import uuid as _uuid
+    ref = f"SRV-{datetime.now().strftime('%Y%m%d')}-{_uuid.uuid4().hex[:6].upper()}"
+    await db.service_references.insert_one({
+        "reference_no": ref,
+        "customer_username": customer_username,
+        "event": event,
+        "plan": plan, "cycle": cycle, "months": months,
+        "created_by": created_by,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "invoiced": False,
+    })
+    return ref
+
+
+@router.get("/super-admin/service-references")
+async def list_service_references(request: Request, customer_username: str = ""):
+    """List service references, optionally filtered to one customer.
+    Frontend uses this to render a dropdown on the Generate Invoice modal."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    q = {}
+    if customer_username:
+        q["customer_username"] = customer_username
+    rows = await db.service_references.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return APIResponse(success=True, data={"references": rows})
+
+
+@router.post("/super-admin/service-references")
+async def create_service_reference_endpoint(request: Request):
+    """Manual reference generation from SuperAdmin (e.g. one-off
+    onboarding fee). Frontend calls this before opening the invoice modal."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    body = await request.json()
+    ref = await create_service_reference(
+        customer_username=body.get("customer_username", ""),
+        event=body.get("event", "manual"),
+        plan=body.get("plan", ""),
+        cycle=body.get("cycle", ""),
+        months=int(body.get("months", 0) or 0),
+        created_by=sa["username"],
+    )
+    return APIResponse(success=True, data={"reference_no": ref})
+

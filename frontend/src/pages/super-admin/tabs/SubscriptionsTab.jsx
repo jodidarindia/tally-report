@@ -19,22 +19,34 @@ const paymentStatusFor = (admin) => {
   return { label: 'Paid', tone: 'bg-emerald-100 text-emerald-700' };
 };
 
-const SummaryCards = ({ counts }) => {
+const SummaryCards = ({ counts, activeFilter, onFilter }) => {
   const cards = [
-    { label: 'Total Customers',    value: counts.total,    tint: 'bg-slate-50 text-slate-800',       border: 'border-slate-200' },
-    { label: 'Active Subs',        value: counts.active,   tint: 'bg-emerald-50 text-emerald-700',   border: 'border-emerald-200' },
-    { label: 'Trial Users',        value: counts.trial,    tint: 'bg-cyan-50 text-cyan-800',         border: 'border-cyan-200' },
-    { label: 'Expiring Soon (≤30d)', value: counts.expiring, tint: 'bg-amber-50 text-amber-800',     border: 'border-amber-200' },
-    { label: 'Expired',            value: counts.expired,  tint: 'bg-rose-50 text-rose-700',         border: 'border-rose-200' },
+    { id: 'total',    label: 'Total Customers',      value: counts.total,    tint: 'bg-slate-50 text-slate-800',     border: 'border-slate-200' },
+    { id: 'active',   label: 'Active Subs',          value: counts.active,   tint: 'bg-emerald-50 text-emerald-700', border: 'border-emerald-200' },
+    { id: 'trial',    label: 'Trial Users',          value: counts.trial,    tint: 'bg-cyan-50 text-cyan-800',       border: 'border-cyan-200' },
+    { id: 'expiring', label: 'Expiring Soon (≤30d)', value: counts.expiring, tint: 'bg-amber-50 text-amber-800',     border: 'border-amber-200' },
+    { id: 'expired',  label: 'Expired',              value: counts.expired,  tint: 'bg-rose-50 text-rose-700',       border: 'border-rose-200' },
   ];
   return (
     <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4" data-testid="sub-summary-cards">
-      {cards.map((c) => (
-        <div key={c.label} className={`border ${c.border} rounded-xl p-3 ${c.tint}`}>
-          <div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{c.label}</div>
-          <div className="text-2xl font-bold mt-1">{c.value}</div>
-        </div>
-      ))}
+      {cards.map((c) => {
+        const active = activeFilter === c.id;
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onFilter(active ? 'total' : c.id)}
+            className={`border rounded-xl p-3 text-left transition-all ${c.tint} ${c.border} ${active ? 'ring-2 ring-offset-2 ring-blue-500 shadow-md' : 'hover:shadow-sm'}`}
+            data-testid={`sub-card-${c.id}`}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wide opacity-70 flex items-center justify-between">
+              <span>{c.label}</span>
+              {active && <span className="text-blue-600 text-[10px]">● Filtered</span>}
+            </div>
+            <div className="text-2xl font-bold mt-1">{c.value}</div>
+          </button>
+        );
+      })}
     </div>
   );
 };
@@ -42,6 +54,7 @@ const SummaryCards = ({ counts }) => {
 export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertTrial, token }) => {
   const headers = { Authorization: `Bearer ${token}` };
   const [preview, setPreview] = useState(null);       // {username, day, subject, html, loading}
+  const [filter, setFilter] = useState('total');      // iter-122: clickable summary cards filter the table
 
   const openPreview = async (username, day) => {
     setPreview({ username, day, loading: true });
@@ -71,13 +84,33 @@ export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertT
     return { total: (admins || []).length, active, trial, expiring, expired };
   }, [admins]);
 
+  // iter-122: apply the clickable-card filter to the table so tapping
+  // a summary card narrows to just those admins.
+  const filteredAdmins = useMemo(() => {
+    if (filter === 'total') return admins || [];
+    return (admins || []).filter((a) => {
+      const start = a.subscription_start || a.created_at;
+      const months = a.subscription_months || 12;
+      let daysLeft = null;
+      if (start) {
+        const end = new Date(start); end.setMonth(end.getMonth() + months);
+        daysLeft = Math.ceil((end - new Date()) / 86400000);
+      }
+      if (filter === 'trial') return !!a.is_trial;
+      if (filter === 'active') return a.active && !a.is_trial;
+      if (filter === 'expired') return !a.is_trial && daysLeft !== null && daysLeft < 0;
+      if (filter === 'expiring') return !a.is_trial && daysLeft !== null && daysLeft >= 0 && daysLeft <= 30;
+      return true;
+    });
+  }, [admins, filter]);
+
   return (
     <div data-testid="subscriptions-tab">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-slate-900">Subscription Management</h2>
       </div>
 
-      <SummaryCards counts={counts} />
+      <SummaryCards counts={counts} activeFilter={filter} onFilter={setFilter} />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -96,7 +129,7 @@ export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertT
               </tr>
             </thead>
             <tbody>
-              {admins.map(admin => {
+              {filteredAdmins.map(admin => {
                 const plan = admin.plan || 'starter';
                 const cycle = admin.billing_cycle || 'annual';
                 const months = admin.subscription_months || 12;

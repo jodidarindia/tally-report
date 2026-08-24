@@ -333,6 +333,13 @@ async def update_prospect_status(prospect_id: str, request: Request):
         update = {"status": new_status, "updated_at": datetime.now(timezone.utc).isoformat()}
         if notes:
             update["notes"] = notes
+        # iter-122: capture the demo_given_at date when the SuperAdmin
+        # moves a prospect to "Demo Given". Also flip demo_completed so
+        # the existing "Demo · Done" pill lights up automatically.
+        demo_given_at = body.get("demo_given_at")
+        if new_status == "demo_given" and demo_given_at:
+            update["demo_given_at"] = demo_given_at
+            update["demo_completed"] = True
 
         result = await db.prospects.update_one({"prospect_id": prospect_id}, {"$set": update})
         if result.matched_count == 0:
