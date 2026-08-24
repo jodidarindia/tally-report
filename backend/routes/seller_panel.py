@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone
+import asyncio
 import logging
 import io
 import uuid
@@ -918,7 +919,18 @@ async def download_invoice_pdf(invoice_id: str, request: Request):
 
 @router.get("/super-admin/customer-health")
 async def customer_health(request: Request):
-    """Get usage/sync health for all tenants."""
+    """Get usage/sync health for all tenants.
+
+    iter-124 perf fix: the previous implementation ran ~12 separate
+    `count_documents` calls per admin (N × 12 round-trips to Mongo),
+    which pushed the endpoint past the 60-second nginx timeout the
+    moment the customer count grew — bug reported by the user:
+    "customer health menu not opening". Rebuilt with:
+      * one aggregation per collection grouped by tenant_id
+      * one aggregation for payments grouped by customer_username
+      * one aggregation for the staff breakdown by role
+    Net queries: constant (~9) regardless of tenant count.
+    """
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -928,57 +940,86 @@ async def customer_health(request: Request):
             {"_id": 0, "password_hash": 0}
         ).to_list(500)
 
-        health_data = []
+        tenant_ids = [a.get("tenant_id", "") for a in admins if a.get("tenant_id")]
+        usernames = [a.get("username", "") for a in admins]
+
+        # ── One aggregation per collection, grouped by tenant_id. ──
+        async def _count_by_tenant(collection_name: str) -> dict:
+            pipeline = [
+                {"$match": {"tenant_id": {"$in": tenant_ids}}},
+                {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+            ]
+            out: dict = {}
+            async for row in db[collection_name].aggregate(pipeline):
+                out[row["_id"]] = row["n"]
+            return out
+
+        (
+            inv_map, sales_map, cust_map, purchase_map, receipt_map,
+            credit_map, beat_map, salesman_map, dispatch_map,
+        ) = await asyncio.gather(
+            _count_by_tenant("inventory_items"),
+            _count_by_tenant("sales_vouchers"),
+            _count_by_tenant("customers"),
+            _count_by_tenant("purchase_vouchers"),
+            _count_by_tenant("receipt_vouchers"),
+            _count_by_tenant("credit_notes"),
+            _count_by_tenant("beat_runs"),
+            _count_by_tenant("salesman_orders"),
+            _count_by_tenant("dispatch_cards"),
+        )
+
+        # Last-sync + agent_version per tenant (single scan).
+        sync_map: dict = {}
+        async for s in db.sync_status.find(
+            {"tenant_id": {"$in": tenant_ids}, "type": "agent_sync"},
+            {"_id": 0, "tenant_id": 1, "last_sync": 1, "agent_version": 1},
+        ):
+            sync_map[s["tenant_id"]] = s
+
+        # Staff breakdown per tenant.
+        staff_map: dict = {}
+        async for s in db.users.aggregate([
+            {"$match": {"tenant_id": {"$in": tenant_ids}, "role": {"$ne": "admin"}}},
+            {"$group": {"_id": {"tenant_id": "$tenant_id", "role": "$role"}, "n": {"$sum": 1}}},
+        ]):
+            tid = s["_id"]["tenant_id"]; role = s["_id"]["role"]
+            staff_map.setdefault(tid, {})[role] = s["n"]
+
+        # Total paid per admin (grouped over payments.customer_username).
+        payment_map: dict = {}
+        async for p in db.payments.aggregate([
+            {"$match": {"customer_username": {"$in": usernames}}},
+            {"$group": {"_id": "$customer_username", "amt": {"$sum": "$amount"}}},
+        ]):
+            payment_map[p["_id"]] = p["amt"]
+
+        # Resolve companies in one batch (still per-tenant since names
+        # live inside each tenant's own collection — but far fewer round
+        # trips than the count-documents storm).
+        health_data: list[dict] = []
+        from dateutil.parser import parse as parse_dt
         for admin in admins:
             tid = admin.get("tenant_id", "")
             company_uuids = admin.get("companies", [])
-            name_map = await resolve_company_names(tid, company_uuids)
+            name_map = await resolve_company_names(tid, company_uuids) if tid and company_uuids else {}
             companies_display = [name_map.get(c, c) for c in company_uuids]
 
-            # Get last sync
-            last_sync = await db.sync_status.find_one(
-                {"tenant_id": tid, "type": "agent_sync"},
-                {"_id": 0}
-            )
+            staff_breakdown = staff_map.get(tid, {})
+            emp_count = sum(staff_breakdown.get(r, 0) for r in ("employee", "dispatch", "salesman"))
 
-            # Data counts — extended to cover all current modules
-            inv_count = await db.inventory_items.count_documents({"tenant_id": tid})
-            sales_count = await db.sales_vouchers.count_documents({"tenant_id": tid})
-            cust_count = await db.customers.count_documents({"tenant_id": tid})
-            purchase_count = await db.purchase_vouchers.count_documents({"tenant_id": tid})
-            receipt_count = await db.receipt_vouchers.count_documents({"tenant_id": tid})
-            credit_note_count = await db.credit_notes.count_documents({"tenant_id": tid})
-            beat_run_count = await db.beat_runs.count_documents({"tenant_id": tid})
-            salesman_order_count = await db.salesman_orders.count_documents({"tenant_id": tid})
-            dispatch_card_count = await db.dispatch_cards.count_documents({"tenant_id": tid})
-            # Count all non-admin staff (employee + dispatch + salesman roles).
-            # The legacy `role:"employee"` filter under-counted modern multi-role
-            # tenants — a tenant with 3 salesmen + 2 dispatch users showed 0.
-            emp_count = await db.users.count_documents({
-                "tenant_id": tid,
-                "role": {"$in": ["employee", "dispatch", "salesman"]},
-            })
-            staff_breakdown = {}
-            async for s in db.users.aggregate([
-                {"$match": {"tenant_id": tid, "role": {"$ne": "admin"}}},
-                {"$group": {"_id": "$role", "n": {"$sum": 1}}},
-            ]):
-                staff_breakdown[s["_id"]] = s["n"]
-
-            # Days since last sync
+            last_sync_doc = sync_map.get(tid)
+            last_sync = last_sync_doc.get("last_sync") if last_sync_doc else None
             days_since_sync = None
-            if last_sync and last_sync.get("last_sync"):
+            if last_sync:
                 try:
-                    from dateutil.parser import parse as parse_dt
-                    last_dt = parse_dt(last_sync["last_sync"])
+                    last_dt = parse_dt(last_sync)
                     if last_dt.tzinfo is None:
                         last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    diff = (datetime.now(timezone.utc) - last_dt).days
-                    days_since_sync = diff
+                    days_since_sync = (datetime.now(timezone.utc) - last_dt).days
                 except Exception:
                     pass
 
-            # Determine health status
             if days_since_sync is None:
                 status = "never_synced"
             elif days_since_sync <= 1:
@@ -988,12 +1029,6 @@ async def customer_health(request: Request):
             else:
                 status = "inactive"
 
-            # Total paid
-            total_paid = 0.0
-            payments = await db.payments.find({"customer_username": admin["username"]}, {"_id": 0, "amount": 1}).to_list(1000)
-            for p in payments:
-                total_paid += p.get("amount", 0)
-
             health_data.append({
                 "username": admin["username"],
                 "name": admin.get("name", ""),
@@ -1002,20 +1037,20 @@ async def customer_health(request: Request):
                 "companies": companies_display,
                 "employee_count": emp_count,
                 "staff_breakdown": staff_breakdown,
-                "last_sync": last_sync.get("last_sync") if last_sync else None,
-                "agent_version": last_sync.get("agent_version", "") if last_sync else "",
+                "last_sync": last_sync,
+                "agent_version": last_sync_doc.get("agent_version", "") if last_sync_doc else "",
                 "days_since_sync": days_since_sync,
                 "health_status": status,
-                "inventory_items": inv_count,
-                "sales_vouchers": sales_count,
-                "purchase_vouchers": purchase_count,
-                "receipts": receipt_count,
-                "credit_notes": credit_note_count,
-                "customers": cust_count,
-                "beat_runs": beat_run_count,
-                "salesman_orders": salesman_order_count,
-                "dispatch_cards": dispatch_card_count,
-                "total_paid": round(total_paid, 2),
+                "inventory_items": inv_map.get(tid, 0),
+                "sales_vouchers": sales_map.get(tid, 0),
+                "purchase_vouchers": purchase_map.get(tid, 0),
+                "receipts": receipt_map.get(tid, 0),
+                "credit_notes": credit_map.get(tid, 0),
+                "customers": cust_map.get(tid, 0),
+                "beat_runs": beat_map.get(tid, 0),
+                "salesman_orders": salesman_map.get(tid, 0),
+                "dispatch_cards": dispatch_map.get(tid, 0),
+                "total_paid": round(payment_map.get(admin["username"], 0.0), 2),
                 "subscription_expires": subscription_expires_at(admin.get("subscription_start", ""), admin.get("subscription_months", 12)),
                 "days_left": days_until_expiry(admin.get("subscription_start", ""), admin.get("subscription_months", 12)),
             })

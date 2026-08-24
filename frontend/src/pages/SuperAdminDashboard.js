@@ -460,9 +460,15 @@ const SuperAdminDashboard = ({ token, user }) => {
   };
 
   const markInvoiceStatus = async (invoiceId, status) => {
-    const inv = (invoices || []).find(i => i.invoice_id === invoiceId);
+    // iter-124 bug fix: `invoices` state is an OBJECT
+    // ({ invoices: [], total_invoiced }), so calling .find() on it
+    // threw "invoices.find is not a function" the moment a SuperAdmin
+    // clicked the Paid/Unpaid toggle — reported by the user
+    // ("runtime error in invoice paid unpaid flip"). Read the nested
+    // array before searching.
+    const inv = (invoices?.invoices || []).find(i => i.invoice_id === invoiceId);
     const invNo = inv?.invoice_number || invoiceId;
-    const amt = inv?.amount || 0;
+    const amt = Number(inv?.amount) || 0;
     let payload = { status };
 
     if (status === 'paid') {
