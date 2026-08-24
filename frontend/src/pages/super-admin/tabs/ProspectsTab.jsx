@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowRightCircle, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatDate } from '../utils';
+import { RemarksPanel } from '../RemarksPanel';
 
-export const ProspectsTab = ({ prospects, prospectStats, onUpdateStatus, onConvert }) => {
+export const ProspectsTab = ({ prospects, prospectStats, onUpdateStatus, onConvert, token }) => {
   const [filter, setFilter] = useState('all');       // iter-122 clickable summary cards
   const [expanded, setExpanded] = useState(null);    // iter-122 clickable prospect drill-down
   const [demoDateFor, setDemoDateFor] = useState(null);
@@ -105,6 +106,12 @@ export const ProspectsTab = ({ prospects, prospectStats, onUpdateStatus, onConve
               <div><span className="text-slate-400 block">Employees</span><span className="text-slate-700">{p.employees_count || '—'}</span></div>
               <div><span className="text-slate-400 block">Demo Given On</span><span className="text-slate-700">{p.demo_given_at ? formatDate(p.demo_given_at) : '—'}</span></div>
               <div className="md:col-span-3"><span className="text-slate-400 block">Notes</span><span className="text-slate-600">{p.notes || 'No notes recorded yet.'}</span></div>
+              {/* iter-123: Remarks + history */}
+              {token && (
+                <div className="md:col-span-3 mt-2" onClick={e => e.stopPropagation()}>
+                  <RemarksPanel targetType="prospect" targetId={p.prospect_id} token={token} />
+                </div>
+              )}
             </div>
           )}
         </div>

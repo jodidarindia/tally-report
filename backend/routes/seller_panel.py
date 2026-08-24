@@ -205,6 +205,48 @@ async def record_payment(request: Request):
         }
         await db.payments.insert_one(payment)
 
+        # iter-123: Ledger ↔ Invoice sync. Auto-mark the oldest unpaid
+        # invoices for this customer as `paid` up to the receipt amount.
+        # This keeps SuperAdmin → Invoices in perfect sync with the
+        # customer ledger, so "the status of payment must be updated as
+        # per the payment received" (user, msg 828) holds without any
+        # manual clicking. FIFO order matches how accountants recognise
+        # partial receipts.
+        try:
+            remaining = amount
+            unpaid = await db.invoices.find(
+                {"customer_username": customer_username, "status": "unpaid"},
+                {"_id": 0, "invoice_id": 1, "invoice_number": 1, "amount": 1},
+            ).sort("invoice_date", 1).to_list(500)
+            auto_marked: list[str] = []
+            for inv in unpaid:
+                inv_amt = float(inv.get("amount", 0) or 0)
+                if inv_amt <= 0:
+                    continue
+                if remaining + 0.5 < inv_amt:      # tolerate 50 paisa rounding
+                    break
+                await db.invoices.update_one(
+                    {"invoice_id": inv["invoice_id"]},
+                    {"$set": {
+                        "status": "paid",
+                        "linked_payment_id": payment["payment_id"],
+                        "auto_paid_from": "ledger_receipt",
+                        "auto_paid_at": now_ist_iso(),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
+                auto_marked.append(inv.get("invoice_number") or inv["invoice_id"])
+                remaining -= inv_amt
+            if auto_marked:
+                await log_audit(
+                    "invoice_auto_paid_from_ledger", sa["username"],
+                    target=customer_username,
+                    details=f"Auto-marked {len(auto_marked)} invoice(s) paid: {', '.join(auto_marked)}",
+                    ip_address=get_client_ip(request),
+                )
+        except Exception as sync_err:
+            logger.warning(f"ledger-to-invoice sync failed for {customer_username}: {sync_err}")
+
         await log_audit(
             "payment_recorded", sa["username"],
             target=customer_username,
@@ -708,7 +750,81 @@ async def download_invoice_pdf(invoice_id: str, request: Request):
             style_cmds.append(('TEXTCOLOR', (0, -2), (-1, -2), colors.HexColor('#dc2626')))
         item_table.setStyle(TableStyle(style_cmds))
         elements.append(item_table)
-        elements.append(Spacer(1, 10 * mm))
+        elements.append(Spacer(1, 6 * mm))
+
+        # ── Payment Status + Timeline (iter-123) ──
+        # Show current invoice status + a chronologically-ordered list
+        # of receipts against this customer so the recipient can verify
+        # what has been credited. Always renders — even for unpaid
+        # invoices — so the customer sees "0 payments recorded yet".
+        inv_status = (invoice.get("status") or "unpaid").lower()
+        status_color = {
+            "paid":      colors.HexColor('#059669'),
+            "unpaid":    colors.HexColor('#dc2626'),
+            "cancelled": colors.HexColor('#6b7280'),
+        }.get(inv_status, colors.HexColor('#dc2626'))
+        status_bg = {
+            "paid":      colors.HexColor('#ecfdf5'),
+            "unpaid":    colors.HexColor('#fef2f2'),
+            "cancelled": colors.HexColor('#f3f4f6'),
+        }.get(inv_status, colors.HexColor('#fef2f2'))
+
+        pay_rows = await db.payments.find(
+            {"customer_username": invoice.get("customer_username", "")},
+            {"_id": 0}
+        ).sort("payment_date", 1).to_list(200)
+        total_received = sum(float(p.get("amount", 0) or 0) for p in pay_rows)
+        balance = final_amount - total_received
+
+        elements.append(Paragraph("Payment Status", h2_style))
+        # Status band
+        status_band = Table(
+            [[
+                Paragraph(f"<b>Status:</b> <font color='{status_color.hexval()}'><b>{inv_status.upper()}</b></font>", normal_style),
+                Paragraph(f"<b>Received:</b> Rs. {total_received:,.2f}", normal_style),
+                Paragraph(f"<b>Balance:</b> Rs. {max(balance, 0):,.2f}", normal_style),
+            ]],
+            colWidths=[58 * mm, 58 * mm, 58 * mm],
+        )
+        status_band.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), status_bg),
+            ('BOX', (0, 0), (-1, -1), 0.5, status_color),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(status_band)
+        elements.append(Spacer(1, 3 * mm))
+
+        # Timeline table (only if there are payments to show)
+        if pay_rows:
+            tl_data = [["Date", "Amount (Rs.)", "Mode", "Reference"]]
+            for p in pay_rows[-10:]:   # last 10 to keep the PDF compact
+                dt = (p.get("payment_date") or "")[:10]
+                tl_data.append([
+                    dt,
+                    f"{float(p.get('amount', 0) or 0):,.2f}",
+                    (p.get("payment_mode") or "").replace("_", " ").title(),
+                    (p.get("reference_no") or "—")[:24],
+                ])
+            tl_table = Table(tl_data, colWidths=[28 * mm, 34 * mm, 40 * mm, 72 * mm])
+            tl_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+                ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#e2e8f0')),
+                ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            elements.append(tl_table)
+        else:
+            elements.append(Paragraph(
+                "<i>No payments recorded against this account yet.</i>",
+                muted_style))
+        elements.append(Spacer(1, 6 * mm))
 
         # ── Footer ──
         elements.append(Paragraph("Thank you for choosing FLOWRA.", normal_style))

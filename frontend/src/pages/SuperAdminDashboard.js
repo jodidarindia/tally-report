@@ -6,7 +6,7 @@ import {
   X, UserPlus,
   FileText, AlertTriangle,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart,
-  BarChart3, Wallet, Calendar, Gift, Database,
+  BarChart3, Wallet, Calendar, Gift, Database, BookOpen,
   Sparkles, Copy, Download, Building2, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
@@ -24,6 +24,8 @@ import { HealthTab } from './super-admin/tabs/HealthTab';
 import { AdminsTab } from './super-admin/tabs/AdminsTab';
 import { RenewalsTab } from './super-admin/tabs/RenewalsTab';
 import { StaffTab } from './super-admin/tabs/StaffTab';
+import { BlogTab } from './super-admin/tabs/BlogTab';
+import { RemarksPanel } from './super-admin/RemarksPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -259,13 +261,56 @@ const SuperAdminDashboard = ({ token, user }) => {
   };
 
   const openEditAdmin = (admin) => {
-    setEditAdmin({ username: admin.username, name: admin.name || '', plan: admin.plan || 'enterprise', billing_cycle: admin.billing_cycle || 'annual', subscription_months: admin.subscription_months || 12, features: admin.features || [] });
+    // iter-123: capture is_trial so saveEditAdmin can automatically
+    // route through the /convert-trial endpoint when the SuperAdmin
+    // clicks Save. Trial admins no longer need a separate "Convert"
+    // button — Edit does the conversion + collects payment.
+    setEditAdmin({
+      username: admin.username,
+      name: admin.name || '',
+      plan: admin.plan && admin.plan !== 'trial' ? admin.plan : 'enterprise',
+      billing_cycle: admin.billing_cycle && admin.billing_cycle !== 'trial' ? admin.billing_cycle : 'annual',
+      subscription_months: admin.subscription_months || 12,
+      features: admin.features || [],
+      is_trial: !!admin.is_trial,
+      payment_mode: 'bank_transfer',
+      reference_no: '',
+    });
     setShowEditModal(admin.username);
   };
 
   const saveEditAdmin = async () => {
     try {
       const plan = PLANS[editAdmin.plan];
+      // iter-123: trial-to-paid conversion path — Edit modal + Save on
+      // a trial admin calls the convert-trial endpoint (records the
+      // Razorpay/manual receipt in one shot). Otherwise fall through
+      // to the classic edit endpoint.
+      if (editAdmin.is_trial) {
+        const price = editAdmin.billing_cycle === 'annual'
+          ? Math.round(plan.annual * (editAdmin.subscription_months / 12))
+          : plan.monthly * editAdmin.subscription_months;
+        const r = await axios.post(
+          `${API}/super-admin/admins/${editAdmin.username}/convert-trial`,
+          {
+            plan: editAdmin.plan,
+            billing_cycle: editAdmin.billing_cycle,
+            subscription_months: editAdmin.subscription_months,
+            amount: price,
+            payment_mode: editAdmin.payment_mode || 'bank_transfer',
+            reference_no: editAdmin.reference_no || '',
+          },
+          { headers },
+        );
+        if (r.data?.success) {
+          toast.success(r.data.message || 'Trial converted');
+          setShowEditModal(null); setEditAdmin(null); fetchData();
+        } else {
+          toast.error(r.data?.error || 'Failed to convert trial');
+        }
+        return;
+      }
+
       const res = await axios.put(`${API}/super-admin/admins/${editAdmin.username}/edit`, {
         name: editAdmin.name, plan: editAdmin.plan, billing_cycle: editAdmin.billing_cycle, subscription_months: editAdmin.subscription_months,
         features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
@@ -535,6 +580,7 @@ const SuperAdminDashboard = ({ token, user }) => {
     { id: 'renewals', label: 'Renewals', icon: Calendar },
     { id: 'referrals', label: 'Referrals', icon: Gift },
     { id: 'questionnaires', label: 'Leads', icon: FileText },
+    { id: 'blog', label: 'Blog', icon: BookOpen },
     { id: 'backups', label: 'Backups', icon: Database },
     { id: 'activity', label: 'Activity', icon: Activity },
     // Staff Mgmt — only the SuperAdmin sees this tab (control-panel users
@@ -619,6 +665,7 @@ const SuperAdminDashboard = ({ token, user }) => {
           prospects={prospects}
           prospectStats={prospectStats}
           onUpdateStatus={updateProspectStatus}
+          token={token}
           onConvert={(p) => {
             setConvertModal(p.prospect_id);
             setConvertData({ password: '', plan: p.plan_interest || 'professional', billing_cycle: 'annual', subscription_months: 12 });
@@ -647,6 +694,19 @@ const SuperAdminDashboard = ({ token, user }) => {
         <RenewalsTab
           renewals={renewals}
           onRenew={(u) => {
+            // iter-123: trial rows now say "Edit & Convert" and jump
+            // straight into the admin edit modal, from which the
+            // SuperAdmin flips plan + records payment (same flow as
+            // the old Convert Trial button, but consolidated).
+            if (u.is_trial) {
+              const admin = admins.find(a => a.username === u.username);
+              if (admin) {
+                openEditAdmin(admin);
+              } else {
+                toast.error('Trial admin not loaded — refresh the page and try again');
+              }
+              return;
+            }
             setProcessModal(u.username);
             setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' });
           }}
@@ -655,6 +715,7 @@ const SuperAdminDashboard = ({ token, user }) => {
 
       {activeTab === 'referrals' && <ReferralManagement token={token} />}
       {activeTab === 'questionnaires' && <QuestionnaireLeads headers={headers} />}
+      {activeTab === 'blog' && <BlogTab token={token} />}
       {activeTab === 'activity' && <ActivityLog />}
       {activeTab === 'backups' && <SuperAdminBackups />}
 
@@ -1766,13 +1827,19 @@ const QuestionnaireLeads = ({ headers }) => {
                   )}
                   {q.callback_time && <p className="text-xs text-slate-600 mb-2"><span className="font-semibold text-slate-500">Callback:</span> {q.callback_time}</p>}
                   {q.notes && <p className="text-xs text-slate-600 mb-3"><span className="font-semibold text-slate-500">Notes:</span> {q.notes}</p>}
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     {['new', 'contacted', 'qualified', 'closed'].map(s => (
                       <button key={s} onClick={() => updateStatus(idx, s)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${q.status === s ? 'border-[#2563EB] bg-blue-50 text-[#2563EB]' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
                         {s.charAt(0).toUpperCase() + s.slice(1)}
                       </button>
                     ))}
+                  </div>
+                  {/* iter-123: Remarks + history for leads. targetId is
+                      submitted_at because questionnaire docs are indexed
+                      by timestamp on the frontend. */}
+                  <div className="mt-4">
+                    <RemarksPanel targetType="lead" targetId={q.submitted_at || String(idx)} token={headers.Authorization?.replace('Bearer ', '')} />
                   </div>
                 </div>
               )}

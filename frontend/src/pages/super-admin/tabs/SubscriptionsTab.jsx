@@ -190,19 +190,15 @@ export const SubscriptionsTab = ({ admins, onOpenLedger, onEditAdmin, onConvertT
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-1">
                         {isTrial && (
-                          <>
-                            <button onClick={() => onConvertTrial && onConvertTrial(admin)}
-                              className="p-1.5 text-cyan-600 hover:text-cyan-800 hover:bg-cyan-50 rounded-lg"
-                              title="Convert Trial → Paid" data-testid={`convert-trial-${admin.username}`}>
-                              <ArrowUpCircle size={14} />
-                            </button>
-                            <button onClick={() => openPreview(admin.username, 8)}
-                              className="p-1.5 text-slate-400 hover:text-cyan-700 hover:bg-cyan-50 rounded-lg"
-                              title="Preview reminder mail" data-testid={`preview-reminder-${admin.username}`}>
-                              <Mail size={14} />
-                            </button>
-                          </>
+                          <button onClick={() => openPreview(admin.username, 8)}
+                            className="p-1.5 text-slate-400 hover:text-cyan-700 hover:bg-cyan-50 rounded-lg"
+                            title="Preview reminder mail" data-testid={`preview-reminder-${admin.username}`}>
+                            <Mail size={14} />
+                          </button>
                         )}
+                        {/* iter-123: Convert button removed for trials.
+                            Edit now opens the plan+billing modal which
+                            triggers conversion via Razorpay checkout. */}
                         <button onClick={() => onOpenLedger(admin.username)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View Ledger" data-testid={`ledger-${admin.username}`}>
                           <FileText size={14} />
                         </button>

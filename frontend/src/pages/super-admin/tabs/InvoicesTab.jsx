@@ -78,20 +78,31 @@ export const InvoicesTab = ({ invoices, onGenerateInvoice, onDownloadPDF, onMark
                   </span>
                 </td>
                 <td className="py-3 px-4 text-center">
-                  <div className="flex items-center justify-center gap-1">
+                  <div className="flex items-center justify-center gap-1 flex-wrap">
                     <button onClick={() => onDownloadPDF(inv.invoice_id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Download PDF" data-testid={`download-invoice-${i}`}>
                       <Download size={14} />
                     </button>
-                    {inv.status === 'unpaid' && (
-                      <button onClick={() => onMarkStatus(inv.invoice_id, 'paid')} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Mark Paid" data-testid={`mark-paid-${i}`}>
-                        <BadgeCheck size={14} />
-                      </button>
-                    )}
-                    {inv.status === 'paid' && (
-                      <button onClick={() => onMarkStatus(inv.invoice_id, 'unpaid')} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Mark Unpaid">
-                        <XCircle size={14} />
-                      </button>
-                    )}
+                    {/* iter-123: toggle buttons always visible so status can
+                        be flipped in either direction; disabled when the
+                        current status already matches. */}
+                    <button
+                      onClick={() => onMarkStatus(inv.invoice_id, 'paid')}
+                      disabled={inv.status === 'paid'}
+                      className={`p-1.5 rounded-lg ${inv.status === 'paid' ? 'text-emerald-500 bg-emerald-50 cursor-default' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                      title={inv.status === 'paid' ? 'Already paid' : 'Mark Paid'}
+                      data-testid={`mark-paid-${i}`}
+                    >
+                      <BadgeCheck size={14} />
+                    </button>
+                    <button
+                      onClick={() => onMarkStatus(inv.invoice_id, 'unpaid')}
+                      disabled={inv.status === 'unpaid'}
+                      className={`p-1.5 rounded-lg ${inv.status === 'unpaid' ? 'text-red-500 bg-red-50 cursor-default' : 'text-slate-400 hover:text-red-600 hover:bg-red-50'}`}
+                      title={inv.status === 'unpaid' ? 'Already unpaid' : 'Flip to Unpaid'}
+                      data-testid={`mark-unpaid-${i}`}
+                    >
+                      <XCircle size={14} />
+                    </button>
                   </div>
                 </td>
               </tr>

@@ -50,8 +50,13 @@ export const RenewalsTab = ({ renewals, onRenew }) => {
               <p className="text-xs text-cyan-700">{u.username} · 14-day Free Trial</p>
               <p className="text-xs text-cyan-600 mt-1">{u.days_left} days left</p>
             </div>
+            {/* iter-123: no more Convert CTA — SuperAdmin uses Edit which
+                triggers Razorpay checkout inside the admin edit modal. */}
             <button onClick={() => onRenew(u)}
-              className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-xs font-medium hover:bg-cyan-700" data-testid={`convert-trial-${u.username}`}>Convert</button>
+              className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-xs font-medium hover:bg-cyan-700 flex items-center gap-1"
+              data-testid={`edit-trial-${u.username}`}>
+              Edit &amp; Convert
+            </button>
           </div>
         ))}
       </div>

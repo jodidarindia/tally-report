@@ -40,6 +40,7 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
     selected_plan: '',
     message: '',
     referral_code: '',
+    consent_given: false,          // iter-123: DPDP mandatory checkbox
   });
 
   const updateForm = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
@@ -49,6 +50,11 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
     e.preventDefault();
     if (!form.company_name || !form.contact_person || !form.email || !form.phone) {
       toast.error('Please fill all required fields');
+      return;
+    }
+    // iter-123: DPDP consent is a hard gate — no submission without it.
+    if (!form.consent_given) {
+      toast.error('Please accept the Privacy Notice to continue (DPDP Act compliance)');
       return;
     }
     setLoading(true);
@@ -263,7 +269,30 @@ const SignupPage = ({ onNavigateToLogin, onNavigateToLanding }) => {
                 <p className="text-xs text-zinc-500">Your data is encrypted with AES-256 and stored securely. We never share your information with third parties.</p>
               </div>
 
-              <button type="submit" disabled={loading} data-testid="signup-submit-btn"
+              {/* iter-123: DPDP Act 2023 consent — mandatory. */}
+              <div className={`p-4 rounded-sm border ${form.consent_given ? 'bg-emerald-50 border-emerald-300' : 'bg-amber-50 border-amber-300'}`}>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.consent_given}
+                    onChange={e => updateForm('consent_given', e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-[#0052FF]"
+                    data-testid="signup-consent-checkbox"
+                    required
+                  />
+                  <span className="text-xs text-zinc-700 leading-relaxed">
+                    <b>Consent (DPDP Act, 2023):</b> I consent to JODIDAR INDIA collecting and processing my personal
+                    data (name, business email, phone, GSTIN, address) for the purpose of onboarding, product demos and
+                    lifecycle communication for FLOWRA. I understand I can withdraw consent, or request access,
+                    correction or erasure of my data at any time by writing to <b>privacy@flowralive.in</b>.
+                    Read our{' '}
+                    <a href="/privacy" className="text-[#0052FF] underline" target="_blank" rel="noreferrer">Privacy Notice</a> and{' '}
+                    <a href="/cookies" className="text-[#0052FF] underline" target="_blank" rel="noreferrer">Cookie Policy</a>.
+                  </span>
+                </label>
+              </div>
+
+              <button type="submit" disabled={loading || !form.consent_given} data-testid="signup-submit-btn"
                 className="w-full bg-[#0052FF] text-white py-3 font-bold rounded-sm hover:bg-[#0039B3] transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
                 {loading ? <><Loader className="animate-spin" size={18} /> Submitting...</> : <>Submit Enquiry <ArrowRight size={18} /></>}
               </button>

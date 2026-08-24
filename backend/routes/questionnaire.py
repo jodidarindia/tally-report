@@ -18,6 +18,13 @@ async def submit_questionnaire(request: Request):
     """Public endpoint — anyone can submit a questionnaire."""
     try:
         body = await request.json()
+        # iter-123: DPDP consent enforcement + audit fields
+        consent_given = bool(body.get("consent_given"))
+        if not consent_given:
+            return APIResponse(success=False, error="Consent is required under the DPDP Act, 2023")
+
+        client_ip = request.client.host if request.client else ""
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         doc = {
             "company_name": body.get("company_name", ""),
@@ -49,14 +56,34 @@ async def submit_questionnaire(request: Request):
             "callback_time": body.get("callback_time", ""),
             "notes": body.get("notes", ""),
             "submitted_by": body.get("submitted_by", "prospect"),
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "submitted_at": now_iso,
             "status": "new",
+            # iter-123 DPDP audit trail
+            "consent_given":   True,
+            "consent_version": "dpdp-v1-2026-02",
+            "consent_ts":      now_iso,
+            "consent_ip":      client_ip,
         }
 
         if not doc["company_name"] and not doc["contact_person"] and not doc["phone"]:
             return APIResponse(success=False, error="Please fill at least company name, contact person, or phone number.")
 
         await db.questionnaires.insert_one(doc)
+
+        # Fire prospect welcome email if we have an email address.
+        try:
+            if doc.get("email"):
+                import asyncio
+                from services.email_service import send_prospect_welcome_email
+                asyncio.create_task(send_prospect_welcome_email({
+                    "prospect_id":    "Q-" + doc["submitted_at"][:19].replace("-", "").replace(":", "").replace("T", ""),
+                    "company_name":   doc["company_name"],
+                    "contact_person": doc["contact_person"],
+                    "email":          doc["email"],
+                    "selected_plan":  doc.get("budget") or "Free Trial",
+                }))
+        except Exception as mail_err:
+            logger.warning(f"lead welcome email failed: {mail_err}")
 
         return APIResponse(success=True, data={"message": "Questionnaire submitted successfully. Our team will reach out shortly."})
     except Exception as e:

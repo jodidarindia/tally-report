@@ -110,6 +110,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
             <button onClick={() => scrollTo('pricing')} className="hover:text-zinc-950 transition-colors">Pricing</button>
             <button onClick={() => scrollTo('testimonials')} className="hover:text-zinc-950 transition-colors">Testimonials</button>
             <button onClick={() => scrollTo('security')} className="hover:text-zinc-950 transition-colors">Security</button>
+            <button onClick={() => onNavigate?.('blog')} className="hover:text-zinc-950 transition-colors" data-testid="nav-blog-btn">Blog</button>
             <div className="relative" ref={resourcesRef}>
               <button onClick={() => setResourcesOpen(!resourcesOpen)} className="hover:text-zinc-950 transition-colors flex items-center gap-1" data-testid="resources-menu-btn">
                 Resources <ChevronDown size={14} className={`transition-transform ${resourcesOpen ? 'rotate-180' : ''}`} />
@@ -128,14 +129,14 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
 
                   <div className="border-t border-zinc-100 my-1"></div>
                   <div className="px-4 py-2 text-[10px] uppercase tracking-wider font-bold text-zinc-400">Documents</div>
-                  <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                  <button onClick={() => { onNavigate?.('product-presentation'); setResourcesOpen(false); }}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-presentation">
                     <FileText size={16} className="text-[#0052FF]" /> Product Presentation
-                  </a>
-                  <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer" onClick={() => setResourcesOpen(false)}
+                  </button>
+                  <button onClick={() => { onNavigate?.('deployment-guide'); setResourcesOpen(false); }}
                     className="w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-50 flex items-center gap-2.5 text-zinc-700" data-testid="resources-deployment">
                     <Warehouse size={16} className="text-[#0052FF]" /> Deployment Guide
-                  </a>
+                  </button>
                 </div>
               )}
             </div>
@@ -164,6 +165,7 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
               <button onClick={() => { scrollTo('pricing'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Pricing</button>
               <button onClick={() => { scrollTo('testimonials'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Testimonials</button>
               <button onClick={() => { scrollTo('security'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]">Security</button>
+              <button onClick={() => { onNavigate?.('blog'); setMobileMenuOpen(false); }} className="w-full text-left py-2.5 hover:text-[#0052FF]" data-testid="mobile-nav-blog">Blog</button>
 
               <button onClick={() => setMobileResourcesOpen(!mobileResourcesOpen)}
                       className="w-full flex items-center justify-between py-2.5 hover:text-[#0052FF]"
@@ -181,14 +183,14 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
                      className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
                     <Download size={14} className="text-[#0052FF]" /> Customer Questionnaire
                   </a>
-                  <a href="/FLOWRA_Presentation.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                  <button onClick={() => { onNavigate?.('product-presentation'); setMobileMenuOpen(false); }}
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2 w-full text-left">
                     <FileText size={14} className="text-[#0052FF]" /> Product Presentation
-                  </a>
-                  <a href="/FLOWRA_Deployment_Guide.pdf" target="_blank" rel="noopener noreferrer"
-                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2">
+                  </button>
+                  <button onClick={() => { onNavigate?.('deployment-guide'); setMobileMenuOpen(false); }}
+                     className="block py-2 text-sm hover:text-[#0052FF] flex items-center gap-2 w-full text-left">
                     <Warehouse size={14} className="text-[#0052FF]" /> Deployment Guide
-                  </a>
+                  </button>
                 </div>
               )}
             </div>
@@ -345,27 +347,43 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 max-w-7xl mx-auto" data-testid="plans-grid">
             {PLANS.map((plan) => (
-              <div key={plan.id} className={`border rounded-sm p-8 relative ${plan.popular ? 'border-[#0052FF] border-2 scale-[1.02]' : 'border-zinc-200'}`} data-testid={`plan-${plan.id}`}>
+              <div key={plan.id} className={`border rounded-sm p-6 relative flex flex-col ${plan.popular ? 'border-[#0052FF] border-2 lg:scale-[1.02]' : 'border-zinc-200'}`} data-testid={`plan-${plan.id}`}>
                 {plan.popular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#0052FF] text-white text-xs font-bold px-4 py-1 rounded-sm">
                     Most Popular
                   </div>
                 )}
+                {plan.id === 'trial' && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs font-bold px-4 py-1 rounded-sm">
+                    14-Day Trial
+                  </div>
+                )}
                 <h3 className="text-xl font-bold text-zinc-950 mb-1">{plan.name}</h3>
-                <p className="text-sm text-zinc-500 mb-5">{plan.desc}</p>
-                <div className="mb-6">
-                  <span className="text-4xl font-black text-zinc-950" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
-                    {billingCycle === 'annual' ? `₹${Math.round(plan.annual / 12).toLocaleString('en-IN')}` : `₹${plan.monthly.toLocaleString('en-IN')}`}
-                  </span>
-                  <span className="text-zinc-500 text-sm">/month</span>
-                  {billingCycle === 'annual' && <p className="text-xs text-green-600 mt-1">Billed ₹{plan.annual.toLocaleString('en-IN')}/year</p>}
+                <p className="text-sm text-zinc-500 mb-5 min-h-[42px]">{plan.desc}</p>
+                <div className="mb-6 min-h-[68px]">
+                  {plan.id === 'trial' ? (
+                    // iter-123: Free Trial card shows no monetary value —
+                    // just a "Free · 14 days" pill instead of ₹0.
+                    <>
+                      <span className="text-4xl font-black text-emerald-600" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>Free</span>
+                      <p className="text-sm text-zinc-500 mt-1">for 14 days · no card required</p>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-4xl font-black text-zinc-950" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>
+                        {billingCycle === 'annual' ? `₹${Math.round(plan.annual / 12).toLocaleString('en-IN')}` : `₹${plan.monthly.toLocaleString('en-IN')}`}
+                      </span>
+                      <span className="text-zinc-500 text-sm">/month</span>
+                      {billingCycle === 'annual' && <p className="text-xs text-green-600 mt-1">Billed ₹{plan.annual.toLocaleString('en-IN')}/year</p>}
+                    </>
+                  )}
                 </div>
-                <button onClick={onNavigateToSignup} className={`w-full py-3 font-bold rounded-sm transition-colors mb-6 ${plan.popular ? 'bg-[#0052FF] text-white hover:bg-[#0039B3]' : 'bg-zinc-950 text-white hover:bg-zinc-800'}`}>
-                  Get Started
+                <button onClick={onNavigateToSignup} className={`w-full py-3 font-bold rounded-sm transition-colors mb-6 ${plan.id === 'trial' ? 'bg-emerald-600 text-white hover:bg-emerald-700' : plan.popular ? 'bg-[#0052FF] text-white hover:bg-[#0039B3]' : 'bg-zinc-950 text-white hover:bg-zinc-800'}`}>
+                  {plan.id === 'trial' ? 'Start Free Trial' : 'Get Started'}
                 </button>
-                <div className="space-y-3">
+                <div className="space-y-3 flex-1">
                   {plan.features.map((f, i) => (
                     <div key={i} className="flex items-start gap-2">
                       <Check size={16} className="text-green-600 mt-0.5 flex-shrink-0" />

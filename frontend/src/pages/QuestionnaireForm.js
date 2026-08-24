@@ -118,6 +118,7 @@ const QuestionnaireForm = ({ onBack }) => {
     decision_factors: [], timeline: '', decision_maker: '', budget: '', additional_features: '',
     heard_from: '', next_steps: [], callback_time: '', notes: '',
     submitted_by: 'prospect',
+    consent_given: false,       // iter-123: DPDP mandatory
   });
 
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
@@ -131,6 +132,10 @@ const QuestionnaireForm = ({ onBack }) => {
   const handleSubmit = async () => {
     if (!form.company_name && !form.contact_person && !form.phone) {
       toast.error('Please fill at least company name, contact person, or phone.');
+      return;
+    }
+    if (!form.consent_given) {
+      toast.error('Please accept the Privacy Notice to continue (DPDP Act compliance)');
       return;
     }
     setSubmitting(true);
@@ -441,7 +446,7 @@ const QuestionnaireForm = ({ onBack }) => {
                 Next <ChevronRight size={16} />
               </button>
             ) : (
-              <button onClick={handleSubmit} disabled={submitting}
+              <button onClick={handleSubmit} disabled={submitting || !form.consent_given}
                 className="flex items-center gap-1.5 px-6 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                 data-testid="q-submit-btn">
                 {submitting ? 'Submitting...' : 'Submit'} <Send size={14} />
@@ -449,6 +454,29 @@ const QuestionnaireForm = ({ onBack }) => {
             )}
           </div>
         </div>
+
+        {/* iter-123: DPDP Act 2023 consent — mandatory before Submit. */}
+        {step === STEPS.length - 1 && (
+          <div className={`mt-6 p-4 rounded-lg border ${form.consent_given ? 'bg-emerald-50 border-emerald-300' : 'bg-amber-50 border-amber-300'}`}>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.consent_given}
+                onChange={e => set('consent_given', e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-[#2563EB]"
+                data-testid="q-consent-checkbox"
+              />
+              <span className="text-xs text-slate-700 leading-relaxed">
+                <b>Consent (DPDP Act, 2023):</b> I consent to JODIDAR INDIA collecting and processing the personal
+                data I&apos;ve shared in this questionnaire (name, business email, phone, GSTIN, address, business
+                inputs) for the purpose of onboarding, product demos and lifecycle communication for FLOWRA.
+                I understand I can withdraw consent, or request access, correction or erasure of my data at any
+                time by writing to <b>privacy@flowralive.in</b>. Read our{' '}
+                <a href="/privacy" className="text-[#2563EB] underline" target="_blank" rel="noreferrer">Privacy Notice</a>.
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Disclaimer */}
         <p className="text-center text-[9px] text-slate-400 mt-6 max-w-lg mx-auto leading-relaxed">

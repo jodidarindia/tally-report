@@ -1445,15 +1445,19 @@ async def preview_trial_reminder(username: str, day: int, request: Request):
         admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "password_hash": 0})
         name = (admin or {}).get("name", "there")
         # Compute days_left / trial_end_display defensively.
-        from services.trial_service import parse_iso, trial_days_remaining
+        # iter-123 fix: preview shows what the mail will look like WHEN
+        # SENT (i.e. on day 5/8/12/14 of the trial), so days_left MUST
+        # be `14 - day` regardless of how many days the target admin
+        # currently has left. Previously all four previews said "14
+        # days left" because we used the live trial_days_remaining.
+        from services.trial_service import parse_iso
         end_dt = parse_iso((admin or {}).get("trial_end", ""))
+        days_left = 14 - day
         if end_dt:
             trial_end_disp = end_dt.strftime("%d %b %Y")
-            days_left = trial_days_remaining(admin) or (14 - day)
         else:
             from datetime import timedelta
-            trial_end_disp = (datetime.now(timezone.utc) + timedelta(days=14 - day)).strftime("%d %b %Y")
-            days_left = 14 - day
+            trial_end_disp = (datetime.now(timezone.utc) + timedelta(days=days_left)).strftime("%d %b %Y")
 
         from services.email_service import (
             send_trial_reminder_day5, send_trial_reminder_day8,

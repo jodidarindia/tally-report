@@ -532,6 +532,68 @@ async def send_lead_signup_notification(prospect: dict) -> bool:
     )
 
 
+async def send_prospect_welcome_email(prospect: dict) -> bool:
+    """iter-123: Auto-welcome email to the prospect the moment their
+    enquiry lands. Sets expectations (24h SLA, no card required),
+    reinforces the DPDP consent they just gave, and gives them a quick
+    "book a slot" CTA so keen leads don't have to wait for our team."""
+    company = prospect.get("company_name", "")
+    contact = prospect.get("contact_person", "")
+    email = prospect.get("email", "")
+    plan = (prospect.get("selected_plan") or "").title() or "Free Trial"
+    pid = prospect.get("prospect_id", "")
+    first_name = contact.split()[0] if contact else "there"
+
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#1e293b;">Thanks for reaching out, {first_name}!</h2>
+      <p style="color:#334155;font-size:14px;margin:0 0 18px;line-height:1.7;">
+        We've received your enquiry for <b>{company or 'your business'}</b> and someone
+        from the FLOWRA team will reach out within <b>one working day</b> to walk you
+        through the platform on your own data.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;border:1px solid #dbeafe;border-radius:8px;padding:18px 22px;margin-bottom:22px;">
+        <tr><td>
+          <div style="font-size:11px;color:#1d4ed8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Enquiry snapshot</div>
+          <p style="margin:2px 0;font-size:13px;color:#1e293b;"><b>Reference:</b> {pid}</p>
+          <p style="margin:2px 0;font-size:13px;color:#1e293b;"><b>Plan of interest:</b> {plan}</p>
+          <p style="margin:2px 0;font-size:13px;color:#1e293b;"><b>Contact email:</b> {email}</p>
+        </td></tr>
+      </table>
+
+      <p style="color:#334155;font-size:14px;margin:0 0 12px;line-height:1.7;">
+        <b>What happens next?</b>
+      </p>
+      <ol style="margin:0 0 18px 0;padding-left:22px;font-size:13.5px;color:#334155;line-height:1.9;">
+        <li>Our onboarding team studies your enquiry and picks the right specialist.</li>
+        <li>You get a call &amp; a personalised 20-minute demo on Tally or Busy* data.</li>
+        <li>Start the 14-day <b>Free Trial</b> with full Enterprise access &mdash; no card required.</li>
+      </ol>
+
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0 24px;">
+          <a href="https://insights.flowralive.in" style="display:inline-block;background:#2563EB;color:#ffffff;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">Explore FLOWRA</a>
+        </td></tr>
+      </table>
+
+      <div style="border-top:1px solid #e2e8f0;padding-top:14px;margin-top:8px;">
+        <p style="font-size:11px;color:#94a3b8;line-height:1.55;margin:0;">
+          <b>DPDP Act, 2023 Notice:</b> You gave consent for JODIDAR INDIA to process the
+          personal data you shared (name, business email, phone, GSTIN, address) for
+          onboarding, demos and lifecycle communication of FLOWRA. Withdraw consent
+          any time or request access, correction or erasure by writing to
+          <a href="mailto:privacy@flowralive.in" style="color:#2563EB;">privacy@flowralive.in</a>.
+        </p>
+      </div>
+    """
+    subject = f"We've got your FLOWRA enquiry, {first_name} — next steps inside"
+    return await send_email(
+        email, subject,
+        _base_template(content, insights=True),
+        tag="prospect-welcome",
+    )
+
+
 async def send_lead_demo_requested_notification(prospect: dict) -> bool:
     """Notify admins when an existing prospect requests demo access."""
     company = prospect.get("company_name", "")

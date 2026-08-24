@@ -9,6 +9,63 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 24 2026 (iter-123) — Landing/Compliance/Blog/Remarks Sweep
+
+Follow-up sweep on the 10-item punch list from msg 828 + auto-welcome email.
+
+**Backend**
+- `routes/prospects.py`: DPDP Act 2023 consent is a hard gate on `/public/signup`
+  — audit fields `consent_given`, `consent_version` (`dpdp-v1-2026-02`),
+  `consent_ts`, `consent_ip` persisted. Stats now include `negotiating`
+  and `lost` (fixes item #10 where "New" appeared stuck at 1).
+- `routes/questionnaire.py`: same consent gate + auto prospect welcome mail.
+- `routes/blog.py` **(new)**: Blog CMS — public list/detail + SuperAdmin
+  CRUD, publish toggle, view counter, tag facets, SEO title/description.
+- `routes/remarks.py` **(new)**: append-only remarks per prospect / lead
+  with 6-tag palette (Follow-up / Callback / Objection / Positive /
+  Negative / Info-Only) and full author history.
+- `routes/seller_panel.py`:
+  - `record_payment` auto-flips oldest unpaid invoices for that customer
+    to `paid` (FIFO, tolerates 50-paisa rounding); stamps
+    `linked_payment_id`, `auto_paid_from='ledger_receipt'`, `auto_paid_at`.
+  - Invoice PDF got a Payment Status band + timeline of the last 10 receipts.
+- `routes/super_admin.py`: trial reminder preview `days_left` is always
+  `14 - day` (was uniformly showing "14 days left" for every reminder).
+- `server.py`: same `14 - day` fix inside the actual scheduler loop.
+- `services/email_service.py`: `send_prospect_welcome_email` — DPDP-safe
+  welcome mail with reference number, next steps and privacy footer,
+  fired the moment a signup or questionnaire lands.
+
+**Frontend**
+- `LandingPage.js`: `lg:grid-cols-4` for pricing — all four plans in one
+  row on desktop. Free Trial card shows "Free · for 14 days · no card
+  required" (no ₹). Blog link in the top nav and mobile menu. Resources
+  dropdown now routes to in-app Product Presentation + Deployment Guide.
+- `BlogPage.jsx` **(new)**: public blog list + detail with tag facets,
+  DIY Markdown renderer, and "start free trial" CTA per post.
+- `ResourcesPages.jsx` **(new)**: `ProductPresentationPage` +
+  `DeploymentGuidePage`, print-friendly (browser Print → Save as PDF).
+- `SignupPage.js` + `QuestionnaireForm.js`: mandatory DPDP consent
+  checkbox; Submit disabled until ticked; toast if user tries to bypass.
+- `super-admin/tabs/BlogTab.jsx` **(new)**: full CRUD with modal editor.
+- `super-admin/RemarksPanel.jsx` **(new)**: reusable remarks panel wired
+  into Prospects drill-down and QuestionnaireLeads drill-down.
+- `super-admin/tabs/SubscriptionsTab.jsx` + `RenewalsTab.jsx`: Convert
+  Trial button removed. Renewals trial rows say "Edit & Convert" and
+  jump into the Edit modal which converts via `/convert-trial`.
+- `super-admin/tabs/InvoicesTab.jsx`: both Mark Paid + Mark Unpaid
+  buttons always render (disabled when matching current status).
+
+**Testing**
+- Backend E2E validated via curl: DPDP gate, blog CRUD + public list,
+  remarks add, trial reminder previews with correct day-specific
+  `days_left`, prospect stats include all 7 buckets.
+- Frontend smoke screenshots captured for the 4-plan grid and /blog.
+- Testing agent workflow timed out twice (infra); primary validation
+  by curl + Playwright screenshots.
+
+
+
 
 ## Shipped — Feb 24 2026 (iter-122) — SuperAdmin Batch 2 (9-point sweep)
 

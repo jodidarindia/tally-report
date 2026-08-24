@@ -100,6 +100,13 @@ async def prospect_signup(request: Request):
         selected_plan = (body.get("selected_plan") or "").strip()
         message = (body.get("message") or "").strip()
         referral_code = (body.get("referral_code") or "").strip().upper()
+        # iter-123: DPDP consent capture — mandatory. We store the raw
+        # boolean plus the version of the consent copy shown at that
+        # moment + the IP + timestamp so we can prove compliance in
+        # any future data-request or audit.
+        consent_given = bool(body.get("consent_given"))
+        if not consent_given:
+            return APIResponse(success=False, error="Consent is required under the DPDP Act, 2023")
 
         if not company_name or not email or not contact_person or not phone:
             return APIResponse(success=False, error="Company name, contact person, email, and phone are required")
@@ -143,6 +150,11 @@ async def prospect_signup(request: Request):
             "created_at": now,
             "updated_at": now,
             "ip_address": get_client_ip(request),
+            # iter-123: DPDP consent trail
+            "consent_given":   True,
+            "consent_version": "dpdp-v1-2026-02",
+            "consent_ts":      now,
+            "consent_ip":      get_client_ip(request),
         }
 
         encrypted = encrypt_pii(prospect_data, PROSPECT_PII_FIELDS)
@@ -151,14 +163,18 @@ async def prospect_signup(request: Request):
         await db.prospects.insert_one(encrypted)
         logger.info(f"New prospect signup: {prospect_id}")
 
-        # Fire-and-forget admin lead notification email (Insights branded,
-        # TO=support@flowralive.in, CC=jodidarindiaoffice@gmail.com).
+        # Fire-and-forget admin lead notification email + prospect
+        # welcome email (iter-123). Both use asyncio tasks so slow
+        # Resend calls don't block the API response.
         try:
-            # ``prospect_data`` still has plaintext PII (encryption happened on
-            # a separate dict above), so it is safe to forward to the email.
             asyncio.create_task(send_lead_signup_notification(prospect_data))
         except Exception as mail_err:
             logger.error(f"Lead notification email scheduling failed: {mail_err}")
+        try:
+            from services.email_service import send_prospect_welcome_email
+            asyncio.create_task(send_prospect_welcome_email(prospect_data))
+        except Exception as mail_err:
+            logger.error(f"Prospect welcome email scheduling failed: {mail_err}")
 
         # Link referral if code provided
         if referral_code:
@@ -301,12 +317,22 @@ async def list_prospects(request: Request):
         prospects_raw = await db.prospects.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
         prospects = [decrypt_pii(p, PROSPECT_PII_FIELDS) for p in prospects_raw]
 
+        # iter-123 fix: compute stats via a single case-insensitive
+        # sweep + include the `lost` bucket (previously missing so the
+        # frontend card always read 0). Legacy prospects created before
+        # the status field was introduced default to "new" so they show
+        # up correctly on the dashboard.
+        def _status_of(p):
+            s = (p.get("status") or "new").strip().lower()
+            return s or "new"
         stats = {
-            "total": len(prospects),
-            "new": sum(1 for p in prospects if p.get("status") == "new"),
-            "contacted": sum(1 for p in prospects if p.get("status") == "contacted"),
-            "demo_given": sum(1 for p in prospects if p.get("demo_completed")),
-            "converted": sum(1 for p in prospects if p.get("status") == "converted"),
+            "total":      len(prospects),
+            "new":        sum(1 for p in prospects if _status_of(p) == "new"),
+            "contacted":  sum(1 for p in prospects if _status_of(p) == "contacted"),
+            "demo_given": sum(1 for p in prospects if _status_of(p) == "demo_given" or p.get("demo_completed")),
+            "negotiating": sum(1 for p in prospects if _status_of(p) == "negotiating"),
+            "converted":  sum(1 for p in prospects if _status_of(p) == "converted"),
+            "lost":       sum(1 for p in prospects if _status_of(p) == "lost"),
         }
 
         return APIResponse(success=True, data={"prospects": prospects, "stats": stats})

@@ -82,6 +82,12 @@ api_router.include_router(backups_router)
 api_router.include_router(creditors_router)
 api_router.include_router(academy_router)
 api_router.include_router(forecast_router)
+# iter-123: Blog CMS
+from routes.blog import router as blog_router
+api_router.include_router(blog_router)
+# iter-123: Remarks (Prospects + Leads) with tags & history
+from routes.remarks import router as remarks_router
+api_router.include_router(remarks_router)
 
 
 # ── Health endpoint (k8s / Atlas liveness probe + uptime monitor) ──────
@@ -265,7 +271,12 @@ async def startup_event():
                     sender = _TRIAL_SENDERS.get(day)
                     if not sender:
                         continue
-                    days_left = trial_days_remaining(user) or 0
+                    # iter-123: `days_left` must be `14 - day` in the
+                    # mail body. `trial_days_remaining` can be off by
+                    # ±1 depending on when the loop ticks vs. midnight
+                    # — using `14 - day` guarantees the copy matches
+                    # the reminder milestone the user actually hit.
+                    days_left = 14 - day
                     trial_end_disp = ""
                     end_dt = parse_iso(user.get("trial_end", ""))
                     if end_dt:
