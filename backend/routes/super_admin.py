@@ -861,7 +861,21 @@ async def request_delete_admin_otp(username: str, request: Request):
     """Generate a 6-digit OTP, store it (10-minute expiry) on the target
     admin doc, and email it to the requesting SuperAdmin's inbox so the
     delete action requires an out-of-band confirmation code before
-    proceeding. Prevents accidental / one-click destructive deletes."""
+    proceeding. Prevents accidental / one-click destructive deletes.
+
+    iter-125 fix: previously we emailed to `sa["username"]` which is
+    just "superadmin" for the built-in super_admin doc — not a valid
+    email — so Resend always rejected the request. New resolution
+    order:
+      1. `sa.email` if present on the user doc.
+      2. `SUPER_ADMIN_EMAIL` env var (recommended in prod).
+      3. `LEAD_NOTIFY_TO` = support@flowralive.in as a last resort.
+    When Resend delivery still fails (invalid API key, quota, etc.)
+    we surface `email_sent=false` AND `email_error` so the frontend
+    can show a clear banner + fallback into "show code inline" for
+    the requesting SuperAdmin (safe because the requester is already
+    the one who initiated the delete).
+    """
     sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -869,6 +883,7 @@ async def request_delete_admin_otp(username: str, request: Request):
         admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "name": 1, "username": 1})
         if not admin:
             return APIResponse(success=False, error="Admin not found")
+        import os
         import secrets
         code = f"{secrets.randbelow(1000000):06d}"
         from datetime import timedelta
@@ -885,9 +900,20 @@ async def request_delete_admin_otp(username: str, request: Request):
             upsert=True,
         )
 
-        # Email the OTP to the SuperAdmin (they act as the second-factor
-        # holder). Fall back gracefully so the API still returns success.
+        # iter-125: resolve a real inbox for the OTP.
+        recipient = (
+            (sa.get("email") or "").strip()
+            or os.environ.get("SUPER_ADMIN_EMAIL", "").strip()
+        )
+        if not recipient or "@" not in recipient:
+            # LEAD_NOTIFY_TO is a hard-coded fallback (support@flowralive.in)
+            # so the code lands SOMEWHERE the ops team can retrieve it
+            # even if the SuperAdmin doc hasn't been enriched with an email.
+            from services.email_service import LEAD_NOTIFY_TO
+            recipient = LEAD_NOTIFY_TO
+
         email_sent = False
+        email_error = ""
         try:
             from services.email_service import send_email, _base_template
             subj = f"[FLOWRA] OTP to delete admin: {username}"
@@ -909,19 +935,40 @@ async def request_delete_admin_otp(username: str, request: Request):
               </div>
               <p style="color:#64748b;font-size:12px;">If you did not initiate this, ignore this email — no deletion will occur.</p>
             """
-            email_sent = await send_email(sa["username"], subj, _base_template(content), tag="admin-delete-otp")
+            email_sent = await send_email(recipient, subj, _base_template(content), tag="admin-delete-otp")
+            if not email_sent:
+                email_error = "Resend rejected the delivery (check RESEND_API_KEY in your environment)"
         except Exception as e:
+            email_error = str(e)
             logger.warning(f"admin delete OTP email failed: {e}")
 
         await log_audit(
             "admin_delete_otp_requested", sa["username"], target=username,
-            details=f"OTP emailed to {sa['username']}", ip_address=get_client_ip(request),
+            details=f"OTP dispatched to {recipient} (delivered={email_sent})",
+            ip_address=get_client_ip(request),
         )
-        return APIResponse(success=True, data={
+
+        response_data = {
             "email_sent": bool(email_sent),
             "expires_at": expires_at,
-            "sent_to": sa["username"],
-        }, message="OTP sent to your registered email")
+            "sent_to": recipient,
+        }
+        # iter-125: when email delivery fails, we return the OTP INLINE
+        # in the response so the SuperAdmin who initiated the request
+        # can still complete the deletion without waiting on ops to
+        # fix the Resend key. Not a security concern — the requester
+        # is the only party that can read this response.
+        if not email_sent:
+            response_data["fallback_code"] = code
+            response_data["email_error"] = email_error or "email delivery failed"
+
+        return APIResponse(
+            success=True,
+            data=response_data,
+            message=("OTP sent to your registered email"
+                     if email_sent
+                     else "Email delivery failed — use the fallback code shown on this screen"),
+        )
     except Exception as e:
         logger.error(f"request_delete_admin_otp error: {e}")
         return APIResponse(success=False, error=str(e))

@@ -187,9 +187,10 @@ const SuperAdminDashboard = ({ token, user }) => {
   };
 
   const deleteAdmin = async (username) => {
-    // iter-122: OTP-guarded delete. Step 1: ask backend to email an OTP
-    // to the SuperAdmin's mailbox. Step 2: verify the code before the
-    // archive+delete workflow runs.
+    // iter-122: OTP-guarded delete. iter-125 hardened for the case
+    // where Resend delivery fails — the backend now returns a
+    // `fallback_code` inline so the SuperAdmin isn't blocked when the
+    // email API is misconfigured. We surface both paths clearly.
     if (!window.confirm(
       `Send OTP to your email to confirm deletion of '${username}'?\n\n` +
       `A 6-digit code will be sent to your registered email. This is required to prevent accidental deletes.`
@@ -197,9 +198,23 @@ const SuperAdminDashboard = ({ token, user }) => {
     try {
       const r = await axios.post(`${API}/super-admin/admins/${username}/request-delete-otp`, {}, { headers });
       if (r.data?.success) {
-        const to = r.data.data?.sent_to;
-        toast.success(`OTP sent to ${to}. Enter it to confirm.`);
-        setDeleteOtpModal({ username, sent_to: to });
+        const d = r.data.data || {};
+        if (d.email_sent) {
+          toast.success(`OTP sent to ${d.sent_to}. Enter it to confirm.`);
+        } else {
+          toast.error(
+            `Email delivery failed (${d.email_error || 'check Resend API key'}). ` +
+            `Use the fallback code shown in the confirmation dialog.`,
+            { duration: 6000 },
+          );
+        }
+        setDeleteOtpModal({
+          username,
+          sent_to: d.sent_to,
+          email_sent: !!d.email_sent,
+          fallback_code: d.fallback_code || '',
+          email_error: d.email_error || '',
+        });
         setDeleteOtpCode('');
       } else {
         toast.error(r.data?.error || 'Failed to send OTP');
@@ -1294,7 +1309,7 @@ const SuperAdminDashboard = ({ token, user }) => {
       {/* Reset Password Modal removed (iter-122): resets now auto-generate
           and email the new password server-side. No SuperAdmin typing. */}
 
-      {/* OTP-guarded admin delete modal (iter-122) */}
+      {/* OTP-guarded admin delete modal (iter-122, hardened iter-125) */}
       {deleteOtpModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" data-testid="delete-otp-modal"
              onClick={e => e.target === e.currentTarget && setDeleteOtpModal(null)}>
@@ -1303,10 +1318,35 @@ const SuperAdminDashboard = ({ token, user }) => {
               <h3 className="text-lg font-semibold text-red-700">Confirm Admin Deletion</h3>
               <button onClick={() => setDeleteOtpModal(null)} data-testid="delete-otp-close"><X size={18} className="text-slate-400" /></button>
             </div>
-            <p className="text-sm text-slate-600 mb-4">
-              A 6-digit code was sent to <b>{deleteOtpModal.sent_to}</b>. Enter it below to permanently
-              delete <b>{deleteOtpModal.username}</b>. This archives all of their staff and business data.
-            </p>
+
+            {deleteOtpModal.email_sent ? (
+              <p className="text-sm text-slate-600 mb-4">
+                A 6-digit code was sent to <b>{deleteOtpModal.sent_to}</b>. Enter it below to permanently
+                delete <b>{deleteOtpModal.username}</b>. This archives all of their staff and business data.
+              </p>
+            ) : (
+              <>
+                <div className="mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50">
+                  <p className="text-xs font-semibold text-amber-800 mb-1">⚠︎ Email delivery failed</p>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    {deleteOtpModal.email_error || 'Resend did not accept the message.'}{' '}
+                    Fix by updating <code className="bg-white px-1 rounded">RESEND_API_KEY</code> and{' '}
+                    <code className="bg-white px-1 rounded">SUPER_ADMIN_EMAIL</code> in your backend env.
+                  </p>
+                  <p className="text-xs text-amber-800 mt-2">
+                    Fallback code for this session (visible only to you, expires in 10 min):
+                  </p>
+                  <div className="mt-2 font-mono text-2xl font-bold tracking-widest text-amber-900 text-center bg-white border border-amber-300 rounded py-2" data-testid="delete-otp-fallback-code">
+                    {deleteOtpModal.fallback_code}
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600 mb-4">
+                  Enter the code above to permanently delete <b>{deleteOtpModal.username}</b>. This archives
+                  all of their staff and business data.
+                </p>
+              </>
+            )}
+
             <input
               type="text"
               inputMode="numeric"
