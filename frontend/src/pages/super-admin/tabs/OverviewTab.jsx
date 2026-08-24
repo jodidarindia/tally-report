@@ -30,27 +30,37 @@ export const OverviewTab = ({ businessData, onRecordPayment, onGenerateInvoice, 
         </div>
       </div>
 
-      {/* Customer & Plan metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      {/* Customer & Plan metrics — iter-124: added ACV + churn +
+          separated Trials so numbers are honest to standard SaaS
+          definitions. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="text-xs text-slate-500 mb-1">Total Customers</div>
+          <div className="text-xs text-slate-500 mb-1">Total</div>
           <div className="text-xl font-bold text-slate-900" data-testid="total-customers">{businessData.total_customers}</div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="text-xs text-slate-500 mb-1">Active</div>
-          <div className="text-xl font-bold text-emerald-600">{businessData.active_customers}</div>
+          <div className="text-xs text-slate-500 mb-1">Paying</div>
+          <div className="text-xl font-bold text-emerald-600" data-testid="paying-customers">{businessData.paying_customers ?? businessData.active_customers}</div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="text-xs text-slate-500 mb-1">ARPU</div>
-          <div className="text-xl font-bold text-blue-600">{formatINR(businessData.arpu)}</div>
+          <div className="text-xs text-slate-500 mb-1">Trials</div>
+          <div className="text-xl font-bold text-cyan-600" data-testid="trial-customers">{businessData.trial_customers ?? 0}</div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="text-xs text-slate-500 mb-1">Contract Value</div>
-          <div className="text-xl font-bold text-slate-900">{formatINR(businessData.total_contract_value)}</div>
+          <div className="text-xs text-slate-500 mb-1" title="Monthly Recurring / paying customer">ARPU</div>
+          <div className="text-xl font-bold text-blue-600" data-testid="arpu-value">{formatINR(businessData.arpu)}</div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="text-xs text-slate-500 mb-1">Total Payments</div>
-          <div className="text-xl font-bold text-slate-900">{businessData.total_payments}</div>
+          <div className="text-xs text-slate-500 mb-1" title="Average Contract Value">ACV</div>
+          <div className="text-xl font-bold text-slate-800" data-testid="acv-value">{formatINR(businessData.acv ?? (businessData.paying_customers ? businessData.total_contract_value / businessData.paying_customers : 0))}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1" title="Total Contract Value across active paying customers">TCV</div>
+          <div className="text-xl font-bold text-slate-900" data-testid="tcv-value">{formatINR(businessData.total_contract_value)}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <div className="text-xs text-slate-500 mb-1" title="Churned / (Paying + Churned)">Churn %</div>
+          <div className="text-xl font-bold text-rose-600" data-testid="churn-rate">{(businessData.churn_rate ?? 0).toFixed(1)}%</div>
         </div>
       </div>
 
@@ -59,7 +69,7 @@ export const OverviewTab = ({ businessData, onRecordPayment, onGenerateInvoice, 
         <div className="bg-white border border-slate-200 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-slate-900 mb-4">Plan Distribution</h3>
           {Object.entries(businessData.plan_distribution || {}).map(([plan, count]) => {
-            const total = businessData.active_customers || 1;
+            const total = (businessData.paying_customers ?? businessData.active_customers) || 1;
             const pct = Math.round((count / total) * 100);
             const colors = { starter: 'bg-slate-400', professional: 'bg-blue-500', enterprise: 'bg-purple-500' };
             return (

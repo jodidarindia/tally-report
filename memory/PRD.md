@@ -9,6 +9,53 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 24 2026 (iter-124) — AI Draft + SaaS Metrics Correctness
+
+**Backend**
+- `routes/blog.py`: new `POST /super-admin/blog/ai-draft` — takes
+  `{note, tone}` and calls GPT-5.2 (via Emergent LLM key, existing
+  `LlmChat.with_model("openai","gpt-5.2")` pattern) returning strict
+  JSON `{title, slug, excerpt, body_md, tags, seo_title, seo_description}`.
+  System prompt is FLOWRA-branded (Indian SMEs, Tally/Busy context,
+  no emojis, no ChatGPT tell-tales) and enforces 450–800 words with
+  Markdown headings + bullet lists.
+- `routes/seller_panel.py::business_dashboard`: correct SaaS formulas:
+  - Paying customer = active AND not is_trial AND subscription not
+    expired (via `is_subscription_active`).
+  - **MRR** = Σ monthly-normalised rate over paying customers only
+    (annual plan → annual/12, monthly plan → monthly).
+  - **ARR** = MRR × 12.
+  - **ARPU** = MRR / paying_customers.
+  - **TCV** = Σ contract_value over paying customers.
+  - **ACV** = TCV / paying_customers (new).
+  - **Churn %** = churned / (paying + churned) × 100 (new).
+  - Response now separates `paying_customers`, `trial_customers`,
+    `expired_customers`, `churned_customers` and keeps legacy
+    `active_customers` alias for older UI.
+
+**Frontend**
+- `super-admin/tabs/BlogTab.jsx`: **AI Draft** button in the toolbar
+  and inline in the editor header (data-testid `ai-draft-btn` and
+  `ai-draft-inline-btn`) → opens a violet-themed modal with a rough-
+  note textarea + 3 tone chips (Informative / Casual / Thought-Leadership).
+  Generate button (`ai-draft-run-btn`) shows a spinner during the
+  ~15-second GPT-5.2 call and pre-fills the editor as a draft.
+- `super-admin/tabs/OverviewTab.jsx`: 7-card metrics grid (Total /
+  Paying / Trials / ARPU / ACV / TCV / Churn %) with tooltips
+  documenting each formula. Plan distribution percentages now use
+  `paying_customers` denominator instead of the old catch-all.
+
+**Testing**
+- Backend E2E via curl: business-dashboard returns all 11 new metric
+  keys with correct arithmetic (verified against 13-admin sample:
+  10 trials + 2 paying + 1 expired → MRR ₹6,331.67 / ARR ₹75,980 /
+  ARPU ₹3,165.83 / ACV ₹56,985 / TCV ₹113,970).
+- AI Draft E2E via curl: GPT-5.2 returned a 864-word Diwali-forecasting
+  post with 5 tags, 68-char SEO title, 156-char meta description in
+  ~15 s. Round-trip proven end-to-end.
+
+
+
 ## Shipped — Feb 24 2026 (iter-123) — Landing/Compliance/Blog/Remarks Sweep
 
 Follow-up sweep on the 10-item punch list from msg 828 + auto-welcome email.

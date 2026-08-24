@@ -52,7 +52,25 @@ async def _require_super_admin(request: Request):
 
 @router.get("/super-admin/business-dashboard")
 async def business_dashboard(request: Request):
-    """Revenue metrics, MRR, plan distribution, collections summary."""
+    """Revenue metrics, MRR, plan distribution, collections summary.
+
+    iter-124 fix: earlier version was piling trials + expired + inactive
+    admins into MRR/ARR/ARPU because it filtered only on `active==True`.
+    The user (msg 830) called this out — every top-of-dashboard number
+    was wrong. New definitions:
+
+    * Paying customer   = role='admin', active=True, is_trial!=True,
+                          subscription not expired.
+    * MRR   = Σ monthly-normalized recurring rate over paying customers.
+              (annual plan → annual/12; monthly plan → monthly rate)
+    * ARR   = MRR × 12  (industry-standard annualised run-rate)
+    * ARPU  = MRR / paying_customers    (0 when no paying customers)
+    * TCV   = Σ contract_value over paying customers (contracted amount
+              for the full committed term — annual plan = pricing.annual,
+              monthly plan = pricing.monthly × subscription_months).
+    * ACV   = TCV / paying_customers    (average deal size)
+    * Churn = churned_customers / (paying + churned) × 100
+    """
     sa = await _require_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
@@ -61,51 +79,84 @@ async def business_dashboard(request: Request):
             {"role": "admin"}, {"_id": 0, "password_hash": 0}
         ).to_list(1000)
 
-        total_customers = len(admins)
-        active_customers = sum(1 for a in admins if a.get("active", True))
-        churned_customers = total_customers - active_customers
+        from services.ist_utils import is_subscription_active
 
-        # Calculate MRR and plan distribution
+        total_customers = len(admins)
+        # A trial admin is *not* a paying customer — separate bucket.
+        trial_customers = sum(1 for a in admins if a.get("is_trial"))
+        paying_customers = 0
+        churned_customers = 0
+        expired_customers = 0
+
+        # Calculate MRR + TCV over PAYING customers only.
         mrr = 0.0
+        tcv = 0.0
         plan_distribution = {"starter": 0, "professional": 0, "enterprise": 0}
         billing_distribution = {"monthly": 0, "annual": 0}
-        total_contract_value = 0.0
 
         for admin in admins:
-            if not admin.get("active", True):
-                continue
+            is_trial = bool(admin.get("is_trial"))
+            active = admin.get("active", True)
             plan = admin.get("plan", "enterprise")
             cycle = admin.get("billing_cycle", "annual")
-            months = admin.get("subscription_months", 12)
-            pricing = PLAN_PRICING.get(plan, PLAN_PRICING["enterprise"])
+            months = int(admin.get("subscription_months", 12) or 12)
+            sub_start = admin.get("subscription_start", "")
 
+            # Bucket 1: churned = flipped inactive by super-admin.
+            if not active and not is_trial:
+                churned_customers += 1
+                continue
+
+            # Trials never contribute to revenue metrics.
+            if is_trial:
+                continue
+
+            # Bucket 2: expired = active flag on but sub window elapsed.
+            sub_active = is_subscription_active(sub_start, months) if sub_start else False
+            if not sub_active:
+                expired_customers += 1
+                continue
+
+            # Skip legacy admins missing a plan (shouldn't happen for
+            # paying customers, but defensive so we don't crash).
+            pricing = PLAN_PRICING.get(plan)
+            if not pricing:
+                continue
+
+            paying_customers += 1
             plan_distribution[plan] = plan_distribution.get(plan, 0) + 1
             billing_distribution[cycle] = billing_distribution.get(cycle, 0) + 1
 
             if cycle == "annual":
-                monthly_rate = pricing["annual"] / 12
-                contract_val = pricing["annual"] * (months / 12)
+                monthly_rate = pricing["annual"] / 12.0
+                contract_val = pricing["annual"] * (months / 12.0)
             else:
-                monthly_rate = pricing["monthly"]
+                monthly_rate = float(pricing["monthly"])
                 contract_val = pricing["monthly"] * months
 
             mrr += monthly_rate
-            total_contract_value += contract_val
+            tcv += contract_val
 
-        arr = mrr * 12
-        arpu = mrr / active_customers if active_customers > 0 else 0
+        arr = mrr * 12.0
+        arpu = (mrr / paying_customers) if paying_customers else 0.0
+        acv = (tcv / paying_customers) if paying_customers else 0.0
+
+        # Churn rate = share of ex-paying customers vs. paying + churned.
+        # Trials + expired-but-not-yet-cancelled are not part of the
+        # churn denominator until they either convert or lapse.
+        denom = paying_customers + churned_customers
+        churn_rate = (churned_customers / denom * 100.0) if denom else 0.0
 
         # Payment summary
         total_received = 0.0
         total_payments = 0
         payments = await db.payments.find({}, {"_id": 0}).to_list(10000)
         for p in payments:
-            total_received += p.get("amount", 0)
+            total_received += float(p.get("amount", 0) or 0)
             total_payments += 1
 
-        # Calculate total billed (sum of all active subscription values)
-        total_billed = total_contract_value
-        outstanding = max(0, total_billed - total_received)
+        outstanding = max(0.0, tcv - total_received)
+        collection_rate = round((total_received / tcv * 100.0) if tcv else 0.0, 1)
 
         # Recent payments (last 5)
         recent_payments = await db.payments.find(
@@ -113,20 +164,31 @@ async def business_dashboard(request: Request):
         ).sort("payment_date", -1).to_list(5)
 
         return APIResponse(success=True, data={
-            "total_customers": total_customers,
-            "active_customers": active_customers,
-            "churned_customers": churned_customers,
-            "mrr": round(mrr, 2),
-            "arr": round(arr, 2),
-            "arpu": round(arpu, 2),
-            "total_contract_value": round(total_contract_value, 2),
-            "total_received": round(total_received, 2),
-            "outstanding": round(outstanding, 2),
-            "collection_rate": round((total_received / total_billed * 100) if total_billed > 0 else 0, 1),
-            "plan_distribution": plan_distribution,
-            "billing_distribution": billing_distribution,
-            "total_payments": total_payments,
-            "recent_payments": recent_payments,
+            "total_customers":       total_customers,
+            "paying_customers":      paying_customers,
+            "trial_customers":       trial_customers,
+            "expired_customers":     expired_customers,
+            "churned_customers":     churned_customers,
+            # legacy alias so older SuperAdmin cards still resolve
+            "active_customers":      paying_customers,
+            "mrr":                   round(mrr, 2),
+            "arr":                   round(arr, 2),
+            "arpu":                  round(arpu, 2),
+            "acv":                   round(acv, 2),
+            "churn_rate":            round(churn_rate, 2),
+            "total_contract_value":  round(tcv, 2),
+            "total_received":        round(total_received, 2),
+            "outstanding":           round(outstanding, 2),
+            "collection_rate":       collection_rate,
+            "plan_distribution":     plan_distribution,
+            "billing_distribution":  billing_distribution,
+            "total_payments":        total_payments,
+            "recent_payments":       recent_payments,
+            "formula_note":          (
+                "MRR = Σ monthly-normalised rate over active paying "
+                "customers (excludes trials & expired). ARR = MRR × 12. "
+                "ARPU = MRR / paying_customers. ACV = TCV / paying."
+            ),
         })
     except Exception as e:
         logger.error(f"Business dashboard error: {e}")

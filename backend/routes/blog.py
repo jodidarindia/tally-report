@@ -120,6 +120,102 @@ async def sa_list_blog(request: Request):
         return APIResponse(success=False, error=str(e))
 
 
+@router.post("/super-admin/blog/ai-draft")
+async def sa_ai_draft_blog(request: Request):
+    """Turn a rough note into a full blog post using GPT-5.2 via the
+    Emergent LLM key. Returns a draft with title / slug / excerpt /
+    body_md / tags / seo_title / seo_description that the SuperAdmin
+    can review and tweak before hitting Save.
+
+    Body:  { note: str, tone?: 'informative'|'casual'|'thought-leadership' }
+    """
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Forbidden")
+    try:
+        body = await request.json()
+        note = (body.get("note") or "").strip()
+        tone = (body.get("tone") or "informative").strip().lower()
+        if not note or len(note) < 12:
+            return APIResponse(success=False, error="Give me at least a sentence or two to work with (min 12 chars).")
+
+        import os
+        import json as _json
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            return APIResponse(success=False, error="EMERGENT_LLM_KEY not configured")
+
+        system = (
+            "You are FLOWRA's senior content writer, drafting posts for the "
+            "FLOWRA Insights blog (a SaaS built on top of Tally & Busy for "
+            "Indian SMEs). You always return STRICT JSON with keys: "
+            "title, slug, excerpt, body_md, tags, seo_title, seo_description.\n\n"
+            "Rules:\n"
+            "- title: max 70 chars, punchy, action-oriented.\n"
+            "- slug: url-safe (lowercase, hyphens), <=60 chars.\n"
+            "- excerpt: <=280 chars, hook the reader in one sentence.\n"
+            "- body_md: 450–800 words, well-structured Markdown with "
+            "  ## sub-headings, short paragraphs, at least one bullet "
+            "  list, and 1 or 2 practical takeaways for Indian SME owners "
+            "  or their accountants. Reference Tally/Busy naturally.\n"
+            "- tags: array of 3–5 lowercase kebab-case tags.\n"
+            "- seo_title: <=70 chars, keyword-forward variation of title.\n"
+            "- seo_description: <=160 chars, meta description.\n"
+            "- Tone: " + tone + ". No emojis. No ChatGPT-style disclaimers.\n"
+            "- Do NOT invent statistics. Speak in India-specific context "
+            "  (GST, financial year Apr–Mar, MSME, DPDP Act).\n"
+            "- Output must be valid JSON only — no code fences, no prose."
+        )
+
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"blog-ai-draft-{sa.get('username')}",
+            system_message=system,
+        ).with_model("openai", "gpt-5.2")
+
+        user_prompt = (
+            f"Rough note from the FLOWRA team:\n\n{note}\n\n"
+            f"Turn this into a publish-ready blog post in valid JSON per the schema."
+        )
+        response = await chat.send_message(UserMessage(text=user_prompt))
+        raw = (response or "").strip()
+        if raw.startswith("```"):
+            # Strip ``` … ``` fences some models still add despite the rule.
+            first_nl = raw.find("\n")
+            if first_nl != -1:
+                raw = raw[first_nl + 1:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+
+        try:
+            draft = _json.loads(raw)
+        except _json.JSONDecodeError:
+            logger.warning(f"AI draft JSON parse failed. Raw preview: {raw[:200]}")
+            return APIResponse(success=False, error="AI returned an invalid format. Retry once more.")
+
+        # Defensive shape normalisation — trim + coerce types.
+        draft = {
+            "title":           str(draft.get("title") or "").strip()[:70],
+            "slug":            _slugify(draft.get("slug") or draft.get("title") or ""),
+            "excerpt":         str(draft.get("excerpt") or "").strip()[:280],
+            "body_md":         str(draft.get("body_md") or ""),
+            "tags":            [str(t).strip() for t in (draft.get("tags") or []) if t][:5],
+            "seo_title":       str(draft.get("seo_title") or draft.get("title") or "").strip()[:70],
+            "seo_description": str(draft.get("seo_description") or draft.get("excerpt") or "").strip()[:160],
+        }
+
+        if not draft["title"] or not draft["body_md"]:
+            return APIResponse(success=False, error="AI response was incomplete. Retry once more.")
+
+        return APIResponse(success=True, data=draft, message="Draft ready")
+    except Exception as e:
+        logger.error(f"sa_ai_draft_blog: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.get("/super-admin/blog/{post_id}")
 async def sa_get_blog(post_id: str, request: Request):
     sa = await _require_super_admin(request)
