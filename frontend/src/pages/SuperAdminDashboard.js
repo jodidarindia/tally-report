@@ -6,7 +6,7 @@ import {
   X, UserPlus,
   FileText, AlertTriangle,
   IndianRupee, TrendingUp, CreditCard, Receipt, Heart,
-  BarChart3, Wallet, Calendar, Gift, Database, BookOpen,
+  BarChart3, Wallet, Calendar, Gift, Database, BookOpen, Inbox,
   Sparkles, Copy, Download, Building2, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import ActivityLog from './ActivityLog';
@@ -25,6 +25,7 @@ import { AdminsTab } from './super-admin/tabs/AdminsTab';
 import { RenewalsTab } from './super-admin/tabs/RenewalsTab';
 import { StaffTab } from './super-admin/tabs/StaffTab';
 import { BlogTab } from './super-admin/tabs/BlogTab';
+import { SupportTab } from './super-admin/tabs/SupportTab';
 import { RemarksPanel } from './super-admin/RemarksPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -90,10 +91,12 @@ const SuperAdminDashboard = ({ token, user }) => {
   const [invoiceForm, setInvoiceForm] = useState({
     customer_username: '', description: '', period_from: '', period_to: '',
     discount_pct: 0,
+    service_reference: '',       // iter-125: links invoice to a real service event
   });
   const [invoiceCustomer, setInvoiceCustomer] = useState(null);
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invoiceSuggestions, setInvoiceSuggestions] = useState([]);
+  const [serviceRefs, setServiceRefs] = useState([]);            // iter-125 dropdown source
 
   // Industry dropdown data (loaded once on mount)
   const [industries, setIndustries] = useState([]);
@@ -412,11 +415,50 @@ const SuperAdminDashboard = ({ token, user }) => {
     setCustomerSuggestions([]);
   };
 
-  const selectInvoiceCustomer = (c) => {
+  const selectInvoiceCustomer = async (c) => {
     setInvoiceCustomer(c);
-    setInvoiceForm(f => ({ ...f, customer_username: c.username }));
+    setInvoiceForm(f => ({ ...f, customer_username: c.username, service_reference: '' }));
     setInvoiceSearchTerm(`${c.name || c.company_name || c.username} (${c.username})`);
     setInvoiceSuggestions([]);
+    // iter-125: pull all UN-INVOICED service references for this
+    // customer so the SuperAdmin can pick one from the dropdown.
+    // Ordering: most-recent first so signups + latest plan changes
+    // sit at the top of the list.
+    try {
+      const r = await axios.get(`${API}/super-admin/service-references`, {
+        headers, params: { customer_username: c.username },
+      });
+      if (r.data?.success) {
+        const refs = (r.data.data?.references || []).filter(x => !x.invoiced);
+        setServiceRefs(refs);
+        // Auto-select if only one open reference exists to keep the
+        // happy-path a single click.
+        if (refs.length === 1) {
+          setInvoiceForm(f => ({ ...f, service_reference: refs[0].reference_no }));
+        }
+      } else {
+        setServiceRefs([]);
+      }
+    } catch { setServiceRefs([]); }
+  };
+
+  const generateNewServiceRef = async () => {
+    if (!invoiceCustomer) { toast.error('Pick a customer first'); return; }
+    try {
+      const r = await axios.post(`${API}/super-admin/service-references`, {
+        customer_username: invoiceCustomer.username,
+        event: 'manual',
+        plan: invoiceCustomer.plan || '',
+        cycle: invoiceCustomer.billing_cycle || '',
+        months: invoiceCustomer.subscription_months || 12,
+      }, { headers });
+      if (r.data?.success) {
+        toast.success(`Reference generated: ${r.data.data.reference_no}`);
+        // refresh dropdown + pre-select the new one
+        await selectInvoiceCustomer(invoiceCustomer);
+        setInvoiceForm(f => ({ ...f, service_reference: r.data.data.reference_no }));
+      } else toast.error(r.data?.error || 'Failed to generate reference');
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
   };
 
   // --- NEW: Payment & Invoice functions ---
@@ -438,6 +480,12 @@ const SuperAdminDashboard = ({ token, user }) => {
 
   const generateInvoice = async () => {
     if (!invoiceForm.customer_username) { toast.error('Please pick a customer'); return; }
+    if (!invoiceForm.service_reference) {
+      // iter-125: reference number is a hard gate (backend enforces
+      // this too). Guide the SuperAdmin to either pick one from the
+      // dropdown OR mint a new one via the "+ New" button next to it.
+      toast.error('Pick a Service Reference or generate a new one'); return;
+    }
     const disc = Math.max(0, Math.min(20, parseFloat(invoiceForm.discount_pct) || 0));
     try {
       const res = await axios.post(`${API}/super-admin/invoices/generate`, {
@@ -446,16 +494,17 @@ const SuperAdminDashboard = ({ token, user }) => {
         period_from: invoiceForm.period_from,
         period_to: invoiceForm.period_to,
         discount_pct: disc,
+        service_reference: invoiceForm.service_reference,
       }, { headers });
       if (res.data?.success) {
         const d = res.data.data || {};
         toast.success(`${res.data.message} · Final ₹${(d.final_amount || 0).toLocaleString('en-IN')}`);
         setShowInvoiceModal(false);
-        setInvoiceForm({ customer_username: '', description: '', period_from: '', period_to: '', discount_pct: 0 });
-        setInvoiceCustomer(null); setInvoiceSearchTerm(''); setInvoiceSuggestions([]);
+        setInvoiceForm({ customer_username: '', description: '', period_from: '', period_to: '', discount_pct: 0, service_reference: '' });
+        setInvoiceCustomer(null); setInvoiceSearchTerm(''); setInvoiceSuggestions([]); setServiceRefs([]);
         fetchData();
       } else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Failed to generate invoice'); }
+    } catch (e) { toast.error(e.response?.data?.error || 'Failed to generate invoice'); }
   };
 
   const downloadInvoicePDF = async (invoiceId, invoiceNumber) => {
@@ -602,6 +651,7 @@ const SuperAdminDashboard = ({ token, user }) => {
     { id: 'referrals', label: 'Referrals', icon: Gift },
     { id: 'questionnaires', label: 'Leads', icon: FileText },
     { id: 'blog', label: 'Blog', icon: BookOpen },
+    { id: 'support', label: 'Support', icon: Inbox },
     { id: 'backups', label: 'Backups', icon: Database },
     { id: 'activity', label: 'Activity', icon: Activity },
     // Staff Mgmt — only the SuperAdmin sees this tab (control-panel users
@@ -737,6 +787,7 @@ const SuperAdminDashboard = ({ token, user }) => {
       {activeTab === 'referrals' && <ReferralManagement token={token} />}
       {activeTab === 'questionnaires' && <QuestionnaireLeads headers={headers} />}
       {activeTab === 'blog' && <BlogTab token={token} />}
+      {activeTab === 'support' && <SupportTab token={token} />}
       {activeTab === 'activity' && <ActivityLog />}
       {activeTab === 'backups' && <SuperAdminBackups />}
 
@@ -896,6 +947,44 @@ const SuperAdminDashboard = ({ token, user }) => {
                   <div className="flex justify-between"><span className="text-slate-600">Base amount (fixed)</span><span className="font-semibold">₹{base.toLocaleString('en-IN')}</span></div>
                   <div className="flex justify-between"><span className="text-slate-600">Discount</span><span className="text-rose-600">−₹{discAmt.toLocaleString('en-IN')} ({disc.toFixed(1)}%)</span></div>
                   <div className="flex justify-between border-t border-blue-200 pt-1 mt-1"><span className="text-slate-800 font-semibold">Final invoice</span><span className="font-bold text-blue-700" data-testid="invoice-final-amount">₹{finalAmt.toLocaleString('en-IN')}</span></div>
+                </div>
+              )}
+
+              {/* iter-125: Service Reference dropdown — every invoice
+                  must cite a real service event so accounting can
+                  trace it back. Auto-fills when there's only one open
+                  reference. "+ New" mints a manual reference on the fly
+                  (e.g. one-off onboarding/setup fee). */}
+              {invoiceCustomer && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Service Reference * <span className="text-xs text-slate-400 font-normal">— links invoice to a service event</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={invoiceForm.service_reference}
+                      onChange={e => setInvoiceForm(p => ({ ...p, service_reference: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                      data-testid="invoice-service-ref-select">
+                      <option value="">— Pick a reference —</option>
+                      {serviceRefs.map(r => (
+                        <option key={r.reference_no} value={r.reference_no}>
+                          {r.reference_no} · {r.event.replace('_', ' ')} · {r.plan} {r.cycle} ({r.months}m) · {(r.created_at || '').slice(0,10)}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" onClick={generateNewServiceRef}
+                      className="px-3 py-2 border border-blue-300 bg-blue-50 text-blue-700 rounded-lg text-xs font-semibold hover:bg-blue-100 whitespace-nowrap"
+                      data-testid="invoice-new-service-ref">
+                      + New
+                    </button>
+                  </div>
+                  {serviceRefs.length === 0 && (
+                    <p className="text-[10px] text-amber-600 mt-1">No open references for this customer. Click <b>+ New</b> to mint one for this invoice.</p>
+                  )}
+                  {serviceRefs.length > 0 && !invoiceForm.service_reference && (
+                    <p className="text-[10px] text-slate-500 mt-1">{serviceRefs.length} open reference{serviceRefs.length === 1 ? '' : 's'} available — pick one.</p>
+                  )}
                 </div>
               )}
 

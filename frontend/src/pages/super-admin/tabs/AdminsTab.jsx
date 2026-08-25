@@ -32,8 +32,16 @@ export const AdminsTab = ({
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end max-w-full">
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${admin.plan === 'enterprise' ? 'bg-purple-50 text-purple-700' : admin.plan === 'professional' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{admin.plan || 'enterprise'}</span>
-                  <button onClick={e => { e.stopPropagation(); onToggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`} data-testid={`toggle-active-${admin.username}`}>
-                    {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} {admin.active ? 'Active' : 'Inactive'}
+                  {/* iter-125: brand-new admins land INACTIVE — flag it
+                      visually so the SuperAdmin remembers to activate
+                      before the customer tries to log in. */}
+                  {admin.activation_pending && !admin.active && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300" title="Click Toggle to activate">
+                      Pending Activation
+                    </span>
+                  )}
+                  <button onClick={e => { e.stopPropagation(); onToggleActive(admin.username); }} className={`px-3 py-1.5 text-xs rounded-lg font-medium flex items-center gap-1 ${admin.active ? 'bg-green-50 text-green-700' : (admin.activation_pending ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-50 text-red-700')}`} data-testid={`toggle-active-${admin.username}`}>
+                    {admin.active ? <ToggleRight size={14} /> : <ToggleLeft size={14} />} {admin.active ? 'Active' : (admin.activation_pending ? 'Activate' : 'Inactive')}
                   </button>
                   <button onClick={e => { e.stopPropagation(); onEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`edit-admin-${admin.username}`}><Pencil size={14} /></button>
                   <button onClick={e => { e.stopPropagation(); onResetPassword(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Email a new auto-generated password to this admin" data-testid={`reset-pwd-${admin.username}`}><Key size={14} /></button>

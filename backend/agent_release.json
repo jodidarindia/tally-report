@@ -1,9 +1,9 @@
 {
-  "version": "9.8.28",
+  "version": "9.8.30",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.28 — REVERT iter-107 paren/apostrophe/quote escaping in SVCURRENTCOMPANY. Field data from Krishna Sales Corporation confirms v9.8.25 (raw company name) worked on Tally Prime 7.0, while v9.8.27 (with `(` → `&#40;`, `)` → `&#41;`, `'` → `&apos;`, `\"` → `&quot;`) failed with `Could not set 'SVCurrentCompany'`. Diagnosis: Tally's TDL matching layer does NOT decode numeric character references or `&apos;`/`&quot;` back to literal chars when matching against the loaded-company catalog — so the escaped string is compared literally and never matches. v9.8.28 keeps only the three strictly XML-mandated escapes (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`) which every conformant XML parser (Tally included) DOES decode. Parens / single-quote / double-quote are sent raw — they are perfectly legal inside XML element content. Customer-side: rebuild .exe from current source, drop into frontend/public/FlowraTallyAgent.exe, update sha256+size_bytes here, push to droplet.",
-  "released_at": "2026-05-22T20:00:00+05:30",
-  "sha256": "f0a2975284351c0d74b74534deb29d2135604639b482247b3b2efcfb4c7f21c7",
-  "size_bytes": 27031673
+  "release_notes": "v9.8.30 — Voucher-date window scoping for incremental syncs (only pulls vouchers within an explicit date range instead of always full-history), plus carry-forward of iter-107 fixes: raw parentheses/apostrophes/quotes in SVCURRENTCOMPANY (only the three XML-mandated entities are escaped now — & < > — because Tally's TDL matcher does NOT decode numeric character refs or &apos;/&quot; back to literals). Faster startup on Tally Prime 7.0, less network chatter, no more false 'company not loaded' errors after upgrade. Customer-side: run the new .exe from the same folder, choose Replace when Windows prompts.",
+  "released_at": "2026-08-24T19:15:00+05:30",
+  "sha256": "bb34387be33e722e9648e91a96610814b7b7fd7259fc5543f9c5176a8265de82",
+  "size_bytes": 26930814
 }

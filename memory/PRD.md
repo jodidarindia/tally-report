@@ -9,6 +9,60 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 25 2026 (iter-125) — OTP recipient, Inactive-by-default admins, Service Ref dropdown, Agent v9.8.30, Support tab
+
+**Backend**
+- `routes/super_admin.py::request_delete_admin_otp`: OTP now dispatched
+  to `sa.email → SUPER_ADMIN_EMAIL env → ceo@flowralive.in` (was
+  support@ which is a shared alias). Fallback code still returned
+  inline when Resend delivery fails.
+- `routes/super_admin.py::create_admin`: brand-new UserAdmin lands
+  with `active: False` + `activation_pending: True` — SuperAdmin must
+  explicitly flip them Active from Admin Mgmt. Prevents "signed-up
+  but not paid" tenants from logging in.
+- `routes/super_admin.py::toggle_admin_active`: clears the
+  `activation_pending` flag + stamps `activated_at` / `activated_by`
+  when the SuperAdmin flips a pending admin to Active.
+- `routes/super_admin.py::edit_admin_full`: auto-mints a
+  `plan_change` service reference on plan/cycle/months change so the
+  next delta invoice can cite it. Returned in the response as
+  `service_reference` for immediate use.
+- `routes/super_admin.py::STAFF_FEATURES`: catalogue expanded to all
+  14 SuperAdmin tabs (added `blog` + `support`);
+  `STAFF_VIEW_ONLY_FEATURES` extended to `admins` + `activity` +
+  `backups` for safer defaults.
+- New public asset `/FlowraTallyAgent.exe` = v9.8.30 (26.93 MB,
+  SHA-256 `bb34387b…`). `agent_release.json` bumped to 9.8.30 with
+  voucher-date-window scoping notes.
+
+**Frontend**
+- `super-admin/tabs/SupportTab.jsx` **(new)**: full Support Tickets
+  inbox with clickable summary cards (Total / Open / In-Progress /
+  Closed / From Email), ✉ Email pill on inbound-webhook tickets, split
+  conversation pane with reply + status change (Open/In-Progress/
+  Waiting/Closed), and a footer showing the exact webhook URL to
+  configure in Resend Inbound.
+- `super-admin/tabs/AdminsTab.jsx`: new amber "PENDING ACTIVATION"
+  badge on newly-created admins; toggle button reads "Activate" with
+  an amber pulse until it's flipped for the first time.
+- `SuperAdminDashboard.js` Generate Invoice modal: added a **Service
+  Reference dropdown** populated from
+  `/api/super-admin/service-references?customer_username=…` (open
+  refs only), auto-selects when only one exists, and a "**+ New**"
+  button that mints a manual reference on the fly (event=`manual`)
+  for one-off setup/onboarding fees. Backend already gated invoice
+  generation on the field — frontend now honours it too.
+- SuperAdmin sidebar wired the new `support` tab.
+
+**Testing**
+- Backend E2E via curl on preview: OTP `sent_to = ceo@flowralive.in`;
+  service reference list + create endpoints returning correct payload;
+  new admin creation lands with `active:false, activation_pending:true`
+  (verified via `list_admins`).
+- Frontend compiles clean with 1 warning (pre-existing).
+
+
+
 ## Shipped — Feb 24 2026 (iter-124) — AI Draft + SaaS Metrics Correctness
 
 **Backend**

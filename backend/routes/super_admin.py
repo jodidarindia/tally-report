@@ -49,16 +49,31 @@ async def _require_strict_super_admin(request: Request):
 # when SuperAdmin creates a staff account. `staff_mgmt` is reserved for
 # super_admin only — staff cannot grant themselves staff-management
 # privileges.
+# iter-125: catalogue every SuperAdmin tab so the SuperAdmin can pick
+# which ones each staff member gets. Order matches the sidebar so the
+# picklist in the Staff-Create modal reads top-to-bottom the same way
+# the dashboard does.
 STAFF_FEATURES = [
-    "overview", "subscriptions", "payments", "invoices",
-    "prospects", "health", "admins", "renewals",
-    "referrals", "questionnaires", "backups", "activity",
+    "overview",       # Overview / KPIs
+    "subscriptions",  # Subscriptions tab
+    "payments",       # Payments ledger
+    "invoices",       # Invoice CRUD + PDF download
+    "prospects",      # Prospects + remarks
+    "health",         # Customer Health
+    "admins",         # Admin Mgmt (view-only for staff)
+    "renewals",       # Renewals + Active Trials
+    "referrals",      # Referral programme
+    "questionnaires", # Leads (Needs Assessment questionnaires)
+    "blog",           # Blog CMS  (iter-123)
+    "backups",        # Encrypted backup manager
+    "activity",       # Audit log viewer
+    "support",        # Support Tickets inbox  (iter-115 inbound webhook)
 ]
 
 # Feature names where flowra_staff get VIEW-ONLY access. The route
 # decorator checks the request method too — GET passes, mutating verbs
 # (POST/PUT/PATCH/DELETE) are blocked for staff.
-STAFF_VIEW_ONLY_FEATURES = {"admins"}
+STAFF_VIEW_ONLY_FEATURES = {"admins", "backups", "activity"}
 
 
 async def _require_command_center(request: Request, feature: str = "", *, mutating: bool = False):
@@ -464,7 +479,14 @@ async def create_admin(request: Request):
             "tenant_id": tenant_id,
             "features": valid_features,
             "companies": [],
-            "active": True,
+            # iter-125 policy (msg 838): a freshly-created UserAdmin is
+            # INACTIVE by default. The SuperAdmin must explicitly flip
+            # them Active from the Admin Mgmt tab after verifying
+            # onboarding + payment. Prevents accidental "customer
+            # signed up but never paid" tenants from having live
+            # login access.
+            "active": False,
+            "activation_pending": True,
             "plan": plan_id,
             "billing_cycle": billing_cycle,
             "max_companies": plan_config["max_companies"],
@@ -712,10 +734,31 @@ async def edit_admin_full(username: str, request: Request):
                 ),
             }
 
+        # iter-125: auto-mint a service reference whenever a plan /
+        # cycle / months change happens so the SuperAdmin can raise
+        # the delta invoice against a real event (per user directive:
+        # "reference number generated after creation, modification of a
+        # useradmin must be available as dropdown"). Manual /
+        # trial-adjust edits are skipped so we don't pollute the list
+        # with no-op references.
+        service_ref = ""
+        if plan_changed and old_plan != "trial" and new_plan != "trial":
+            try:
+                from routes.seller_panel import create_service_reference
+                service_ref = await create_service_reference(
+                    customer_username=username,
+                    event="plan_change",
+                    plan=new_plan, cycle=new_cycle, months=new_months,
+                    created_by=sa["username"],
+                )
+            except Exception as _re:
+                logger.warning(f"service ref generation on edit failed for {username}: {_re}")
+
         await log_audit(
             "admin_edited", sa["username"], target=username,
             details=(f"plan={new_plan}, cycle={new_cycle}, months={new_months}, "
-                     f"billing_delta={billing_delta['direction']}:{billing_delta['amount']}"),
+                     f"billing_delta={billing_delta['direction']}:{billing_delta['amount']}, "
+                     f"service_ref={service_ref or '-'}"),
             ip_address=get_client_ip(request),
         )
         return APIResponse(success=True, message=f"Admin '{username}' updated", data={
@@ -724,6 +767,7 @@ async def edit_admin_full(username: str, request: Request):
             "subscription_months": new_months,
             "features": update.get("features", target.get("features", [])),
             "billing_delta": billing_delta,
+            "service_reference": service_ref,
         })
     except Exception as e:
         logger.error(f"Error editing admin: {e}")
@@ -744,9 +788,17 @@ async def toggle_admin_active(username: str, request: Request):
             return APIResponse(success=False, error="Admin not found")
 
         new_status = not admin.get("active", True)
+        update_doc: dict = {"active": new_status}
+        # iter-125: when the SuperAdmin flips a brand-new UserAdmin to
+        # active for the first time, clear the `activation_pending`
+        # bookkeeping flag so the "PENDING ACTIVATION" badge disappears.
+        if new_status:
+            update_doc["activation_pending"] = False
+            update_doc["activated_at"] = now_ist_iso()
+            update_doc["activated_by"] = sa["username"]
         await db.users.update_one(
             {"username": username},
-            {"$set": {"active": new_status}}
+            {"$set": update_doc}
         )
         await log_audit("admin_toggled", sa["username"], target=username, details=f"{'Activated' if new_status else 'Deactivated'}", ip_address=get_client_ip(request))
         return APIResponse(success=True, message=f"Admin '{username}' {'activated' if new_status else 'deactivated'}", data={
@@ -901,16 +953,16 @@ async def request_delete_admin_otp(username: str, request: Request):
         )
 
         # iter-125: resolve a real inbox for the OTP.
+        # Priority: user-configured `sa.email` → SUPER_ADMIN_EMAIL env
+        # → hard-coded ceo@flowralive.in fallback (per user directive
+        # in msg 838 — OTP must land in the CEO's inbox, NOT the
+        # generic support alias which anyone in the ops team can read).
         recipient = (
             (sa.get("email") or "").strip()
             or os.environ.get("SUPER_ADMIN_EMAIL", "").strip()
         )
         if not recipient or "@" not in recipient:
-            # LEAD_NOTIFY_TO is a hard-coded fallback (support@flowralive.in)
-            # so the code lands SOMEWHERE the ops team can retrieve it
-            # even if the SuperAdmin doc hasn't been enriched with an email.
-            from services.email_service import LEAD_NOTIFY_TO
-            recipient = LEAD_NOTIFY_TO
+            recipient = "ceo@flowralive.in"
 
         email_sent = False
         email_error = ""
