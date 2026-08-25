@@ -1,0 +1,27 @@
+[Unit]
+Description=FLOWRA Backend (FastAPI + uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=flowra
+Group=flowra
+WorkingDirectory=/opt/flowra/backend
+EnvironmentFile=/opt/flowra/backend/.env
+# Load the venv's uvicorn. --workers scales with vCPU (safe default: 4).
+ExecStart=/opt/flowra/.venv/bin/uvicorn server:app \
+    --host 127.0.0.1 --port 8001 \
+    --workers 4 \
+    --limit-concurrency 200 \
+    --timeout-keep-alive 30 \
+    --proxy-headers --forwarded-allow-ips="*"
+Restart=on-failure
+RestartSec=3
+# Give background tasks time to finish (trial scheduler, backups)
+TimeoutStopSec=30
+# Log to journald so `journalctl -u flowra-backend -f` shows everything
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

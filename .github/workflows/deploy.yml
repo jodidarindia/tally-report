@@ -1,0 +1,58 @@
+name: Deploy to DigitalOcean
+
+# Triggers:
+#   1. Every push to `main`     → auto-deploys prod
+#   2. Manual "Run workflow"    → the "click-of-a-button" republish you asked for
+#      (Actions tab → Deploy to DigitalOcean → Run workflow)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      restart_only:
+        description: "Skip git pull + build, just restart services"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false     # never abort an in-flight deploy
+
+jobs:
+  deploy:
+    name: SSH → build → restart
+    runs-on: ubuntu-latest
+    environment: production      # so GitHub prompts for approval if you turn on required reviews
+
+    steps:
+      - name: Checkout (for the deploy scripts only)
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DO_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DO_HOST:      ${{ secrets.DO_HOST }}
+          DO_USER:      ${{ secrets.DO_USER }}
+          RESTART_ONLY: ${{ inputs.restart_only || 'false' }}
+        run: |
+          ssh -o StrictHostKeyChecking=no "$DO_USER@$DO_HOST" \
+              "cd /opt/flowra && ./deploy/deploy.sh $RESTART_ONLY"
+
+      - name: Smoke test
+        env:
+          DO_HOST: ${{ secrets.DO_HOST }}
+        run: |
+          sleep 5
+          curl -fsSL "https://insights.flowralive.in/api/health" \
+            | tee /dev/stderr \
+            | grep -q '"ok":true' \
+            || (echo "❌ /api/health did not return ok:true" && exit 1)
+          echo "✅ Deployment healthy"
