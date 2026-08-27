@@ -171,6 +171,26 @@ const TallySetup = ({ companyId }) => {
       </div>
 
       <div className="max-w-2xl space-y-6">
+        {/* iter-126 — Multi-company safety banner. A client incident on
+            26 Feb 2026 had two Tally companies open simultaneously;
+            the agent couldn't pick one and one company's data file
+            got corrupted. The v9.8.31+ agents now refuse to sync when
+            multiple companies are open, but a big visible warning
+            here is the belt to that suspenders. */}
+        <div className="bg-red-50 border-l-4 border-red-500 rounded-r-xl p-4 flex items-start gap-3" data-testid="multi-company-warning">
+          <div className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">!</div>
+          <div>
+            <p className="text-sm font-semibold text-red-900 mb-1">Do NOT open more than one {getErpLabelMarked()} company while the sync agent is running</p>
+            <p className="text-xs text-red-800 leading-relaxed">
+              {getErpLabelMarked()}&apos;s XML data-server only exposes the <b>foreground</b> company. Opening a second
+              company mid-sync can (a) attribute vouchers to the wrong tenant OR (b) leave {getErpLabelMarked()}&apos;s
+              .tsf/.mgr files in an inconsistent state → <b>&quot;Damaged data file&quot;</b> on next open.
+              If you must switch companies, <b>right-click the FLOWRA agent tray icon → Pause Sync</b> first.
+              Agent v9.8.31 and later will detect the condition and refuse to sync until only one company is open.
+            </p>
+          </div>
+        </div>
+
         {/* Desktop Agent Download */}
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6" data-testid="agent-download-card">
           <div className="flex items-center gap-4">

@@ -147,6 +147,89 @@ async def receive_agent_sync(request: dict):
         if not verify_sync_token(req_tenant_id, sync_token):
             return APIResponse(success=False, error="Invalid sync token")
 
+        # iter-126 — MULTI-COMPANY SAFETY GUARDS
+        # -----------------------------------------------------------
+        # A client-site incident (msg 856) had two Tally companies open
+        # on the same machine. The agent's `SVCURRENTCOMPANY` XML call
+        # returns whichever company is currently in the FOREGROUND, and
+        # Tally silently switches that when the user tabs — meaning the
+        # agent can attribute vouchers from Company A to Company B, or
+        # (worse) issue a `LOAD COMPANY` XML action mid-sync and leave
+        # the .tsf/.mgr files in an inconsistent state.
+        #
+        # Server-side defence-in-depth:
+        #  (1) REJECT any sync payload that doesn't carry BOTH an
+        #      explicit company_id AND a matching company_name. Legacy
+        #      agents that only push `company_name` (with company_id ==
+        #      display name) still work — but a payload with BLANK
+        #      company_id is now refused so ambiguous "current company"
+        #      pushes fail loudly instead of writing to the wrong tenant.
+        #  (2) Take a per-(tenant, company) advisory lock via
+        #      Mongo findOneAndUpdate so two overlapping sync requests
+        #      for the same tenant+company can never interleave.
+        # -----------------------------------------------------------
+        if not (req_company_id or "").strip():
+            return APIResponse(
+                success=False,
+                error=(
+                    "company_id is required — the agent must send both "
+                    "company_id and company_name on every sync request. "
+                    "Refusing ambiguous 'current company' pushes to avoid "
+                    "cross-company data corruption."
+                ),
+            )
+        if not (company_name_raw or "").strip():
+            return APIResponse(
+                success=False,
+                error="company_name is required alongside company_id.",
+            )
+
+        # (2) Advisory lock — one active sync per (tenant, company).
+        # 60-second stale-lock TTL protects us if the agent crashes
+        # between acquiring and releasing the lock. Clients hitting
+        # a busy slot get 409 CONFLICT with the owner + acquired_at so
+        # they can back off and retry.
+        _lock_key = {"tenant_id": req_tenant_id, "company_id": req_company_id}
+        _now_iso = datetime.now(timezone.utc).isoformat()
+        _lock_ttl_seconds = 60
+        try:
+            from datetime import timedelta as _td
+            _stale_before = (datetime.now(timezone.utc) - _td(seconds=_lock_ttl_seconds)).isoformat()
+            # Acquire only if no non-stale lock exists.
+            _acq = await db.sync_locks.find_one_and_update(
+                {
+                    **_lock_key,
+                    "$or": [
+                        {"acquired_at": {"$lt": _stale_before}},
+                        {"acquired_at": {"$exists": False}},
+                    ],
+                },
+                {"$set": {
+                    **_lock_key,
+                    "acquired_at": _now_iso,
+                    "sync_token_prefix": (sync_token or "")[:8],
+                    "data_type": data_type,
+                }},
+                upsert=True,
+                return_document=True,
+            )
+        except Exception as _lock_err:
+            # DuplicateKeyError → another agent already holds the lock.
+            _existing = await db.sync_locks.find_one(_lock_key, {"_id": 0})
+            logger.warning(
+                f"sync lock conflict tenant={req_tenant_id} company={req_company_id} "
+                f"existing={_existing} err={_lock_err}"
+            )
+            return APIResponse(
+                success=False,
+                error=(
+                    f"Another sync is already in progress for this company "
+                    f"(started at {(_existing or {}).get('acquired_at', 'unknown')}). "
+                    f"Retry in a few seconds."
+                ),
+            )
+
+
         # Resolve company_id: if it's a plain name (not UUID), map it to UUID
         from services.id_mapping_service import register_company_mapping, register_company_by_folder, get_company_uuid
         is_uuid = False
@@ -971,6 +1054,14 @@ async def receive_agent_sync(request: dict):
             except Exception as digest_err:
                 logger.error(f"Error recomputing overdue digest: {digest_err}")
 
+        # iter-126: release the (tenant, company) sync lock on the way
+        # out. Wrapped in try/except so a stale lock never blocks the
+        # response — the 60-second TTL sweep will clean it up anyway.
+        try:
+            await db.sync_locks.delete_one({"tenant_id": req_tenant_id, "company_id": req_company_id})
+        except Exception:
+            pass
+
         return APIResponse(
             success=True,
             message=f"Successfully synced {len(data)} {data_type} items"
@@ -978,6 +1069,12 @@ async def receive_agent_sync(request: dict):
 
     except Exception as e:
         logger.error(f"Error receiving agent sync: {e}")
+        # Best-effort lock release on error too so the next legitimate
+        # retry isn't blocked by our own crash.
+        try:
+            await db.sync_locks.delete_one({"tenant_id": req_tenant_id, "company_id": req_company_id})
+        except Exception:
+            pass
         return APIResponse(success=False, error=str(e))
 
 
@@ -995,6 +1092,118 @@ _RECONCILE_MAP = {
     "sundry_creditors":   {"collection": "sundry_creditors",  "key": "creditor_name"},
     "bank_cash_ledgers":  {"collection": "bank_cash_ledgers", "key": "ledger_name"},
 }
+
+
+@router.post("/agent/preflight")
+async def sync_preflight(request: dict):
+    """Preflight check the agent MUST call before every sync cycle.
+
+    iter-126 — multi-company incident (msg 856): the agent used to
+    blindly trust `SVCURRENTCOMPANY` which returns the FOREGROUND
+    company only. If the user tabs between two open companies mid-sync,
+    the agent can attribute vouchers to the wrong tenant OR (worse)
+    issue a `LOAD COMPANY` XML action that leaves Tally's .tsf/.mgr
+    files in an inconsistent state → "Damaged data file" on next open.
+
+    The agent now POSTs this preflight before touching any voucher:
+    ```
+      POST /api/agent/preflight
+      {
+        "tenant_id": "...",
+        "sync_token": "...",
+        "active_company": "NAVDURGA AUTO SPARES",
+        "loaded_companies": ["NAVDURGA AUTO SPARES", "SHIVAM TRADERS"],
+        "intended_company_id": "COMP0002"
+      }
+    ```
+    The server returns:
+      { allow: bool, reason: str, warnings: [...] }
+
+    Agent MUST honour `allow=false` and skip the cycle entirely.
+    """
+    try:
+        tenant_id       = (request.get("tenant_id") or "").strip()
+        sync_token      = request.get("sync_token") or ""
+        active_company  = (request.get("active_company") or "").strip()
+        loaded          = request.get("loaded_companies") or []
+        intended        = (request.get("intended_company_id") or "").strip()
+
+        if not tenant_id or not sync_token or not verify_sync_token(tenant_id, sync_token):
+            return APIResponse(success=False, error="Invalid tenant_id or sync_token")
+
+        warnings: list[str] = []
+        allow = True
+        reason = "ok"
+
+        # Rule 1 — multiple companies loaded is a HARD block unless the
+        # agent explicitly names both the intended company_id AND the
+        # active_company matches it. Otherwise voucher attribution is
+        # ambiguous and Tally state can flip mid-cycle.
+        if isinstance(loaded, list) and len(loaded) > 1:
+            if not intended or not active_company:
+                allow = False
+                reason = (
+                    f"Multiple companies open ({len(loaded)}). Refusing to sync — "
+                    f"close one of {loaded} in Tally or explicitly set intended_company_id."
+                )
+            elif active_company not in loaded:
+                allow = False
+                reason = (
+                    f"active_company '{active_company}' is not in the loaded list {loaded}. "
+                    f"Refusing to sync — the agent read inconsistent Tally state."
+                )
+            else:
+                warnings.append(
+                    f"{len(loaded)} companies open — agent will sync only '{active_company}'. "
+                    f"Do NOT switch companies in Tally until this cycle finishes."
+                )
+
+        # Rule 2 — the intended company_id must be in the tenant's
+        # registered companies. Blocks a wrong-tenant push if the agent
+        # was pointed at the wrong pod.
+        if intended and allow:
+            admin_user = await db.users.find_one(
+                {"tenant_id": tenant_id, "role": "admin"},
+                {"_id": 0, "companies": 1, "max_companies": 1, "active": 1},
+            )
+            if not admin_user:
+                allow = False
+                reason = "tenant not found"
+            elif not admin_user.get("active", True):
+                allow = False
+                reason = "tenant is inactive — sync disabled"
+            elif intended not in (admin_user.get("companies") or []):
+                # Not fatal — first-time-seen companies are auto-registered
+                # by the main sync endpoint. Emit a warning so the agent
+                # logs it.
+                warnings.append(
+                    f"company '{intended}' not yet in tenant's registered list. "
+                    f"It will be auto-registered on first successful sync."
+                )
+
+        # Rule 3 — surface any live sync lock so the agent backs off.
+        try:
+            _existing = await db.sync_locks.find_one(
+                {"tenant_id": tenant_id, "company_id": intended},
+                {"_id": 0, "acquired_at": 1},
+            )
+            if _existing:
+                warnings.append(
+                    f"another sync for this company is in progress "
+                    f"(started {_existing.get('acquired_at')}). Waiting is safe."
+                )
+        except Exception:
+            pass
+
+        return APIResponse(success=True, data={
+            "allow": allow,
+            "reason": reason,
+            "warnings": warnings,
+            "server_time_utc": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"sync_preflight error: {e}")
+        return APIResponse(success=False, error=str(e))
 
 
 @router.post("/agent/reconcile")
