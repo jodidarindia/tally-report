@@ -1924,6 +1924,68 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     # ---- FY DISCOVERY from Tally ----
 
+    def list_of_companies(self) -> List[str]:
+        """v9.8.31 — enumerate the currently LOADED companies (multi-
+        company safety preflight). Returns a list of display names."""
+        xml = """<ENVELOPE>
+        <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ListOfCompaniesLoaded</ID></HEADER>
+        <BODY><DESC>
+            <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+            <TDL><TDLMESSAGE>
+                <COLLECTION NAME="ListOfCompaniesLoaded" ISMODIFY="No">
+                    <TYPE>Company</TYPE>
+                    <FETCH>NAME</FETCH>
+                </COLLECTION>
+            </TDLMESSAGE></TDL>
+        </DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
+            if not data:
+                return []
+            companies = self._find_deep(data, 'COMPANY')
+            if not companies:
+                return []
+            if isinstance(companies, (str, dict)):
+                companies = [companies]
+            out: List[str] = []
+            for c in companies:
+                if isinstance(c, str):
+                    nm = c.strip()
+                elif isinstance(c, dict):
+                    nm = c.get('NAME') or c.get('@NAME') or ''
+                    if isinstance(nm, dict):
+                        nm = nm.get('#text', '')
+                    nm = str(nm or '').strip()
+                else:
+                    nm = ''
+                if nm and nm not in out:
+                    out.append(nm)
+            return out
+        except Exception:
+            return []
+
+    def get_current_company(self) -> str:
+        """v9.8.31 — SVCURRENTCOMPANY (foreground company). Empty
+        string on any error so callers can fail open."""
+        xml = """<ENVELOPE>
+        <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Function</TYPE><ID>$$CurrentCompany</ID></HEADER>
+        <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>"""
+        try:
+            data = self._post(xml)
+            if not data:
+                return ""
+            for k in ('RESULT', 'CURRENTCOMPANY', 'ENVELOPE'):
+                v = self._find_deep(data, k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+                if isinstance(v, dict):
+                    txt = v.get('#text') or v.get('RESULT') or ''
+                    if isinstance(txt, str) and txt.strip():
+                        return txt.strip()
+            return ""
+        except Exception:
+            return ""
+
     def discover_financial_years(self) -> List[str]:
         """Query Tally for all available financial years (accounting periods)."""
         xml = """<ENVELOPE>
@@ -3356,7 +3418,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.28-company-raw-parens")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.31-multi-company-safe")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3739,7 +3801,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.28-company-raw-parens',
+                'agent_version': '9.8.31-multi-company-safe',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3778,7 +3840,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.28-company-raw-parens',
+                'agent_version': '9.8.31-multi-company-safe',
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
@@ -3838,7 +3900,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.28-company-raw-parens',
+                'agent_version': '9.8.31-multi-company-safe',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4032,7 +4094,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.28-company-raw-parens',
+                                'agent_version': '9.8.31-multi-company-safe',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4226,9 +4288,82 @@ class FlowraSyncAgent:
         finally:
             self.sync_running = False
 
+    def _preflight_or_skip(self, intended_company_name: str) -> bool:
+        """v9.8.31 multi-company safety preflight.
+
+        Enumerates loaded Tally companies via ListOfCompanies and asks the
+        FLOWRA server for permission. Returns True to proceed, False to
+        skip this cycle. NEVER RAISES — a preflight failure logs a warning
+        and skips, it doesn't blow up the entire scheduler.
+        """
+        try:
+            # (a) Enumerate loaded companies. If Tally isn't reachable at
+            # all, let the downstream code emit its own error rather than
+            # blocking the cycle.
+            try:
+                loaded = self.tally.list_of_companies() or []
+            except Exception as e:
+                logger.warning(f"[preflight] list_of_companies failed: {e} — allowing cycle")
+                return True
+
+            # (b) Figure out the FOREGROUND company (SVCURRENTCOMPANY).
+            try:
+                active = self.tally.get_current_company() or ""
+            except Exception:
+                active = ""
+
+            # (c) Map intended company_name → registered company_id.
+            intended_id = self.company_mappings.get(intended_company_name, "") if intended_company_name != "_active_" else ""
+
+            payload = {
+                "tenant_id":            self.tenant_id,
+                "sync_token":           self.sync_token,
+                "active_company":       active,
+                "loaded_companies":     loaded,
+                "intended_company_id":  intended_id,
+            }
+            r = requests.post(
+                f"{self.backend_url}/api/agent/preflight",
+                json=payload, timeout=10,
+            )
+            data = (r.json() or {}).get("data", {}) if r.ok else {}
+            if not data:
+                logger.warning(f"[preflight] server rejected: {r.status_code} — allowing cycle (fail-open)")
+                return True
+            for w in data.get("warnings", []):
+                logger.info(f"[preflight] warning: {w}")
+            if not data.get("allow", True):
+                logger.warning(
+                    f"[preflight] SKIPPING cycle for '{intended_company_name}': "
+                    f"{data.get('reason')} (loaded={loaded}, active={active})"
+                )
+                try:
+                    self.report_progress('sync_error', error=f"preflight blocked: {data.get('reason')}")
+                except Exception:
+                    pass
+                return False
+            return True
+        except Exception as e:
+            logger.warning(f"[preflight] unexpected error: {e} — allowing cycle (fail-open)")
+            return True
+
     def _sync_single_company(self, company_name):
         """Run sync for a single company."""
         try:
+            # v9.8.31 iter-126 — MULTI-COMPANY SAFETY GATE.
+            # A client-site incident (26 Feb 2026) had two Tally companies
+            # open. SVCURRENTCOMPANY only returns the FOREGROUND company —
+            # if the user tabbed mid-sync, vouchers ended up attributed to
+            # the wrong tenant AND one company's .tsf/.mgr files got left
+            # in an inconsistent state (Damaged data file on next open).
+            # Two-layer defence, one client-side + one server-side:
+            #   1. Enumerate all loaded Tally companies via ListOfCompanies
+            #      and call the FLOWRA preflight endpoint. Honour allow=False.
+            #   2. Verify SVCURRENTCOMPANY BEFORE and AFTER each export
+            #      (see _tally_export_safe below).
+            if not self._preflight_or_skip(company_name):
+                return
+
             # If company_name is placeholder, use empty string for display but still sync
             is_placeholder = company_name == '_active_'
             display_name = company_name if not is_placeholder else 'Active Company (auto-detect)'
@@ -4739,7 +4874,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.28-company-raw-parens")
+        print("FLOWRA Tally Sync Agent v9.8.31-multi-company-safe")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag
