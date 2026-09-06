@@ -44,7 +44,7 @@ jobs:
           RESTART_ONLY: ${{ inputs.restart_only || 'false' }}
         run: |
           ssh -o StrictHostKeyChecking=no "$DO_USER@$DO_HOST" \
-              "cd /opt/flowra && ./deploy/deploy.sh $RESTART_ONLY"
+              "cd /var/www/Flowra_insights/tally-report && ./deploy/deploy.sh $RESTART_ONLY"
 
       - name: Smoke test
         env:
