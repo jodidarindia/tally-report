@@ -9,7 +9,7 @@
 set -euo pipefail
 
 RESTART_ONLY="${1:-false}"
-APP_DIR="/opt/flowra"
+APP_DIR="/var/www/Flowra_insights/tally-report"
 cd "$APP_DIR"
 
 log() { echo -e "\033[1;34m▸ $*\033[0m"; }
