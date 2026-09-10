@@ -7,6 +7,14 @@ name: Deploy to DigitalOcean
 on:
   push:
     branches: [main]
+    paths-ignore:
+      # iter-127: Emergent + agent-testing infra auto-stamps these files
+      # after every run. Ignoring them here prevents a "no code changed"
+      # push from firing a full ~2-minute deploy for nothing.
+      - '.emergent/**'
+      - 'memory/**'
+      - 'test_reports/**'
+      - '**.md'
   workflow_dispatch:
     inputs:
       restart_only:
@@ -50,9 +58,18 @@ jobs:
         env:
           DO_HOST: ${{ secrets.DO_HOST }}
         run: |
-          sleep 5
-          curl -fsSL "https://insights.flowralive.in/api/health" \
-            | tee /dev/stderr \
-            | grep -q '"ok":true' \
-            || (echo "❌ /api/health did not return ok:true" && exit 1)
-          echo "✅ Deployment healthy"
+          # iter-127: retry the health probe with backoff — cold uvicorn
+          # startup on a 2-vCPU Droplet can take 15–20 s (deps load +
+          # Mongo index ensure), so a single curl was flaking healthy
+          # deploys as failed.
+          for i in 1 2 3 4 5 6 7 8; do
+            body=$(curl -fsSL --max-time 10 "https://insights.flowralive.in/api/health" || true)
+            echo "attempt $i → $body"
+            if echo "$body" | grep -q '"ok":true'; then
+              echo "✅ Deployment healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "❌ /api/health did not return ok:true after 40 s"
+          exit 1

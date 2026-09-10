@@ -46,7 +46,6 @@ async def _get_purchase_branch_set(ctx):
     """Detect branch-like parties in purchase vouchers (non-sundry-creditor).
     These are internal transfers, not actual procurement from external suppliers."""
     from services.id_mapping_service import get_company_name
-    import re
     if not ctx:
         return set()
     tenant_id = ctx.get("tenant_id", "")

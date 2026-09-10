@@ -62,7 +62,7 @@ class TestSalesmanOrderSystem:
                     if order.get("customer_name", "").startswith("TEST_"):
                         # Can't delete orders via API, but they're isolated by tenant
                         pass
-        except:
+        except Exception:
             pass
 
     # ═══════════════════════════════════════════════════════

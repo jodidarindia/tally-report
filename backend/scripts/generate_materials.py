@@ -83,7 +83,7 @@ def draw_content_slide(c, w, h, title, bullets, screenshot=None):
             c.setStrokeColor(HexColor("#e2e8f0"))
             c.setLineWidth(1)
             c.rect(w - img_w - 40, 60, img_w, img_h, fill=0, stroke=1)
-        except:
+        except Exception:
             pass
 
 def draw_pricing_slide(c, w, h):

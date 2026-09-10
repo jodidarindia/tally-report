@@ -1261,7 +1261,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                                 r_date = date_type(int(rd_parts[0]), int(rd_parts[1]), int(rd_parts[2]))
                                 i_date = date_type(int(ci_parts[0]), int(ci_parts[1]), int(ci_parts[2]))
                                 delays.append((r_date - i_date).days)
-                            except:
+                            except Exception:
                                 pass
                     data["average_payment_delay"] = round(sum(delays) / len(delays), 0) if delays else 0
                 else:
@@ -1312,7 +1312,7 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
                     f_date = date_type(int(ft[0]), int(ft[1]), int(ft[2]))
                     l_date = date_type(int(lt[0]), int(lt[1]), int(lt[2]))
                     data["relationship_months"] = max(1, round((l_date - f_date).days / 30))
-                except:
+                except Exception:
                     data["relationship_months"] = 0
             else:
                 data["relationship_months"] = 0
