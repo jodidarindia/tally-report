@@ -298,6 +298,57 @@ async def _apply_billing_success(order_row: dict, payment_id: str) -> None:
                   "captured_at": now}},
     )
 
+    # iter-131: generate an invoice for this Razorpay payment so the
+    # customer ledger stays consistent (previously the payment_voucher
+    # existed without a matching invoice row). Also auto-email the
+    # invoice + payment receipt to the customer.
+    try:
+        pricing_row = PLAN_PRICING.get(plan, PLAN_PRICING["starter"])
+        invoice_amount = float(order_row["amount"])
+        count = await db.invoices.count_documents({}) + 1
+        invoice_number = f"FLW-{datetime.now(timezone.utc).strftime('%Y%m')}-{count:04d}"
+        invoice_doc = {
+            "invoice_id": str(uuid.uuid4()),
+            "invoice_number": invoice_number,
+            "service_reference": service_ref,
+            "customer_username": username,
+            "customer_name": admin.get("name", username),
+            "customer_company": admin.get("company_name", ""),
+            "customer_gst": admin.get("gst", ""),
+            "customer_address": admin.get("address", ""),
+            "customer_city": admin.get("city", ""),
+            "customer_mobile": admin.get("mobile", ""),
+            "tenant_id": admin.get("tenant_id", ""),
+            "amount": invoice_amount,
+            "base_amount": invoice_amount,
+            "discount_pct": 0.0,
+            "discount_amount": 0.0,
+            "description": f"{pricing_row.get('name', plan.title())} Plan · {intent} · {cycle} · {months}m",
+            "items": [{"description": f"{pricing_row.get('name', plan.title())} Plan Subscription ({cycle})", "amount": invoice_amount}],
+            "plan": plan,
+            "billing_cycle": cycle,
+            "invoice_date": now,
+            "status": "paid",   # already captured
+            "linked_payment_id": payment_id,
+            "auto_paid_from": "razorpay",
+            "auto_paid_at": now,
+            "generated_by": "razorpay-self-serve",
+            "created_at": now,
+        }
+        await db.invoices.insert_one(invoice_doc)
+
+        from services.email_service import send_invoice_generated, send_payment_receipt
+        await send_invoice_generated(username, admin.get("name") or username, invoice_doc)
+        await send_payment_receipt(
+            username, admin.get("name") or username,
+            {"amount": invoice_amount, "payment_mode": "razorpay",
+             "reference_no": payment_id, "payment_date": now,
+             "razorpay_payment_id": payment_id},
+            linked_invoices=[invoice_number],
+        )
+    except Exception as _e:
+        logger.warning(f"Razorpay auto-invoice / email failed for {username}: {_e}")
+
     # Fire a fresh welcome mail (best-effort — don't fail the request).
     try:
         pricing = PLAN_PRICING.get(plan, PLAN_PRICING["starter"])

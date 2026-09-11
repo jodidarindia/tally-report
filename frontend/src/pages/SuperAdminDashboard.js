@@ -105,6 +105,18 @@ const SuperAdminDashboard = ({ token, user }) => {
   const [ledgerModal, setLedgerModal] = useState(null);
   const [ledgerData, setLedgerData] = useState(null);
 
+  // iter-131: Admin creation email OTP + forced-delete state.
+  const [emailOtp, setEmailOtp] = useState({
+    stage: 'idle',      // idle | sending | sent | verified
+    email: '',
+    otp: '',
+    sent_to: '',
+    fallback_code: '',
+    verification_token: '',
+  });
+  const [forcedDeleteFor, setForcedDeleteFor] = useState(null);
+  const [forcedDeleteReason, setForcedDeleteReason] = useState('');
+
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
   const fetchData = useCallback(async () => {
@@ -146,6 +158,54 @@ const SuperAdminDashboard = ({ token, user }) => {
   }, [isSuperAdmin, token]);
 
   // --- CRUD functions (kept from original) ---
+  const requestCreateAdminOtp = async () => {
+    if (!newAdmin.username) { toast.error('Enter the customer email first'); return; }
+    setEmailOtp(o => ({ ...o, stage: 'sending', email: newAdmin.username, otp: '' }));
+    try {
+      const r = await axios.post(`${API}/super-admin/admins/verify-email/request-otp`, { email: newAdmin.username }, { headers });
+      if (r.data?.success) {
+        const d = r.data.data || {};
+        setEmailOtp({
+          stage: 'sent',
+          email: newAdmin.username,
+          otp: '',
+          sent_to: d.sent_to || newAdmin.username,
+          fallback_code: d.fallback_code || '',
+          verification_token: '',
+        });
+        toast.success(d.email_sent
+          ? `OTP sent to ${d.sent_to}. Ask the customer to share the code.`
+          : `Email delivery failed. Use fallback code shown on-screen.`);
+      } else {
+        setEmailOtp(o => ({ ...o, stage: 'idle' }));
+        toast.error(r.data?.error || 'Failed to send OTP');
+      }
+    } catch (err) {
+      setEmailOtp(o => ({ ...o, stage: 'idle' }));
+      toast.error(err.response?.data?.error || 'Failed to send OTP');
+    }
+  };
+
+  const verifyCreateAdminOtp = async () => {
+    if (emailOtp.otp.length !== 6) { toast.error('Enter the 6-digit code'); return; }
+    try {
+      const r = await axios.post(`${API}/super-admin/admins/verify-email/verify-otp`, {
+        email: emailOtp.email, otp: emailOtp.otp,
+      }, { headers });
+      if (r.data?.success) {
+        const d = r.data.data || {};
+        setEmailOtp(o => ({ ...o, stage: 'verified', verification_token: d.verification_token }));
+        toast.success('Email verified — proceed with the admin creation.');
+      } else {
+        toast.error(r.data?.error || 'Verification failed');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Verification failed');
+    }
+  };
+
+  const resetEmailOtp = () => setEmailOtp({ stage: 'idle', email: '', otp: '', sent_to: '', fallback_code: '', verification_token: '' });
+
   const createAdmin = async () => {
     if (!newAdmin.username || !newAdmin.password) { toast.error('Email and password are required'); return; }
     if (!newAdmin.name?.trim()) { toast.error('Customer full name is required'); return; }
@@ -153,6 +213,10 @@ const SuperAdminDashboard = ({ token, user }) => {
     if (!newAdmin.city?.trim()) { toast.error('City is required'); return; }
     if (!newAdmin.company_name?.trim()) { toast.error('Company name is required'); return; }
     if (!newAdmin.industry?.trim()) { toast.error('Please pick an industry'); return; }
+    if (emailOtp.stage !== 'verified' || emailOtp.email.toLowerCase() !== newAdmin.username.toLowerCase() || !emailOtp.verification_token) {
+      toast.error('Verify the customer email with an OTP before creating the admin.');
+      return;
+    }
     try {
       const plan = PLANS[newAdmin.plan];
       const res = await axios.post(`${API}/super-admin/admins`, {
@@ -162,6 +226,7 @@ const SuperAdminDashboard = ({ token, user }) => {
         max_employees: plan.maxEmployees,
         sales_count: parseInt(newAdmin.sales_count) || 0,
         dispatch_count: parseInt(newAdmin.dispatch_count) || 0,
+        email_verification_token: emailOtp.verification_token,
       }, { headers });
       if (res.data?.success) {
         const d = res.data.data || {};
@@ -177,6 +242,7 @@ const SuperAdminDashboard = ({ token, user }) => {
           company_name: '', gst: '', industry: '',
           sales_count: 1, dispatch_count: 0,
         });
+        resetEmailOtp();
         fetchData();
       } else toast.error(res.data?.error || 'Failed');
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to create admin'); }
@@ -184,26 +250,27 @@ const SuperAdminDashboard = ({ token, user }) => {
 
   const toggleActive = async (username) => {
     try {
-      const res = await axios.put(`${API}/super-admin/admins/${username}/toggle`, {}, { headers });
+      const res = await axios.put(`${API}/super-admin/admins/${username}/toggle-active`, {}, { headers });
       if (res.data?.success) { toast.success(res.data.message); fetchData(); }
-    } catch { toast.error('Failed to toggle status'); }
+      else toast.error(res.data?.error || 'Failed to toggle status');
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to toggle status'); }
   };
 
   const deleteAdmin = async (username) => {
-    // iter-122: OTP-guarded delete. iter-125 hardened for the case
-    // where Resend delivery fails — the backend now returns a
-    // `fallback_code` inline so the SuperAdmin isn't blocked when the
-    // email API is misconfigured. We surface both paths clearly.
+    // iter-131: consented deletion — OTP goes to the userAdmin's OWN
+    // email (they share it back with SA to confirm consent). Forced
+    // deletion (CEO-authorised) is a separate button.
     if (!window.confirm(
-      `Send OTP to your email to confirm deletion of '${username}'?\n\n` +
-      `A 6-digit code will be sent to your registered email. This is required to prevent accidental deletes.`
+      `Send a deletion OTP to '${username}' (their email inbox)?\n\n` +
+      `The customer will receive a 6-digit code. Ask them to share it with you to confirm their consent. ` +
+      `Use "Forced Delete" only if the customer is unreachable.`
     )) return;
     try {
       const r = await axios.post(`${API}/super-admin/admins/${username}/request-delete-otp`, {}, { headers });
       if (r.data?.success) {
         const d = r.data.data || {};
         if (d.email_sent) {
-          toast.success(`OTP sent to ${d.sent_to}. Enter it to confirm.`);
+          toast.success(`OTP sent to ${d.sent_to}. Ask the customer to share the code.`);
         } else {
           toast.error(
             `Email delivery failed (${d.email_error || 'check Resend API key'}). ` +
@@ -217,6 +284,7 @@ const SuperAdminDashboard = ({ token, user }) => {
           email_sent: !!d.email_sent,
           fallback_code: d.fallback_code || '',
           email_error: d.email_error || '',
+          flow: d.flow || 'consented',
         });
         setDeleteOtpCode('');
       } else {
@@ -224,6 +292,38 @@ const SuperAdminDashboard = ({ token, user }) => {
       }
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Failed to send OTP');
+    }
+  };
+
+  const forceDeleteAdmin = async () => {
+    if (!forcedDeleteFor) return;
+    const username = forcedDeleteFor;
+    try {
+      const r = await axios.post(`${API}/super-admin/admins/${username}/request-force-delete-otp`,
+        { reason: forcedDeleteReason }, { headers });
+      if (r.data?.success) {
+        const d = r.data.data || {};
+        if (d.email_sent) {
+          toast.success(`Forced-delete OTP sent to ${d.sent_to} (CEO). Ask the CEO to share the code.`);
+        } else {
+          toast.error(`Email delivery failed (${d.email_error || 'check Resend'}). Use the fallback code.`, { duration: 6000 });
+        }
+        setDeleteOtpModal({
+          username,
+          sent_to: d.sent_to,
+          email_sent: !!d.email_sent,
+          fallback_code: d.fallback_code || '',
+          email_error: d.email_error || '',
+          flow: 'forced',
+        });
+        setDeleteOtpCode('');
+        setForcedDeleteFor(null);
+        setForcedDeleteReason('');
+      } else {
+        toast.error(r.data?.error || 'Failed to send forced-delete OTP');
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to send forced-delete OTP');
     }
   };
 
@@ -469,13 +569,33 @@ const SuperAdminDashboard = ({ token, user }) => {
     try {
       const res = await axios.post(`${API}/super-admin/payments`, { ...paymentForm, amount: parseFloat(paymentForm.amount) }, { headers });
       if (res.data?.success) {
-        toast.success(res.data.message);
+        toast.success(res.data.message + ' · receipt email sent to customer');
         setShowPaymentModal(false);
         setPaymentForm({ customer_username: '', amount: '', payment_mode: 'bank_transfer', reference_no: '', notes: '', period_description: '' });
         setPaymentCustomer(null); setCustomerSearchTerm(''); setCustomerSuggestions([]);
         fetchData();
-      } else toast.error(res.data?.error || 'Failed');
-    } catch { toast.error('Failed to record payment'); }
+      } else {
+        // iter-131: backend now refuses payment without a matching
+        // unpaid invoice. Guide the SuperAdmin into the invoice flow
+        // first.
+        const err = res.data?.error || 'Failed';
+        toast.error(err);
+        if (/no unpaid invoice/i.test(err)) {
+          const goInvoice = window.confirm(
+            'No unpaid invoice exists for this customer.\n\n' +
+            'Would you like to generate one now? (You will be able to record the payment right after.)'
+          );
+          if (goInvoice) {
+            // Pre-fill the invoice modal with the same customer.
+            setInvoiceForm(f => ({ ...f, customer_username: paymentForm.customer_username }));
+            const c = admins.find(a => a.username === paymentForm.customer_username);
+            if (c) { setInvoiceCustomer(c); setInvoiceSearchTerm(`${c.name || c.username} (${c.username})`); }
+            setShowPaymentModal(false);
+            setShowInvoiceModal(true);
+          }
+        }
+      }
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to record payment'); }
   };
 
   const generateInvoice = async () => {
@@ -498,11 +618,24 @@ const SuperAdminDashboard = ({ token, user }) => {
       }, { headers });
       if (res.data?.success) {
         const d = res.data.data || {};
-        toast.success(`${res.data.message} · Final ₹${(d.final_amount || 0).toLocaleString('en-IN')}`);
+        toast.success(`${res.data.message} · Final ₹${(d.final_amount || 0).toLocaleString('en-IN')} · invoice emailed to customer`);
+        const invoicedUsername = invoiceForm.customer_username;
+        const finalAmount = d.final_amount || 0;
         setShowInvoiceModal(false);
         setInvoiceForm({ customer_username: '', description: '', period_from: '', period_to: '', discount_pct: 0, service_reference: '' });
         setInvoiceCustomer(null); setInvoiceSearchTerm(''); setInvoiceSuggestions([]); setServiceRefs([]);
         fetchData();
+        // iter-131: after invoice generation, immediately prompt to
+        // record the payment against it (upgrade → invoice → payment
+        // chain). SA can dismiss if payment hasn't landed yet.
+        setTimeout(() => {
+          if (window.confirm(`Invoice generated for ${invoicedUsername} (₹${finalAmount.toLocaleString('en-IN')}).\n\nRecord the payment now?`)) {
+            setPaymentForm(f => ({ ...f, customer_username: invoicedUsername, amount: String(finalAmount) }));
+            const c = admins.find(a => a.username === invoicedUsername);
+            if (c) { setPaymentCustomer(c); setCustomerSearchTerm(`${c.name || c.username} (${c.username})`); }
+            setShowPaymentModal(true);
+          }
+        }, 400);
       } else toast.error(res.data?.error || 'Failed');
     } catch (e) { toast.error(e.response?.data?.error || 'Failed to generate invoice'); }
   };
@@ -719,7 +852,20 @@ const SuperAdminDashboard = ({ token, user }) => {
       )}
 
       {activeTab === 'payments' && (
-        <PaymentsTab payments={payments} onRecordPayment={() => setShowPaymentModal(true)} />
+        <PaymentsTab
+          payments={payments}
+          onRecordPayment={() => setShowPaymentModal(true)}
+          onReconcile={async (payment_id, reconciled, note) => {
+            try {
+              const r = await axios.put(`${API}/super-admin/payments/${payment_id}/reconcile`,
+                { reconciled, note: note || '' }, { headers });
+              if (r.data?.success) {
+                toast.success(reconciled ? 'Marked as reconciled' : 'Reconciliation cleared');
+                fetchData();
+              } else toast.error(r.data?.error || 'Reconciliation failed');
+            } catch (err) { toast.error(err.response?.data?.error || 'Reconciliation failed'); }
+          }}
+        />
       )}
 
       {activeTab === 'invoices' && (
@@ -758,6 +904,7 @@ const SuperAdminDashboard = ({ token, user }) => {
           onEditAdmin={openEditAdmin}
           onResetPassword={(u) => handleResetPassword(u)}
           onDeleteAdmin={deleteAdmin}
+          onForceDeleteAdmin={(u) => { setForcedDeleteFor(u); setForcedDeleteReason(''); }}
         />
       )}
 
@@ -780,6 +927,15 @@ const SuperAdminDashboard = ({ token, user }) => {
             }
             setProcessModal(u.username);
             setProcessData({ action: 'approve', plan: u.plan, subscription_months: 12, notes: '' });
+          }}
+          onProcessRenewal={(r, action) => {
+            setProcessModal(r.username);
+            setProcessData({
+              action,
+              plan: r.plan || 'starter',
+              subscription_months: r.subscription_months || 12,
+              notes: '',
+            });
           }}
         />
       )}
@@ -1056,42 +1212,101 @@ const SuperAdminDashboard = ({ token, user }) => {
                 <div className="text-lg font-bold text-red-700">{formatINR(ledgerData.balance_due)}</div>
               </div>
             </div>
-            <h4 className="text-sm font-semibold text-slate-700 mb-3">Payment History</h4>
-            {ledgerData.payments?.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-4">No payments recorded</p>
-            ) : (
-              <div className="space-y-2 mb-6">
-                {ledgerData.payments?.map((p, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                    <div>
-                      <div className="text-sm font-medium">{formatINR(p.amount)}</div>
-                      <div className="text-xs text-slate-400">{p.payment_mode?.replace('_', ' ')} · {p.reference_no || '—'}</div>
-                    </div>
-                    <div className="text-xs text-slate-500">{formatDate(p.payment_date)}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {ledgerData.invoices?.length > 0 && (
-              <>
-                <h4 className="text-sm font-semibold text-slate-700 mb-3">Invoices</h4>
-                <div className="space-y-2">
-                  {ledgerData.invoices.map((inv, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <div>
-                        <div className="text-sm font-medium font-mono">{inv.invoice_number}</div>
-                        <div className="text-xs text-slate-400">{inv.description?.substring(0, 50)}</div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{inv.status}</span>
-                        <span className="text-sm font-bold">{formatINR(inv.amount)}</span>
-                        <button onClick={() => downloadInvoicePDF(inv.invoice_id, inv.invoice_number)} className="p-1 text-slate-400 hover:text-blue-600"><Download size={14} /></button>
-                      </div>
-                    </div>
-                  ))}
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Account Ledger</h4>
+            {/* iter-131: unified T-form ledger — Debit (invoices raised)
+                on one side, Credit (payments received) on the other,
+                with a running balance. Payment history + invoice
+                history are now presented as a single chronological
+                statement of account. */}
+            {(() => {
+              const invoices = ledgerData.invoices || [];
+              const payments = ledgerData.payments || [];
+              // Build a chronological list of entries. Debit = invoice
+              // (increases what customer owes), Credit = payment
+              // (reduces what customer owes).
+              const entries = [
+                ...invoices.map(i => ({
+                  key:  `inv-${i.invoice_id}`,
+                  date: i.invoice_date || i.created_at,
+                  particulars: `Invoice ${i.invoice_number}${i.description ? ` — ${i.description}` : ''}`,
+                  debit:  Number(i.amount) || 0,
+                  credit: 0,
+                  ref: i,
+                  kind: 'invoice',
+                })),
+                ...payments.map(p => ({
+                  key:  `pay-${p.payment_id}`,
+                  date: p.payment_date || p.created_at,
+                  particulars: `Payment received (${(p.payment_mode || '').replace('_', ' ')})${p.reference_no ? ` · Ref ${p.reference_no}` : ''}`,
+                  debit:  0,
+                  credit: Number(p.amount) || 0,
+                  ref: p,
+                  kind: 'payment',
+                })),
+              ].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+              // Running balance = cumulative debit − cumulative credit.
+              // Positive = customer owes us.
+              let running = 0;
+              const rows = entries.map(e => {
+                running = running + e.debit - e.credit;
+                return { ...e, balance: running };
+              });
+              const totalDr = rows.reduce((s, r) => s + r.debit, 0);
+              const totalCr = rows.reduce((s, r) => s + r.credit, 0);
+
+              if (rows.length === 0) {
+                return <p className="text-sm text-slate-400 text-center py-6" data-testid="ledger-empty">No invoices or payments recorded yet.</p>;
+              }
+              return (
+                <div className="border border-slate-200 rounded-lg overflow-hidden" data-testid="ledger-tform">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold">Date</th>
+                        <th className="text-left px-3 py-2 font-semibold">Particulars</th>
+                        <th className="text-right px-3 py-2 font-semibold text-red-600">Debit</th>
+                        <th className="text-right px-3 py-2 font-semibold text-emerald-600">Credit</th>
+                        <th className="text-right px-3 py-2 font-semibold">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rows.map(r => (
+                        <tr key={r.key} className={`hover:bg-slate-50 ${r.kind === 'invoice' ? '' : ''}`} data-testid={`ledger-row-${r.key}`}>
+                          <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">{formatDate(r.date)}</td>
+                          <td className="px-3 py-2 text-slate-700 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span>{r.particulars}</span>
+                              {r.kind === 'invoice' && (
+                                <button onClick={() => downloadInvoicePDF(r.ref.invoice_id, r.ref.invoice_number)}
+                                        className="p-1 text-slate-400 hover:text-blue-600" title="Download invoice PDF">
+                                  <Download size={12} />
+                                </button>
+                              )}
+                              {r.kind === 'invoice' && (
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${r.ref.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                                  {r.ref.status}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-red-700">{r.debit ? formatINR(r.debit) : '—'}</td>
+                          <td className="px-3 py-2 text-right font-mono text-emerald-700">{r.credit ? formatINR(r.credit) : '—'}</td>
+                          <td className={`px-3 py-2 text-right font-mono font-semibold ${r.balance > 0 ? 'text-red-700' : 'text-slate-500'}`}>{formatINR(r.balance)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                      <tr>
+                        <td colSpan={2} className="px-3 py-2 text-right font-semibold text-slate-700 text-xs">Totals</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-red-700">{formatINR(totalDr)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-emerald-700">{formatINR(totalCr)}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${running > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{formatINR(running)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
-              </>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1191,7 +1406,50 @@ const SuperAdminDashboard = ({ token, user }) => {
               <button onClick={() => setShowCreateModal(false)}><X size={20} className="text-slate-400" /></button>
             </div>
             <div className="space-y-4">
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Email *</label><input type="email" value={newAdmin.username} onChange={e => setNewAdmin({ ...newAdmin, username: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-email" /></div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email *</label>
+                <input type="email" value={newAdmin.username}
+                  onChange={e => {
+                    setNewAdmin({ ...newAdmin, username: e.target.value });
+                    if (emailOtp.stage !== 'idle' && emailOtp.email.toLowerCase() !== e.target.value.toLowerCase()) resetEmailOtp();
+                  }}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" data-testid="new-admin-email" />
+                {/* iter-131: OTP-verify the email BEFORE creating the admin */}
+                <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="admin-email-otp">
+                  {emailOtp.stage === 'idle' && (
+                    <button type="button" onClick={requestCreateAdminOtp}
+                      disabled={!newAdmin.username || newAdmin.username.trim().length < 5}
+                      className="px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50"
+                      data-testid="request-email-otp-btn">
+                      Send OTP to verify this email
+                    </button>
+                  )}
+                  {emailOtp.stage === 'sending' && <span className="text-xs text-slate-500">Sending code…</span>}
+                  {emailOtp.stage === 'sent' && (
+                    <>
+                      <input type="text" value={emailOtp.otp} onChange={e => setEmailOtp(o => ({ ...o, otp: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                        placeholder="6-digit code"
+                        className="w-32 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono"
+                        data-testid="admin-email-otp-input" />
+                      <button type="button" onClick={verifyCreateAdminOtp}
+                        className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        data-testid="verify-email-otp-btn">
+                        Verify
+                      </button>
+                      <button type="button" onClick={requestCreateAdminOtp} className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-800">Resend</button>
+                      <span className="text-[11px] text-slate-500">Sent to <b>{emailOtp.sent_to}</b></span>
+                      {emailOtp.fallback_code && (
+                        <span className="text-[11px] text-amber-700 font-mono ml-1">Fallback: {emailOtp.fallback_code}</span>
+                      )}
+                    </>
+                  )}
+                  {emailOtp.stage === 'verified' && (
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                      ✓ Email verified
+                    </span>
+                  )}
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
                 <div className="flex gap-2">
@@ -1321,7 +1579,12 @@ const SuperAdminDashboard = ({ token, user }) => {
                   })}
                 </div>
               </div>
-              <button onClick={createAdmin} className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8]" data-testid="confirm-create-admin">Create Admin</button>
+              <button onClick={createAdmin}
+                disabled={emailOtp.stage !== 'verified'}
+                className="w-full py-2.5 bg-[#2563EB] text-white rounded-lg font-medium hover:bg-[#1D4ED8] disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="confirm-create-admin">
+                {emailOtp.stage === 'verified' ? 'Create Admin' : 'Verify email first to create admin'}
+              </button>
             </div>
           </div>
         </div>
@@ -1399,19 +1662,64 @@ const SuperAdminDashboard = ({ token, user }) => {
           and email the new password server-side. No SuperAdmin typing. */}
 
       {/* OTP-guarded admin delete modal (iter-122, hardened iter-125) */}
+      {/* iter-131: Forced-delete authorization modal — collects a reason
+          then hits the CEO-only OTP endpoint. */}
+      {forcedDeleteFor && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+             onClick={e => e.target === e.currentTarget && setForcedDeleteFor(null)}
+             data-testid="forced-delete-modal">
+          <div className="bg-white rounded-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-rose-700 flex items-center gap-2">
+                <span className="text-rose-600">⚠</span> Forced Delete
+              </h3>
+              <button onClick={() => setForcedDeleteFor(null)}><X size={18} className="text-slate-400" /></button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              You're about to force-delete <b>{forcedDeleteFor}</b>. This bypasses the customer's
+              consent — an OTP will be emailed to <code className="text-xs bg-slate-100 px-1 rounded">ceo@flowralive.in</code>
+              for authorisation.
+            </p>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Reason (required)</label>
+            <textarea rows={3}
+              value={forcedDeleteReason}
+              onChange={e => setForcedDeleteReason(e.target.value)}
+              placeholder="e.g. customer unreachable for 30 days, invalid email on file, chargeback dispute…"
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+              data-testid="forced-delete-reason" />
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setForcedDeleteFor(null)}
+                className="px-4 py-2 text-sm border border-slate-200 rounded-lg">Cancel</button>
+              <button onClick={forceDeleteAdmin}
+                disabled={forcedDeleteReason.trim().length < 6}
+                className="px-4 py-2 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50"
+                data-testid="forced-delete-request-btn">
+                Send CEO authorisation OTP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteOtpModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" data-testid="delete-otp-modal"
              onClick={e => e.target === e.currentTarget && setDeleteOtpModal(null)}>
           <div className="bg-white rounded-xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold text-red-700">Confirm Admin Deletion</h3>
+              <h3 className="text-lg font-semibold text-red-700">
+                Confirm Admin Deletion
+                {deleteOtpModal.flow === 'forced' && <span className="ml-2 text-[10px] font-bold uppercase text-rose-700 bg-rose-50 border border-rose-300 rounded-full px-2 py-0.5">Forced · CEO OTP</span>}
+              </h3>
               <button onClick={() => setDeleteOtpModal(null)} data-testid="delete-otp-close"><X size={18} className="text-slate-400" /></button>
             </div>
 
             {deleteOtpModal.email_sent ? (
               <p className="text-sm text-slate-600 mb-4">
-                A 6-digit code was sent to <b>{deleteOtpModal.sent_to}</b>. Enter it below to permanently
-                delete <b>{deleteOtpModal.username}</b>. This archives all of their staff and business data.
+                A 6-digit code was sent to <b>{deleteOtpModal.sent_to}</b>.
+                {deleteOtpModal.flow === 'forced'
+                  ? <> Ask the CEO to share the authorisation code. </>
+                  : <> Ask the customer to share the code they just received. </>}
+                Enter it below to permanently delete <b>{deleteOtpModal.username}</b>. This archives all of their staff and business data.
               </p>
             ) : (
               <>

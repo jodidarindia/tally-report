@@ -75,7 +75,6 @@ export const RichTextEditor = ({ value, onChange, token, placeholder }) => {
       },
     },
   });
-
   // Sync when parent replaces the value programmatically (e.g. AI draft
   // populated → set into the editor without wiping the user's caret).
   useEffect(() => {
@@ -127,9 +126,10 @@ export const RichTextEditor = ({ value, onChange, token, placeholder }) => {
   if (!editor) return null;
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white" data-testid="rich-text-editor">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-slate-200 bg-slate-50">
+    <div className="border border-slate-200 rounded-lg bg-white flex flex-col" data-testid="rich-text-editor">
+      {/* Toolbar — sticks to the top of the editor frame so it stays
+          visible even after the content grows past the frame height. */}
+      <div className="flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-slate-200 bg-slate-50 rounded-t-lg sticky top-0 z-10">
         <TB testId="rte-bold"   title="Bold (Ctrl+B)"  active={editor.isActive('bold')}   onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={14} /></TB>
         <TB testId="rte-italic" title="Italic (Ctrl+I)" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={14} /></TB>
         <TB testId="rte-underline" title="Underline (Ctrl+U)" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon size={14} /></TB>
@@ -177,7 +177,9 @@ export const RichTextEditor = ({ value, onChange, token, placeholder }) => {
         </div>
       )}
 
-      <EditorContent editor={editor} />
+      <div className="max-h-[400px] overflow-y-auto" data-testid="rich-editor-scroll">
+        <EditorContent editor={editor} />
+      </div>
 
       <ImageCropUpload
         open={imgModal}

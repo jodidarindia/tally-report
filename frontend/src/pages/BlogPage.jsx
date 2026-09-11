@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import DOMPurify from 'dompurify';
 import { ArrowLeft, Calendar, Tag, ChevronRight } from 'lucide-react';
+import PublicSiteHeader from '../components/PublicSiteHeader';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -88,6 +89,11 @@ export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
   if (activePost) {
     return (
       <div className="min-h-screen bg-white text-zinc-900" data-testid="blog-post-page">
+        <PublicSiteHeader
+          onNavigate={onNavigate}
+          showBackToBlog
+          onBack={() => { setActivePost(null); window.history.pushState({}, '', '/blog'); }}
+        />
         <div className="max-w-3xl mx-auto px-6 py-10">
           <button onClick={() => { setActivePost(null); window.history.pushState({}, '', '/blog'); }}
             className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 mb-6" data-testid="blog-back-btn">
@@ -125,8 +131,9 @@ export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
 
   return (
     <div className="min-h-screen bg-white text-zinc-900" data-testid="blog-list-page">
+      <PublicSiteHeader onNavigate={onNavigate} />
       <div className="max-w-6xl mx-auto px-6 py-10">
-        <button onClick={() => onNavigate('landing')} className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 mb-6">
+        <button onClick={() => onNavigate('landing')} className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 mb-6" data-testid="blog-home-btn">
           <ArrowLeft size={16} /> Home
         </button>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0052FF] mb-3">FLOWRA Journal</p>

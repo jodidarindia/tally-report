@@ -1,0 +1,36 @@
+{
+  "summary": "iter-131 SuperAdmin sweep + Blog fixes — 15/15 backend pytest green; frontend E2E: Blog public header on list+detail, back button, RTE sticky/scrollable, Create Admin OTP modal, Force-Delete buttons, Payments recon toggle+note modal, Renewals cards+table all verified working.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Blog list", "issues": ["Logo click stays on /blog URL though landing content renders — SPA-only navigation, not a bug but router history is not updated"]},
+      {"screen": "Renewals renewal-requests-table", "issues": ["Last column header truncated to 'Do' (likely 'Do' from 'Do…' visually cut). Widen the column or shorten label."]},
+      {"screen": "Payments Reconciliation Note modal", "issues": ["Modal has both 'Mark as reconciled' checkbox AND separate outer toggle — mildly redundant; consider unifying."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration131_superadmin_sweep.py",
+    "/app/test_reports/pytest/iter131_sweep.xml"
+  ],
+  "action_items": [
+    "Nothing critical. Optional: widen 'Do' column in renewal-requests-table so its header text is not clipped."
+  ],
+  "critical_code_review_comments": [
+    "super_admin.py is now 1867 lines — approaching an unwieldy size. Consider splitting into super_admin_admins.py / super_admin_billing.py / super_admin_delete_flows.py for maintainability.",
+    "Admin-create OTP endpoint returns fallback_code in the JSON body when Resend fails — fine for preview, but ensure production RESEND_API_KEY is valid or add a feature flag so the code is never exposed to the UI in prod.",
+    "reconcile_payment sets reconciled_by=''/reconciled_at='' when unmarking; better to use MongoDB $unset or store None so audit history isn't lost. Current behaviour is OK for MVP but not ideal.",
+    "The frontend requests full recon-toggle/recon-note testids per row (13 rows currently) — no pagination. When >1000 payments exist this will render slowly. Add pagination + server-side filter."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration131_superadmin_sweep.py"
+  ],
+  "success_rate": { "backend": "100% (15/15)", "frontend": "100% verified" },
+  "test_credentials": "superadmin / superadmin123; busydemo@flowralive.in / demo2026",
+  "seed_data_creation": "Created TEST admin (test_otp_<hex>@example.com) with a service reference + one unpaid invoice + one recorded+reconciled payment. Test class autouse fixture attempts DELETE cleanup at end (best-effort, may leave orphaned invoice/payment/service_reference/service_reference). Safe to purge.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 15 backend tests in /app/backend/tests/test_iteration131_superadmin_sweep.py assert both status + payload. Key flows: (1) admin-create requires email_verification_token — token is single-use / burnt after create; (2) toggle-active correct URL is /toggle-active (not /toggle); (3) consented delete recipient == userAdmin's own email, forced delete == ceo@flowralive.in; (4) payments require an existing unpaid invoice unless allow_unlinked=true; (5) invoice requires service_reference from /super-admin/service-references; (6) reconcile toggle takes {reconciled:bool, note:str}. Frontend: PublicSiteHeader is a shared component used by Blog list + detail; the tab BUTTONS themselves don't have data-testid (only the rendered CONTENT div does — e.g. data-testid=\"payments-tab\" is on the div rendered when Payments is selected). Click by text label to switch tabs.",
+  "rca of the issue": "No blockers found. Everything ships."
+}

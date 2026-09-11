@@ -251,6 +251,21 @@ async def record_payment(request: Request):
         if not customer:
             return APIResponse(success=False, error=f"Admin '{customer_username}' not found")
 
+        # iter-131 policy — every payment MUST be tied to an existing
+        # unpaid invoice. If nothing unpaid exists, refuse and tell the
+        # SuperAdmin to generate an invoice first. Emergency bypass via
+        # body["allow_unlinked"]=true (for exceptional cases only —
+        # logged in audit).
+        allow_unlinked = bool(body.get("allow_unlinked"))
+        unpaid_count = await db.invoices.count_documents({
+            "customer_username": customer_username, "status": "unpaid",
+        })
+        if unpaid_count == 0 and not allow_unlinked:
+            return APIResponse(success=False, error=(
+                "No unpaid invoice exists for this customer. Generate an invoice first "
+                "(Ledger → Generate Invoice), then record the payment against it."
+            ))
+
         payment = {
             "payment_id": str(uuid.uuid4()),
             "customer_username": customer_username,
@@ -317,9 +332,60 @@ async def record_payment(request: Request):
             ip_address=get_client_ip(request)
         )
 
+        # iter-131: auto-email a payment receipt to the customer.
+        try:
+            from services.email_service import send_payment_receipt
+            await send_payment_receipt(
+                customer_username,
+                customer.get("name") or customer_username,
+                payment,
+                linked_invoices=auto_marked if 'auto_marked' in dir() else [],
+            )
+        except Exception as _e:
+            logger.warning(f"payment receipt email failed for {customer_username}: {_e}")
+
         return APIResponse(success=True, message=f"Payment of Rs.{amount:,.2f} recorded for {customer_username}")
     except Exception as e:
         logger.error(f"Record payment error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+# ── Bank reconciliation (iter-131) ─────────────────────────────────
+@router.put("/super-admin/payments/{payment_id}/reconcile")
+async def reconcile_payment(payment_id: str, request: Request):
+    """Toggle the `reconciled` flag on a payment row so SuperAdmin can
+    verify the receipt against a bank statement. Also records optional
+    reconciliation notes + which SA marked it."""
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        reconciled = bool(body.get("reconciled", True))
+        note = (body.get("note") or "").strip()[:500]
+
+        pay = await db.payments.find_one({"payment_id": payment_id}, {"_id": 0, "amount": 1, "customer_username": 1})
+        if not pay:
+            return APIResponse(success=False, error="Payment not found")
+
+        now = datetime.now(timezone.utc).isoformat()
+        update = {
+            "reconciled": reconciled,
+            "reconciled_at": now if reconciled else "",
+            "reconciled_by": sa["username"] if reconciled else "",
+            "reconciliation_note": note,
+        }
+        await db.payments.update_one({"payment_id": payment_id}, {"$set": update})
+        await log_audit(
+            "payment_reconciled" if reconciled else "payment_reconciliation_cleared",
+            sa["username"],
+            target=pay.get("customer_username", payment_id),
+            details=f"payment_id={payment_id} amount={pay.get('amount')} note={note or '—'}",
+            ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, data=update, message="Reconciliation updated")
+    except Exception as e:
+        logger.error(f"reconcile_payment error: {e}")
         return APIResponse(success=False, error=str(e))
 
 
@@ -499,6 +565,13 @@ async def generate_invoice(request: Request):
             details=f"Invoice {invoice_number}, Base: Rs.{base_amount}, Discount: {discount_pct}%, Final: Rs.{final_amount}",
             ip_address=get_client_ip(request)
         )
+
+        # iter-131: auto-email the invoice to the customer.
+        try:
+            from services.email_service import send_invoice_generated
+            await send_invoice_generated(customer_username, customer.get("name") or customer_username, invoice)
+        except Exception as _e:
+            logger.warning(f"invoice email send failed for {customer_username}: {_e}")
 
         return APIResponse(success=True, message=f"Invoice {invoice_number} generated",
                            data={"invoice_id": invoice["invoice_id"],

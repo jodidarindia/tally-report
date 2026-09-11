@@ -92,6 +92,21 @@ const LandingPage = ({ onNavigateToLogin, onNavigateToSignup, onNavigate }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Pick up any scroll target left by the shared PublicSiteHeader
+  // (e.g. clicking "Pricing" on the blog page → set sessionStorage →
+  // navigate to landing → scroll to the section on mount).
+  useEffect(() => {
+    try {
+      const target = sessionStorage.getItem('flowra_scroll_to');
+      if (target) {
+        sessionStorage.removeItem('flowra_scroll_to');
+        setTimeout(() => {
+          document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+        }, 200);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const scrollTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };

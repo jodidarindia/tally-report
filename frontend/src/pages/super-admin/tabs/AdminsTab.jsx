@@ -1,10 +1,10 @@
 import React from 'react';
-import { Plus, Pencil, Key, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Pencil, Key, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react';
 import { ALL_FEATURES, formatDate } from '../utils';
 
 export const AdminsTab = ({
   admins, expandedAdmin, setExpandedAdmin,
-  onCreateAdmin, onToggleActive, onEditAdmin, onResetPassword, onDeleteAdmin,
+  onCreateAdmin, onToggleActive, onEditAdmin, onResetPassword, onDeleteAdmin, onForceDeleteAdmin,
 }) => (
   <div data-testid="admins-tab">
     <div className="flex items-center justify-between mb-6">
@@ -45,7 +45,10 @@ export const AdminsTab = ({
                   </button>
                   <button onClick={e => { e.stopPropagation(); onEditAdmin(admin); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" data-testid={`edit-admin-${admin.username}`}><Pencil size={14} /></button>
                   <button onClick={e => { e.stopPropagation(); onResetPassword(admin.username); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Email a new auto-generated password to this admin" data-testid={`reset-pwd-${admin.username}`}><Key size={14} /></button>
-                  <button onClick={e => { e.stopPropagation(); onDeleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete (requires email OTP)" data-testid={`delete-admin-${admin.username}`}><Trash2 size={14} /></button>
+                  <button onClick={e => { e.stopPropagation(); onDeleteAdmin(admin.username); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete (customer's consent via OTP)" data-testid={`delete-admin-${admin.username}`}><Trash2 size={14} /></button>
+                  {onForceDeleteAdmin && (
+                    <button onClick={e => { e.stopPropagation(); onForceDeleteAdmin(admin.username); }} className="p-1.5 text-rose-500 hover:text-white hover:bg-rose-600 rounded-lg border border-rose-200" title="Forced delete (CEO OTP override — use only when customer is unreachable)" data-testid={`force-delete-admin-${admin.username}`}><ShieldAlert size={14} /></button>
+                  )}
                   <button onClick={() => setExpandedAdmin(expandedAdmin === admin.username ? null : admin.username)} className="p-1.5 text-slate-400 rounded-lg" data-testid={`expand-admin-${admin.username}`}>
                     {expandedAdmin === admin.username ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>

@@ -966,3 +966,92 @@ async def send_trial_reminder_day14(to_email: str, name: str, trial_end_display:
         "subject": "Final day \u2014 your FLOWRA trial ends tonight",
         "html":    _base_template(content),
     }
+
+
+# ── Invoice + Payment auto-notifications (iter-131) ────────────────
+def _fmt_inr(amount: float | int) -> str:
+    """Format amount in Indian rupee grouping — 1,23,456.00."""
+    try:
+        n = float(amount or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+    # Two-decimal, then India-group the integer portion.
+    intp, decp = f"{n:.2f}".split(".")
+    negative = intp.startswith("-")
+    intp = intp.lstrip("-")
+    if len(intp) > 3:
+        head, tail = intp[:-3], intp[-3:]
+        head = ",".join([head[max(0, i - 2):i] for i in range(len(head), 0, -2)][::-1])
+        intp = f"{head},{tail}"
+    return ("-" if negative else "") + f"₹{intp}.{decp}"
+
+
+async def send_invoice_generated(to_email: str, customer_name: str, invoice: dict) -> bool:
+    """Emails the newly-generated invoice summary to the customer."""
+    inv_no = invoice.get("invoice_number") or invoice.get("invoice_id") or "—"
+    amount = _fmt_inr(invoice.get("amount", 0))
+    desc   = invoice.get("description") or "FLOWRA Subscription"
+    date_str = (invoice.get("invoice_date") or "")[:10]
+    status = (invoice.get("status") or "unpaid").upper()
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#0f172a;">Invoice {inv_no}</h2>
+      <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+        Hi {customer_name or 'there'}, a new invoice has been generated for your FLOWRA subscription.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:0 0 18px;">
+        <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;">
+          <tr><td style="padding:6px 0;color:#64748b;">Invoice #</td>       <td style="padding:6px 0;text-align:right;font-weight:600;">{inv_no}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Date</td>            <td style="padding:6px 0;text-align:right;">{date_str}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Description</td>     <td style="padding:6px 0;text-align:right;">{desc}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Amount due</td>      <td style="padding:6px 0;text-align:right;font-weight:700;font-size:16px;color:#0f172a;">{amount}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Status</td>          <td style="padding:6px 0;text-align:right;"><span style="padding:2px 8px;border-radius:999px;background:{ '#dcfce7' if status == 'PAID' else '#fee2e2'};color:{ '#166534' if status == 'PAID' else '#991b1b'};font-size:11px;font-weight:700;">{status}</span></td></tr>
+        </table>
+      </div>
+      <p style="color:#475569;font-size:13px;margin:0 0 14px;">
+        You'll be able to download the PDF invoice from your FLOWRA account, or the FLOWRA team can
+        send it separately on request.
+      </p>
+      <p style="color:#64748b;font-size:12px;">Questions? Reply to this email or write to support@flowralive.in.</p>
+    """
+    return await send_email(
+        to_email,
+        f"[FLOWRA] Invoice {inv_no} — {amount}",
+        _base_template(content),
+        cc="auto",
+        tag="invoice-generated",
+    )
+
+
+async def send_payment_receipt(to_email: str, customer_name: str, payment: dict, linked_invoices: list | None = None) -> bool:
+    """Emails a payment receipt to the customer after a successful payment."""
+    linked_invoices = linked_invoices or []
+    amount = _fmt_inr(payment.get("amount", 0))
+    mode   = (payment.get("payment_mode") or "").replace("_", " ") or "manual"
+    ref    = payment.get("reference_no") or payment.get("razorpay_payment_id") or "—"
+    date_str = (payment.get("payment_date") or payment.get("created_at") or "")[:10]
+    inv_rows = "".join(
+        f"<li style='margin:2px 0;color:#334155;'>{inv}</li>" for inv in linked_invoices
+    )
+    content = f"""
+      <h2 style="margin:0 0 8px;font-size:22px;color:#166534;">Payment received</h2>
+      <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+        Hi {customer_name or 'there'}, thanks for your payment! Here's the receipt for your records.
+      </p>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin:0 0 18px;">
+        <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;">
+          <tr><td style="padding:6px 0;color:#64748b;">Amount</td>          <td style="padding:6px 0;text-align:right;font-weight:700;font-size:18px;color:#166534;">{amount}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Payment mode</td>    <td style="padding:6px 0;text-align:right;text-transform:capitalize;">{mode}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Reference #</td>     <td style="padding:6px 0;text-align:right;font-family:monospace;">{ref}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Date</td>            <td style="padding:6px 0;text-align:right;">{date_str}</td></tr>
+        </table>
+      </div>
+      {f'<p style="color:#334155;font-size:13px;margin:0 0 8px;font-weight:600;">Marked paid:</p><ul style="margin:0 0 18px 18px;padding:0;font-size:13px;">{inv_rows}</ul>' if inv_rows else ''}
+      <p style="color:#64748b;font-size:12px;">Questions? Reply to this email or write to support@flowralive.in.</p>
+    """
+    return await send_email(
+        to_email,
+        f"[FLOWRA] Payment received — {amount}",
+        _base_template(content),
+        cc="auto",
+        tag="payment-receipt",
+    )

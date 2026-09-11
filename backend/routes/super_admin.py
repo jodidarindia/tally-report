@@ -393,18 +393,174 @@ async def list_admins(request: Request):
         return APIResponse(success=False, error=str(e))
 
 
+# ── Admin creation: email OTP verification (iter-131) ──────────────
+@router.post("/super-admin/admins/verify-email/request-otp")
+async def sa_admin_create_email_request_otp(request: Request):
+    """Send a 6-digit OTP to the prospective userAdmin's email. The
+    SuperAdmin enters the code they receive on-call from the customer
+    to prove the email address is reachable BEFORE the admin record
+    is created. Prevents typo'd tenant emails and downstream welcome
+    email bounces."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+        email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+        if not re.match(email_pattern, email):
+            return APIResponse(success=False, error="Enter a valid email address")
+
+        # Reject if already taken by an existing account.
+        if await db.users.find_one({"username": email}):
+            return APIResponse(success=False, error="This email is already registered as a user.")
+
+        import secrets
+        code = f"{secrets.randbelow(1000000):06d}"
+        from datetime import timedelta
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        await db.admin_create_email_otps.update_one(
+            {"email": email},
+            {"$set": {
+                "email": email,
+                "otp": code,
+                "verified": False,
+                "verification_token": "",
+                "expires_at": expires_at,
+                "requested_by": sa["username"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+
+        email_sent = False
+        email_error = ""
+        try:
+            from services.email_service import send_email, _base_template
+            subj = f"[FLOWRA] Confirm your email — code {code}"
+            content = f"""
+              <h2 style="margin:0 0 8px;font-size:22px;color:#0f172a;">Verify your email</h2>
+              <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+                The FLOWRA team is about to create a subscription account for you at <b>{email}</b>.
+                To confirm this is the right email, share the 6-digit code below with the
+                FLOWRA representative on your call.
+              </p>
+              <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 18px;margin:0 0 18px;">
+                <div style="font-size:11px;color:#1e40af;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">
+                  Verification code
+                </div>
+                <div style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:6px;color:#1e3a8a;">
+                  {code}
+                </div>
+                <p style="font-size:11px;color:#1e40af;margin:8px 0 0;">Valid for 10 minutes.</p>
+              </div>
+              <p style="color:#64748b;font-size:12px;">If you weren't expecting this, ignore this email.</p>
+            """
+            email_sent = await send_email(email, subj, _base_template(content), tag="admin-create-verify")
+            if not email_sent:
+                email_error = "Resend rejected the delivery"
+        except Exception as e:
+            email_error = str(e)
+            logger.warning(f"admin-create email OTP send failed: {e}")
+
+        await log_audit(
+            "admin_create_email_otp_requested", sa["username"], target=email,
+            details=f"delivered={email_sent}",
+            ip_address=get_client_ip(request),
+        )
+
+        response_data = {"email_sent": bool(email_sent), "expires_at": expires_at, "sent_to": email}
+        if not email_sent:
+            response_data["fallback_code"] = code
+            response_data["email_error"] = email_error or "email delivery failed"
+
+        return APIResponse(
+            success=True,
+            data=response_data,
+            message=(f"OTP sent to {email}. Ask the customer to share the code."
+                     if email_sent
+                     else "Email delivery failed — use the fallback code shown on this screen"),
+        )
+    except Exception as e:
+        logger.error(f"sa_admin_create_email_request_otp error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/super-admin/admins/verify-email/verify-otp")
+async def sa_admin_create_email_verify_otp(request: Request):
+    """Verify the OTP and return a short-lived verification token that
+    the frontend passes back into `POST /super-admin/admins` to prove
+    the tenant email was reached."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+        otp = (body.get("otp") or "").strip()
+        if not otp or len(otp) != 6 or not otp.isdigit():
+            return APIResponse(success=False, error="Enter the 6-digit code")
+        rec = await db.admin_create_email_otps.find_one({"email": email})
+        if not rec:
+            return APIResponse(success=False, error="No OTP requested for this email")
+        if rec.get("otp") != otp:
+            return APIResponse(success=False, error="Incorrect code")
+        try:
+            exp = datetime.fromisoformat((rec.get("expires_at") or "").replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp:
+                return APIResponse(success=False, error="Code expired. Request a new one.")
+        except Exception:
+            return APIResponse(success=False, error="Code expired. Request a new one.")
+
+        import secrets as _secrets
+        from datetime import timedelta
+        token = _secrets.token_urlsafe(24)
+        token_expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        await db.admin_create_email_otps.update_one(
+            {"email": email},
+            {"$set": {
+                "verified": True,
+                "verification_token": token,
+                "token_expires_at": token_expires,
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+
+        await log_audit(
+            "admin_create_email_verified", sa["username"], target=email,
+            details="ok", ip_address=get_client_ip(request),
+        )
+
+        return APIResponse(
+            success=True,
+            data={"verification_token": token, "email": email, "expires_at": token_expires},
+            message="Email verified — you can now create the admin.",
+        )
+    except Exception as e:
+        logger.error(f"sa_admin_create_email_verify_otp error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.post("/super-admin/admins")
 async def create_admin(request: Request):
     """Create a new admin tenant. Now accepts the rich customer form
     (email, name, mobile/WhatsApp, address, city, company_name, gst,
     sales_count, dispatch_count, industry) and, when plan=='trial',
-    stamps the 14-day trial window."""
+    stamps the 14-day trial window.
+
+    iter-131: to guarantee the tenant email is reachable, the frontend
+    MUST first call `/super-admin/admins/verify-email/request-otp`,
+    have the SuperAdmin enter the code returned to that inbox, then
+    submit this endpoint with the token `email_verification_token`
+    proving the OTP was verified.
+    """
     sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
         body = await request.json()
         username = body.get("username", "").strip()
+        email_verification_token = (body.get("email_verification_token") or "").strip()
         password = body.get("password", "")
         name = body.get("name", "")
         plan_id = body.get("plan", "starter")
@@ -439,6 +595,26 @@ async def create_admin(request: Request):
         existing = await db.users.find_one({"username": username})
         if existing:
             return APIResponse(success=False, error="This email is already registered as a user. Please use a different email address.")
+
+        # iter-131: enforce OTP verification of the tenant email so a
+        # typo in the SuperAdmin's create-admin form doesn't send the
+        # welcome mail into the void.
+        token_row = await db.admin_create_email_otps.find_one({
+            "verification_token": email_verification_token,
+            "email": username,
+            "verified": True,
+        })
+        if not token_row:
+            return APIResponse(
+                success=False,
+                error="Email not verified. Send an OTP to this email and confirm it before creating the admin.",
+            )
+        try:
+            exp = datetime.fromisoformat((token_row.get("token_expires_at") or "").replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp:
+                return APIResponse(success=False, error="Email verification expired. Resend the OTP.")
+        except Exception:
+            return APIResponse(success=False, error="Email verification expired. Resend the OTP.")
 
         # Also check prospects collection for cross-collection uniqueness
         import hashlib
@@ -512,6 +688,11 @@ async def create_admin(request: Request):
             "converted_at": None,
         }
         await db.users.insert_one(user_doc)
+        # Burn the email-verification token so it can't be replayed.
+        try:
+            await db.admin_create_email_otps.delete_one({"email": username})
+        except Exception:
+            pass
 
         sync_token = generate_sync_token(tenant_id)
 
@@ -910,31 +1091,141 @@ async def delete_admin(username: str, request: Request):
 
 @router.post("/super-admin/admins/{username}/request-delete-otp")
 async def request_delete_admin_otp(username: str, request: Request):
-    """Generate a 6-digit OTP, store it (10-minute expiry) on the target
-    admin doc, and email it to the requesting SuperAdmin's inbox so the
-    delete action requires an out-of-band confirmation code before
-    proceeding. Prevents accidental / one-click destructive deletes.
+    """Generate a 6-digit OTP and email it to the **userAdmin being
+    deleted** (not the SuperAdmin). Consented-deletion pattern:
+    userAdmin receives the code → shares it back with SuperAdmin over
+    call/WhatsApp → SA enters it in the UI → deletion proceeds. This
+    prevents unilateral destructive deletes and gives the tenant a
+    chance to intervene.
 
-    iter-125 fix: previously we emailed to `sa["username"]` which is
-    just "superadmin" for the built-in super_admin doc — not a valid
-    email — so Resend always rejected the request. New resolution
-    order:
-      1. `sa.email` if present on the user doc.
-      2. `SUPER_ADMIN_EMAIL` env var (recommended in prod).
-      3. `LEAD_NOTIFY_TO` = support@flowralive.in as a last resort.
-    When Resend delivery still fails (invalid API key, quota, etc.)
-    we surface `email_sent=false` AND `email_error` so the frontend
-    can show a clear banner + fallback into "show code inline" for
-    the requesting SuperAdmin (safe because the requester is already
-    the one who initiated the delete).
+    iter-131 update: OTP recipient changed from SA inbox → userAdmin's
+    own registered email. Fallback code stays in the response for the
+    edge case where email delivery fails.
     """
     sa = await _require_strict_super_admin(request)
     if not sa:
         return APIResponse(success=False, error="Super admin access required")
     try:
-        admin = await db.users.find_one({"username": username, "role": "admin"}, {"_id": 0, "name": 1, "username": 1})
+        admin = await db.users.find_one(
+            {"username": username, "role": "admin"},
+            {"_id": 0, "name": 1, "username": 1, "email": 1},
+        )
         if not admin:
             return APIResponse(success=False, error="Admin not found")
+        import secrets
+        code = f"{secrets.randbelow(1000000):06d}"
+        from datetime import timedelta
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        await db.admin_delete_otps.update_one(
+            {"target_username": username, "requested_by": sa["username"]},
+            {"$set": {
+                "target_username": username,
+                "requested_by": sa["username"],
+                "otp": code,
+                "expires_at": expires_at,
+                "flow": "consented",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+
+        # iter-131: OTP goes to the userAdmin's own email. `username`
+        # IS the email in FLOWRA's schema; `email` field is a fallback
+        # for legacy accounts.
+        recipient = (admin.get("email") or admin.get("username") or "").strip()
+        if not recipient or "@" not in recipient:
+            return APIResponse(success=False, error="This admin has no valid email on file — use forced deletion instead.")
+
+        email_sent = False
+        email_error = ""
+        try:
+            from services.email_service import send_email, _base_template
+            subj = f"[FLOWRA] Confirm account deletion — code {code}"
+            content = f"""
+              <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Account deletion requested</h2>
+              <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+                Hi {admin.get('name') or username.split('@')[0]}, our SuperAdmin
+                team has requested to permanently delete your FLOWRA account
+                (<code>{username}</code>) and archive all associated data.
+              </p>
+              <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
+                If you consent to this deletion, share the code below with
+                the FLOWRA team member who contacted you.
+                <b>Do NOT share this code with anyone else.</b>
+              </p>
+              <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 18px;margin:0 0 18px;">
+                <div style="font-size:11px;color:#b91c1c;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">
+                  Deletion confirmation code
+                </div>
+                <div style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:6px;color:#7f1d1d;">
+                  {code}
+                </div>
+                <p style="font-size:11px;color:#7f1d1d;margin:8px 0 0;">Valid for 10 minutes.</p>
+              </div>
+              <p style="color:#64748b;font-size:12px;">
+                If you did NOT consent to this deletion, reply to this email
+                immediately or write to ceo@flowralive.in — do not share the code.
+              </p>
+            """
+            email_sent = await send_email(recipient, subj, _base_template(content), tag="admin-delete-otp-consented")
+            if not email_sent:
+                email_error = "Resend rejected the delivery (check RESEND_API_KEY)"
+        except Exception as e:
+            email_error = str(e)
+            logger.warning(f"admin delete OTP email failed: {e}")
+
+        await log_audit(
+            "admin_delete_otp_requested", sa["username"], target=username,
+            details=f"Consented OTP dispatched to {recipient} (delivered={email_sent})",
+            ip_address=get_client_ip(request),
+        )
+
+        response_data = {
+            "email_sent": bool(email_sent),
+            "expires_at": expires_at,
+            "sent_to": recipient,
+            "flow": "consented",
+        }
+        if not email_sent:
+            response_data["fallback_code"] = code
+            response_data["email_error"] = email_error or "email delivery failed"
+
+        return APIResponse(
+            success=True,
+            data=response_data,
+            message=(f"OTP sent to {recipient}. Ask the customer to share the code with you."
+                     if email_sent
+                     else "Email delivery failed — use the fallback code shown on this screen"),
+        )
+    except Exception as e:
+        logger.error(f"request_delete_admin_otp error: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.post("/super-admin/admins/{username}/request-force-delete-otp")
+async def request_force_delete_admin_otp(username: str, request: Request):
+    """Forced deletion path — for cases where the userAdmin is
+    uncooperative, unreachable, or the email on file is invalid. OTP
+    goes to `ceo@flowralive.in` (or SUPER_ADMIN_FORCE_OTP_RECIPIENT env
+    override) so only the CEO can green-light a unilateral delete."""
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = (body.get("reason") or "").strip()
+
+        admin = await db.users.find_one(
+            {"username": username, "role": "admin"},
+            {"_id": 0, "name": 1, "username": 1},
+        )
+        if not admin:
+            return APIResponse(success=False, error="Admin not found")
+
         import os
         import secrets
         code = f"{secrets.randbelow(1000000):06d}"
@@ -947,56 +1238,50 @@ async def request_delete_admin_otp(username: str, request: Request):
                 "requested_by": sa["username"],
                 "otp": code,
                 "expires_at": expires_at,
+                "flow": "forced",
+                "reason": reason,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }},
             upsert=True,
         )
 
-        # iter-125: resolve a real inbox for the OTP.
-        # Priority: user-configured `sa.email` → SUPER_ADMIN_EMAIL env
-        # → hard-coded ceo@flowralive.in fallback (per user directive
-        # in msg 838 — OTP must land in the CEO's inbox, NOT the
-        # generic support alias which anyone in the ops team can read).
-        recipient = (
-            (sa.get("email") or "").strip()
-            or os.environ.get("SUPER_ADMIN_EMAIL", "").strip()
-        )
-        if not recipient or "@" not in recipient:
-            recipient = "ceo@flowralive.in"
+        recipient = os.environ.get("SUPER_ADMIN_FORCE_OTP_RECIPIENT", "").strip() or "ceo@flowralive.in"
 
         email_sent = False
         email_error = ""
         try:
             from services.email_service import send_email, _base_template
-            subj = f"[FLOWRA] OTP to delete admin: {username}"
+            subj = f"[FLOWRA] FORCED DELETE authorisation — {username}"
             content = f"""
-              <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Confirm admin deletion</h2>
+              <h2 style="margin:0 0 8px;font-size:22px;color:#b91c1c;">Forced deletion authorisation</h2>
               <p style="color:#334155;font-size:14px;margin:0 0 14px;line-height:1.6;">
-                You requested to permanently delete the FLOWRA admin account
-                <b>{admin.get('name') or username}</b> (<code>{username}</code>).
-                This will archive all their staff and business data.
+                SuperAdmin <b>{sa.get('name') or sa.get('username')}</b> has requested a
+                <b>forced deletion</b> (no customer consent) of the FLOWRA admin
+                account <b>{admin.get('name') or username}</b>
+                (<code>{username}</code>).
               </p>
+              {f'<p style="color:#334155;font-size:13px;margin:0 0 14px;padding:10px 14px;background:#f1f5f9;border-radius:6px;">Reason: <i>{reason}</i></p>' if reason else ''}
               <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 18px;margin:0 0 18px;">
                 <div style="font-size:11px;color:#b91c1c;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">
-                  One-time confirmation code
+                  CEO authorisation code
                 </div>
                 <div style="font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:6px;color:#7f1d1d;">
                   {code}
                 </div>
-                <p style="font-size:11px;color:#7f1d1d;margin:8px 0 0;">Valid for 10 minutes. Never share this code.</p>
+                <p style="font-size:11px;color:#7f1d1d;margin:8px 0 0;">Valid for 10 minutes. Share with the requesting SuperAdmin only if authorised.</p>
               </div>
-              <p style="color:#64748b;font-size:12px;">If you did not initiate this, ignore this email — no deletion will occur.</p>
+              <p style="color:#64748b;font-size:12px;">This code bypasses the consented-deletion flow. Only approve if the customer is unreachable or refusing to cooperate.</p>
             """
-            email_sent = await send_email(recipient, subj, _base_template(content), tag="admin-delete-otp")
+            email_sent = await send_email(recipient, subj, _base_template(content), tag="admin-force-delete-otp")
             if not email_sent:
-                email_error = "Resend rejected the delivery (check RESEND_API_KEY in your environment)"
+                email_error = "Resend rejected the delivery (check RESEND_API_KEY)"
         except Exception as e:
             email_error = str(e)
-            logger.warning(f"admin delete OTP email failed: {e}")
+            logger.warning(f"forced delete OTP email failed: {e}")
 
         await log_audit(
-            "admin_delete_otp_requested", sa["username"], target=username,
-            details=f"OTP dispatched to {recipient} (delivered={email_sent})",
+            "admin_force_delete_otp_requested", sa["username"], target=username,
+            details=f"CEO OTP dispatched to {recipient} (delivered={email_sent}) — reason: {reason or 'n/a'}",
             ip_address=get_client_ip(request),
         )
 
@@ -1004,12 +1289,8 @@ async def request_delete_admin_otp(username: str, request: Request):
             "email_sent": bool(email_sent),
             "expires_at": expires_at,
             "sent_to": recipient,
+            "flow": "forced",
         }
-        # iter-125: when email delivery fails, we return the OTP INLINE
-        # in the response so the SuperAdmin who initiated the request
-        # can still complete the deletion without waiting on ops to
-        # fix the Resend key. Not a security concern — the requester
-        # is the only party that can read this response.
         if not email_sent:
             response_data["fallback_code"] = code
             response_data["email_error"] = email_error or "email delivery failed"
@@ -1017,12 +1298,12 @@ async def request_delete_admin_otp(username: str, request: Request):
         return APIResponse(
             success=True,
             data=response_data,
-            message=("OTP sent to your registered email"
+            message=(f"Forced-delete OTP sent to {recipient}. Ask the CEO to share the code."
                      if email_sent
                      else "Email delivery failed — use the fallback code shown on this screen"),
         )
     except Exception as e:
-        logger.error(f"request_delete_admin_otp error: {e}")
+        logger.error(f"request_force_delete_admin_otp error: {e}")
         return APIResponse(success=False, error=str(e))
 
 

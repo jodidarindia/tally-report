@@ -2058,3 +2058,38 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 **E2E** (testing agent iter-129): 100% pass on both backend and frontend. Verified login → create post → cover crop upload → inline image upload → image resize popover → save → publish → public `/blog/{slug}` renders formatted content correctly.
 
 **Deps added**: `@tiptap/react` `@tiptap/pm` `@tiptap/starter-kit` `@tiptap/extension-image` `@tiptap/extension-link` `@tiptap/extension-underline` `@tiptap/extension-text-align` `@tiptap/extension-placeholder` `react-image-crop` `dompurify` (frontend); `@tailwindcss/typography` dev-dep + plugin registration in `tailwind.config.js`.
+
+
+## Shipped — Sep 11 2026 (iteration 131) — SuperAdmin 8-item sweep + Blog polish
+
+**Fixes (all in one batch, testing agent 100% pass, 15/15 backend + full E2E)**:
+
+1. **Toggle-active bug** — frontend was hitting `/admins/{u}/toggle` (404); backend endpoint is `/toggle-active`. One-line URL fix. Active/Inactive flip now works.
+
+2. **Admin creation with email OTP** — new `/super-admin/admins/verify-email/request-otp` + `/verify-otp` endpoints. Create Admin modal now has an inline OTP step: enter email → send OTP → customer shares 6-digit code → SA verifies → `verification_token` returned → `POST /super-admin/admins` requires that token (or fails with 'Email not verified'). Prevents typo'd tenant emails and downstream welcome-mail bounces.
+
+3. **Deletion OTP routing** — 
+   - `request-delete-otp` now targets the **userAdmin's own email** (consented deletion). Copy in modal changed: "Ask the customer to share the code they just received."
+   - New `request-force-delete-otp` endpoint sends OTP to `ceo@flowralive.in` (env `SUPER_ADMIN_FORCE_OTP_RECIPIENT` override). ShieldAlert button per admin row → reason modal (min 6 chars) → CEO authorisation.
+
+4. **Renewals tab** — every summary card clickable. "Total Requests" and "Pending" now render the `renewal_requests` table (was ignoring the backend payload entirely). Columns: Customer, Requested, Plan/Months, Status badge, Action Taken (processed_by / processed_at / admin_notes), inline Approve/Reject buttons on pending rows.
+
+5. **Upgrade → Invoice → Payment chain** — 
+   - Backend `record_payment` refuses payments when no `unpaid` invoice exists (bypass flag: `allow_unlinked`).
+   - Backend `billing._apply_billing_success` (Razorpay path) now creates a paid invoice + emails receipt + invoice PDF to the customer — closes the "payment voucher but no invoice" gap after trial→enterprise conversion.
+   - Frontend `recordPayment` on error shows a confirm dialog and jumps to the invoice modal pre-filled. `generateInvoice` on success prompts "Record the payment now?" and opens payment modal pre-filled with amount.
+
+6. **Customer Health Ledger T-form** — Payment History + Invoice History merged into one chronological ledger table with Date / Particulars / Debit (invoice raised) / Credit (payment received) / Running Balance. Totals footer, invoice status badge, one-click PDF download inline.
+
+7. **Auto-emails via Resend** — new `send_invoice_generated` and `send_payment_receipt` templates. Hooked into `generate_invoice`, `record_payment`, and the Razorpay success path so customers get invoice + receipt emails automatically.
+
+8. **Bank reconciliation** — new `PUT /super-admin/payments/{payment_id}/reconcile` with `reconciled` boolean + optional note. Payments tab redesigned with Total / Reconciled / Unmatched summary cards, per-row toggle, note modal. Reconciled_by / at / note tracked in Mongo.
+
+**Blog fixes (bonus)**:
+- New shared `PublicSiteHeader` component with logo + Home/Features/Pricing/Blog/Security/Sign-in/Start-trial rendered on both blog list and post detail. Section anchors work via `sessionStorage.flowra_scroll_to` handoff to LandingPage.
+- Post detail page adds an "All posts" back button in the header (data-testid=public-header-back-btn).
+- RichTextEditor now has `sticky top-0` toolbar + `max-h-[400px] overflow-y-auto` inner scroller so content scrolls independently of the toolbar (fixes the "toolbar moves up as I type" complaint).
+
+**Razorpay** — verified working: `GET /billing/config` returns test key `rzp_test_TTCKqwUQ9cwsxZ` and 3 plans; `_apply_billing_success` now also generates the invoice and fires emails.
+
+**Deps**: no new deps, only edits + new components.
