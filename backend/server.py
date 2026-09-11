@@ -222,6 +222,13 @@ async def startup_event():
     logger.info("Admin user seeded")
     await ensure_indexes(db)
     logger.info("MongoDB indexes ensured")
+    # iter-129: Emergent Object Storage for blog inline/cover images.
+    try:
+        from services.storage_service import init_storage
+        init_storage()
+        logger.info("Object storage initialised")
+    except Exception as e:
+        logger.warning(f"Object storage init failed (uploads will retry lazily): {e}")
     # v135 — background sweep for CMA annual reminders. Runs every 24h;
     # each sweep is idempotent (marks reminder_sent_at so a second run
     # in the same cycle doesn't duplicate emails).

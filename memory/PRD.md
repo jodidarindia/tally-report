@@ -2036,3 +2036,25 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 **Live backend round-trip** (testing agent iter-147, 13/13 green on preview): NEW payment_vouchers + sundry_journals categories, all 5 re-mapped voucher categories, existing v1.5.2 flows unchanged, tenant isolation verified.
 
 **Ops note (mocked/manual)**: Rebuild the desktop `.exe` on Windows via `build.bat` and redistribute. The agent will now discover ~3,500 real vouchers per FY (was reporting <2,000 before v1.5.3).
+
+
+## Shipped — Sep 11 2026 (iteration 129) — Blog CMS Rich Text Editor + Emergent Object Storage
+
+**User request**: SuperAdmin needs proper text formatting tools in the Blog Editor (was plain textarea), plus inline image adding, cropping, and resizing. Image uploads MUST use Emergent Object Storage (NOT Base64 in MongoDB).
+
+**Delivered**:
+- **TipTap Rich Text Editor** (`/app/frontend/src/components/RichTextEditor.jsx`) — Bold, Italic, Underline, H1-H3, bullet/numbered lists, blockquote, code block, horizontal rule, text alignment, links, inline image, undo/redo. Toolbar buttons all carry `data-testid="rte-*"` for automation.
+- **Image Cropper + Uploader** (`/app/frontend/src/components/ImageCropUpload.jsx`) — react-image-crop with Free / 16:9 / 4:3 / 1:1 aspect presets (Free hidden when parent forces an aspect e.g. covers). 5 MB max, image MIMEs only. Streams cropped JPEG to backend.
+- **Inline image resize** — clicking an inserted image reveals a size popover (S 25% / M 50% / L 75% / Full 100%) on the editor toolbar strip.
+- **Cover image upload** — replaced the raw URL input with a click-to-upload cropper locked to 16:9 for consistent blog card thumbnails.
+- **Backend (`/app/backend/services/storage_service.py`, `routes/blog.py`)** — new `POST /api/super-admin/blog/upload-image` (multipart, superadmin-only, 5 MB cap, rejects non-image extensions) → streams to Emergent Object Storage under `flowra/blog/{uuid}.{ext}`, records ref in `blog_images` collection. New `GET /api/public/blog-image/{path:path}` public reader with 24 h cache header.
+- **New DB field `body_html`** — TipTap output persisted alongside legacy `body_md` (backward compatible). Public renderer (BlogPage.jsx) prefers HTML, falls back to markdown, sanitises with DOMPurify, and rewrites backend-relative image srcs to absolute URLs.
+- **AI Draft integration** — existing GPT-5.2 draft returns markdown → converted to HTML in the frontend when loading into the editor so it lands ready-to-edit.
+
+**Storage init**: `services.storage_service.init_storage()` is called at FastAPI startup; storage key is cached at module scope per the playbook.
+
+**Regression tests**: `test_iteration_blog_rte_upload.py` — 5/5 pytest green covering upload happy path, non-image rejection, oversize rejection, body_html persistence round-trip, public blog reader HTML output.
+
+**E2E** (testing agent iter-129): 100% pass on both backend and frontend. Verified login → create post → cover crop upload → inline image upload → image resize popover → save → publish → public `/blog/{slug}` renders formatted content correctly.
+
+**Deps added**: `@tiptap/react` `@tiptap/pm` `@tiptap/starter-kit` `@tiptap/extension-image` `@tiptap/extension-link` `@tiptap/extension-underline` `@tiptap/extension-text-align` `@tiptap/extension-placeholder` `react-image-crop` `dompurify` (frontend); `@tailwindcss/typography` dev-dep + plugin registration in `tailwind.config.js`.

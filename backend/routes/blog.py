@@ -26,11 +26,13 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 
 from db import db
 from models import APIResponse
 from services.auth_service import get_current_user
+from services.storage_service import APP_NAME, MIME_TYPES, get_object, put_object
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,6 +54,76 @@ async def _require_super_admin(request: Request):
 
 # ── Public ────────────────────────────────────────────────────────────
 
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 5 MB — matches editor UI cap
+_ALLOWED_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
+
+
+@router.post("/super-admin/blog/upload-image")
+async def sa_upload_blog_image(request: Request, file: UploadFile = File(...)):
+    """Accepts a blog image (cover or inline) and streams it into
+    Emergent Object Storage. Returns a public URL that can be embedded
+    inside `<img src>` on the marketing site.
+    """
+    sa = await _require_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Forbidden")
+    try:
+        raw_name = (file.filename or "").strip()
+        ext = raw_name.split(".")[-1].lower() if "." in raw_name else ""
+        if ext not in _ALLOWED_IMAGE_EXTS:
+            return APIResponse(success=False, error="Only JPG, PNG, GIF, or WebP images are allowed.")
+        data = await file.read()
+        if not data:
+            return APIResponse(success=False, error="Empty file")
+        if len(data) > _MAX_IMAGE_BYTES:
+            return APIResponse(success=False, error=f"Image exceeds 5 MB (got {len(data)/1024/1024:.1f} MB).")
+
+        content_type = file.content_type or MIME_TYPES.get(ext, "application/octet-stream")
+        storage_path = f"{APP_NAME}/blog/{uuid.uuid4().hex}.{ext}"
+        result = put_object(storage_path, data, content_type)
+
+        # Track in Mongo so we can soft-delete + audit later.
+        await db.blog_images.insert_one({
+            "image_id":         f"IMG-{uuid.uuid4().hex[:10].upper()}",
+            "storage_path":     result["path"],
+            "original_filename": raw_name,
+            "content_type":     content_type,
+            "size":             result.get("size", len(data)),
+            "uploaded_by":      sa.get("username"),
+            "is_deleted":       False,
+            "created_at":       datetime.now(timezone.utc).isoformat(),
+        })
+
+        public_url = f"/api/public/blog-image/{result['path']}"
+        return APIResponse(success=True, data={"url": public_url, "path": result["path"]})
+    except Exception as e:
+        logger.error(f"sa_upload_blog_image: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/public/blog-image/{path:path}")
+async def public_blog_image(path: str):
+    """Streams a blog image from Emergent Object Storage. Public — blog
+    posts are meant to be crawlable, so no auth check here."""
+    if not path.startswith(f"{APP_NAME}/blog/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    record = await db.blog_images.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="Image not found")
+    try:
+        data, content_type = get_object(path)
+    except Exception as e:
+        logger.error(f"public_blog_image fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Storage error")
+    return Response(
+        content=data,
+        media_type=record.get("content_type") or content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ── Public listings ───────────────────────────────────────────────────
+
 @router.get("/public/blog")
 async def public_list_blog(tag: str = "", limit: int = 20, skip: int = 0):
     """Public listing of PUBLISHED blog posts. Optional ?tag=… filter."""
@@ -59,7 +131,7 @@ async def public_list_blog(tag: str = "", limit: int = 20, skip: int = 0):
         q = {"published": True}
         if tag:
             q["tags"] = tag
-        cursor = db.blogs.find(q, {"_id": 0, "body_md": 0}).sort("published_at", -1).skip(skip).limit(min(limit, 100))
+        cursor = db.blogs.find(q, {"_id": 0, "body_md": 0, "body_html": 0}).sort("published_at", -1).skip(skip).limit(min(limit, 100))
         posts = await cursor.to_list(min(limit, 100))
         total = await db.blogs.count_documents(q)
         # Collect all tag facets for nav.
@@ -104,7 +176,7 @@ async def sa_list_blog(request: Request):
     if not sa:
         return APIResponse(success=False, error="Forbidden")
     try:
-        posts = await db.blogs.find({}, {"_id": 0, "body_md": 0}).sort("created_at", -1).to_list(500)
+        posts = await db.blogs.find({}, {"_id": 0, "body_md": 0, "body_html": 0}).sort("created_at", -1).to_list(500)
         total = len(posts)
         published_count = sum(1 for p in posts if p.get("published"))
         return APIResponse(success=True, data={
@@ -250,6 +322,7 @@ async def sa_create_blog(request: Request):
         "excerpt":         (body.get("excerpt") or "").strip()[:280],
         "cover_image":     (body.get("cover_image") or "").strip(),
         "body_md":         body.get("body_md") or "",
+        "body_html":       body.get("body_html") or "",
         "tags":            [t.strip() for t in (body.get("tags") or []) if t and isinstance(t, str)][:10],
         "author":          (body.get("author") or sa.get("name") or sa.get("username") or "FLOWRA Team").strip(),
         "seo_title":       (body.get("seo_title") or title).strip()[:70],
@@ -276,7 +349,7 @@ async def sa_update_blog(post_id: str, request: Request):
         return APIResponse(success=False, error="Post not found")
 
     update = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for k in ("title", "excerpt", "cover_image", "body_md", "author", "seo_title", "seo_description"):
+    for k in ("title", "excerpt", "cover_image", "body_md", "body_html", "author", "seo_title", "seo_description"):
         if k in body:
             update[k] = (body.get(k) or "").strip() if isinstance(body.get(k), str) else body.get(k)
     if "tags" in body and isinstance(body["tags"], list):

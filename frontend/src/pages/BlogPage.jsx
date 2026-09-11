@@ -1,11 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import DOMPurify from 'dompurify';
 import { ArrowLeft, Calendar, Tag, ChevronRight } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
-/* Very small MD → HTML converter (headings, bold, italic, links, code,
- * lists) so we don't drag in a dependency for a first-cut blog. */
+/*  Resolve backend-relative image URLs (`/api/public/blog-image/...`)
+ *  to the fully-qualified URL served by the API. External URLs pass
+ *  through untouched. */
+const absUrl = (u = '') => (u && u.startsWith('/api/')) ? (process.env.REACT_APP_BACKEND_URL + u) : u;
+
+/*  Very small MD → HTML converter for legacy posts (body_md only).
+ *  New posts written in the rich editor land as body_html directly. */
 const renderMd = (md = '') => {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   let html = esc(md);
@@ -19,7 +25,26 @@ const renderMd = (md = '') => {
   html = html.replace(/^\s*[-*]\s+(.*)$/gm, '<li>$1</li>')
              .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
   html = html.replace(/\n\n/g, '</p><p>');
-  return `<div class="prose"><p>${html}</p></div>`;
+  return `<p>${html}</p>`;
+};
+
+/*  Renders the blog body — prefers stored HTML (from the TipTap editor),
+ *  falls back to the legacy Markdown pipeline. Sanitises + rewrites
+ *  backend-relative <img> sources. */
+const renderBody = (post) => {
+  let html = post?.body_html?.trim() ? post.body_html : renderMd(post?.body_md || '');
+  // Rewrite server-relative image URLs before sanitising so DOMPurify
+  // keeps them (allowed protocols: http, https, data).
+  html = html.replace(/(<img\b[^>]*\bsrc=["'])(\/api\/[^"']+)(["'])/g,
+                      (_m, p1, p2, p3) => `${p1}${process.env.REACT_APP_BACKEND_URL}${p2}${p3}`);
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'p','br','strong','b','em','i','u','s','strike','h1','h2','h3','h4','ul','ol','li',
+      'blockquote','code','pre','a','img','hr','span','div','table','thead','tbody','tr','th','td',
+    ],
+    ALLOWED_ATTR: ['href','target','rel','src','alt','style','width','height','class'],
+    ADD_ATTR: ['target'],
+  });
 };
 
 export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
@@ -69,7 +94,7 @@ export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
             <ArrowLeft size={16} /> Back to all posts
           </button>
           {activePost.cover_image && (
-            <img src={activePost.cover_image} alt="" className="w-full aspect-video object-cover rounded-lg mb-6" />
+            <img src={absUrl(activePost.cover_image)} alt="" className="w-full aspect-video object-cover rounded-lg mb-6" />
           )}
           <div className="flex items-center gap-3 text-xs text-zinc-500 mb-3">
             <span className="flex items-center gap-1"><Calendar size={12} /> {(activePost.published_at || '').slice(0, 10)}</span>
@@ -86,9 +111,9 @@ export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
           </div>
           <h1 className="text-4xl font-bold text-zinc-950 mb-4" style={{ fontFamily: 'Cabinet Grotesk, Outfit, sans-serif' }}>{activePost.title}</h1>
           <p className="text-lg text-zinc-600 mb-8 leading-relaxed">{activePost.excerpt}</p>
-          <div className="prose max-w-none text-zinc-700 leading-relaxed"
+          <div className="prose prose-slate max-w-none text-zinc-700 leading-relaxed"
                style={{ fontSize: 15 }}
-               dangerouslySetInnerHTML={{ __html: renderMd(activePost.body_md || '') }} />
+               dangerouslySetInnerHTML={{ __html: renderBody(activePost) }} />
           <div className="mt-12 pt-8 border-t border-zinc-200 text-sm text-zinc-500">
             Want to see FLOWRA in action for your business?{' '}
             <button onClick={() => onNavigate('signup')} className="text-[#0052FF] font-semibold underline">Start your free 14-day trial →</button>
@@ -135,7 +160,7 @@ export const BlogListPage = ({ onNavigate, initialSlug = '' }) => {
               <button key={p.post_id} onClick={() => openPost(p.slug)}
                 className="text-left border border-zinc-200 rounded-lg overflow-hidden hover:border-zinc-400 transition-colors bg-white"
                 data-testid={`blog-card-${p.slug}`}>
-                {p.cover_image && <img src={p.cover_image} alt="" className="w-full aspect-video object-cover" />}
+                {p.cover_image && <img src={absUrl(p.cover_image)} alt="" className="w-full aspect-video object-cover" />}
                 <div className="p-5">
                   <div className="flex items-center gap-2 text-xs text-zinc-500 mb-2">
                     <span>{(p.published_at || '').slice(0, 10)}</span>

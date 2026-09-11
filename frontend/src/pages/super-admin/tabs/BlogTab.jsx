@@ -1,13 +1,37 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { Plus, Trash2, Pencil, ExternalLink, Eye, X, Check, FileText, Sparkles, Loader } from 'lucide-react';
+import { Plus, Trash2, Pencil, ExternalLink, Eye, X, Check, FileText, Sparkles, Loader, ImagePlus } from 'lucide-react';
+import { RichTextEditor } from '../../../components/RichTextEditor';
+import { ImageCropUpload } from '../../../components/ImageCropUpload';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
 const emptyPost = {
-  title: '', slug: '', excerpt: '', cover_image: '', body_md: '',
+  title: '', slug: '', excerpt: '', cover_image: '', body_md: '', body_html: '',
   tags: [], author: '', seo_title: '', seo_description: '', published: false,
+};
+
+/*  Tiny Markdown → HTML converter used ONLY when we open a legacy post
+ *  that has body_md but no body_html (e.g. AI drafts or posts saved
+ *  before iter-129). Handles headings, bold, italic, links, lists —
+ *  enough to seed the editor; the SuperAdmin can refine from there. */
+const mdToHtml = (md = '') => {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let html = esc(md);
+  html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
+             .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+             .replace(/^# (.*)$/gm, '<h1>$1</h1>');
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+             .replace(/\*(.*?)\*/g, '<em>$1</em>')
+             .replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  html = html.replace(/^\s*[-*]\s+(.*)$/gm, '<li>$1</li>')
+             .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+  const paragraphs = html.split(/\n{2,}/).map(p =>
+    /^\s*<(h\d|ul|ol|blockquote|pre)/.test(p) ? p : `<p>${p.replace(/\n/g, '<br/>')}</p>`
+  ).join('\n');
+  return paragraphs;
 };
 
 export const BlogTab = ({ token }) => {
@@ -15,6 +39,7 @@ export const BlogTab = ({ token }) => {
   const [posts, setPosts] = useState([]);
   const [stats, setStats] = useState({ total: 0, published: 0, drafts: 0 });
   const [editing, setEditing] = useState(null);   // full post object being edited/created
+  const [coverModal, setCoverModal] = useState(false);
   // iter-124: AI draft state — a lightweight side-modal that takes a
   // rough note + tone, calls /ai-draft, and fills the editor form.
   const [aiModal, setAiModal] = useState(false);
@@ -37,8 +62,17 @@ export const BlogTab = ({ token }) => {
   const startEdit = async (post_id) => {
     try {
       const r = await axios.get(`${API}/super-admin/blog/${post_id}`, { headers });
-      if (r.data?.success) setEditing({ ...r.data.data, tagsInput: (r.data.data.tags || []).join(', ') });
-      else toast.error(r.data?.error || 'Failed to load post');
+      if (r.data?.success) {
+        const p = r.data.data;
+        setEditing({
+          ...p,
+          // Prefer stored HTML; fall back to converting legacy markdown.
+          body_html: p.body_html || (p.body_md ? mdToHtml(p.body_md) : ''),
+          tagsInput: (p.tags || []).join(', '),
+        });
+      } else {
+        toast.error(r.data?.error || 'Failed to load post');
+      }
     } catch { toast.error('Failed to load post'); }
   };
 
@@ -46,6 +80,8 @@ export const BlogTab = ({ token }) => {
     if (!editing?.title?.trim()) { toast.error('Title is required'); return; }
     const payload = {
       ...editing,
+      // We keep body_md empty for new HTML posts; body_html is the source of truth.
+      body_md: '',
       tags: (editing.tagsInput || (editing.tags || []).join(', ')).split(',').map(t => t.trim()).filter(Boolean),
     };
     delete payload.tagsInput;
@@ -82,13 +118,15 @@ export const BlogTab = ({ token }) => {
       if (r.data?.success) {
         const d = r.data.data;
         // Fill the editor form. If no editor was open, open a NEW one
-        // pre-filled with the AI response.
+        // pre-filled with the AI response. Convert AI's markdown → HTML
+        // so it lands ready-to-edit in the TipTap editor.
         setEditing((prev) => ({
           ...(prev || { _new: true }),
           title:            d.title,
           slug:             d.slug,
           excerpt:          d.excerpt,
-          body_md:          d.body_md,
+          body_html:        mdToHtml(d.body_md || ''),
+          body_md:          '',
           tags:             d.tags || [],
           tagsInput:        (d.tags || []).join(', '),
           seo_title:        d.seo_title,
@@ -145,7 +183,7 @@ export const BlogTab = ({ token }) => {
         )}
         {posts.map(p => (
           <div key={p.post_id} className="flex items-center gap-3 p-4" data-testid={`blog-row-${p.post_id}`}>
-            {p.cover_image && <img src={p.cover_image} alt="" className="w-14 h-14 object-cover rounded-lg" />}
+            {p.cover_image && <img src={p.cover_image.startsWith('/api/') ? (process.env.REACT_APP_BACKEND_URL + p.cover_image) : p.cover_image} alt="" className="w-14 h-14 object-cover rounded-lg" />}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${p.published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{p.published ? 'Published' : 'Draft'}</span>
@@ -176,7 +214,7 @@ export const BlogTab = ({ token }) => {
 
       {editing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-auto" data-testid="blog-editor-modal" onClick={e => e.target === e.currentTarget && setEditing(null)}>
-          <div className="bg-white rounded-xl w-full max-w-3xl p-6 my-8">
+          <div className="bg-white rounded-xl w-full max-w-4xl p-6 my-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">{editing._new ? 'New Blog Post' : 'Edit Post'}</h3>
               <div className="flex items-center gap-2">
@@ -207,9 +245,30 @@ export const BlogTab = ({ token }) => {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Cover Image URL</label>
-                <input type="url" value={editing.cover_image || ''} onChange={e => setEditing({ ...editing, cover_image: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="https://…" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Cover Image</label>
+                {editing.cover_image ? (
+                  <div className="flex items-start gap-3">
+                    <img src={editing.cover_image.startsWith('/api/') ? (process.env.REACT_APP_BACKEND_URL + editing.cover_image) : editing.cover_image}
+                         alt="cover" className="w-40 aspect-video object-cover rounded-lg border border-slate-200" data-testid="cover-image-preview" />
+                    <div className="flex flex-col gap-2">
+                      <button type="button" onClick={() => setCoverModal(true)}
+                              data-testid="cover-image-replace-btn"
+                              className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5">
+                        <ImagePlus size={12} /> Replace
+                      </button>
+                      <button type="button" onClick={() => setEditing({ ...editing, cover_image: '' })}
+                              className="px-3 py-1.5 text-xs border border-red-200 text-red-600 rounded-lg hover:bg-red-50 flex items-center gap-1.5">
+                        <Trash2 size={12} /> Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setCoverModal(true)}
+                          data-testid="cover-image-upload-btn"
+                          className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-slate-300 rounded-lg hover:bg-slate-50 text-sm text-slate-600">
+                    <ImagePlus size={16} /> Upload cover image (16:9 recommended)
+                  </button>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Excerpt (max 280 chars)</label>
@@ -217,9 +276,13 @@ export const BlogTab = ({ token }) => {
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none" maxLength={280} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Body (Markdown)</label>
-                <textarea rows={10} value={editing.body_md || ''} onChange={e => setEditing({ ...editing, body_md: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono resize-y" placeholder="# Heading&#10;&#10;Body copy with **bold**, _italic_, [link](url), etc." data-testid="blog-body-input" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Body</label>
+                <RichTextEditor
+                  value={editing.body_html || ''}
+                  onChange={html => setEditing(prev => ({ ...prev, body_html: html }))}
+                  token={token}
+                  placeholder="Start writing your post…"
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tags (comma-separated)</label>
@@ -254,6 +317,15 @@ export const BlogTab = ({ token }) => {
           </div>
         </div>
       )}
+
+      {/* iter-129: cover image cropper — 16:9 fixed for consistent blog cards */}
+      <ImageCropUpload
+        open={coverModal}
+        onClose={() => setCoverModal(false)}
+        onUploaded={({ url }) => setEditing(prev => ({ ...prev, cover_image: url }))}
+        token={token}
+        aspect={16 / 9}
+      />
 
       {/* iter-124: AI Draft modal — uses GPT-5.2 via Emergent LLM key */}
       {aiModal && (
