@@ -1508,9 +1508,33 @@ async def export_targets_excel(request: Request):
             ws.cell(row=i, column=4, value=round(row.get("current_fy_sales", 0), 2))
             pct = row.get("achievement_pct", 0)
             ws.cell(row=i, column=5, value=f"{round(pct, 1)}%")
-            monthly = row.get("monthly_sales", {})
+            # iter-132 bug fix: `monthly_sales` from GET /customers/targets
+            # is a LIST of {"month": "YYYY-MM", "amount": n} dicts (see
+            # `get_customer_targets` line ~603), not a {"Apr": n} dict.
+            # Old code did `monthly.get(m, 0)` on a list → crash:
+            # `'list' object has no attribute 'get'`. Now we accept
+            # both shapes and pre-normalise to a month-name → amount map.
+            raw_monthly = row.get("monthly_sales") or {}
+            monthly_map = {}
+            if isinstance(raw_monthly, list):
+                _MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+                for entry in raw_monthly:
+                    if not isinstance(entry, dict):
+                        continue
+                    key = str(entry.get("month") or "")
+                    amt = entry.get("amount", 0)
+                    if len(key) >= 7 and key[4] == "-":     # "YYYY-MM"
+                        try:
+                            abbr = _MONTH_ABBR[int(key[5:7]) - 1]
+                            monthly_map[abbr] = monthly_map.get(abbr, 0) + float(amt or 0)
+                        except (ValueError, IndexError):
+                            pass
+                    elif key[:3] in _MONTH_ABBR:            # "Apr" etc
+                        monthly_map[key[:3]] = monthly_map.get(key[:3], 0) + float(amt or 0)
+            elif isinstance(raw_monthly, dict):
+                monthly_map = raw_monthly
             for j, m in enumerate(months):
-                ws.cell(row=i, column=6 + j, value=round(monthly.get(m, 0), 2))
+                ws.cell(row=i, column=6 + j, value=round(float(monthly_map.get(m, 0) or 0), 2))
 
         for col in range(1, len(headers) + 1):
             ws.column_dimensions[chr(64 + col) if col <= 26 else 'A' + chr(64 + col - 26)].width = 14

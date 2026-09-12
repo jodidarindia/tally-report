@@ -44,7 +44,16 @@ async def _get_branch_set(request, ctx):
 
 async def _get_purchase_branch_set(ctx):
     """Detect branch-like parties in purchase vouchers (non-sundry-creditor).
-    These are internal transfers, not actual procurement from external suppliers."""
+    These are internal transfers, not actual procurement from external suppliers.
+
+    iter-132 hardening: require ALL company-name tokens (>3 chars) to appear
+    in the party name — not just 2+. The 2+ heuristic misfired for
+    company names with common words like "India" that many external
+    suppliers also carry ("Bosch India", "Motul India"), silently
+    flagging every supplier as a branch → all Inward columns showed 0
+    in Movement Analysis. Also skip the filter entirely for
+    single-token company names (nothing safe to match against).
+    """
     from services.id_mapping_service import get_company_name
     if not ctx:
         return set()
@@ -55,7 +64,10 @@ async def _get_purchase_branch_set(ctx):
         return set()
     name_clean = re.sub(r'\b(private|limited|pvt|ltd|llp|inc|corp)\b', '', company_name, flags=re.IGNORECASE).strip()
     tokens = [w.lower() for w in name_clean.split() if len(w) > 3]
-    if not tokens:
+    # iter-132: require at least 2 distinct tokens AND every one of them
+    # to appear in the party name (was: "2+ matching", which caught any
+    # supplier sharing 2 common words like "india autotech").
+    if len(tokens) < 2:
         return set()
     parties = await db.purchase_vouchers.distinct(
         "party_name",
@@ -66,8 +78,7 @@ async def _get_purchase_branch_set(ctx):
         if not party:
             continue
         party_lower = party.lower()
-        matching = sum(1 for t in tokens if t in party_lower)
-        if matching >= 2:
+        if all(t in party_lower for t in tokens):
             branch_parties.add(party)
     return branch_parties
 
@@ -778,6 +789,20 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         # Detect branch-like parties in purchases (non-sundry-creditor)
         purchase_branch_set = await _get_purchase_branch_set(ctx)
         sundry_creditor_purchases = _filter_branch_vouchers(raw_purchase_vouchers, purchase_branch_set)
+
+        # iter-132 safety net: if the branch-detection heuristic strips
+        # more than 90% of purchase vouchers (or all of them when we
+        # know real suppliers exist), it's misfiring — fall back to
+        # the full un-filtered set so Movement Analysis "Inward" column
+        # doesn't silently show zero across the board.
+        raw_count = len(raw_purchase_vouchers)
+        sc_count = len(sundry_creditor_purchases)
+        if raw_count >= 10 and (sc_count == 0 or sc_count / max(raw_count, 1) < 0.10):
+            logger.warning(
+                f"purchase-branch heuristic over-catching (kept {sc_count}/{raw_count}) — "
+                f"reverting to raw purchase set for Movement Analysis"
+            )
+            sundry_creditor_purchases = raw_purchase_vouchers
 
         # ALL sales and ALL purchases for opening stock (must use full data for balance)
         all_sales_fy = filter_vouchers_by_fy(raw_sales_vouchers, fy)

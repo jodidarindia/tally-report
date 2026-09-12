@@ -2,7 +2,7 @@ import csv
 import io
 import os
 from typing import List, Dict, Any
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
@@ -142,7 +142,18 @@ class ExportService:
     def export_to_pdf(data: List[Dict[str, Any]], report_type: str = "Report",
                       title: str = "FLOWRA Report", company_name: str = "") -> io.BytesIO:
         output = io.BytesIO()
-        doc = SimpleDocTemplate(output, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        # iter-132: switch to LANDSCAPE A4 for wide tables (Inventory has
+        # 12 columns — portrait squeezes the Item Name column to zero
+        # width and readers see a blank first column). Also honour
+        # per-column widths and wrap long strings via Paragraph.
+        column_count = len(data[0].keys()) if data else 0
+        wide_report = column_count > 8
+        pagesize = landscape(A4) if wide_report else A4
+        doc = SimpleDocTemplate(
+            output, pagesize=pagesize,
+            topMargin=0.4*inch, bottomMargin=0.4*inch,
+            leftMargin=0.35*inch, rightMargin=0.35*inch,
+        )
         elements = []
         styles = getSampleStyleSheet()
 
@@ -182,27 +193,70 @@ class ExportService:
             output.seek(0)
             return output
 
-        # Table
+        # Table — iter-132: wrap long values in Paragraph so they flow
+        # across lines instead of overrunning the column, and stretch
+        # the table to fill the available page width so columns are
+        # readable rather than squeezed. Numeric columns get a bit less
+        # width than text columns.
         headers = list(data[0].keys())
-        table_data = [headers]
-        for row in data:
-            table_data.append([str(row.get(h, "")) for h in headers])
+        cell_style = ParagraphStyle(
+            'FlowraCell', parent=styles['Normal'],
+            fontSize=7.5, leading=9,
+        )
+        header_style = ParagraphStyle(
+            'FlowraCellHead', parent=styles['Normal'],
+            fontSize=8, leading=10, textColor=colors.whitesmoke, fontName='Helvetica-Bold',
+        )
+        def _cell(txt, hdr=False):
+            s = "" if txt is None else str(txt)
+            if len(s) > 60 and not hdr:
+                s = s[:57] + "…"
+            return Paragraph(s.replace("\n", "<br/>"), header_style if hdr else cell_style)
 
-        table = Table(table_data)
+        table_data = [[_cell(h, True) for h in headers]]
+        for row in data:
+            table_data.append([_cell(row.get(h, "")) for h in headers])
+
+        # Compute column widths — long text columns wider, numeric ones
+        # tighter. Falls back to equal split when we can't identify the
+        # column shape.
+        page_w = pagesize[0] - doc.leftMargin - doc.rightMargin
+        _NUMERIC_HINT = ("qty", "price", "rate", "value", "amount", "level", "closing stock", "achievement", "target")
+        weights = []
+        for h in headers:
+            hl = h.lower()
+            if any(k in hl for k in _NUMERIC_HINT):
+                weights.append(0.8)
+            elif hl in ("item name", "customer", "customer name", "category", "stock group", "aliases", "description"):
+                weights.append(1.6)
+            else:
+                weights.append(1.0)
+        total_w = sum(weights) or 1
+        col_widths = [w / total_w * page_w for w in weights]
+
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(BRAND_COLOR)),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            # iter-132: header centered, data left/right based on col type
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('TOPPADDING', (0, 1), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
             ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ('BACKGROUND', (0, 1), (-1, -1), colors.white),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor(BG_STRIPE)])
         ]))
+        # Right-align numeric columns for readability.
+        _NUMERIC_HINT = ("qty", "price", "rate", "value", "amount", "level", "closing stock", "achievement", "target")
+        for idx, h in enumerate(headers):
+            if any(k in h.lower() for k in _NUMERIC_HINT):
+                table.setStyle(TableStyle([('ALIGN', (idx, 1), (idx, -1), 'RIGHT')]))
 
         elements.append(table)
         elements.append(Spacer(1, 0.3*inch))

@@ -138,14 +138,44 @@ function App() {
     return () => { wsRef.current?.close(); };
   }, [isAuthenticated, user?.role, company.selectedCompany]);
 
-  // FY dropdown options
+  // FY dropdown options — hydrated per-company from /sync/synced-fys so
+  // useradmins can only pick FYs that actually have synced data. Falls
+  // back to the calendar-derived list until the probe resolves.
+  const [syncedFYs, setSyncedFYs] = useState([]);
+  useEffect(() => {
+    if (!isAuthenticated || !token || !company.selectedCompany) { setSyncedFYs([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `${process.env.REACT_APP_BACKEND_URL}/api/sync/synced-fys?company_id=${encodeURIComponent(company.selectedCompany)}`,
+          { headers: { Authorization: `Bearer ${token}`, 'X-Company-ID': company.selectedCompany } },
+        );
+        const j = await r.json();
+        if (!cancelled && j?.success) {
+          setSyncedFYs(j.data?.fys || []);
+          // If the currently selected FY is not in the synced list,
+          // auto-switch to the newest synced FY.
+          const fys = j.data?.fys || [];
+          if (fys.length && company.selectedFY && !fys.includes(company.selectedFY)) {
+            company.setSelectedFY(fys[fys.length - 1]);
+          }
+        }
+      } catch (e) { /* fall through to calendar-derived list */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [isAuthenticated, token, company.selectedCompany]);
+
   const fyOptions = useMemo(() => {
+    if (syncedFYs && syncedFYs.length) return syncedFYs;
+    // Fallback (initial paint / pre-sync tenants): last 6 calendar FYs.
     const yr = new Date().getFullYear();
     return Array.from({ length: 6 }, (_, i) => {
       const y = yr - i;
       return `${y}-${String(y + 1).slice(2)}`;
     });
-  }, []);
+  }, [syncedFYs]);
 
   // Navigation items derived from user features
   const navItems = useMemo(() => {

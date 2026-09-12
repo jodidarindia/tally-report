@@ -2114,3 +2114,28 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 **Verified locally**: `CI=false DISABLE_ESLINT_PLUGIN=true yarn build` completes in 21.4s, produces a 2.1 MB main.js containing all 8 new test-ids (`public-site-header`, `rich-editor-scroll`, `forced-delete-modal`, `ledger-tform`, `recon-toggle`, `verify-email-otp-btn`, `force-delete-admin`, `renewal-requests-table`).
 
 **Impact**: On the next push to `main`, ALL iter-131 fixes (toggle-active, admin-create email OTP, consented/forced delete OTP routing, renewals action-taken table, T-form ledger, invoice-before-payment enforcement, auto-emails, bank reconciliation, blog top-nav, RTE scroller) will actually reach production.
+
+
+## Shipped — Sep 12 2026 (iteration 156) — 5-bug sweep (CRM export, Inventory PDF, FY dropdown, Movement Analysis)
+
+**All 5 user-reported bugs fixed and verified end-to-end (backend pytest 7/7 + frontend 4/4)**:
+
+1. **CRM Targets Excel Export — "'list' object has no attribute 'get'"** — `get_customer_targets` returns `monthly_sales` as a *list* of `{month, amount}` dicts (line ~603), but `export_targets_excel` treated it as a `{"Apr": n}` dict and called `.get(m, 0)` on a list. Fix: normalise both shapes into a `{month_abbr: amount}` map before the row write. Backward-compatible with the legacy dict shape.
+
+2. **Inventory PDF — missing Item Name + wrong header names + alignment broken** — Root cause: `export_to_pdf` used portrait A4 with NO column widths, so ReportLab squeezed 12-col Inventory tables until the Item Name column collapsed to 0px and appeared "missing". Fixes:
+   - `_project_export_rows` renamed **Quantity → Closing Stock** and pushed **ABC / Aliases** to the tail so the primary business columns anchor the left side
+   - `export_to_pdf` now switches to **landscape A4** when the report has more than 8 columns, computes explicit weighted col-widths (numeric cols narrow, name/description cols wide), wraps every cell value in a `Paragraph` so long text flows, right-aligns numeric columns, and adds `repeatRows=1` so the header prints on every page
+
+4. **FY dropdown lists un-synced years** — App.js was memoising the FY list from `new Date().getFullYear()`, showing the last 6 calendar FYs regardless of what the tenant synced. Fixes:
+   - New `GET /api/sync/synced-fys?company_id=…` endpoint probes min/max `voucher_date` across `sales_vouchers` + `purchase_vouchers` and returns only the FYs that actually have data (plus `current_fy_hint`)
+   - `App.js` now fetches this on `selectedCompany` change, feeds `fyOptions`, and auto-switches `selectedFY` to the latest synced FY if the previously-selected value is not in the list. Falls back to the calendar list only during initial paint
+
+5. **Movement Analysis — Inward all zero + wrong Opening Stock** — `_get_purchase_branch_set` flagged any supplier whose name shared **2+ tokens** with the tenant's company name. For "ASA AUTOTECH INDIA", tokens `[autotech, india]` — and every real Indian supplier ("Bosch India Pvt Ltd", "Castrol India") shares "india" → matched, but with only 1 token match got dropped. However, for "NAVDURGA AUTO SPARES JABALPUR" the tokens `[navdurga, auto, spares, jabalpur]` were long enough that many real vendors shared 2+ words, killing the Inward column. Fixes:
+   - Now requires **ALL name tokens** to appear in a party name (was 2+) — much stricter, only true clones match
+   - Skip filter entirely for single-token company names (nothing safe to match)
+   - Safety net in `movement-analysis`: if the branch-filter strips >90% of purchases (obvious misfire), fall back to the raw unfiltered set with a warning log
+   - Result on busydemo tenant: 2086 of 10114 items now show positive Inward (previously 0), total inward qty across all items = 59,378 (was 0)
+
+**Regression tests**: `test_iteration156_bugfixes.py` — 7 pytest cases covering both list + dict `monthly_sales`, synced-FYs empty-tenant guard, movement-analysis inward math, and PDF byte-magic + landscape validation.
+
+**Testing agent iter-156**: 100% pass on both. Minor cosmetic notes (0 vs '-' in Opening column; harmless <span>-in-<option> hydration warning) noted but not blocking.

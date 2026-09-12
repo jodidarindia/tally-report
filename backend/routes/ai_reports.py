@@ -95,19 +95,22 @@ def _project_export_rows(report_type: str, rows: list) -> list:
             else:
                 aliases_str = str(aliases or "")
             out.append({
+                # iter-132: reordered so Item Name is first and won't get
+                # squeezed out on A4 PDF; renamed "Quantity" → "Closing
+                # Stock" so it matches the on-screen Inventory tab.
                 "Item Name": it.get("item_name", ""),
                 "Part #": it.get("part_number", "") or "",
-                "ABC": it.get("abc_category", "") or "",
                 "Category": it.get("category", "") or "",
                 "Stock Group": it.get("stock_group", "") or "",
                 "Unit": it.get("unit", "") or "",
-                "Quantity": _fmt_num(it.get("quantity"), 2),
+                "Closing Stock": _fmt_num(it.get("quantity"), 2),
                 "Reorder Level": _fmt_num(it.get("reorder_level"), 2),
                 "Sale Price (Rs)": _fmt_num(
                     it.get("effective_sale_price") or it.get("standard_price") or it.get("price"), 2,
                 ),
                 "Purchase Price (Rs)": _fmt_num(it.get("purchase_price"), 2),
                 "Stock Value (Rs)": _fmt_num(it.get("closing_value"), 2),
+                "ABC": it.get("abc_category", "") or "",
                 "Aliases": aliases_str,
             })
         return out

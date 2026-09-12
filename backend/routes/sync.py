@@ -1660,6 +1660,66 @@ async def get_all_companies_sync_status(request: Request):
         return APIResponse(success=False, error=str(e))
 
 
+@router.get("/sync/synced-fys")
+async def get_synced_fys(request: Request, company_id: Optional[str] = None):
+    """List FYs that actually have synced data for the given company.
+    Powers the FY dropdown in AppNavbar so useradmins never see empty
+    FYs and can't accidentally pick an un-synced year.
+
+    iter-132: previously the FY dropdown was hardcoded to the last 6
+    calendar years (App.js), which meant users could pick 2021-22 for
+    a tenant that only synced FY 2024-25 onwards → all screens showed
+    empty state + "no data" toasts.
+    """
+    try:
+        from utils import fy_to_date_range
+        ctx = await get_tenant_context(request)
+        tenant_id = ctx.get("tenant_id", "") if ctx else ""
+        cid = company_id or (ctx.get("company_id") if ctx else "") or ""
+        if not tenant_id or not cid:
+            return APIResponse(success=True, data={"fys": [], "current_fy_hint": ""})
+
+        q = {"tenant_id": tenant_id, "company_id": cid}
+
+        # Cheapest possible date-range probe: min + max voucher_date
+        # from BOTH sales and purchases (Tally's canonical FY signal).
+        oldest = None
+        newest = None
+        for col in ("sales_vouchers", "purchase_vouchers"):
+            first = await db[col].find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", 1).limit(1).to_list(1)
+            last  = await db[col].find(q, {"_id": 0, "voucher_date": 1}).sort("voucher_date", -1).limit(1).to_list(1)
+            if first and first[0].get("voucher_date"):
+                d = first[0]["voucher_date"][:10]
+                if not oldest or d < oldest:
+                    oldest = d
+            if last and last[0].get("voucher_date"):
+                d = last[0]["voucher_date"][:10]
+                if not newest or d > newest:
+                    newest = d
+
+        fys: list[str] = []
+        if oldest and newest:
+            def _year_from_date(d: str) -> int:
+                y, m = int(d[:4]), int(d[5:7])
+                return y if m >= 4 else y - 1     # FY starts April
+            y0, y1 = _year_from_date(oldest), _year_from_date(newest)
+            for y in range(y0, y1 + 1):
+                fys.append(f"{y}-{str(y + 1)[2:]}")
+
+        # Suggest the "current" FY = latest synced FY.
+        current_fy_hint = fys[-1] if fys else ""
+
+        return APIResponse(success=True, data={
+            "fys": fys,
+            "current_fy_hint": current_fy_hint,
+            "oldest_voucher": oldest or "",
+            "newest_voucher": newest or "",
+        })
+    except Exception as e:
+        logger.error(f"synced-fys probe failed: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 
 
 @router.get("/sync/connection-status")
