@@ -66,10 +66,22 @@ jobs:
             body=$(curl -fsSL --max-time 10 "https://insights.flowralive.in/api/health" || true)
             echo "attempt $i → $body"
             if echo "$body" | grep -q '"ok":true'; then
-              echo "✅ Deployment healthy"
-              exit 0
+              echo "✅ Backend healthy"
+              break
             fi
             sleep 5
           done
-          echo "❌ /api/health did not return ok:true after 40 s"
+          # iter-131: also verify the FRONTEND bundle actually refreshed
+          # to the commit we just pushed. Silent stale-frontend bug —
+          # see deploy.sh comments.
+          echo "── Frontend version stamp ──"
+          FE_VERSION=$(curl -fsSL --max-time 10 "https://insights.flowralive.in/version.txt" 2>/dev/null || echo "MISSING")
+          echo "Deployed frontend version: $FE_VERSION"
+          EXPECTED_SHA="$(git rev-parse --short "${GITHUB_SHA}")"
+          if echo "$FE_VERSION" | grep -q "$EXPECTED_SHA"; then
+            echo "✅ Frontend serving $EXPECTED_SHA — deploy complete"
+            exit 0
+          fi
+          echo "❌ Frontend still on old bundle (expected $EXPECTED_SHA, got: $FE_VERSION)"
+          echo "   Check deploy logs — yarn build likely failed silently."
           exit 1

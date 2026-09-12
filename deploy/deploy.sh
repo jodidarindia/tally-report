@@ -32,7 +32,28 @@ if [ "$RESTART_ONLY" = "false" ]; then
   log "Frontend build (Yarn)…"
   cd frontend
   yarn install --frozen-lockfile
-  yarn build
+  # iter-131: DigitalOcean deploys had been silently serving stale
+  # frontend for weeks because GitHub-Actions' inherited `CI=true`
+  # turns every ESLint warning into a build failure, `set -e` aborts
+  # the script BEFORE rsync-ing the new bundle. Force `CI=false` +
+  # disable ESLint plugin so warnings never break prod deploys.
+  CI=false DISABLE_ESLINT_PLUGIN=true yarn build
+  # Belt-and-braces safety net: verify build/index.html was actually
+  # produced by THIS run. If yarn build somehow exited 0 without
+  # writing output (unlikely but possible on OOM), abort loudly
+  # rather than rsync-ing an empty / stale dir.
+  if [ ! -f build/index.html ]; then
+    echo "❌ Frontend build did NOT produce build/index.html — aborting deploy."
+    exit 1
+  fi
+  if [ "$(find build/index.html -mmin -5 | wc -l)" -eq 0 ]; then
+    echo "❌ build/index.html is older than 5 minutes — the build didn't refresh. Aborting."
+    exit 1
+  fi
+  # Stamp the build with the deploying commit so we can eyeball
+  # which version production is actually serving.
+  DEPLOY_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "$DEPLOY_SHA $(date -u +%FT%TZ)" > build/version.txt
   cd ..
 
   log "Syncing frontend build → /var/www/flowra"

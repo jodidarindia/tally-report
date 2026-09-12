@@ -12,7 +12,7 @@ export const PaymentsTab = ({ payments, onRecordPayment, onReconcile }) => {
   const [noteFor, setNoteFor] = useState(null);   // {payment_id, note}
 
   const totalAmount = payments.total_amount || 0;
-  const rows = payments.payments || [];
+  const rows = useMemo(() => payments.payments || [], [payments.payments]);
   const reconciledRows = useMemo(() => rows.filter(p => p.reconciled), [rows]);
   const unreconciledRows = useMemo(() => rows.filter(p => !p.reconciled), [rows]);
   const reconciledSum = reconciledRows.reduce((s, p) => s + (Number(p.amount) || 0), 0);
