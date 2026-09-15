@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.7"
-AGENT_TAG = "busy-1.5.7-invoice-fields"
+VERSION = "1.5.8"
+AGENT_TAG = "busy-1.5.8-cost-valuation"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -1185,7 +1185,12 @@ class BusyDataExtractor:
                 op_rate = opening.get("opening_rate", 0.0) or cost_price
                 op_val  = opening.get("opening_value",
                                       round(op_qty * op_rate, 2))
-                close_val = round(closing_qty * (sale_price or cost_price or op_rate), 2)
+                # iter-158 (v1.5.8) — closing_value must be valued at
+                # COST, not sale price. Busy's own StockStatus "Cl. Amt."
+                # column uses weighted-avg cost, so preferring sale_price
+                # here inflated every dashboard by 20-50%. Priority order
+                # now matches Busy's report semantics.
+                close_val = round(closing_qty * (cost_price or op_rate or sale_price), 2)
 
                 yield {
                     # Legacy keys — kept for backwards-compat with v1.5.1

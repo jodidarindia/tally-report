@@ -423,6 +423,13 @@ async def get_profit_loss(request: Request, fy: str = "", view: str = "annual"):
                 stock_ledger_close += abs(safe_num(l.get("closing_balance")))
                 stock_ledger_open += abs(safe_num(l.get("opening_balance")))
         inventory = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
+        # iter-158: dedupe per-FY Busy code drift before summing values,
+        # otherwise CA balance-sheet inventory line inflates ~5×.
+        try:
+            from routes.inventory import _dedupe_inventory_by_name
+            inventory = _dedupe_inventory_by_name(inventory)
+        except Exception:
+            pass
         if stock_ledger_close > 0:
             master_closing_stock = stock_ledger_close
             master_opening_stock = stock_ledger_open or sum(safe_num(i.get("opening_value", 0)) for i in inventory)

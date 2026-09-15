@@ -42,6 +42,55 @@ async def _get_branch_set(request, ctx):
     return set(bp) if bp else set()
 
 
+def _dedupe_inventory_by_name(items: list) -> list:
+    """iter-158: collapse duplicate inventory rows produced by Busy's
+    per-FY code drift (same real SKU lands as N docs, one per FY .bds
+    file, because Master1.Code differs across files).
+
+    Key: normalised item_name. Aggregation:
+      • quantity  → sum (each FY row carries its own snapshot)
+      • prices    → prefer the most-recently-updated non-zero value
+      • opening/closing_value → recomputed from summed qty × cost
+      • other scalar fields → picked from the newest row (last_updated)
+
+    Tally rows have unique item_id per SKU already, so 1-to-1 dedupe
+    is a no-op for them.
+    """
+    from typing import Any
+    def _num(v) -> float:
+        try: return float(v or 0)
+        except (TypeError, ValueError): return 0.0
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        key = ((it.get("item_name") or it.get("alias") or it.get("item_id") or "")
+               .strip().lower())
+        if not key:
+            continue
+        groups.setdefault(key, []).append(it)
+    out: list[dict[str, Any]] = []
+    for _, rows in groups.items():
+        if len(rows) == 1:
+            out.append(rows[0]); continue
+        # Newest row wins for scalar fields.
+        rows_sorted = sorted(
+            rows, key=lambda r: (r.get("last_updated") or r.get("fy") or ""), reverse=True,
+        )
+        head = dict(rows_sorted[0])
+        head["quantity"] = round(sum(_num(r.get("quantity")) for r in rows), 4)
+        # Prefer newest non-zero rates.
+        for fld in ("price", "sale_price", "cost_price", "standard_price", "purchase_price"):
+            head[fld] = next(
+                (_num(r.get(fld)) for r in rows_sorted if _num(r.get(fld)) > 0), 0.0,
+            )
+        cost = head.get("cost_price") or head.get("price") or 0.0
+        head["closing_value"] = round(head["quantity"] * cost, 2)
+        head["opening_quantity"] = round(sum(_num(r.get("opening_quantity")) for r in rows), 4)
+        head["opening_value"]    = round(sum(_num(r.get("opening_value")) for r in rows), 2)
+        head["_dedupe_group_size"] = len(rows)
+        out.append(head)
+    return out
+
+
 async def _get_purchase_branch_set(ctx):
     """Detect branch-like parties in purchase vouchers (non-sundry-creditor).
     These are internal transfers, not actual procurement from external suppliers.
@@ -424,6 +473,12 @@ async def get_inventory_items(
             total = None
             items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
 
+        # iter-158: collapse Busy's per-FY code drift so the UI lists
+        # 237 real SKUs instead of 1143 phantom duplicates.
+        items = _dedupe_inventory_by_name(items)
+        if total is None:
+            total = len(items)
+
         # If FY is specified, compute closing stock for that FY from vouchers
         if fy:
             base_q = _build_query(ctx, company_id)
@@ -530,12 +585,15 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
 
-        # v1.5.7 — Fast, exact count via count_documents. Previously we
-        # did `.to_list(10000)` then `len(items)`, which capped the
-        # Dashboard tile at 10 K for Busy tenants with 13.6 K+ items.
-        total_items = await db.inventory_items.count_documents(q)
-
         items = await db.inventory_items.find(q, {"_id": 0}).to_list(50000)
+
+        # iter-158: Busy stores each FY in a separate .bds file and
+        # regenerates Master1.Code across FY files, so the same real
+        # SKU lands as N Mongo docs (one per FY sync). Collapse by
+        # normalised item_name so dashboard counts + valuation match
+        # Busy's StockStatus report exactly.
+        items = _dedupe_inventory_by_name(items)
+        total_items = len(items)
 
         if not items:
             return APIResponse(
@@ -543,14 +601,21 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
                 data={"total_items": 0, "total_value": 0, "low_stock_items": 0, "categories": []}
             )
 
-        # Compute total value: prefer closing_value, then qty*price
+        # iter-158: prefer cost_price for valuation (matches Busy's
+        # weighted-avg Cl. Amt.). Only fall back to closing_value when
+        # cost_price is missing, and to qty*price as a last resort.
         total_value = 0.0
         for item in items:
-            cv = safe_num(item.get("closing_value"))
-            if cv > 0:
-                total_value += cv
+            qty  = safe_num(item.get("quantity"))
+            cost = safe_num(item.get("cost_price"))
+            if qty > 0 and cost > 0:
+                total_value += qty * cost
             else:
-                total_value += safe_num(item.get("quantity")) * safe_num(item.get("price"))
+                cv = safe_num(item.get("closing_value"))
+                if cv > 0:
+                    total_value += cv
+                else:
+                    total_value += qty * safe_num(item.get("price"))
 
         # Low stock: use movement-based analysis
         # Items with qty=0 but that had sales activity are out-of-stock (genuinely low)
@@ -605,6 +670,9 @@ async def generate_purchase_order(request: Request, company_id: Optional[str] = 
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        # iter-158: dedupe Busy's per-FY code drift so Movement Analysis
+        # doesn't show 1311 rows for a company that has 237 real SKUs.
+        inventory_items = _dedupe_inventory_by_name(inventory_items)
         sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
 
         po_ai = PurchaseOrderAI()
@@ -780,6 +848,9 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
                     }
 
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        # iter-158: dedupe Busy's per-FY code drift so Movement Analysis
+        # doesn't show 1311 rows for a company that has 237 real SKUs.
+        inventory_items = _dedupe_inventory_by_name(inventory_items)
         raw_sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
 
@@ -1006,6 +1077,9 @@ async def get_pivot_data(request: Request, group_by: str = "category", metric: s
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        # iter-158: dedupe Busy's per-FY code drift so Movement Analysis
+        # doesn't show 1311 rows for a company that has 237 real SKUs.
+        inventory_items = _dedupe_inventory_by_name(inventory_items)
 
         pivot_data = {}
         for item in inventory_items:
@@ -1051,6 +1125,9 @@ async def get_below_cost_sales(request: Request, fy: Optional[str] = None, compa
         q = _build_query(ctx, company_id)
 
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
+        # iter-158: dedupe Busy's per-FY code drift so Movement Analysis
+        # doesn't show 1311 rows for a company that has 237 real SKUs.
+        inventory_items = _dedupe_inventory_by_name(inventory_items)
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
         all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)

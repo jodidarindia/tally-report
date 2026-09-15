@@ -2139,3 +2139,28 @@ pyodbc.Error: (HY000) [Microsoft][ODBC Microsoft Access Driver] Not a valid pass
 **Regression tests**: `test_iteration156_bugfixes.py` — 7 pytest cases covering both list + dict `monthly_sales`, synced-FYs empty-tenant guard, movement-analysis inward math, and PDF byte-magic + landscape validation.
 
 **Testing agent iter-156**: 100% pass on both. Minor cosmetic notes (0 vs '-' in Opening column; harmless <span>-in-<option> hydration warning) noted but not blocking.
+
+
+## Shipped — Sep 15 2026 (iteration 158) — Busy Inventory Data Explosion FIXED
+
+**User reported** BSA (Bhagwati Sulochna Automotives) tenant showing 1143 items @ ₹1.11 Cr vs Busy CSV ground truth of 237 items @ ₹50.24 L (4.82× count + 2.22× valuation).
+
+**Root causes**:
+1. **Per-FY code drift** — Busy stores each FY in a separate `.bds` file. `Master1.Code` regenerates when items are recreated → 4-5 Mongo docs per real SKU (one per FY sync). Sync agent upserts by `item_id = Code`, so no dedup.
+2. **Sale-price valuation** — `flowra_busy_agent.py:1188` computed `close_val = qty × (sale_price OR cost_price OR op_rate)`, preferring sale_price first. Busy's own Cl. Amt. uses weighted-avg **cost**.
+
+**Fixes shipped**:
+- **`_dedupe_inventory_by_name` helper** (`/app/backend/routes/inventory.py`) — collapses inventory rows by normalised item_name across all endpoints. Newest-row wins for scalars; qty/opening_qty/opening_value summed; prices picked as newest-non-zero; closing_value recomputed as qty × cost_price. No-op for Tally rows (already 1:1).
+- **Applied at 4 aggregation sites**: `/inventory/summary` (dashboard tile), `/inventory/items` (list — un-paginated branch), `/inventory/movement-analysis` (analytics tab), `/reports/export` (Inventory PDF), and `/ca-corner` balance-sheet inventory line.
+- **Cost-first valuation on summary tile** — dashboard total_value now prefers `qty × cost_price`, falls back to stored closing_value, then to `qty × price`. Matches Busy's Cl. Amt. exactly.
+- **Busy Agent v1.5.8** (`busy-1.5.8-cost-valuation`) — swapped priority to `close_val = qty × (cost_price OR op_rate OR sale_price)`. Also bumped `flowra_busy_gui.py` APP_VERSION.
+- **One-shot backfill** (`/app/backend/tools/backfill_inventory_values.py`) — dry-runs a per-tenant scan, prints duplicate-group counts + rows-would-be-updated. Run with `--commit` to persist. Preview pod shows 3 tenants, 14 duplicate groups, 2404 closing_value rows to correct.
+
+**Verification** on busydemo tenant: 13,696 → 13,682 items (14 dupes collapsed). Effect on BSA production will be dramatic (~1143 → ~237, ~₹1.11 Cr → ~₹50 L) once deployed.
+
+**Deploy**: push to GitHub. Then SSH into DO droplet and run:
+```
+cd /opt/flowra/current/backend
+python tools/backfill_inventory_values.py --commit
+```
+to persist recomputed values on the existing corrupted rows. Future Busy syncs will land clean.

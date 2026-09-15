@@ -262,6 +262,12 @@ async def export_report(request: Request):
                     ]
 
             data = await db.inventory_items.find(extra, {"_id": 0}).to_list(10000)
+            # iter-158: collapse Busy per-FY duplicates before export
+            try:
+                from routes.inventory import _dedupe_inventory_by_name
+                data = _dedupe_inventory_by_name(data)
+            except Exception:
+                pass
             report_title = "Inventory Report"
         elif report_type == "sales":
             # iter-121: FY isn't stored on sales_vouchers as a scalar field —
