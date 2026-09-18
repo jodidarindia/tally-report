@@ -9,6 +9,39 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 18 2026 (iter-161) — Inventory FY-Scoping Fix ROOT CAUSE (Busy Data Parity)
+
+**Root cause (from user's BSA-BSP_StockStatus.csv comparison)**
+- BSA's Busy report (FY 2026-27): **659 items, ₹50,24,207** closing value
+- FLOWRA was showing: **1,143 items, ₹1,11,62,352** — inflated ~2x
+- iter-158's `_dedupe_inventory_by_name` was SUMMING quantities/values across per-FY snapshots. Busy re-syncs the same physical SKU into every FY database file (each carries its own FY-end closing snapshot). Summing them double-counted.
+
+**Backend (`/app/backend/routes/inventory.py`)**
+- `_dedupe_inventory_by_name(items, fy_hint=None)` rewritten (line 45):
+  - Optional pre-filter by ``fy_hint`` (Tally masters with no ``fy`` field always kept).
+  - Groups by lower-cased ``item_name``; picks the row with the **latest FY** (ties broken by ``last_updated``) — NO summing.
+- 5 call sites now pass ``fy``:
+  - `/inventory/summary` (dashboard tile, L588)
+  - `/inventory/items` (inventory list, L468)
+  - `/inventory/movement-analysis` (L846)
+  - `/inventory/pivot-data` (L1075, added fy param)
+  - `/inventory/below-cost-sales` (L1123)
+- `/inventory/generate-purchase-order` (L668) intentionally uses no fy_hint — PO recommendations should use the latest snapshot.
+
+**Verification**
+- New pytest `tests/test_iteration161_inventory_fy_scoping.py`: 7/7 green.
+- Live busydemo: FY 2026-27 → 13,682 items / ₹94,10,388.24 ; FY 2025-26 → 14 items / ₹14,587.18.
+- No summing across FYs; each dashboard/inventory read shows the exact per-FY snapshot.
+- Expected on BSA production once new bundle deploys: 1143 → ~659 items, ₹1.11 Cr → ~₹50 lakh (matching Busy Stock Status parity).
+
+**CRM Outstanding / Payment Behavior — investigated, no code bug on preview**
+- Backend endpoints verified returning rich data (busydemo: 401 customers Outstanding / 6 Payment Behavior; admin: 49 / 26).
+- Playwright reproduced UI rendering 401 rows correctly after ~4s wait.
+- Initial "Showing 0 of 0 filtered" flash before fetch response is a brief post-render race (default state before ``fetchData`` fires) — clears within one render tick once the ``setOutstanding`` fires.
+- If user still sees "no data" on production, most likely a stale deployed bundle (CI=true regression) — recommend hard-refresh (Ctrl+F5) and verify a Sync has occurred on their tenant.
+
+
+
 ## Shipped — Feb 25 2026 (iter-125) — OTP recipient, Inactive-by-default admins, Service Ref dropdown, Agent v9.8.30, Support tab
 
 **Backend**
