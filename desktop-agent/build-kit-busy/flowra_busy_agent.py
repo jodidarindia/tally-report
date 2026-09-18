@@ -54,7 +54,7 @@ from collections import defaultdict
 # Constants
 # ---------------------------------------------------------------------------
 VERSION = "1.5.9"
-AGENT_TAG = "busy-1.5.9-force-sync-button"
+AGENT_TAG = "busy-1.5.9-gui-force-sync-button"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -2721,10 +2721,24 @@ def run_daemon() -> int:
             logger.info(f"[daemon] FYs queued this tick: {fys_to_sync}")
 
             # Full sync every `interval_min` minutes; quick sync every 5 min.
+            # iter-159: GUI can drop a flag file at
+            # %LOCALAPPDATA%\Flowra\force_next_full_sync.flag to make the
+            # very next tick a *forced* full sync (bypasses the 7-day
+            # FULL_SKIP window). Flag is deleted after consumption.
+            force_flag = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra" / "force_next_full_sync.flag"
+            force_this_tick = force_flag.exists()
+            if force_this_tick:
+                try:
+                    force_flag.unlink()
+                    logger.info("[daemon] Force-full-sync flag consumed — bypassing 7-day skip window for this tick.")
+                except Exception as _e:
+                    logger.warning(f"[daemon] Could not delete force flag: {_e}")
+
             for fy in fys_to_sync:
-                if tick % (interval_min // quick_every_min or 1) == 0:
-                    logger.info(f"[daemon] Starting full sync for {company_display} | FY {fy}")
-                    agent.run_full_sync(company, company_display, fy, force=False)
+                if force_this_tick or tick % (interval_min // quick_every_min or 1) == 0:
+                    _mode = " (FORCED)" if force_this_tick else ""
+                    logger.info(f"[daemon] Starting full sync for {company_display} | FY {fy}{_mode}")
+                    agent.run_full_sync(company, company_display, fy, force=force_this_tick)
                 else:
                     logger.info(f"[daemon] Quick sales sync {company_display} | FY {fy}")
                     agent.run_quick_sales_sync(company, company_display, fy)

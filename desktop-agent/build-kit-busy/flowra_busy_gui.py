@@ -665,6 +665,16 @@ class FlowraBusyAgentGUI:
                                   font=("Segoe UI", 11, "bold"),
                                   padx=18, pady=10, cursor="hand2")
         self.btn_stop.pack(side="left", padx=4, pady=8)
+        # iter-159: manual force-full-sync trigger. Writes a flag file
+        # the daemon consumes on its next tick, bypassing the 7-day
+        # FULL_SKIP window. Works whether the daemon is currently
+        # running or waiting to be started.
+        self.btn_force = tk.Button(bar, text="🚀  Force Full Sync",
+                                   command=self.force_full_sync_next_tick,
+                                   bg="#F59E0B", fg="white", relief="flat",
+                                   font=("Segoe UI", 10, "bold"),
+                                   padx=14, pady=10, cursor="hand2")
+        self.btn_force.pack(side="left", padx=4, pady=8)
         tk.Button(bar, text="📁 Open Logs Folder",
                   command=lambda: os.startfile(str(LOG_DIR))
                   if os.name == "nt" else None,
@@ -1976,6 +1986,41 @@ class FlowraBusyAgentGUI:
 
 
     # ---- Agent lifecycle -------------------------------------------------
+    def force_full_sync_next_tick(self):
+        """iter-159: user clicks 'Force Full Sync' — drop a flag file
+        that the daemon reads on its next tick, bypassing the 7-day
+        FULL_SKIP window. Confirm first because a full sync on large
+        books re-uploads every master and can take several minutes."""
+        ok = messagebox.askyesno(
+            "Force Full Sync",
+            "Force a full sync on the next scheduled tick?\n\n"
+            "This bypasses the 7-day skip window and re-uploads every "
+            "master (inventory, ledgers, customers, opening balances) "
+            "plus every voucher in each FY. Use this after FLOWRA fixes, "
+            "Busy master data changes, or when support asks you to.\n\n"
+            "The sync starts within the next 5 minutes (or immediately "
+            "if the service is running its next quick-tick).",
+        )
+        if not ok:
+            return
+        try:
+            flag = APP_DIR / "force_next_full_sync.flag"
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text(f"requested_at={datetime.now().isoformat()}\n")
+            messagebox.showinfo(
+                "Force Full Sync queued",
+                "The next scheduled sync tick will run a FULL SYNC "
+                "(bypassing the 7-day skip window).\n\n"
+                "If the service is running, it will start within 5 "
+                "minutes. If the service is stopped, it will run as "
+                "soon as you click ▶ Start Sync Service.",
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Force sync failed",
+                f"Could not write the force flag:\n\n{e}",
+            )
+
     def start_agent(self):
         if self.proc and self.proc.poll() is None:
             return
