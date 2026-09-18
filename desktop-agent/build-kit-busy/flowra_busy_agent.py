@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.8"
-AGENT_TAG = "busy-1.5.8-cost-valuation"
+VERSION = "1.5.9"
+AGENT_TAG = "busy-1.5.9-force-sync-button"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -2642,6 +2642,9 @@ def run_daemon() -> int:
     except Exception:
         interval_min = 20
 
+    # iter-158/9: stamp the version + tag on every boot so support can
+    # tell at a glance which build a customer is running.
+    logger.info(f"[daemon] FLOWRA Busy Agent v{VERSION} ({AGENT_TAG})")
     logger.info(f"[daemon] boot. backend={backend} email={email} "
                 f"folder={folder} company={company} start_fy={start_fy} "
                 f"interval={interval_min}min")
