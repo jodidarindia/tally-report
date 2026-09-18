@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.5.9"
-AGENT_TAG = "busy-1.5.9-gui-force-sync-button"
+VERSION = "1.6.0"
+AGENT_TAG = "busy-1.6.0-inventory-reconcile"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"

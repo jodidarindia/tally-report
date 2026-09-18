@@ -1091,6 +1091,12 @@ _RECONCILE_MAP = {
     "customers":          {"collection": "customers",         "key": "customer_name"},
     "sundry_creditors":   {"collection": "sundry_creditors",  "key": "creditor_name"},
     "bank_cash_ledgers":  {"collection": "bank_cash_ledgers", "key": "ledger_name"},
+    # iter-160 — inventory reconciliation. Previously missing, so every
+    # SKU deleted in Busy/Tally stayed orphaned in Mongo AND Busy's
+    # per-FY Master1.Code regeneration piled up 5× duplicates. Now the
+    # agent's manifest of currently-live item_ids on every full sync
+    # tick will delete anything not in the list.
+    "inventory":          {"collection": "inventory_items",   "key": "item_id"},
 }
 
 

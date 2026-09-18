@@ -462,22 +462,17 @@ async def get_inventory_items(
                 ]
 
         query = _build_query(ctx, company_id, extra)
-        # Server-side pagination — when page_size > 0, return a page of
-        # results + a `total` count. Mobile inventory page hits this with
-        # page_size=50; desktop loads everything (page_size=0) for full sort.
+        # iter-160: always fetch all + dedupe + slice in memory so
+        # pagination shows real SKUs, not per-FY duplicates. Busy
+        # tenants top out at ~15k items — still fits comfortably.
+        all_items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
+        all_items = _dedupe_inventory_by_name(all_items)
+        total = len(all_items)
         if page_size and page_size > 0:
-            total = await db.inventory_items.count_documents(query)
             skip = max(0, (page - 1) * page_size)
-            items = await db.inventory_items.find(query, {"_id": 0}).skip(skip).limit(page_size).to_list(page_size)
+            items = all_items[skip:skip + page_size]
         else:
-            total = None
-            items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
-
-        # iter-158: collapse Busy's per-FY code drift so the UI lists
-        # 237 real SKUs instead of 1143 phantom duplicates.
-        items = _dedupe_inventory_by_name(items)
-        if total is None:
-            total = len(items)
+            items = all_items
 
         # If FY is specified, compute closing stock for that FY from vouchers
         if fy:
