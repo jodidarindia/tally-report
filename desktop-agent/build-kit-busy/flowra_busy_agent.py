@@ -2109,7 +2109,8 @@ class FlowraBusySyncAgent:
 
         self.running = True
         start = time.time()
-        self.set_status(f"Starting full sync for {company_name} | FY {fy}...")
+        _mode_hint = " (forced)" if force else ""
+        self.set_status(f"Starting full sync for {company_name} | FY {fy}{_mode_hint}...")
         self.report_progress("sync_started", company_id=company_id,
                              company_name=company_name, financial_year=fy,
                              source="busy")
@@ -2430,18 +2431,34 @@ def run_gui():
             return None
         return fy
 
-    def do_sync():
+    def do_sync(force: bool = False):
         cid, cname = _selected_company()
         if not cid:
             return
         fy = _current_fy()
         if not fy:
             return
-        tree.set(cid, "status", "Syncing...")
+        # iter-158: when force=True we bypass the 7-day FULL_SKIP guard
+        # (see FULL_SKIP_WINDOW_DAYS). Ask the user to confirm because a
+        # forced full sync re-uploads every master + voucher and can
+        # take several minutes on large books.
+        if force:
+            ok = messagebox.askyesno(
+                "Confirm forced full sync",
+                f"Force a full sync for '{cname}' | FY {fy}?\n\n"
+                f"This bypasses the {FULL_SKIP_WINDOW_DAYS}-day skip window and re-uploads "
+                f"every master (inventory, ledgers, customers, opening balances) plus every "
+                f"voucher in the FY. Use only after correcting Busy master data or when the "
+                f"FLOWRA team asks you to.\n\n"
+                f"Continue?",
+            )
+            if not ok:
+                return
+        tree.set(cid, "status", "Force Syncing..." if force else "Syncing...")
 
         def sync_thread():
             try:
-                agent.run_full_sync(cid, cname, fy)
+                agent.run_full_sync(cid, cname, fy, force=force)
                 tree.set(cid, "status", "Done")
                 tree.set(cid, "last_sync", now_ist_display())
             except Exception as e:
@@ -2463,7 +2480,11 @@ def run_gui():
             daemon=True,
         ).start()
 
-    ttk.Button(btn_frame, text="Full Sync", command=do_sync, style="Accent.TButton").pack(side="left", padx=(0, 5))
+    ttk.Button(btn_frame, text="Full Sync", command=lambda: do_sync(force=False), style="Accent.TButton").pack(side="left", padx=(0, 5))
+    # iter-158: forced full sync — bypasses the 7-day FULL_SKIP window.
+    # Deliberately styled as plain (not Accent) so the everyday
+    # "Full Sync" button stays the primary CTA.
+    ttk.Button(btn_frame, text="Full Sync (Force)", command=lambda: do_sync(force=True)).pack(side="left", padx=(0, 5))
     ttk.Button(btn_frame, text="Quick Sales Sync", command=do_quick_sync).pack(side="left", padx=(0, 5))
     ttk.Button(btn_frame, text="Refresh", command=lambda: (refresh_companies(), refresh_fys())).pack(side="right")
 
