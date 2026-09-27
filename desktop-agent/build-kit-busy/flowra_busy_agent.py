@@ -54,7 +54,7 @@ from collections import defaultdict
 # Constants
 # ---------------------------------------------------------------------------
 VERSION = "1.6.0"
-AGENT_TAG = "busy-1.6.0-inventory-reconcile"
+AGENT_TAG = "busy-1.6.0-group-hierarchy-walk"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -835,7 +835,33 @@ class BusyDataExtractor:
         return self._code_map.get(str(code), f"Code:{code}")
 
     def _resolve_category(self, parent_grp_code) -> str:
-        return self._group_map.get(str(parent_grp_code), "other")
+        """Return the root account category for a group code.
+
+        v1.6.0 — walks up the ``ParentGrp`` chain when the code isn't a
+        Busy built-in root (101-129). BSA-style books nest their debtors/
+        creditors under user-created sub-groups (e.g. "SUNDRY DEBTORS - JBP")
+        whose ParentGrp points to the built-in 116/117. Without the walk,
+        every party under a sub-group resolves to "other" and gets dropped
+        from customer/creditor/ledger sync.
+        """
+        code = str(parent_grp_code or "").strip()
+        seen: set = set()
+        while code and code not in seen:
+            seen.add(code)
+            # Cached MasterType=1 root → category direct hit.
+            cat = self._group_map.get(code)
+            if cat and cat != "other":
+                return cat
+            # Direct ACCOUNT_GROUP_MAP hit for the root codes.
+            try:
+                built_in = ACCOUNT_GROUP_MAP.get(int(code))
+                if built_in:
+                    return built_in
+            except (ValueError, TypeError):
+                pass
+            # Walk up one level via _parent_map.
+            code = str(self._parent_map.get(code, "") or "").strip()
+        return "other"
 
     # ── Master Data Extractors ──────────────────────────
 

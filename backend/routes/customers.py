@@ -56,6 +56,73 @@ async def _resolve_company_name(ctx) -> str:
     return ""
 
 
+async def _synthesize_missing_debtors_from_sales(
+    synced_customers: list, all_sales: list,
+    req_tenant_id: str, req_company_id: str,
+) -> list:
+    """iter-162: Busy safety-net for group-hierarchy misses.
+
+    Some Busy books nest Sundry Debtors under user-created sub-groups
+    (e.g. "SUNDRY DEBTORS - JBP"). Older agent builds (<= v1.5.9) had a
+    non-walking ``_resolve_category`` that treated those sub-groups as
+    "other" and skipped every party under them — so only the 2-ish
+    debtors sitting directly under 116 landed in Mongo.
+
+    Fix: if the ratio of synced debtors to distinct sale parties is
+    suspicious (< 20 % of distinct parties, or fewer than 10 synced
+    when > 10 distinct sale parties exist), we assume the agent missed
+    debtors and synthesize a customer row for every distinct sale
+    party absent from ``synced_customers``. The synthesized rows carry
+    ``ledger_group='Sundry Debtors'`` + ``customer_id=synthesized-*``
+    so CRM Outstanding / Payment Behavior / Targets can render them.
+
+    Returns the augmented list (never smaller than input). No-op for
+    healthy Tally / newer-agent Busy syncs.
+    """
+    synced_names = {(c.get('customer_name') or '').strip().lower()
+                    for c in synced_customers if (c.get('customer_name') or '').strip()}
+    sale_parties: dict[str, str] = {}
+    for v in all_sales:
+        name = (v.get('party_name') or '').strip()
+        if name and name.lower() not in synced_names:
+            sale_parties.setdefault(name.lower(), name)
+
+    if not sale_parties:
+        return synced_customers
+    # Trigger only when the synced set is suspiciously small vs. sale parties.
+    if len(synced_customers) >= max(10, int(len(sale_parties) * 0.20)):
+        return synced_customers
+
+    logger.warning(
+        f"iter-162 debtor safety-net: synced_customers={len(synced_customers)} "
+        f"but {len(sale_parties)} distinct sale parties missing — synthesizing"
+    )
+    synth = []
+    for lname, canonical in sale_parties.items():
+        synth.append({
+            "customer_name": canonical,
+            "customer_id": f"synthesized-{lname[:24]}",
+            "ledger_group": "Sundry Debtors",
+            "group_id": "",
+            "group_name": "Sundry Debtors",
+            "phone": "", "mobile_number": "", "whatsapp_number": "",
+            "email": "", "contact_person": "",
+            "address": "", "address_line_1": "", "address_line_2": "",
+            "address_line_3": "", "address_line_4": "",
+            "city": "", "station": "", "pin_code": "",
+            "state": "", "country": "India",
+            "gst_number": "", "pan_number": "",
+            "salesman_id": "", "salesman_name": "",
+            "salesman_mobile_number": "", "salesman_whatsapp_number": "",
+            "price_category": "0",
+            "outstanding_amount": 0, "opening_balance": 0,
+            "closing_balance": 0, "balance": 0,
+            "tenant_id": req_tenant_id, "company_id": req_company_id,
+            "_synthesized": True,
+        })
+    return synced_customers + synth
+
+
 router = APIRouter()
 
 
@@ -170,6 +237,13 @@ async def get_customer_outstanding(
             all_payments = filter_branch_parties(all_payments, bp_lower)
             all_credit_notes = filter_branch_parties(all_credit_notes, bp_lower)
             all_journals = filter_branch_parties(all_journals, bp_lower)
+
+        # iter-162 safety-net: hydrate customers from sale-party names when the
+        # synced list is suspiciously small (old Busy agent hierarchy miss).
+        synced_customers = await _synthesize_missing_debtors_from_sales(
+            synced_customers, all_sales,
+            ctx.get("tenant_id", ""), ctx.get("company_id", "") or "",
+        )
 
         # Compute FY boundaries
         fy_start_str = fy_start_iso(fy)
@@ -1045,6 +1119,12 @@ async def get_payment_behavior(request: Request, customer: Optional[str] = None,
         if branch_parties:
             branch_set = set(p.lower() for p in branch_parties)
             synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
+
+        # iter-162 safety-net (see /customers/outstanding).
+        synced_customers = await _synthesize_missing_debtors_from_sales(
+            synced_customers, all_sales_raw,
+            ctx.get("tenant_id", ""), ctx.get("company_id", "") or "",
+        )
 
         # FY boundary for opening balance calculation
         fy_start_str = fy_start_iso(fy)

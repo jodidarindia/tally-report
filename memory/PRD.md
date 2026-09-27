@@ -9,6 +9,40 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 18 2026 (iter-162) — Busy Group-Hierarchy Fix (BSA Customer Loss)
+
+**User symptom (BSA tenant on production)**
+- CRM Outstanding tab showed only **2 customers** ("A" and "JAIN AUTOMOBILES JANJGIR"); Salesman → Map Customers dropdown ditto — every other party invisible.
+
+**Root cause**
+- Busy books nest debtors/creditors under **user-created sub-groups** (e.g. "SUNDRY DEBTORS - JBP" — code 5001, ParentGrp=116).
+- Agent's ``_resolve_category`` only checked the immediate ``ParentGrp`` against Busy's built-in ``ACCOUNT_GROUP_MAP`` (codes 101-129). Any code > 129 → returned "other" → customer sync **skipped** the party entirely.
+- Only the 2 debtors whose ``ParentGrp`` was 116 directly ever landed in Mongo.
+
+**Fix (dual-layer)**
+1. **Agent — `desktop-agent/build-kit-busy/flowra_busy_agent.py` v1.6.0**
+   - ``_resolve_category`` now **walks up the ``_parent_map`` chain** until it hits a code that resolves to a built-in root category. Cycle-safe (``seen`` guard).
+   - ``AGENT_TAG = "busy-1.6.0-group-hierarchy-walk"``.
+   - **User must rebuild the .exe on their Windows machine** (`build-kit-busy/build.bat`) before the agent-side fix reaches their production install.
+
+2. **Backend — `backend/routes/customers.py::_synthesize_missing_debtors_from_sales` (server-side safety-net)**
+   - Fires on `/customers/outstanding`, `/customers/payment-behavior`, `/customers/targets`.
+   - Trigger: ``len(synced_customers) < max(10, 20% of distinct sale parties)``.
+   - When triggered: for every party found in ``sales_vouchers`` but absent from ``customers`` collection, synthesize a full-schema row (``ledger_group="Sundry Debtors"``, ``customer_id="synthesized-*"``, ``_synthesized=True``). Non-destructive — no DB write.
+   - Healthy Tally/newer-Busy tenants are unaffected (verified: busydemo/admin/demo → 0 synthesized rows).
+
+**Verification**
+- New pytests `tests/test_iteration162_busy_group_walk.py` (7 cases) + `tests/test_iteration162_debtor_safety_net.py` (5 cases): 12/12 green.
+- Full suite iter-161 + iter-162: **19/19 pytest** passed.
+- Live pod: busydemo (401 customers, healthy) — synthesized=0. Admin (49) — synthesized=0. Demo (46) — synthesized=0. Safety-net does not misfire on healthy tenants.
+
+**Impact on BSA (after deploy)**
+- BSA Outstanding will jump from 2 → hundreds of customers (all sale-party names).
+- Salesman → Map Customers dropdown will show every distinct sale party.
+- Once agent v1.6.0 is rebuilt + re-synced, the ``customers`` collection itself gets populated correctly (with full addresses/GST/contact enrichment); the safety-net stops firing.
+
+
+
 ## Shipped — Feb 18 2026 (iter-161) — Inventory FY-Scoping Fix ROOT CAUSE (Busy Data Parity)
 
 **Root cause (from user's BSA-BSP_StockStatus.csv comparison)**
