@@ -620,6 +620,16 @@ async def get_salesman_performance_detailed(
         master_list = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}
 
+        # iter-163: inventory-master lookup for product_category + ABC pill.
+        # Deduped so BSA's per-FY duplicates don't override each other.
+        from routes.inventory import _dedupe_inventory_by_name
+        _inv_docs = await db.inventory_items.find(
+            q, {"_id": 0, "item_name": 1, "stock_group": 1, "abc_category": 1, "fy": 1, "last_updated": 1},
+        ).to_list(20000)
+        _inv_docs = _dedupe_inventory_by_name(_inv_docs)
+        _inv_lookup = {(d.get("item_name") or "").strip().lower(): d for d in _inv_docs}
+
+
         # Build customer-to-salesman mapping for the specific FY
         customer_to_salesman = {}
         for m in master_list:
@@ -752,6 +762,12 @@ async def get_salesman_performance_detailed(
             # Items sold by this salesman
             items = salesman_items.get(salesman, {})
             items_breakdown = sorted(items.values(), key=lambda x: x["total_revenue"], reverse=True)
+            # iter-163: enrich each item with product_category + ABC pill
+            # from the tenant's inventory master (matches Inventory tab).
+            for it in items_breakdown:
+                meta = _inv_lookup.get((it.get("item_name") or "").strip().lower(), {})
+                it["product_category"] = meta.get("stock_group") or ""
+                it["abc_category"] = meta.get("abc_category") or ""
 
             performance.append({
                 "salesman_name": salesman,

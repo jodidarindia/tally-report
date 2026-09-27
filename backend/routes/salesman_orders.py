@@ -93,7 +93,12 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
                     {"part_number": {"$regex": fuzzy, "$options": "i"}},
                     {"aliases": {"$regex": fuzzy, "$options": "i"}},
                 ]
-        items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(2000)
+        items = await db.inventory_items.find(inv_q, {"_id": 0}).sort("item_name", 1).to_list(20000)
+        # iter-163: FY-scope so Busy per-FY snapshots don't double-list a
+        # SKU (BSA-style 2 rows per item). Keeps the latest FY's closing
+        # snapshot — matches the Inventory / Movement Analysis screens.
+        from routes.inventory import _dedupe_inventory_by_name
+        items = _dedupe_inventory_by_name(items)
 
         # Last-sale-price fallback: when Tally master STANDARDPRICE is unset,
         # surface the most recent sale rate so salesmen can quote without
@@ -138,6 +143,7 @@ async def get_catalog(request: Request, search: Optional[str] = None, company_id
                 "sale_price_source": source,
                 "unit": it.get("unit", ""),
                 "stock_group": it.get("stock_group", ""),
+                "abc_category": it.get("abc_category") or "",
             })
         return APIResponse(success=True, data={"items": catalog, "total": len(catalog)})
     except Exception as e:
@@ -162,8 +168,10 @@ def _voucher_party_norm(v) -> str:
 async def _build_inventory_lookup(q: dict) -> dict:
     """item_name (lowercased) → {price, stock_qty, unit, part_number, item_id, ...}.
     Joined once and reused by both suggestion endpoints."""
-    from routes.inventory import _last_sale_price_map
+    from routes.inventory import _last_sale_price_map, _dedupe_inventory_by_name
     items = await db.inventory_items.find(q, {"_id": 0}).to_list(20000)
+    # iter-163: same FY-scoping as /catalog (see above).
+    items = _dedupe_inventory_by_name(items)
     try:
         lsp = await _last_sale_price_map(q)
     except Exception:
@@ -188,6 +196,7 @@ async def _build_inventory_lookup(q: dict) -> dict:
             "last_sale_price": last_price,
             "unit": it.get("unit", ""),
             "stock_group": it.get("stock_group", ""),
+            "abc_category": it.get("abc_category") or "",
         }
     return out
 
@@ -282,6 +291,7 @@ async def customer_purchase_history(
                 "standard_price": inv_meta.get("standard_price", 0),
                 "unit": inv_meta.get("unit", ""),
                 "stock_group": inv_meta.get("stock_group", ""),
+                "abc_category": inv_meta.get("abc_category", ""),
                 "part_number": inv_meta.get("part_number", ""),
                 "item_id": inv_meta.get("item_id", ""),
             })
@@ -521,6 +531,24 @@ async def get_my_stats(request: Request, fy: Optional[str] = None, company_id: O
         if expected_target > 0:
             achievement = round(total_achieved / expected_target * 100, 1)
 
+        # iter-163: enrich items_sold with product_category + ABC pill
+        # for the Salesman → Item-wise view. Read the tenant's inventory
+        # master once and map by lowercase item_name.
+        inv_docs = await db.inventory_items.find(
+            q, {"_id": 0, "item_name": 1, "stock_group": 1, "abc_category": 1, "fy": 1, "last_updated": 1},
+        ).to_list(20000)
+        from routes.inventory import _dedupe_inventory_by_name
+        inv_docs = _dedupe_inventory_by_name(inv_docs)
+        inv_lookup = {(d.get("item_name") or "").strip().lower(): d for d in inv_docs}
+        items_sold_enriched = []
+        for it in sorted(per_item.values(), key=lambda x: -x["revenue"])[:50]:
+            meta = inv_lookup.get((it["item_name"] or "").strip().lower(), {})
+            items_sold_enriched.append({
+                **it,
+                "product_category": meta.get("stock_group") or "",
+                "abc_category": meta.get("abc_category") or "",
+            })
+
         return APIResponse(success=True, data={
             "salesman_name": master.get("salesman_name", sname),
             "fy": target_fy,
@@ -533,7 +561,7 @@ async def get_my_stats(request: Request, fy: Optional[str] = None, company_id: O
             "achievement_percentage": achievement,
             "total_customers": len(per_customer),
             "customers": sorted(per_customer.values(), key=lambda x: -x["amount"]),
-            "items_sold": sorted(per_item.values(), key=lambda x: -x["revenue"])[:50],
+            "items_sold": items_sold_enriched,
         })
     except Exception as e:
         logger.error(f"my-stats error: {e}")

@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.6.0"
-AGENT_TAG = "busy-1.6.0-group-hierarchy-walk"
+VERSION = "1.6.1"
+AGENT_TAG = "busy-1.6.1-stockgroup-name-fix"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -811,13 +811,20 @@ class BusyDataExtractor:
         reader = self._get_reader(db_path)
         try:
             for row in reader.iter_rows("Master1"):
-                code = row.get("Code", "")
+                # v1.6.1: normalise the key to str — access_parser returns
+                # ``Code`` as int on some Busy builds (e.g. licensed Busy 21),
+                # so downstream ``.get(str(code))`` missed every lookup and
+                # ``stock_group`` came out as ``Code:23134``. BSA-class fix.
+                code = str(row.get("Code") or "").strip()
+                if not code:
+                    continue
                 mtype = str(row.get("MasterType") or "")
                 name = (row.get("Name") or "").strip()
                 alias = (row.get("Alias") or "").strip()
-                parent = row.get("ParentGrp", "")
+                parent = str(row.get("ParentGrp") or "").strip()
 
                 # Items (MasterType=6) — prefer human-readable Alias.
+                # Stock groups (MasterType=5) — Name is the display label.
                 display = (alias if mtype == "6" and alias else name)
                 self._code_map[code] = display
                 self._parent_map[code] = parent

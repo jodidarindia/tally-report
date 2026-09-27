@@ -48,8 +48,8 @@ def test_agent_source_file_has_walker():
     assert "def _resolve_category" in src
     assert "while code and code not in seen" in src
     assert "self._parent_map.get(code" in src
-    # Version bumped to 1.6.0 for this fix.
-    assert re.search(r'VERSION\s*=\s*"1\.6\.0"', src), "agent VERSION must be 1.6.0"
+    # Version bumped to 1.6.1 for stock-group name-resolution fix.
+    assert re.search(r'VERSION\s*=\s*"1\.6\.[01]"', src), "agent VERSION must be 1.6.0+"
 
 
 def test_direct_root_code_resolves():

@@ -9,6 +9,40 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Backend**: FastAPI behind nginx, /api/health probe live
 - **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
 
+## Shipped — Feb 18 2026 (iter-163) — Salesman screens: Product Category + ABC pill
+
+**User ask**
+- Salesman menu → Item-wise Sales: add "Category (from Busy)" + "ABC" columns.
+- Salesman login → New Order (add order): same two chips next to each item.
+- Verify inventory stock quantity shown to salesman during order entry.
+
+**Backend enrichment**
+- `/salesman-orders/catalog` (`backend/routes/salesman_orders.py`)
+  - Now includes `abc_category` in response payload.
+  - `to_list(2000)` → `to_list(20000)` (BSA/NAV-sized books were alphabetically truncated).
+  - Applies `_dedupe_inventory_by_name` — BSA per-FY duplicates collapsed so the salesman never sees the same SKU twice with contradictory stock qty.
+- `_build_inventory_lookup` (feeds `/customer-history` + `/related-items`): same dedupe + abc_category.
+- `/salesman-orders/my-stats` (`items_sold` list): joined with inventory master → `product_category` + `abc_category` per row.
+- `/salesman/performance-detailed` (`backend/routes/salesman.py`): `_inv_lookup` built once per request → each `items_sold` row enriched.
+
+**Frontend**
+- `SalesmanPerformance.js` → Item-Wise Sales table gains 2 columns: **Category** (truncated with tooltip) + **ABC** (colored pill via shared `ABC_COLORS`). colSpan updated 5 → 7. `data-testid=item-category-*` / `item-abc-*`.
+- `SalesmanOrderApp.js` → new shared `CategoryAbcChips` sub-component; wired into all 3 row components (`RepeatRow`, `SuggestRow`, `CatalogRow`). `data-testid=row-category-chip` / `row-abc-chip`.
+- ABC pill styling identical to Inventory tab (A=green, B=blue, C=amber, D=slate).
+
+**Busy Agent v1.6.1 — stock-group name resolution**
+- `_load_code_map` now stores keys as `str(code)`. Root cause: `access_parser` returned `Master1.Code` as an int on licensed Busy 21, so downstream `.get(str(code))` looked up a string against an int-keyed dict and missed every entry. Result: `stock_group='Code:23134'` in Mongo instead of "Bearings" / "Filters".
+- Fix is idempotent — will simply start resolving names on the next sync tick once the .exe is rebuilt.
+- Version bumped agent → v1.6.1, tag = `busy-1.6.1-stockgroup-name-fix`.
+
+**Verified**
+- 26/26 pytests green (7 iter-161 + 12 iter-162 + 7 iter-163).
+- Live catalog (busydemo): 13,682 items, 0 duplicate names, real `stock_group` names, `abc_category` distribution A=250 B=365 C=318 D=12,749.
+- E2E screenshot on salesman "New Order" screen (Rajesh Kumar → Sharma Lubricants → Patel Motor Works): 12 category chips + 12 ABC pills rendered per row (Batteries · A, Filters · B, Coolant · B, Engine Oil · A, Plugs · C, Hydraulic Oil · A).
+- Stock quantities on order-entry screen verified against inventory master — BATTERY 12V 100AH stock=35 Nos, HYDRAULIC OIL 68 20LT stock=103, SPARK PLUG NGK stock=102 Nos — matches `db.inventory_items.quantity` exactly.
+
+
+
 ## Shipped — Feb 18 2026 (iter-162) — Busy Group-Hierarchy Fix (BSA Customer Loss)
 
 **User symptom (BSA tenant on production)**

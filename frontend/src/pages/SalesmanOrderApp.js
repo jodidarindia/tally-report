@@ -467,6 +467,33 @@ function SectionEmpty({ icon, title, hint }) {
 }
 
 /* Repeat-order row — shows "Last bought" + previous qty + 1-tap add */
+/* iter-163: keep the ABC pill visually identical to the Inventory tab. */
+const ABC_COLORS = { A: '#10b981', B: '#3b82f6', C: '#f59e0b', D: '#94a3b8' };
+function CategoryAbcChips({ item }) {
+  return (
+    <>
+      {item.stock_group && (
+        <span
+          className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 truncate max-w-[110px]"
+          title={item.stock_group}
+          data-testid="row-category-chip"
+        >
+          {item.stock_group}
+        </span>
+      )}
+      {item.abc_category && (
+        <span
+          className="text-[9px] px-1 py-0.5 rounded border font-bold"
+          style={{color: ABC_COLORS[item.abc_category], background: ABC_COLORS[item.abc_category]+'15', borderColor: ABC_COLORS[item.abc_category]+'40'}}
+          data-testid="row-abc-chip"
+        >
+          {item.abc_category}
+        </span>
+      )}
+    </>
+  );
+}
+
 function RepeatRow({ item, inCart, onAdd, testid }) {
   const lastQty = Math.round(item.last_qty || item.avg_qty_per_order || 1);
   return (
@@ -475,11 +502,12 @@ function RepeatRow({ item, inCart, onAdd, testid }) {
         <div className="min-w-0 flex-1">
           <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
           {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
             <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
             <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>
               Stock: {item.stock_qty} {item.unit}
             </span>
+            <CategoryAbcChips item={item} />
             <span className="text-slate-400">
               Last <strong className="text-slate-600">{formatLast(item.last_date)}</strong>
               {' · '}{Math.round(item.last_qty || 0)} {item.unit}
@@ -522,11 +550,12 @@ function SuggestRow({ item, inCart, onAdd, testid }) {
           </div>
           <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
           {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
-          <div className="flex flex-wrap gap-x-3 text-[10px] text-slate-500 mt-0.5">
+          <div className="flex flex-wrap items-center gap-x-3 text-[10px] text-slate-500 mt-0.5">
             <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
             <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>
               Stock: {item.stock_qty} {item.unit}
             </span>
+            <CategoryAbcChips item={item} />
           </div>
         </div>
         <button onClick={onAdd} disabled={inCart}
@@ -546,10 +575,10 @@ function CatalogRow({ item, inCart, onAdd, testid }) {
       <div className="min-w-0 flex-1">
         <div className="text-xs font-semibold text-slate-800 truncate">{item.item_name}</div>
         {item.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {item.part_number}</div>}
-        <div className="flex gap-3 text-[10px] text-slate-500 flex-wrap">
+        <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
           <span className="font-semibold text-slate-700">Rs.{Number(item.price||0).toLocaleString('en-IN')}</span>
           <span className={item.stock_qty>0?'text-green-600':'text-red-500'}>Stock: {item.stock_qty} {item.unit}</span>
-          {item.stock_group && <span className="hidden sm:inline">{item.stock_group}</span>}
+          <CategoryAbcChips item={item} />
         </div>
       </div>
       <button onClick={onAdd} disabled={inCart}

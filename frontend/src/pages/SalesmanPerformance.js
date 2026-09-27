@@ -11,6 +11,9 @@ import SalesmanOrderApp from './SalesmanOrderApp';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
 
+// iter-163: keep the ABC pill visually identical to the Inventory tab.
+const ABC_COLORS = { A: '#10b981', B: '#3b82f6', C: '#f59e0b', D: '#94a3b8' };
+
 const fmt = (n) => {
   if (n === undefined || n === null || n === 0) return '0';
   if (n >= 10000000) return `${(n / 10000000).toFixed(2)} Cr`;
@@ -488,6 +491,8 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                         <thead className="bg-slate-50">
                           <tr>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600">Item Name</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600">Category</th>
+                            <th className="px-3 py-2.5 text-center text-xs font-semibold text-slate-600">ABC</th>
                             <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Qty Sold</th>
                             <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Revenue</th>
                             <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600">Transactions</th>
@@ -498,13 +503,26 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                           {items.length > 0 ? items.map((item, itemIdx) => (
                             <tr key={itemIdx} className="border-t border-slate-50 hover:bg-slate-25" data-testid={`item-row-${idx}-${itemIdx}`}>
                               <td className="px-3 py-2.5 font-medium text-slate-800">{item.item_name || '-'}</td>
+                              <td className="px-3 py-2.5 text-slate-600 truncate max-w-[180px]" data-testid={`item-category-${idx}-${itemIdx}`} title={item.product_category || ''}>
+                                {item.product_category || <span className="text-slate-300">—</span>}
+                              </td>
+                              <td className="px-3 py-2.5 text-center" data-testid={`item-abc-${idx}-${itemIdx}`}>
+                                {item.abc_category ? (
+                                  <span
+                                    className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border"
+                                    style={{color: ABC_COLORS[item.abc_category], background: ABC_COLORS[item.abc_category]+'15', borderColor: ABC_COLORS[item.abc_category]+'40'}}
+                                  >
+                                    {item.abc_category}
+                                  </span>
+                                ) : <span className="text-slate-300">—</span>}
+                              </td>
                               <td className="px-3 py-2.5 text-right font-semibold text-slate-800">{(item.total_quantity || 0).toFixed(1)}</td>
                               <td className="px-3 py-2.5 text-right font-semibold text-blue-700">Rs.{fmt(item.total_revenue)}</td>
                               <td className="px-3 py-2.5 text-right text-slate-600">{item.transaction_count || 0}</td>
                               <td className="px-3 py-2.5 text-right text-slate-600">{item.transaction_count > 0 ? ((item.total_quantity || 0) / item.transaction_count).toFixed(1) : '0'}</td>
                             </tr>
                           )) : (
-                            <tr><td colSpan="5" className="px-3 py-6 text-center text-slate-400">No item-wise data. Voucher line items needed.</td></tr>
+                            <tr><td colSpan="7" className="px-3 py-6 text-center text-slate-400">No item-wise data. Voucher line items needed.</td></tr>
                           )}
                         </tbody>
                       </table>
