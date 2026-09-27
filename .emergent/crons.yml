@@ -1,0 +1,9 @@
+crons:
+  - name: daily-order-digest
+    description: "Emails each user-admin a summary of today's salesman orders every day at 8pm IST"
+    cron: "0 20 * * *"
+    timezone: "Asia/Kolkata"
+    endpoint: "{{BASE_URL}}/api/cron/daily-order-digest"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

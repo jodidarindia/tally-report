@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Package, Clock, CheckCircle2, XCircle, Search, Plus, X,
   User, FileText, ArrowRight, Pause, AlertTriangle, Hash, MessageSquare,
-  Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft, Sparkles,
+  Calendar, ChevronDown, Minus, Eye, Check, Lock, ChevronLeft, Sparkles, Share2,
 } from 'lucide-react';
 import { fuzzyMatchAny } from '../utils/fuzzySearch';
 
@@ -101,8 +101,8 @@ function SalesmanView({ companyId, selectedFY }) {
         <div className="space-y-2" data-testid="my-orders">
           {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No orders yet</p>}
           {orders.map(o=>(
-            <div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3 cursor-pointer hover:border-slate-300" onClick={()=>setViewOrder(o)} data-testid={`order-${o.order_id}`}>
-              <div className="flex items-center justify-between gap-2">
+            <div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3 hover:border-slate-300" data-testid={`order-${o.order_id}`}>
+              <div className="flex items-center justify-between gap-2 cursor-pointer" onClick={()=>setViewOrder(o)}>
                 <div className="min-w-0">
                   <div className="text-xs font-mono text-slate-400">{o.order_id}</div>
                   <div className="text-sm font-semibold text-slate-900 truncate">{o.customer_name}</div>
@@ -117,6 +117,9 @@ function SalesmanView({ companyId, selectedFY }) {
                 <span>{toIST(o.created_at)}</span>
               </div>
               {o.invoice_number && <div className="text-[10px] text-green-600 mt-0.5">Invoice: {o.invoice_number}</div>}
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100">
+                <WhatsAppShareButton order={o} hdr={hdr} testid={`share-${o.order_id}`}/>
+              </div>
             </div>
           ))}
         </div>
@@ -205,8 +208,8 @@ function AdminOrderView({ companyId, selectedFY }) {
         <div className="space-y-2">
           {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No orders</p>}
           {orders.map(o=>(
-            <div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3 cursor-pointer hover:border-slate-300 transition" onClick={()=>setViewOrder(o)} data-testid={`order-${o.order_id}`}>
-              <div className="flex items-center justify-between gap-2">
+            <div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3 hover:border-slate-300 transition" data-testid={`order-${o.order_id}`}>
+              <div className="flex items-center justify-between gap-2 cursor-pointer" onClick={()=>setViewOrder(o)}>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2"><span className="text-xs font-mono text-slate-400">{o.order_id}</span><StatusBadge status={o.status}/></div>
                   <div className="text-sm font-semibold text-slate-900 truncate">{o.customer_name}</div>
@@ -217,6 +220,9 @@ function AdminOrderView({ companyId, selectedFY }) {
                   <div className="text-[10px] text-slate-500">{o.items?.length||0} items</div>
                   {o.invoice_number && <div className="text-[10px] text-green-600">Inv: {o.invoice_number}</div>}
                 </div>
+              </div>
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100">
+                <WhatsAppShareButton order={o} hdr={hdr} testid={`admin-share-${o.order_id}`}/>
               </div>
             </div>
           ))}
@@ -805,6 +811,39 @@ function BeatView({ companyId, hdr, isSalesman }) {
 }
 
 /* ═══ Shared Components ═══ */
+function WhatsAppShareButton({ order, hdr, testid }) {
+  const [loading, setLoading] = useState(false);
+  const share = async (e) => {
+    e.stopPropagation();
+    setLoading(true);
+    try {
+      const r = await axios.post(
+        `${API}/api/salesman-orders/orders/${order.order_id}/share-link`,
+        {},
+        { headers: hdr() },
+      );
+      if (!r.data?.success) throw new Error(r.data?.error || 'Could not create link');
+      const wa = r.data.data.wa_link;
+      // Open WhatsApp — user picks any contact / group and hits send.
+      window.open(wa, '_blank', 'noopener');
+      toast.success('Pick a contact in WhatsApp — PDF link is in the message');
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Share failed');
+    } finally { setLoading(false); }
+  };
+  return (
+    <button
+      onClick={share}
+      disabled={loading}
+      className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold rounded-md bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-40 transition"
+      data-testid={testid}
+      aria-label="Share order to WhatsApp"
+    >
+      <Share2 size={11}/> {loading ? 'Preparing…' : 'WhatsApp'}
+    </button>
+  );
+}
+
 function StatusBadge({ status }) {
   const s = STATUS[status]||STATUS.pending;
   return <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{background:s.bg,color:s.color}}>{s.label}</span>;
