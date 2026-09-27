@@ -899,21 +899,25 @@ async def create_order_share_link(order_id: str, request: Request):
             upsert=True,
         )
 
-        # Absolute public URL — backend serves via /api/public/order-pdf.
+        # Absolute public URL — recipients open this straight from WhatsApp.
+        # Prefer explicit PUBLIC_BASE_URL env; fall back to the ingress-
+        # forwarded scheme+host so preview + production both work.
         import os
-        base = (os.environ.get("PUBLIC_BASE_URL") or "").strip() or ""
+        base = (os.environ.get("PUBLIC_BASE_URL") or "").strip()
         if not base:
-            # Fall back to a relative link; the frontend origin is enough.
-            base = ""
+            fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+            fwd_host  = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+            base = f"{fwd_proto}://{fwd_host}"
         public_url = f"{base.rstrip('/')}/api/public/order-pdf/{opaque}/{order_id}.pdf"
 
         n_items = len(order.get("items", []))
         total = order.get("total_amount", 0)
         msg = (
-            f"Order {order.get('order_id', '')}\n"
+            f"*Order {order.get('order_id', '')}*\n"
             f"Customer: {order.get('customer_name', '')}\n"
-            f"{n_items} items · Total Rs.{total:,.2f}\n"
-            f"PDF: {public_url}"
+            f"{n_items} items · Total Rs.{total:,.2f}\n\n"
+            f"Tap the link to view / download the PDF:\n"
+            f"{public_url}"
         )
         return APIResponse(success=True, data={
             "pdf_url": public_url,

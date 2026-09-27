@@ -817,15 +817,38 @@ function WhatsAppShareButton({ order, hdr, testid }) {
     e.stopPropagation();
     setLoading(true);
     try {
+      // Step 1 — mint the shareable link + prep message.
       const r = await axios.post(
         `${API}/api/salesman-orders/orders/${order.order_id}/share-link`,
         {},
         { headers: hdr() },
       );
       if (!r.data?.success) throw new Error(r.data?.error || 'Could not create link');
-      const wa = r.data.data.wa_link;
-      // Open WhatsApp — user picks any contact / group and hits send.
-      window.open(wa, '_blank', 'noopener');
+      const { message, wa_link, pdf_url } = r.data.data;
+
+      // Step 2 — on mobile, use Web Share API Level 2 to attach the
+      // ACTUAL PDF file (WhatsApp sees it as a document, not a link).
+      // Desktop / older browsers fall back to a wa.me deep-link.
+      try {
+        const pdfRes = await fetch(pdf_url);
+        if (pdfRes.ok && navigator.canShare) {
+          const blob = await pdfRes.blob();
+          const file = new File(
+            [blob],
+            `${order.order_id}.pdf`,
+            { type: 'application/pdf' },
+          );
+          const payload = { files: [file], text: message, title: `Order ${order.order_id}` };
+          if (navigator.canShare(payload)) {
+            await navigator.share(payload);
+            toast.success('Pick WhatsApp from the share sheet');
+            return;
+          }
+        }
+      } catch (_e) { /* fall through to link mode */ }
+
+      // Fallback — open WhatsApp with the link inside the message.
+      window.open(wa_link, '_blank', 'noopener');
       toast.success('Pick a contact in WhatsApp — PDF link is in the message');
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Share failed');

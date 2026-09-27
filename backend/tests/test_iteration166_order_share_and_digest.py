@@ -13,6 +13,14 @@ def test_share_link_endpoint_returns_wa_link():
     src = inspect.getsource(create_order_share_link)
     assert "wa.me" in src
     assert "put_object" in src
+    # iter-166.1: URL must be absolute (recipients open from WhatsApp).
+    assert "x-forwarded-proto" in src.lower() or "PUBLIC_BASE_URL" in src
+
+
+def test_message_prompts_tap_to_open_pdf():
+    from routes.salesman_orders import create_order_share_link
+    src = inspect.getsource(create_order_share_link)
+    assert "Tap the link" in src
 
 
 def test_public_pdf_endpoint_registered():
