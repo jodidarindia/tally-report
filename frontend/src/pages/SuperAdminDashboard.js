@@ -429,9 +429,15 @@ const SuperAdminDashboard = ({ token, user }) => {
         return;
       }
 
+      // iter-164: send the SuperAdmin's edited feature list — NOT the
+      // plan default. Line 434 previously sent ``plan.features`` which
+      // silently overwrote every un-tick the SuperAdmin just made
+      // (amitbajaj.india@gmail.com "unchecked Sales/CRM/Inventory but
+      // features stayed active" bug). max_companies / max_employees
+      // remain plan-derived because the modal doesn't expose them.
       const res = await axios.put(`${API}/super-admin/admins/${editAdmin.username}/edit`, {
         name: editAdmin.name, plan: editAdmin.plan, billing_cycle: editAdmin.billing_cycle, subscription_months: editAdmin.subscription_months,
-        features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+        features: editAdmin.features || [], max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
       }, { headers });
       if (res.data?.success) {
         const bd = res.data.data?.billing_delta;
@@ -488,8 +494,11 @@ const SuperAdminDashboard = ({ token, user }) => {
     if (!convertData.password || convertData.password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     try {
       const plan = PLANS[convertData.plan];
+      // iter-164: send the SuperAdmin's edited feature selection if the
+      // modal allows it — otherwise fall back to plan defaults.
+      const featuresToSend = Array.isArray(convertData.features) ? convertData.features : plan.features;
       const res = await axios.post(`${API}/super-admin/prospects/${convertModal}/convert`, {
-        ...convertData, features: plan.features, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
+        ...convertData, features: featuresToSend, max_companies: plan.maxCompanies, max_employees: plan.maxEmployees
       }, { headers });
       if (res.data?.success) { toast.success(res.data.message); setConvertModal(null); fetchData(); }
       else toast.error(res.data?.error || 'Failed');
