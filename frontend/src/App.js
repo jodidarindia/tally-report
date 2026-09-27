@@ -18,6 +18,7 @@ import ProfileModal from './pages/ProfileModal';
 import RenewalPopup from './components/RenewalPopup';
 import OnboardingTour from './components/OnboardingTour';
 import SupportWidget from './components/SupportWidget';
+import ForceChangePasswordScreen from './components/ForceChangePasswordScreen';
 
 const WS_URL = process.env.REACT_APP_BACKEND_URL?.replace('https://', 'wss://').replace('http://', 'ws://') + '/api/ws/sync-status';
 
@@ -195,6 +196,12 @@ function App() {
   // ── Unauthenticated ──
   if (!isAuthenticated) {
     return <PublicRouter view={publicView} onNavigate={setPublicView} onLogin={handleLogin} loginLoading={loginLoading} />;
+  }
+
+  // iter-167: force the admin to pick a new password when they've just
+  // logged in with a temporary one issued via /auth/forgot-password.
+  if (user?.must_change_password) {
+    return <ForceChangePasswordScreen user={user} token={token} onDone={() => window.location.reload()} onLogout={handleLogout}/>;
   }
 
   // ── Company selector gate ──

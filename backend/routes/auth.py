@@ -216,6 +216,9 @@ async def login(request: LoginRequest, raw_request: Request, response: Response)
                 "subscription_months": sub_months,
                 "subscription_expires": sub_expires_iso,
                 "subscription_days_left": sub_days_left,
+                # iter-167: signal the frontend to route admin to the
+                # force-change-password screen after a temp-password login.
+                "must_change_password": bool(user.get("must_change_password")),
                 "is_trial": bool(user.get("is_trial")) if user["role"] == "admin"
                             else bool((await db.users.find_one({"tenant_id": tenant_id, "role": "admin"}, {"_id": 0, "is_trial": 1}) or {}).get("is_trial")) if tenant_id else False,
                 "trial_end": (user.get("trial_end") if user["role"] == "admin" else "") or "",
@@ -294,6 +297,9 @@ async def get_me(request: Request):
             "subscription_start": sub_start or None,
             "subscription_months": sub_months,
             "subscription_expires": sub_expires_iso,
+            # iter-167: force the user to pick a new password when they log
+            # in with a temporary one issued via /auth/forgot-password.
+            "must_change_password": bool(user.get("must_change_password")),
             "subscription_days_left": sub_days_left,
             "is_trial": bool(trial_owner.get("is_trial")) if trial_owner else False,
             "trial_end": (trial_owner.get("trial_end") if trial_owner else "") or "",
@@ -334,15 +340,153 @@ async def change_password(req: ChangePasswordRequest, request: Request):
         full_user = await db.users.find_one({"username": user["username"]})
         if not verify_password(req.current_password, full_user["password_hash"]):
             return APIResponse(success=False, error="Current password is incorrect")
+        # iter-167: clear the force-change flag once the admin picks a new password.
         await db.users.update_one(
             {"username": user["username"]},
-            {"$set": {"password_hash": hash_password(req.new_password)}}
+            {"$set": {"password_hash": hash_password(req.new_password)},
+             "$unset": {"must_change_password": ""}}
         )
         await log_audit("password_change", user["username"], tenant_id=user.get("tenant_id", ""), ip_address=get_client_ip(request))
         return APIResponse(success=True, message="Password changed successfully")
     except Exception as e:
         logger.error(f"Change password error: {e}")
         return APIResponse(success=False, error=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+# iter-167 · Forgot password (Business Admin only)
+# ═══════════════════════════════════════════════════════════════
+
+class ForgotPasswordRequest_(dict):
+    pass
+
+
+def _generate_temporary_password() -> str:
+    """12-char password: 2 upper + 2 lower + 2 digits + 1 symbol + random fill.
+    All from cryptographically-secure ``secrets``. Excludes O/0/l/1 to avoid
+    the "did you type an el or a one" support ticket.
+    """
+    import secrets, string
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    lower = "abcdefghijkmnpqrstuvwxyz"
+    digits = "23456789"
+    symbols = "!@#$%&*"
+    pw = (
+        [secrets.choice(upper) for _ in range(2)]
+        + [secrets.choice(lower) for _ in range(2)]
+        + [secrets.choice(digits) for _ in range(2)]
+        + [secrets.choice(symbols)]
+        + [secrets.choice(upper + lower + digits) for _ in range(5)]
+    )
+    # Fisher-Yates shuffle via secrets.
+    for i in range(len(pw) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        pw[i], pw[j] = pw[j], pw[i]
+    return "".join(pw)
+
+
+@router.post("/auth/forgot-password")
+async def forgot_password(request: Request):
+    """Generate + email a random password to a BUSINESS ADMIN.
+
+    Restricted by design:
+      • Only users with ``role == "admin"`` are eligible. Employees /
+        dispatch / salesman / super_admin get the same generic response
+        so we don't leak whether an address exists in our DB.
+      • Rate-limited by IP (max 3 / hour) and by target email
+        (max 1 / 15 minutes) via the ``password_reset_attempts``
+        collection.
+      • Always sets ``must_change_password: true`` so the admin is forced
+        to pick their own password on the next login (see /auth/login).
+    """
+    try:
+        body = await request.json()
+        username = ((body.get("username") or body.get("email") or "").strip().lower())
+        if not username or "@" not in username:
+            return APIResponse(success=False, error="Enter a valid email address")
+
+        ip = get_client_ip(request)
+        now = datetime.now(timezone.utc)
+
+        # --- Rate limit: 3 requests per IP per hour ---
+        from datetime import timedelta as _td
+        one_hour_ago = (now - _td(hours=1)).isoformat()
+        ip_recent = await db.password_reset_attempts.count_documents({
+            "ip": ip, "created_at": {"$gte": one_hour_ago},
+        })
+        if ip_recent >= 3:
+            return APIResponse(success=False, error="Too many reset attempts. Try again in an hour.")
+
+        # --- Rate limit: 1 request per email per 15 minutes ---
+        fifteen_ago = (now - _td(minutes=15)).isoformat()
+        recent_for_email = await db.password_reset_attempts.find_one({
+            "username": username, "created_at": {"$gte": fifteen_ago},
+        })
+        if recent_for_email:
+            return APIResponse(success=True, message="If this is a Business Admin account, a temporary password has been emailed. Please check your inbox.")
+
+        # Log the attempt regardless — this rate-limits enumeration too.
+        await db.password_reset_attempts.insert_one({
+            "username": username, "ip": ip, "created_at": now.isoformat(),
+        })
+
+        user = await db.users.find_one({"username": username})
+        # Strict role gate — only Business Admin (role="admin") is eligible.
+        eligible = bool(user) and user.get("role") == "admin" and user.get("active", True)
+
+        if not eligible:
+            # Audit but reply with the same generic success message.
+            await log_audit(
+                "password_reset_rejected", username,
+                tenant_id=(user or {}).get("tenant_id", ""),
+                ip_address=ip,
+                details=("not_admin" if user else "no_user"),
+            )
+            return APIResponse(success=True, message="If this is a Business Admin account, a temporary password has been emailed. Please check your inbox.")
+
+        # Generate + persist temporary password.
+        temp_password = _generate_temporary_password()
+        await db.users.update_one(
+            {"username": username},
+            {"$set": {
+                "password_hash": hash_password(temp_password),
+                "must_change_password": True,
+                "password_reset_at": now.isoformat(),
+            }},
+        )
+
+        # Send email (async, non-blocking).
+        from services.email_service import send_email
+        html = f"""
+        <div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#0f172a;max-width:560px">
+          <h2 style="margin:0 0 4px 0">Your FLOWRA password has been reset</h2>
+          <p style="margin:0 0 14px 0;color:#475569">
+            Use the temporary password below to sign in. You'll be asked to
+            choose a new password immediately after.
+          </p>
+          <div style="background:#f1f5f9;border-radius:8px;padding:14px 18px;font-family:ui-monospace,monospace;font-size:18px;letter-spacing:1px;color:#0f172a;text-align:center;font-weight:700">
+            {temp_password}
+          </div>
+          <p style="margin:14px 0 6px 0;font-size:13px;color:#64748b">
+            This password is valid for 1 hour. If you didn't request this
+            reset, please email <a href="mailto:support@flowralive.in">support@flowralive.in</a> immediately.
+          </p>
+          <p style="margin:14px 0 0 0;font-size:12px;color:#94a3b8">
+            Requested from IP {ip} at {now.strftime("%d %b %Y · %H:%M UTC")}.
+          </p>
+        </div>
+        """
+        asyncio.create_task(send_email(
+            username,
+            subject="FLOWRA · Temporary password inside",
+            html=html,
+            tag="password-reset",
+        ))
+        await log_audit("password_reset", username, tenant_id=user.get("tenant_id", ""), ip_address=ip)
+        return APIResponse(success=True, message="If this is a Business Admin account, a temporary password has been emailed. Please check your inbox.")
+    except Exception as e:
+        logger.error(f"Forgot password error: {e}")
+        return APIResponse(success=False, error="Could not process the request. Please try again.")
 
 
 @router.post("/auth/reset-password")
