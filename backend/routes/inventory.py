@@ -90,6 +90,114 @@ def _dedupe_inventory_by_name(items: list, fy_hint: Optional[str] = None) -> lis
     return out
 
 
+async def _reconcile_item_quantities(
+    items: list, tenant_id: str, company_id: str, fy: Optional[str] = None,
+) -> list:
+    """iter-165: Trust voucher movement over the Busy agent's D-column
+    heuristic for closing quantity.
+
+    **The bug**: Busy agent <= v1.6.1 reads ``closing_qty`` from
+    ``max(abs(D11..D50))`` in Folio1. Those D-slots turn out to be
+    monthly period-tallies on some Busy 21 builds — so an item that
+    received 28 units in month 1 and 16 units in month 2 reports
+    ``closing = 44`` even when Busy's own Stock Status shows 16.
+    Same class of noise inflates FA00725 from 0 → 2000.
+
+    **The fix** (server-side, no agent rebuild):
+        derived_closing = opening_quantity + Σ purchases − Σ sales
+    for the same FY. When the derived value diverges from the agent's
+    stored quantity by > 0.01, we override — the vouchers are Busy's
+    source of truth for movement. When no vouchers exist for an item,
+    we keep the agent's value (nothing to reconcile against).
+
+    Called after ``_dedupe_inventory_by_name`` on the Inventory /
+    Summary / Movement Analysis / PDF-export endpoints.
+    """
+    if not items:
+        return items
+    q: dict = {"tenant_id": tenant_id}
+    if company_id:
+        q["company_id"] = company_id
+    # Pull only items[] projection — no need for voucher metadata.
+    sales_docs = await db.sales_vouchers.find(q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1}).to_list(50000)
+    purchase_docs = await db.purchase_vouchers.find(q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1}).to_list(50000)
+    # FY-scope the vouchers so previous-year movement doesn't leak into
+    # this FY's derived closing.
+    if fy:
+        sales_docs = filter_vouchers_by_fy(sales_docs, fy)
+        purchase_docs = filter_vouchers_by_fy(purchase_docs, fy)
+
+    out_qty: dict = {}
+    in_qty: dict = {}
+    for v in sales_docs:
+        for line in (v.get("items") or []):
+            name = (line.get("item") or "").strip().lower()
+            if not name:
+                continue
+            try:
+                out_qty[name] = out_qty.get(name, 0.0) + float(line.get("quantity") or 0)
+            except (TypeError, ValueError):
+                pass
+    for v in purchase_docs:
+        for line in (v.get("items") or []):
+            name = (line.get("item") or "").strip().lower()
+            if not name:
+                continue
+            try:
+                in_qty[name] = in_qty.get(name, 0.0) + float(line.get("quantity") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    overrides = 0
+    for it in items:
+        name = (it.get("item_name") or "").strip().lower()
+        if not name:
+            continue
+        inward = in_qty.get(name, 0.0)
+        outward = out_qty.get(name, 0.0)
+        # No voucher activity — trust the agent's snapshot.
+        if inward == 0 and outward == 0:
+            continue
+        try:
+            opening = float(it.get("opening_quantity") or 0)
+            agent_qty = float(it.get("quantity") or 0)
+        except (TypeError, ValueError):
+            continue
+        derived_closing = round(opening + inward - outward, 4)
+
+        # --- SAFETY GUARDS (iter-165) ---
+        # (1) Never override with a physically impossible negative closing —
+        #     means our purchase-voucher sync is incomplete for that SKU.
+        if derived_closing < 0:
+            continue
+        # (2) Only override when the agent's value looks *inflated* relative
+        #     to the derived one. If the agent-supplied qty is <= derived
+        #     (undercount), keep the agent's higher value — safer for
+        #     stock-out alerts. This catches FA00725 (agent=2000, derived=0)
+        #     and LF16303 (agent=44, derived=16) but ignores cases where the
+        #     agent already reads the correct D-column.
+        if agent_qty <= derived_closing + 0.01:
+            continue
+        # (3) If we only ever saw outward and no inward, derived is
+        #     capped at ``opening`` — that's fine because we still
+        #     satisfied guard (2).
+
+        it["_agent_quantity"] = agent_qty
+        it["quantity"] = derived_closing
+        # Re-derive closing_value from the new qty at the same rate.
+        rate = float(it.get("cost_price") or it.get("price") or 0)
+        if rate > 0:
+            it["closing_value"] = round(derived_closing * rate, 2)
+        overrides += 1
+
+    if overrides:
+        logger.info(
+            f"iter-165 reconciled {overrides}/{len(items)} items from vouchers "
+            f"(tenant={tenant_id[:8]}, company={company_id[:8] if company_id else '-'}, fy={fy})"
+        )
+    return items
+
+
 async def _get_purchase_branch_set(ctx):
     """Detect branch-like parties in purchase vouchers (non-sundry-creditor).
     These are internal transfers, not actual procurement from external suppliers.
@@ -466,6 +574,10 @@ async def get_inventory_items(
         # tenants top out at ~15k items — still fits comfortably.
         all_items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
         all_items = _dedupe_inventory_by_name(all_items, fy_hint=fy)
+        # iter-165: reconcile closing_qty from actual voucher movement.
+        all_items = await _reconcile_item_quantities(
+            all_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
         total = len(all_items)
         if page_size and page_size > 0:
             skip = max(0, (page - 1) * page_size)
@@ -586,6 +698,11 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
         # into every FY). Rows without an ``fy`` tag (Tally masters) are
         # always kept — they carry the only snapshot we have.
         items = _dedupe_inventory_by_name(items, fy_hint=fy)
+        # iter-165: voucher-derived closing overrides agent's D-column
+        # heuristic when they diverge (FA00725 / LF16303 class bug).
+        items = await _reconcile_item_quantities(
+            items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
         total_items = len(items)
 
         if not items:
@@ -843,6 +960,12 @@ async def get_inventory_movement(request: Request, fy: Optional[str] = None, com
         # iter-161: FY-scope inventory rows so opening/closing snapshots
         # aren't summed across FYs.
         inventory_items = _dedupe_inventory_by_name(inventory_items, fy_hint=fy)
+        # iter-165: reconcile from vouchers so Movement Analysis's
+        # opening = closing + sales - purchases derivation doesn't
+        # amplify the agent's D-column inflation.
+        inventory_items = await _reconcile_item_quantities(
+            inventory_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
         raw_sales_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
 
@@ -1071,6 +1194,10 @@ async def get_pivot_data(request: Request, group_by: str = "category", metric: s
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         # iter-161: FY-scope so pivot totals don't sum across FYs.
         inventory_items = _dedupe_inventory_by_name(inventory_items, fy_hint=fy)
+        # iter-165: reconcile.
+        inventory_items = await _reconcile_item_quantities(
+            inventory_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
 
         pivot_data = {}
         for item in inventory_items:
@@ -1118,6 +1245,10 @@ async def get_below_cost_sales(request: Request, fy: Optional[str] = None, compa
         inventory_items = await db.inventory_items.find(q, {"_id": 0}).to_list(10000)
         # iter-161: FY-scope for below-cost sales lookup.
         inventory_items = _dedupe_inventory_by_name(inventory_items, fy_hint=fy)
+        # iter-165: same voucher-derived reconciliation.
+        inventory_items = await _reconcile_item_quantities(
+            inventory_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
         all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
         branch_set = await _get_branch_set(request, ctx)
         all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
