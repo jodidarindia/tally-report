@@ -1,9 +1,9 @@
 {
-  "version": "9.8.33",
+  "version": "9.8.34",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.33 (guid-bound HOTFIX) — CRITICAL fix over v9.8.32: the earlier GUID lookup used `ISINITIALIZE=\"Yes\"` on the Company collection AND wrapped the request in SVCURRENTCOMPANY. On PCs with multiple books loaded, that combination made Tally rebuild its company cache on every quick-sync tick and eventually HANG / CRASH the tally.exe process (reported by Krishna Sales Corporation). v9.8.33 rewrites the lookup to use the exact same shape as v9.8.31's proven-safe `list_of_companies` (`ISMODIFY=\"No\"`, no SVCURRENTCOMPANY, minimal field fetches), caches the result per-session so Tally is queried AT MOST ONCE per company, and dedupes the bind-endpoint POST per-session. The backend validator was also softened — a missing GUID on a bound sync is now a soft warning (not a hard block) so older Tally builds & first-cycle cache warm-ups no longer strand the customer. Hard block still fires on GUID MISMATCH (real corruption path). ALL v9.8.32 installs MUST upgrade before running against a multi-company Tally.",
-  "released_at": "2026-09-27T23:20:00+05:30",
+  "release_notes": "v9.8.34 (guid-preflight-only) — SECOND-LEVEL FIX after v9.8.33 still crashed Tally on Krishna Sales Corp's PC even with only 1 company loaded. New model: (1) the dedicated GUID Collection XML is REMOVED — GUID is now fetched as a SIDE-EFFECT of the existing v9.8.31 `list_of_companies` request (byte-identical shape, one extra `<FETCH>GUID</FETCH>` line the customer's Tally has already been tolerating for weeks); (2) `fetch_company_guid()` is now pure dict-lookup on the `_guid_cache` warmed by preflight — zero Tally XML calls from the sync loops; (3) a `disable_guid_lookup` per-tenant kill-switch (settable via new super-admin route `PUT /super-admin/admins/{u}/toggle-guid-lookup` or directly in Mongo) makes the agent behave exactly like v9.8.31 (no GUID XML at all). Ships with the backend serving the flag through `/api/auth/me`, so support can unblock any tenant WITHOUT touching the .exe. Also: version_info.txt bumped to 9.8.34.0.",
+  "released_at": "2026-09-28T00:15:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }

@@ -301,6 +301,14 @@ async def get_me(request: Request):
             # in with a temporary one issued via /auth/forgot-password.
             "must_change_password": bool(user.get("must_change_password")),
             "subscription_days_left": sub_days_left,
+            # v9.8.34 — per-tenant nuclear kill-switch for the Tally
+            # Agent's GUID lookup. Set on the admin user doc via
+            # `db.users.update_one({username:...}, {$set:
+            # {tally_disable_guid_lookup: true}})` when a customer
+            # reports Tally crashes after v9.8.32+. The agent honours
+            # it on next `/auth/me` refresh — no re-install needed.
+            "disable_guid_lookup": bool(
+                (trial_owner or user).get("tally_disable_guid_lookup", False)),
             "is_trial": bool(trial_owner.get("is_trial")) if trial_owner else False,
             "trial_end": (trial_owner.get("trial_end") if trial_owner else "") or "",
             "converted_at": (trial_owner.get("converted_at") if trial_owner else "") or "",

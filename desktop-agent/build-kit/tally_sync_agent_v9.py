@@ -1926,8 +1926,28 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 
     def list_of_companies(self) -> List[str]:
         """v9.8.31 — enumerate the currently LOADED companies (multi-
-        company safety preflight). Returns a list of display names."""
-        xml = """<ENVELOPE>
+        company safety preflight). Returns a list of display names.
+
+        v9.8.34 — as a SIDE EFFECT this now also populates
+        `self._guid_cache` with `{name_lower: guid}` for any companies
+        that expose `$Guid`. The XML shape is UNCHANGED — one extra
+        `<FETCH>GUID</FETCH>` line, which Tally silently omits from
+        the response if the field isn't understood, so this remains
+        exactly as safe as v9.8.31. Callers that only need names can
+        keep using this method as-is.
+        """
+        # Reuse cache across calls — set on first init.
+        if not hasattr(self, '_guid_cache') or self._guid_cache is None:
+            self._guid_cache = {}
+        # v9.8.34 — kill-switch. When the tenant sets disable_guid_lookup
+        # in their config.json, we send the ORIGINAL v9.8.31 XML with
+        # ONLY the NAME fetch — byte-identical to the payload their
+        # Tally has been tolerating for weeks. No GUID field at all.
+        if getattr(self, 'disable_guid_fetch', False):
+            guid_fetch_line = ''
+        else:
+            guid_fetch_line = '                    <FETCH>GUID</FETCH>\n'
+        xml = f"""<ENVELOPE>
         <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ListOfCompaniesLoaded</ID></HEADER>
         <BODY><DESC>
             <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
@@ -1935,7 +1955,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
                 <COLLECTION NAME="ListOfCompaniesLoaded" ISMODIFY="No">
                     <TYPE>Company</TYPE>
                     <FETCH>NAME</FETCH>
-                </COLLECTION>
+{guid_fetch_line}                </COLLECTION>
             </TDLMESSAGE></TDL>
         </DESC></BODY></ENVELOPE>"""
         try:
@@ -1951,15 +1971,23 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             for c in companies:
                 if isinstance(c, str):
                     nm = c.strip()
+                    gv = ''
                 elif isinstance(c, dict):
                     nm = c.get('NAME') or c.get('@NAME') or ''
                     if isinstance(nm, dict):
                         nm = nm.get('#text', '')
                     nm = str(nm or '').strip()
+                    gv = c.get('GUID', '') or c.get('@GUID', '')
+                    if isinstance(gv, dict):
+                        gv = gv.get('#text', '')
+                    gv = str(gv or '').strip().strip('{}').lower()
                 else:
                     nm = ''
+                    gv = ''
                 if nm and nm not in out:
                     out.append(nm)
+                if nm and gv:
+                    self._guid_cache[nm.lower()] = gv
             return out
         except Exception:
             return []
@@ -1986,85 +2014,22 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         except Exception:
             return ""
 
-    # ─── iter-168: multi-company safety — GUID fetch (SAFE PATTERN) ──
-    # v9.8.32 hotfix: the earlier fetch_company_guid used `ISINITIALIZE=
-    # "Yes"` on the Company collection AND wrapped the request in
-    # SVCURRENTCOMPANY. On PCs with several books loaded, that combo
-    # made Tally rebuild its company cache on every quick-sync tick
-    # and eventually hang / crash the tally.exe process. We now use
-    # exactly the same shape as `list_of_companies` (proven safe in
-    # v9.8.31) — `ISMODIFY="No"`, no SVCURRENTCOMPANY, no unknown
-    # field fetches — and filter by NAME on the client side. Result
-    # is cached per-session so we only hit Tally ONCE per company.
+    # ─── iter-168: multi-company safety — GUID getter (CACHE-ONLY) ────
+    # v9.8.34 — Tally is NEVER touched here. The cache is filled as a
+    # side-effect of `list_of_companies` (which runs once per preflight,
+    # a call the customer's Tally already tolerated on v9.8.31 without
+    # incident). If the field isn't in the cache, we return '' and the
+    # backend TOFU logic simply defers binding to a later cycle. Zero
+    # extra XML traffic to Tally over the v9.8.31 baseline.
     def fetch_company_guid(self, company_name: str = "") -> str:
-        """Return Tally's `$Guid` for the given company name (or the
-        current `self.company`). Empty string on any failure — callers
-        must treat this as advisory (backend TOFU logic handles first-
-        sync capture without agent-side blocking)."""
+        """Return the cached Tally `$Guid` for the given company. NO
+        Tally XML is issued. Returns '' when the cache is cold or the
+        field is unsupported — callers must treat this as advisory."""
         target = (company_name or self.company or '').strip()
         if not target:
             return ''
-        # Per-process cache — set on TallyCollectionClient at __init__.
-        cache = getattr(self, '_guid_cache', None)
-        if cache is None:
-            cache = {}
-            self._guid_cache = cache
-        cached = cache.get(target.lower())
-        if cached is not None:
-            return cached  # may be '' if a previous lookup failed
-        # Same safe shape as list_of_companies — Tally is happy with
-        # this even when 5 books are loaded. NO ISINITIALIZE. NO
-        # SVCURRENTCOMPANY. Just NAME + GUID fetches on a read-only
-        # (ISMODIFY="No") collection.
-        xml = """<ENVELOPE>
-<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraGuidLookup</ID></HEADER>
-<BODY><DESC>
-<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
-<TDL><TDLMESSAGE>
-<COLLECTION NAME="FlowraGuidLookup" ISMODIFY="No">
-<TYPE>Company</TYPE>
-<FETCH>NAME</FETCH>
-<FETCH>GUID</FETCH>
-</COLLECTION>
-</TDLMESSAGE></TDL>
-</DESC></BODY></ENVELOPE>"""
-        try:
-            data = self._post(xml, debug_name='guid_lookup')
-            if not data:
-                cache[target.lower()] = ''
-                return ''
-            companies = self._find_deep(data, 'COMPANY')
-            if not companies:
-                cache[target.lower()] = ''
-                return ''
-            if isinstance(companies, (str, dict)):
-                companies = [companies]
-            tl = target.lower()
-            found = ''
-            for c in companies:
-                if not isinstance(c, dict):
-                    continue
-                nm = c.get('NAME') or c.get('@NAME') or ''
-                if isinstance(nm, dict):
-                    nm = nm.get('#text', '')
-                nm = str(nm or '').strip()
-                gv = c.get('GUID', '') or c.get('@GUID', '')
-                if isinstance(gv, dict):
-                    gv = gv.get('#text', '')
-                gv = str(gv or '').strip().strip('{}').lower()
-                if not nm or not gv:
-                    # Populate the cache for OTHER companies we see
-                    # so a later lookup on them is also free.
-                    continue
-                if nm.lower() == tl and not found:
-                    found = gv
-                cache[nm.lower()] = gv
-            cache[tl] = found  # remember misses too — don't re-hit Tally
-            return found
-        except Exception as e:
-            logger.debug(f"fetch_company_guid failed: {e}")
-            cache[target.lower()] = ''
-            return ''
+        cache = getattr(self, '_guid_cache', None) or {}
+        return cache.get(target.lower(), '')
 
     def discover_financial_years(self) -> List[str]:
         """Query Tally for all available financial years (accounting periods)."""
@@ -3402,6 +3367,12 @@ def get_or_refresh_auth(backend_url: str = None) -> dict:
                 config["max_companies"] = me_data.get("max_companies", config.get("max_companies", 10))
                 config["subscription_expires"] = me_data.get("subscription_expires")
                 config["subscription_days_left"] = me_data.get("subscription_days_left", 999)
+                # v9.8.34 — per-tenant kill-switch for the GUID lookup
+                # path. Support can flip this from FLOWRA admin without
+                # any config-file edit on the customer's PC.
+                if "disable_guid_lookup" in me_data:
+                    config["disable_guid_lookup"] = bool(
+                        me_data.get("disable_guid_lookup"))
 
                 # Check subscription expiry
                 days_left = config.get("subscription_days_left", 999)
@@ -3498,7 +3469,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.33-guid-bound-hotfix")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.34-guid-preflight-only")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3519,6 +3490,29 @@ class FlowraSyncAgent:
         self.max_companies = self.auth_config.get('max_companies', 10)
         self.sub_days_left = self.auth_config.get('subscription_days_left', 999)
         self.sub_expires = self.auth_config.get('subscription_expires')
+
+        # v9.8.34 — nuclear kill-switch for the GUID lookup path.
+        # If a tenant reports Tally crashes after the multi-company
+        # safety patch, they (or support) can set `disable_guid_lookup:
+        # true` in the local config.json. When true, the agent skips
+        # the extra `<FETCH>GUID</FETCH>` line inside `list_of_companies`
+        # (identical behaviour to v9.8.31) AND never populates the
+        # GUID cache — every sync payload goes out with an empty
+        # `company_guid`, which the backend soft-accepts. Effectively
+        # rolls back the multi-company GUID feature for that one
+        # tenant without downgrading the .exe.
+        self.disable_guid_lookup = bool(self.auth_config.get(
+            'disable_guid_lookup', False))
+        if self.disable_guid_lookup:
+            logger.warning(
+                "[GUID] disable_guid_lookup=true in config — GUID lookup "
+                "and TOFU binding are DISABLED for this tenant. Agent "
+                "will behave like v9.8.31 (name-based safety only)."
+            )
+            try:
+                self.tally.disable_guid_fetch = True
+            except Exception:
+                pass
 
         logger.info(f"  Tally URL     : {TALLY_URL}")
         logger.info(f"  Cloud Backend : {self.backend_url}")
@@ -3947,7 +3941,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.33-guid-bound-hotfix',
+                'agent_version': '9.8.34-guid-preflight-only',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3986,7 +3980,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.33-guid-bound-hotfix',
+                'agent_version': '9.8.34-guid-preflight-only',
                 'company_name': company,
                 'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
@@ -4047,7 +4041,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.33-guid-bound-hotfix',
+                'agent_version': '9.8.34-guid-preflight-only',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4202,19 +4196,15 @@ class FlowraSyncAgent:
                     logger.warning(f"[QUICK] Tally not responding for company '{company}' — skipping. Is Tally running with this company open?")
                     continue
 
-                # iter-168 — capture Tally $Guid for this company and
-                # bind it to the FLOWRA tenant on first sync. Any later
-                # cycle that reports a different GUID is HARD-BLOCKED
-                # by the backend to prevent cross-company corruption
-                # when several Tally companies are loaded at once.
-                self._active_company_guid = ''
-                try:
-                    _guid = self.tally.fetch_company_guid(company)
-                    if _guid:
-                        self._active_company_guid = _guid
-                        self._ensure_tally_binding(company, _guid)
-                except Exception as _e:
-                    logger.debug(f"[QUICK] GUID discovery failed for '{company}': {_e}")
+                # iter-168 (v9.8.34) — Read cached Tally $Guid populated
+                # by the preflight's list_of_companies call. Never touches
+                # Tally itself here — pure dict lookup. If the cache is
+                # cold (e.g. preflight was skipped by fail-open path),
+                # we send an empty company_guid and the backend TOFU
+                # binder will lazily capture on a later cycle.
+                self._active_company_guid = self.tally.fetch_company_guid(company)
+                if self._active_company_guid:
+                    self._ensure_tally_binding(company, self._active_company_guid)
 
                 # Per-company FYs
                 if hasattr(self, '_company_fys') and company in self._company_fys:
@@ -4255,7 +4245,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.33-guid-bound-hotfix',
+                                'agent_version': '9.8.34-guid-preflight-only',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4442,16 +4432,13 @@ class FlowraSyncAgent:
                 logger.info(f"{'=' * 60}")
                 logger.info(f"Syncing company: {display}")
                 logger.info(f"{'=' * 60}")
-                # iter-168 — capture GUID + ensure binding before full sync.
+                # iter-168 (v9.8.34) — GUID is cache-only, populated by
+                # the preflight's list_of_companies. No Tally XML here.
                 self._active_company_guid = ''
                 if company != '_active_':
-                    try:
-                        _guid = self.tally.fetch_company_guid(company)
-                        if _guid:
-                            self._active_company_guid = _guid
-                            self._ensure_tally_binding(company, _guid)
-                    except Exception as _e:
-                        logger.debug(f"GUID discovery failed for '{company}': {_e}")
+                    self._active_company_guid = self.tally.fetch_company_guid(company)
+                    if self._active_company_guid:
+                        self._ensure_tally_binding(company, self._active_company_guid)
                 self._sync_single_company(company)
         except Exception as e:
             logger.error(f"Sync cycle error: {e}")
@@ -5045,7 +5032,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.33-guid-bound-hotfix")
+        print("FLOWRA Tally Sync Agent v9.8.34-guid-preflight-only")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag

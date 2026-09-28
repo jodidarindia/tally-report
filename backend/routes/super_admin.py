@@ -990,6 +990,52 @@ async def toggle_admin_active(username: str, request: Request):
         return APIResponse(success=False, error=str(e))
 
 
+@router.put("/super-admin/admins/{username}/toggle-guid-lookup")
+async def toggle_admin_guid_lookup(username: str, request: Request):
+    """v9.8.34 — flip the Tally-Agent GUID-lookup kill-switch for one
+    admin tenant. When set to true, that tenant's next `/api/auth/me`
+    refresh (agents poll every few minutes) picks up `disable_guid_lookup=
+    true` and the agent falls back to name-based safety only — no
+    `<FETCH>GUID</FETCH>` in the ListOfCompanies XML, no GUID in sync
+    payloads. Used to unblock customers whose Tally build crashes on
+    the extra GUID field (Krishna Sales Corp scenario).
+    """
+    sa = await _require_strict_super_admin(request)
+    if not sa:
+        return APIResponse(success=False, error="Super admin access required")
+    try:
+        admin = await db.users.find_one({"username": username, "role": "admin"})
+        if not admin:
+            return APIResponse(success=False, error="Admin not found")
+        new_value = not bool(admin.get("tally_disable_guid_lookup", False))
+        await db.users.update_one(
+            {"username": username},
+            {"$set": {
+                "tally_disable_guid_lookup": new_value,
+                "tally_disable_guid_lookup_at": now_ist_iso(),
+                "tally_disable_guid_lookup_by": sa["username"],
+            }},
+        )
+        await log_audit(
+            "tally_guid_lookup_toggled",
+            sa["username"],
+            target=username,
+            details=f"disable_guid_lookup = {new_value}",
+            ip_address=get_client_ip(request),
+        )
+        return APIResponse(success=True, data={
+            "disable_guid_lookup": new_value,
+            "note": "Agent will pick up the change on its next /auth/me "
+                    "refresh (usually within a few minutes). No .exe "
+                    "rebuild or reinstall required.",
+        })
+    except Exception as e:
+        logger.error(f"Error toggling GUID lookup: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+
+
 @router.delete("/super-admin/admins/{username}")
 async def delete_admin(username: str, request: Request):
     """Delete an admin tenant — archives all data for audit, then removes active records."""

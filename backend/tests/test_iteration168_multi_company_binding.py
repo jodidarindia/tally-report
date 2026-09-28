@@ -70,7 +70,7 @@ def test_agent_fetches_guid_and_binds():
     # GUID included in every sync payload.
     assert "'company_guid':" in src
     # Version bump.
-    assert "9.8.33-guid-bound-hotfix" in src
+    assert "9.8.34-guid-preflight-only" in src
 
 
 def test_binding_called_in_quick_and_full_sync_loops():
@@ -82,7 +82,7 @@ def test_binding_called_in_quick_and_full_sync_loops():
 
 def test_gui_version_bumped():
     src = pathlib.Path(GUI).read_text()
-    assert 'APP_VERSION = "v9.8.33"' in src
+    assert 'APP_VERSION = "v9.8.34"' in src
 
 
 def test_frontend_binding_card_present():
@@ -108,29 +108,55 @@ def test_guid_normalisation_is_case_insensitive():
     assert _norm_guid(None) == ""
 
 def test_guid_fetch_uses_safe_ismodify_pattern():
-    """v9.8.32 hotfix — Tally crashed because the earlier fetch_company_guid
-    used ISINITIALIZE=\"Yes\" on a Company collection AND wrapped the
-    request in SVCURRENTCOMPANY. Both are dangerous on PCs with multiple
-    books loaded. The fixed version must use the same safe shape as
-    list_of_companies: ISMODIFY=\"No\", no SVCURRENTCOMPANY, minimal
-    field fetches."""
+    """v9.8.34 hotfix — Tally crashed with a dedicated GUID Collection
+    request (even one modeled on list_of_companies). Fix: fetch GUID
+    as a SIDE-EFFECT of the existing list_of_companies XML — no new
+    request to Tally, and the sync-time fetch_company_guid is now
+    pure dict-lookup on `_guid_cache`. Also verifies the kill-switch
+    that omits the GUID fetch entirely."""
     src = pathlib.Path(AGENT).read_text()
-    # Locate the fetch_company_guid function block.
+    # fetch_company_guid must NOT issue any XML — it's cache-only now.
     m = re.search(
         r"def fetch_company_guid\(.*?\n(.*?)(?=\n    def |\nclass )",
         src, re.S,
     )
     assert m, "fetch_company_guid not found"
     body = m.group(1)
-    # Must NOT reintroduce the crash-causing patterns (in the XML).
-    assert 'ISINITIALIZE="Yes"' not in body, \
-        "ISINITIALIZE=\"Yes\" on Company crashes multi-company Tally"
-    assert '<SVCURRENTCOMPANY>' not in body.upper(), \
-        "SVCURRENTCOMPANY-scoped Company collection can hang Tally"
-    # Must use the safe pattern.
-    assert 'ISMODIFY="No"' in body
-    # Cache must be present so we don't hammer Tally each quick-sync tick.
+    assert "<ENVELOPE>" not in body, \
+        "fetch_company_guid must not build Tally XML — cache lookup only"
+    assert "self._post" not in body, \
+        "fetch_company_guid must not call self._post — cache lookup only"
     assert "_guid_cache" in body
+    # The GUID population must live inside list_of_companies with the
+    # safe (ISMODIFY="No") shape, and must be togglable.
+    m2 = re.search(
+        r"def list_of_companies\(.*?\n(.*?)(?=\n    def |\nclass )",
+        src, re.S,
+    )
+    assert m2
+    loc = m2.group(1)
+    assert 'ISMODIFY="No"' in loc
+    assert 'ISINITIALIZE="Yes"' not in loc
+    assert '<SVCURRENTCOMPANY>' not in loc.upper()
+    assert 'disable_guid_fetch' in loc, "kill-switch must be honoured"
+    assert '_guid_cache' in loc
+
+
+def test_kill_switch_flag_is_wired_through_config_and_backend():
+    """`disable_guid_lookup` must flow: backend `/auth/me` →
+    `get_or_refresh_auth()` → `self.disable_guid_lookup` →
+    `self.tally.disable_guid_fetch`."""
+    src = pathlib.Path(AGENT).read_text()
+    assert 'self.disable_guid_lookup' in src
+    assert 'self.tally.disable_guid_fetch' in src
+    assert '"disable_guid_lookup"' in src or "'disable_guid_lookup'" in src
+
+    auth = pathlib.Path("/app/backend/routes/auth.py").read_text()
+    assert '"disable_guid_lookup"' in auth
+    assert 'tally_disable_guid_lookup' in auth
+
+    sa = pathlib.Path("/app/backend/routes/super_admin.py").read_text()
+    assert "/super-admin/admins/{username}/toggle-guid-lookup" in sa
 
 
 def test_binding_post_is_deduped_per_session():
