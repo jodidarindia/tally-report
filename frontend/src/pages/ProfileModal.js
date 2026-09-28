@@ -707,6 +707,134 @@ const IntegrationsSection = ({ token }) => {
           </div>
         </div>
       )}
+
+      <TallyBindingCard token={token} />
+    </div>
+  );
+};
+
+
+// ── Tally Company Binding ────────────────────────────────────────────
+// iter-168 — SafeGuards for multi-company Tally installations. Shows
+// which Tally company this workspace is anchored to (by $Guid) and
+// lets the useradmin unbind so a mis-clicked SVCurrentCompany can
+// never pour a sister-concern's vouchers into this tenant.
+const TallyBindingCard = ({ token }) => {
+  const [binding, setBinding] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/settings/tally-binding`, { headers });
+      if (res.data?.success) setBinding(res.data.data);
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+
+  const unbind = async () => {
+    if (!window.confirm(
+      'Unbind this Tally company from FLOWRA?\n\n'
+      + 'The next successful sync from the Tally Agent will re-capture '
+      + 'the company GUID and lock it back in. Existing synced data is '
+      + 'kept — nothing is deleted. Only do this if you have moved to a '
+      + 'different Tally company or the wrong one was auto-bound.'
+    )) return;
+    setBusy(true);
+    try {
+      const res = await axios.delete(`${API}/settings/tally-binding`, { headers });
+      if (res.data?.success) {
+        toast.success('Tally binding cleared. Next sync will re-bind.');
+        setBinding({ bound: false });
+      } else {
+        toast.error(res.data?.error || 'Could not unbind');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Could not unbind');
+    } finally { setBusy(false); }
+  };
+
+  if (loading) return null;
+  const bound = binding?.bound;
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Shield size={18} className="text-slate-500" />
+        <h3 className="font-semibold text-slate-900">Tally Company Lock</h3>
+      </div>
+      <div className={`border rounded-xl p-5 ${bound
+                ? 'border-emerald-200 bg-emerald-50/60'
+                : 'border-amber-200 bg-amber-50/40'}`}
+           data-testid="tally-binding-card">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-white shadow-sm
+                              flex items-center justify-center">
+              <Shield size={22} className={bound ? 'text-emerald-600' : 'text-amber-500'} />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900 flex items-center gap-2">
+                {bound ? 'Locked to Tally Company' : 'Not locked yet'}
+                {bound && (
+                  <span className="text-xs bg-emerald-100 text-emerald-700
+                          border border-emerald-200 px-2 py-0.5 rounded-full
+                          flex items-center gap-1">
+                    <CheckCircle2 size={12}/> Bound
+                  </span>
+                )}
+              </div>
+              {bound ? (
+                <>
+                  <div className="text-sm text-slate-700 mt-1">
+                    <b data-testid="tally-binding-name">{binding.tally_company_name}</b>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5 font-mono">
+                    GUID · {(binding.tally_company_guid || '').slice(0, 8)}…
+                    {(binding.tally_company_guid || '').slice(-6)}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Bound {binding.bound_at ? formatIST(binding.bound_at) : '—'}
+                    {binding.last_seen_at && (
+                      <> · Last sync {formatIST(binding.last_seen_at)}</>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-2 max-w-xl">
+                    FLOWRA will refuse any Tally Agent sync that reports a
+                    different company GUID — even if the same Tally
+                    instance has other companies loaded. This prevents
+                    sister-concern vouchers from ever being written to
+                    this workspace.
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-slate-600 max-w-xl mt-1">
+                  The Tally Agent hasn't run its first sync yet. As soon as
+                  it does, FLOWRA will capture the company's internal
+                  GUID and lock this workspace to it. From then on any
+                  attempt to sync data from a DIFFERENT Tally company is
+                  hard-blocked.
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            {bound && (
+              <button onClick={unbind} disabled={busy}
+                       data-testid="btn-tally-unbind"
+                       className="px-4 py-2 border border-red-300 text-red-700
+                          hover:bg-red-50 text-sm rounded-lg font-medium
+                          disabled:opacity-60 whitespace-nowrap">
+                {busy ? 'Unbinding…' : 'Unbind'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

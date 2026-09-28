@@ -262,6 +262,35 @@ async def receive_agent_sync(request: dict):
                 company_name_raw = req_company_id
             req_company_id = resolved_uuid
 
+        # iter-168 — MULTI-COMPANY GUID BINDING (trust-on-first-use).
+        # Concurrent Tally companies on the same PC would let a mis-clicked
+        # SVCurrentCompany drop foreign vouchers into this tenant. We now
+        # anchor every (tenant, company) to the Tally $Guid captured on
+        # first sync and refuse any subsequent payload with a different
+        # GUID. See routes/tally_binding.py for the validator.
+        try:
+            from routes.tally_binding import validate_sync_binding
+            _bind_ok, _bind_err = await validate_sync_binding(
+                req_tenant_id,
+                req_company_id,
+                request.get("company_guid", ""),
+                company_name_raw,
+            )
+            if not _bind_ok:
+                # Release the advisory lock we grabbed above.
+                try:
+                    await db.sync_locks.delete_one(_lock_key)
+                except Exception:
+                    pass
+                logger.warning(
+                    f"Sync BLOCKED by binding guard tenant={req_tenant_id} "
+                    f"company={req_company_id}: {_bind_err}"
+                )
+                return APIResponse(success=False, error=_bind_err)
+        except Exception as _e:
+            # Binding validator must never crash the sync path.
+            logger.error(f"tally_binding validator crashed: {_e}")
+
         # Add company to admin's company list if new — enforce max_companies limit
         if req_company_id and req_tenant_id:
             admin_user = await db.users.find_one({"tenant_id": req_tenant_id, "role": "admin"}, {"_id": 0, "companies": 1, "max_companies": 1, "plan": 1, "subscription_start": 1, "subscription_months": 1})

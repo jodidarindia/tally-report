@@ -252,7 +252,7 @@ class WebSocketServer:
         try:
             async for msg in websocket:
                 pass
-        except:
+        except Exception:
             pass
         finally:
             self.clients.discard(websocket)
@@ -268,7 +268,7 @@ class WebSocketServer:
         for c in self.clients:
             try:
                 await c.send(msg)
-            except:
+            except Exception:
                 dead.add(c)
         self.clients -= dead
 
@@ -466,6 +466,69 @@ class TallyCollectionClient:
         except Exception:
             return False
 
+    # ─── iter-168: multi-company safety — GUID fetch ──────────────────
+    def fetch_company_guid(self, company_name: str = "") -> str:
+        """Return Tally's internal $Guid for the given company (or the
+        active `self.company` if none given). Empty string on failure.
+
+        Tally exposes an immutable Guid per company file (survives
+        rename, backup/restore). We use it as the anchor identifier
+        for FLOWRA's Trust-On-First-Use binding so a mis-clicked
+        SVCurrentCompany can never drop cross-company vouchers into
+        the wrong tenant.
+        """
+        target = (company_name or self.company or '').strip()
+        # Temporarily scope the request to the target company so we
+        # don't get GUIDs from the wrong company when several are open.
+        saved = self.company
+        try:
+            if target:
+                self.company = target
+            company_tag = self._company_tag()
+            xml = f"""<ENVELOPE>
+<HEADER><VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Collection</TYPE>
+<ID>FlowraCompanyGuid</ID></HEADER>
+<BODY><DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+{company_tag}
+</STATICVARIABLES>
+<TDL><TDLMESSAGE>
+<COLLECTION NAME="FlowraCompanyGuid" ISINITIALIZE="Yes">
+<TYPE>Company</TYPE>
+<FETCH>NAME</FETCH>
+<FETCH>GUID</FETCH>
+<FETCH>COMPANYGUID</FETCH>
+<FETCH>BASICCOMPANYFORMALNAME</FETCH>
+</COLLECTION>
+</TDLMESSAGE></TDL>
+</DESC></BODY></ENVELOPE>"""
+            data = self._post(xml, debug_name='company_guid')
+            if not data:
+                return ''
+            companies = self._get_collection_items(data, 'COMPANY')
+            for c in companies:
+                if not isinstance(c, dict):
+                    continue
+                # Optionally match by name — but with SVCURRENTCOMPANY
+                # scoping, Tally returns only that company, so any GUID
+                # we find IS the right one.
+                for key in ('GUID', 'COMPANYGUID', '@GUID'):
+                    v = c.get(key, '')
+                    if isinstance(v, dict):
+                        v = v.get('#text', '')
+                    v = str(v).strip() if v else ''
+                    if v:
+                        return v.strip('{}').lower()
+            return ''
+        except Exception as e:
+            logger.debug(f"fetch_company_guid failed: {e}")
+            return ''
+        finally:
+            self.company = saved
+
     def test_connection(self) -> bool:
         """Quick ping to check Tally is responding + detect active company name."""
         # Method 1: Collection request for company list
@@ -649,7 +712,7 @@ class TallyCollectionClient:
             s = s.split('/', 1)[0].strip()
         try:
             return abs(float(s.split()[0]))
-        except:
+        except Exception:
             return 0.0
 
     def _signed_num(self, val):
@@ -668,7 +731,7 @@ class TallyCollectionClient:
             s = s.split('/', 1)[0].strip()
         try:
             return float(s.split()[0])
-        except:
+        except Exception:
             return 0.0
 
     def _safe_float(self, val):
@@ -687,7 +750,7 @@ class TallyCollectionClient:
         parts = s.split()
         try:
             qty = abs(float(parts[0].replace(',', '')))
-        except:
+        except Exception:
             qty = 0.0
         unit = parts[1] if len(parts) > 1 else 'Pcs'
         return qty, unit
@@ -3344,7 +3407,6 @@ def get_or_refresh_auth(backend_url: str = None) -> dict:
 
 def compute_data_hash(data: list) -> str:
     """Compute a quick hash of the data for change detection."""
-    import hashlib
     content = json.dumps(data, sort_keys=True, default=str)
     return hashlib.md5(content.encode()).hexdigest()
 
@@ -3378,6 +3440,7 @@ class FlowraSyncAgent:
         self.sync_running = False
         self.ws_server = None
         self._active_company = COMPANY_NAME
+        self._active_company_guid = ''  # iter-168 — populated per-company for GUID binding
         self._companies_to_sync = []
         self.tally = TallyCollectionClient(
             url=TALLY_URL,
@@ -3569,7 +3632,7 @@ class FlowraSyncAgent:
                     print(f"  Now active:        {new_company}")
                     print("=" * 60)
                     print("  Syncing this new company will upload its data to your")
-                    print(f"  CURRENTLY LOGGED-IN account ({USER_EMAIL or 'unknown'}).")
+                    print(f"  CURRENTLY LOGGED-IN account ({self.auth_config.get('email') or 'unknown'}).")
                     print("  If that's not the right tenant, log out of the agent")
                     print("  first and re-login with the correct user.")
                     print("=" * 60)
@@ -3633,6 +3696,55 @@ class FlowraSyncAgent:
         if not company_name or company_name in ('_active_', 'Default', '##Default'):
             return ''
         return self.company_mappings.get(company_name, company_name)
+
+    def _ensure_tally_binding(self, company_name: str, guid: str) -> None:
+        """iter-168 — Tell the FLOWRA backend to bind this (tenant, company)
+        to the Tally $Guid. Idempotent: repeated calls with the same GUID
+        are a no-op. A DIFFERENT GUID gets rejected by the backend and the
+        useradmin must unbind via the Settings page first.
+
+        Non-fatal: if the bind call fails (network hiccup, older backend),
+        we log and continue — the sync payload itself will still carry the
+        GUID and the backend's TOFU logic will bind on first successful
+        write. Belt-and-braces.
+        """
+        if not company_name or not guid:
+            return
+        try:
+            company_id = self._resolve_company_id(company_name) or company_name
+            resp = requests.post(
+                f"{self.backend_url}/api/agent/tally-binding/bind",
+                json={
+                    'tenant_id': self.tenant_id,
+                    'sync_token': self.sync_token,
+                    'company_id': company_id,
+                    'company_name': company_name,
+                    'company_guid': guid,
+                },
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {self.auth_token}',
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                body = resp.json() if resp.content else {}
+                if body.get('success'):
+                    logger.info(
+                        f"[BIND] {company_name} ({guid[:8]}…) -> "
+                        f"{body.get('data', {}).get('status', 'ok')}"
+                    )
+                    return
+                logger.warning(
+                    f"[BIND] Refused for {company_name}: {body.get('error')}"
+                )
+            else:
+                logger.debug(
+                    f"[BIND] HTTP {resp.status_code} — proceeding, TOFU will "
+                    "catch it on the sync path."
+                )
+        except Exception as e:
+            logger.debug(f"[BIND] call failed silently: {e}")
 
     def discover_and_select_fys(self):
         """Discover available FYs from Tally and ask user to select starting FY per company."""
@@ -3716,6 +3828,7 @@ class FlowraSyncAgent:
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'financial_year': self.financial_year,
             'company_name': company,
+            'company_guid': getattr(self, '_active_company_guid', '') or '',
             'tenant_id': self.tenant_id,
             'company_id': company_id,
             **kwargs
@@ -3735,7 +3848,7 @@ class FlowraSyncAgent:
                 headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {self.auth_token}'},
                 timeout=5
             )
-        except:
+        except Exception:
             pass
 
     # v9.8.24 ── per-cycle failure tracker helpers ─────────────────────────
@@ -3811,8 +3924,9 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.30-window-scoped-reconcile',
+                'agent_version': '9.11.0-multi-company-guid-binding',
                 'company_name': company,
+                'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
                 'tenant_id': self.tenant_id,
                 'company_id': company_id,
@@ -4038,6 +4152,20 @@ class FlowraSyncAgent:
                 if not self.tally._ping_tally():
                     logger.warning(f"[QUICK] Tally not responding for company '{company}' — skipping. Is Tally running with this company open?")
                     continue
+
+                # iter-168 — capture Tally $Guid for this company and
+                # bind it to the FLOWRA tenant on first sync. Any later
+                # cycle that reports a different GUID is HARD-BLOCKED
+                # by the backend to prevent cross-company corruption
+                # when several Tally companies are loaded at once.
+                self._active_company_guid = ''
+                try:
+                    guid = self.tally.fetch_company_guid(company)
+                    if guid:
+                        self._active_company_guid = guid
+                        self._ensure_tally_binding(company, guid)
+                except Exception as _e:
+                    logger.debug(f"[QUICK] GUID discovery failed for '{company}': {_e}")
 
                 # Per-company FYs
                 if hasattr(self, '_company_fys') and company in self._company_fys:
@@ -4295,6 +4423,16 @@ class FlowraSyncAgent:
                 logger.info(f"{'=' * 60}")
                 logger.info(f"Syncing company: {display}")
                 logger.info(f"{'=' * 60}")
+                # iter-168 — capture GUID + ensure binding before full sync.
+                self._active_company_guid = ''
+                if company != '_active_':
+                    try:
+                        guid = self.tally.fetch_company_guid(company)
+                        if guid:
+                            self._active_company_guid = guid
+                            self._ensure_tally_binding(company, guid)
+                    except Exception as _e:
+                        logger.debug(f"GUID discovery failed for '{company}': {_e}")
                 self._sync_single_company(company)
         except Exception as e:
             logger.error(f"Sync cycle error: {e}")

@@ -88,6 +88,9 @@ api_router.include_router(blog_router)
 # iter-123: Remarks (Prospects + Leads) with tags & history
 from routes.remarks import router as remarks_router
 api_router.include_router(remarks_router)
+# iter-168: Tally multi-company safety — GUID-bound TOFU sync
+from routes.tally_binding import router as tally_binding_router
+api_router.include_router(tally_binding_router)
 
 
 # ── Health endpoint (k8s / Atlas liveness probe + uptime monitor) ──────

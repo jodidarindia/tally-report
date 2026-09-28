@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 APP_NAME = "FLOWRA Tally Sync Agent"
-APP_VERSION = "v9.8.30"
+APP_VERSION = "v9.11.0"
 AGENT_SCRIPT = "tally_sync_agent_v9.py"
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Flowra"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1550,8 +1550,8 @@ class FlowraAgentGUI:
                     messagebox.showinfo(APP_NAME, msg) if ok
                     else messagebox.showerror(APP_NAME, msg)))
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
-                    APP_NAME, f"Could not submit renewal request:\n{e}"))
+                self.root.after(0, lambda err=e: messagebox.showerror(
+                    APP_NAME, f"Could not submit renewal request:\n{err}"))
         threading.Thread(target=worker, daemon=True).start()
 
     def _logout(self):
@@ -2287,8 +2287,8 @@ class FlowraAgentGUI:
                 bat = write_updater_batch(temp_exe, target_exe,
                                             os.getpid(), log_path)
             except Exception as e:
-                self.root.after(0, lambda: self._update_failed(
-                    f"Could not write updater: {e}"))
+                self.root.after(0, lambda err=e: self._update_failed(
+                    f"Could not write updater: {err}"))
                 return
 
             self.root.after(0, lambda: self._launch_updater_and_exit(bat))
