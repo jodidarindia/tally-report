@@ -127,11 +127,22 @@ async def validate_sync_binding(
     # Binding exists — must match GUID.
     bound_guid = _norm_guid(binding.get("tally_company_guid", ""))
     if not incoming:
-        return False, (
-            "Your Tally Agent is not sending the company GUID. Please "
-            "update to Tally Agent v9.8.32 or newer so multi-company "
-            "safety can validate the sync."
+        # v9.8.32 hotfix: some Tally versions / installations legitimately
+        # fail to expose $Guid on a Company collection (older Tally.ERP9
+        # builds, first cycle before the agent's client-side cache warms,
+        # brief network hiccups when the agent is restarted). Hard-
+        # blocking every such sync would strand the customer. Instead
+        # we accept the payload, log a warning, and rely on the name
+        # matching the bound company. The hard block still fires when
+        # the agent DOES send a GUID and it doesn't match (below) —
+        # which is the only case that can actually corrupt data.
+        logger.warning(
+            f"Tally binding: payload has no GUID for tenant={tenant_id} "
+            f"company={company_id}. Bound to '{binding.get('tally_company_name')}'. "
+            "Accepting because agent may still be warming its GUID cache."
         )
+        await touch_last_seen(tenant_id, company_id)
+        return True, ""
     if incoming != bound_guid:
         return False, (
             f"Tally company GUID mismatch. This FLOWRA tenant is bound "

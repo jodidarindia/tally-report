@@ -46,8 +46,9 @@ def test_tofu_and_mismatch_logic_present():
     # Mismatch guard.
     assert "guid mismatch" in src.lower() or "guid" in src.lower()
     assert "Refusing to write" in src
-    # Missing GUID from binder-aware backend must be rejected.
-    assert "v9.8.32" in src or "guid-bound" in src.lower()
+    # Missing GUID from binder-aware backend must be handled gracefully
+    # (soft-accept, not hard block — see v9.8.32 hotfix rationale).
+    assert "warming its GUID cache" in src or "guid-bound" in src.lower()
 
 
 def test_sync_endpoint_calls_binding_validator():
@@ -69,7 +70,7 @@ def test_agent_fetches_guid_and_binds():
     # GUID included in every sync payload.
     assert "'company_guid':" in src
     # Version bump.
-    assert "9.8.32-multi-company-guid-bound" in src
+    assert "9.8.33-guid-bound-hotfix" in src
 
 
 def test_binding_called_in_quick_and_full_sync_loops():
@@ -81,7 +82,7 @@ def test_binding_called_in_quick_and_full_sync_loops():
 
 def test_gui_version_bumped():
     src = pathlib.Path(GUI).read_text()
-    assert 'APP_VERSION = "v9.8.32"' in src
+    assert 'APP_VERSION = "v9.8.33"' in src
 
 
 def test_frontend_binding_card_present():
@@ -105,3 +106,52 @@ def test_guid_normalisation_is_case_insensitive():
     assert _norm_guid("  ABCD-1234  ") == "abcd-1234"
     assert _norm_guid("") == ""
     assert _norm_guid(None) == ""
+
+def test_guid_fetch_uses_safe_ismodify_pattern():
+    """v9.8.32 hotfix — Tally crashed because the earlier fetch_company_guid
+    used ISINITIALIZE=\"Yes\" on a Company collection AND wrapped the
+    request in SVCURRENTCOMPANY. Both are dangerous on PCs with multiple
+    books loaded. The fixed version must use the same safe shape as
+    list_of_companies: ISMODIFY=\"No\", no SVCURRENTCOMPANY, minimal
+    field fetches."""
+    src = pathlib.Path(AGENT).read_text()
+    # Locate the fetch_company_guid function block.
+    m = re.search(
+        r"def fetch_company_guid\(.*?\n(.*?)(?=\n    def |\nclass )",
+        src, re.S,
+    )
+    assert m, "fetch_company_guid not found"
+    body = m.group(1)
+    # Must NOT reintroduce the crash-causing patterns (in the XML).
+    assert 'ISINITIALIZE="Yes"' not in body, \
+        "ISINITIALIZE=\"Yes\" on Company crashes multi-company Tally"
+    assert '<SVCURRENTCOMPANY>' not in body.upper(), \
+        "SVCURRENTCOMPANY-scoped Company collection can hang Tally"
+    # Must use the safe pattern.
+    assert 'ISMODIFY="No"' in body
+    # Cache must be present so we don't hammer Tally each quick-sync tick.
+    assert "_guid_cache" in body
+
+
+def test_binding_post_is_deduped_per_session():
+    """_ensure_tally_binding must remember which (company, guid) pairs
+    it already posted so it doesn't spam the backend on every tick."""
+    src = pathlib.Path(AGENT).read_text()
+    m = re.search(
+        r"def _ensure_tally_binding\(.*?\n(.*?)(?=\n    def |\nclass )",
+        src, re.S,
+    )
+    assert m
+    body = m.group(1)
+    assert "_binding_posted" in body
+    assert "bind_key" in body
+
+
+def test_backend_soft_accepts_missing_guid_when_bound():
+    """Hard-blocking absent GUIDs strands legacy Tally installs. The
+    validator should hard-block ONLY on mismatch."""
+    src = pathlib.Path(BINDING_MOD).read_text()
+    assert "warming its GUID cache" in src
+    # The mismatch block MUST still fire — search for the corruption warning.
+    assert "Refusing to write" in src
+

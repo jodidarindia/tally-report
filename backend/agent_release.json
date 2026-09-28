@@ -1,9 +1,9 @@
 {
-  "version": "9.8.32",
+  "version": "9.8.33",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.32 (guid-bound) — Multi-Company Safety Layer #2: FLOWRA now anchors each tenant to Tally's INTERNAL $Guid (immutable per company file). On every cycle the agent fetches the GUID via an SVCurrentCompany-scoped Collection request and includes it in every sync payload. First successful sync auto-binds (Trust-On-First-Use); any subsequent cycle whose GUID doesn't match is HARD-BLOCKED at the FLOWRA server — sister-concern vouchers can no longer bleed into the wrong workspace even if the operator has multiple companies loaded and tabs mid-sync. Complements v9.8.31's ListOfCompanies preflight (name-based warning) with GUID enforcement (hard block). Useradmin can unbind from FLOWRA → Settings → Integrations. Also: 9 pre-existing lint-warnings cleaned up (bare-except → Exception, hashlib top-level import, USER_EMAIL resolved via auth_config, tk.after lambda `err=e` capture fix).",
-  "released_at": "2026-09-27T22:45:00+05:30",
+  "release_notes": "v9.8.33 (guid-bound HOTFIX) — CRITICAL fix over v9.8.32: the earlier GUID lookup used `ISINITIALIZE=\"Yes\"` on the Company collection AND wrapped the request in SVCURRENTCOMPANY. On PCs with multiple books loaded, that combination made Tally rebuild its company cache on every quick-sync tick and eventually HANG / CRASH the tally.exe process (reported by Krishna Sales Corporation). v9.8.33 rewrites the lookup to use the exact same shape as v9.8.31's proven-safe `list_of_companies` (`ISMODIFY=\"No\"`, no SVCURRENTCOMPANY, minimal field fetches), caches the result per-session so Tally is queried AT MOST ONCE per company, and dedupes the bind-endpoint POST per-session. The backend validator was also softened — a missing GUID on a bound sync is now a soft warning (not a hard block) so older Tally builds & first-cycle cache warm-ups no longer strand the customer. Hard block still fires on GUID MISMATCH (real corruption path). ALL v9.8.32 installs MUST upgrade before running against a multi-company Tally.",
+  "released_at": "2026-09-27T23:20:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }

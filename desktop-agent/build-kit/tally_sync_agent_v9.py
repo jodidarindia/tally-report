@@ -1986,65 +1986,85 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
         except Exception:
             return ""
 
-    # ─── iter-168: multi-company safety — GUID fetch ──────────────────
+    # ─── iter-168: multi-company safety — GUID fetch (SAFE PATTERN) ──
+    # v9.8.32 hotfix: the earlier fetch_company_guid used `ISINITIALIZE=
+    # "Yes"` on the Company collection AND wrapped the request in
+    # SVCURRENTCOMPANY. On PCs with several books loaded, that combo
+    # made Tally rebuild its company cache on every quick-sync tick
+    # and eventually hang / crash the tally.exe process. We now use
+    # exactly the same shape as `list_of_companies` (proven safe in
+    # v9.8.31) — `ISMODIFY="No"`, no SVCURRENTCOMPANY, no unknown
+    # field fetches — and filter by NAME on the client side. Result
+    # is cached per-session so we only hit Tally ONCE per company.
     def fetch_company_guid(self, company_name: str = "") -> str:
-        """Return Tally's internal $Guid for the given company (or the
-        active `self.company` if none given). Empty string on failure.
-
-        Tally exposes an immutable Guid per company file (survives
-        rename, backup/restore). We use it as the anchor identifier
-        for FLOWRA's Trust-On-First-Use binding so a mis-clicked
-        SVCurrentCompany can never drop cross-company vouchers into
-        the wrong tenant.
-        """
+        """Return Tally's `$Guid` for the given company name (or the
+        current `self.company`). Empty string on any failure — callers
+        must treat this as advisory (backend TOFU logic handles first-
+        sync capture without agent-side blocking)."""
         target = (company_name or self.company or '').strip()
-        # Temporarily scope the request to the target company so we
-        # don't get GUIDs from the wrong company when several are open.
-        saved = self.company
-        try:
-            if target:
-                self.company = target
-            company_tag = self._company_tag()
-            xml = f"""<ENVELOPE>
-<HEADER><VERSION>1</VERSION>
-<TALLYREQUEST>Export</TALLYREQUEST>
-<TYPE>Collection</TYPE>
-<ID>FlowraCompanyGuid</ID></HEADER>
+        if not target:
+            return ''
+        # Per-process cache — set on TallyCollectionClient at __init__.
+        cache = getattr(self, '_guid_cache', None)
+        if cache is None:
+            cache = {}
+            self._guid_cache = cache
+        cached = cache.get(target.lower())
+        if cached is not None:
+            return cached  # may be '' if a previous lookup failed
+        # Same safe shape as list_of_companies — Tally is happy with
+        # this even when 5 books are loaded. NO ISINITIALIZE. NO
+        # SVCURRENTCOMPANY. Just NAME + GUID fetches on a read-only
+        # (ISMODIFY="No") collection.
+        xml = """<ENVELOPE>
+<HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>FlowraGuidLookup</ID></HEADER>
 <BODY><DESC>
-<STATICVARIABLES>
-<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-{company_tag}
-</STATICVARIABLES>
+<STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
 <TDL><TDLMESSAGE>
-<COLLECTION NAME="FlowraCompanyGuid" ISINITIALIZE="Yes">
+<COLLECTION NAME="FlowraGuidLookup" ISMODIFY="No">
 <TYPE>Company</TYPE>
 <FETCH>NAME</FETCH>
 <FETCH>GUID</FETCH>
-<FETCH>COMPANYGUID</FETCH>
-<FETCH>BASICCOMPANYFORMALNAME</FETCH>
 </COLLECTION>
 </TDLMESSAGE></TDL>
 </DESC></BODY></ENVELOPE>"""
-            data = self._post(xml, debug_name='company_guid')
+        try:
+            data = self._post(xml, debug_name='guid_lookup')
             if not data:
+                cache[target.lower()] = ''
                 return ''
-            companies = self._get_collection_items(data, 'COMPANY')
+            companies = self._find_deep(data, 'COMPANY')
+            if not companies:
+                cache[target.lower()] = ''
+                return ''
+            if isinstance(companies, (str, dict)):
+                companies = [companies]
+            tl = target.lower()
+            found = ''
             for c in companies:
                 if not isinstance(c, dict):
                     continue
-                for key in ('GUID', 'COMPANYGUID', '@GUID'):
-                    v = c.get(key, '')
-                    if isinstance(v, dict):
-                        v = v.get('#text', '')
-                    v = str(v).strip() if v else ''
-                    if v:
-                        return v.strip('{}').lower()
-            return ''
+                nm = c.get('NAME') or c.get('@NAME') or ''
+                if isinstance(nm, dict):
+                    nm = nm.get('#text', '')
+                nm = str(nm or '').strip()
+                gv = c.get('GUID', '') or c.get('@GUID', '')
+                if isinstance(gv, dict):
+                    gv = gv.get('#text', '')
+                gv = str(gv or '').strip().strip('{}').lower()
+                if not nm or not gv:
+                    # Populate the cache for OTHER companies we see
+                    # so a later lookup on them is also free.
+                    continue
+                if nm.lower() == tl and not found:
+                    found = gv
+                cache[nm.lower()] = gv
+            cache[tl] = found  # remember misses too — don't re-hit Tally
+            return found
         except Exception as e:
             logger.debug(f"fetch_company_guid failed: {e}")
+            cache[target.lower()] = ''
             return ''
-        finally:
-            self.company = saved
 
     def discover_financial_years(self) -> List[str]:
         """Query Tally for all available financial years (accounting periods)."""
@@ -3478,7 +3498,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.32-multi-company-guid-bound")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.33-guid-bound-hotfix")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3729,6 +3749,13 @@ class FlowraSyncAgent:
         are a no-op. A DIFFERENT GUID gets rejected by the backend and the
         useradmin must unbind via the Settings page first.
 
+        v9.8.32 hotfix — we ALSO short-circuit locally so the same
+        (company, guid) pair is only posted ONCE per process lifetime.
+        Prevents chatty network calls on every quick-sync tick and
+        keeps Tally itself out of the loop entirely (the GUID lookup
+        that feeds this method is already cached — see
+        TallyCollectionClient.fetch_company_guid).
+
         Non-fatal: if the bind call fails (network hiccup, older backend),
         we log and continue — the sync payload itself will still carry the
         GUID and the backend's TOFU logic will bind on first successful
@@ -3736,6 +3763,14 @@ class FlowraSyncAgent:
         """
         if not company_name or not guid:
             return
+        bind_key = f"{company_name.lower()}|{guid}"
+        seen = getattr(self, '_binding_posted', None)
+        if seen is None:
+            seen = set()
+            self._binding_posted = seen
+        if bind_key in seen:
+            return  # already posted this session — the sync payload
+                    # continues to carry the GUID, so we're covered.
         try:
             company_id = self._resolve_company_id(company_name) or company_name
             resp = requests.post(
@@ -3756,6 +3791,7 @@ class FlowraSyncAgent:
             if resp.status_code == 200:
                 body = resp.json() if resp.content else {}
                 if body.get('success'):
+                    seen.add(bind_key)
                     logger.info(
                         f"[BIND] {company_name} ({guid[:8]}…) -> "
                         f"{body.get('data', {}).get('status', 'ok')}"
@@ -3911,7 +3947,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.32-multi-company-guid-bound',
+                'agent_version': '9.8.33-guid-bound-hotfix',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -3950,7 +3986,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.32-multi-company-guid-bound',
+                'agent_version': '9.8.33-guid-bound-hotfix',
                 'company_name': company,
                 'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
@@ -4011,7 +4047,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.32-multi-company-guid-bound',
+                'agent_version': '9.8.33-guid-bound-hotfix',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4219,7 +4255,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.32-multi-company-guid-bound',
+                                'agent_version': '9.8.33-guid-bound-hotfix',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -5009,7 +5045,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.32-multi-company-guid-bound")
+        print("FLOWRA Tally Sync Agent v9.8.33-guid-bound-hotfix")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag
