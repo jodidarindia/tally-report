@@ -1,9 +1,9 @@
 {
-  "version": "9.8.30",
+  "version": "9.8.32",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.30 — Voucher-date window scoping for incremental syncs (only pulls vouchers within an explicit date range instead of always full-history), plus carry-forward of iter-107 fixes: raw parentheses/apostrophes/quotes in SVCURRENTCOMPANY (only the three XML-mandated entities are escaped now — & < > — because Tally's TDL matcher does NOT decode numeric character refs or &apos;/&quot; back to literals). Faster startup on Tally Prime 7.0, less network chatter, no more false 'company not loaded' errors after upgrade. Customer-side: run the new .exe from the same folder, choose Replace when Windows prompts.",
-  "released_at": "2026-08-24T19:15:00+05:30",
-  "sha256": "bb34387be33e722e9648e91a96610814b7b7fd7259fc5543f9c5176a8265de82",
-  "size_bytes": 26930814
+  "release_notes": "v9.8.32 (guid-bound) — Multi-Company Safety Layer #2: FLOWRA now anchors each tenant to Tally's INTERNAL $Guid (immutable per company file). On every cycle the agent fetches the GUID via an SVCurrentCompany-scoped Collection request and includes it in every sync payload. First successful sync auto-binds (Trust-On-First-Use); any subsequent cycle whose GUID doesn't match is HARD-BLOCKED at the FLOWRA server — sister-concern vouchers can no longer bleed into the wrong workspace even if the operator has multiple companies loaded and tabs mid-sync. Complements v9.8.31's ListOfCompanies preflight (name-based warning) with GUID enforcement (hard block). Useradmin can unbind from FLOWRA → Settings → Integrations. Also: 9 pre-existing lint-warnings cleaned up (bare-except → Exception, hashlib top-level import, USER_EMAIL resolved via auth_config, tk.after lambda `err=e` capture fix).",
+  "released_at": "2026-09-27T22:45:00+05:30",
+  "sha256": "",
+  "size_bytes": 0
 }

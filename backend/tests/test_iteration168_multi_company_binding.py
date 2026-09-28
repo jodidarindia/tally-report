@@ -15,8 +15,8 @@ import re
 BINDING_MOD = "/app/backend/routes/tally_binding.py"
 SYNC_MOD = "/app/backend/routes/sync.py"
 SERVER = "/app/backend/server.py"
-AGENT = "/app/desktop-agent/build-kit-2/tally_sync_agent_v9.py"
-GUI = "/app/desktop-agent/build-kit-2/flowra_gui.py"
+AGENT = "/app/desktop-agent/build-kit/tally_sync_agent_v9.py"
+GUI = "/app/desktop-agent/build-kit/flowra_gui.py"
 FRONTEND = "/app/frontend/src/pages/ProfileModal.js"
 
 
@@ -47,7 +47,7 @@ def test_tofu_and_mismatch_logic_present():
     assert "guid mismatch" in src.lower() or "guid" in src.lower()
     assert "Refusing to write" in src
     # Missing GUID from binder-aware backend must be rejected.
-    assert "v9.11.0" in src
+    assert "v9.8.32" in src or "guid-bound" in src.lower()
 
 
 def test_sync_endpoint_calls_binding_validator():
@@ -69,7 +69,7 @@ def test_agent_fetches_guid_and_binds():
     # GUID included in every sync payload.
     assert "'company_guid':" in src
     # Version bump.
-    assert "9.11.0-multi-company-guid-binding" in src
+    assert "9.8.32-multi-company-guid-bound" in src
 
 
 def test_binding_called_in_quick_and_full_sync_loops():
@@ -81,7 +81,7 @@ def test_binding_called_in_quick_and_full_sync_loops():
 
 def test_gui_version_bumped():
     src = pathlib.Path(GUI).read_text()
-    assert 'APP_VERSION = "v9.11.0"' in src
+    assert 'APP_VERSION = "v9.8.32"' in src
 
 
 def test_frontend_binding_card_present():

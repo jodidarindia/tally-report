@@ -30,12 +30,13 @@ On PCs with multiple Tally companies loaded concurrently (port 9000), XML reques
 - `validate_sync_binding()` — plugged into `/api/agent/sync` right after company_id resolution. Behaviour: no binding + GUID → auto-bind (TOFU); binding + GUID match → accept + `touch_last_seen`; binding + mismatch → hard-block with descriptive error; binding + no GUID (legacy agent) → hard-block with upgrade nudge.
 - GUID normalisation: strip `{}`, whitespace, case-insensitive compare.
 
-**Tally Agent v9.11.0 (`build-kit-2/`)**
+**Tally Agent v9.8.32 (`build-kit/`)**
 - New `TallyCollectionClient.fetch_company_guid(name)` — issues an SVCurrentCompany-scoped Collection request fetching `GUID / COMPANYGUID / BASICCOMPANYFORMALNAME`. Returns lowercase, brace-stripped.
 - New agent method `_ensure_tally_binding(name, guid)` — calls the bind endpoint on every cycle (idempotent).
 - Both sync loops (quick-alter and full) now capture `_active_company_guid` at company boundary and include `company_guid` in every payload (sync + progress).
-- Version bump `9.8.30` → `v9.11.0` (GUI banner + payload `agent_version`).
-- Also cleaned up 8 pre-existing lint errors (bare excepts, F821, F811) as housekeeping.
+- Version bump `9.8.31-multi-company-safe` → `9.8.32-multi-company-guid-bound` (GUI banner + payload `agent_version` + version_info.txt).
+- Complements v9.8.31's advisory ListOfCompanies preflight with **hard-block** GUID enforcement.
+- Also cleaned up 9 pre-existing lint errors as housekeeping.
 
 **Frontend (`ProfileModal.js` → Integrations tab)**
 - New `TallyBindingCard` component underneath the Google Drive card:
@@ -52,7 +53,7 @@ On PCs with multiple Tally companies loaded concurrently (port 9000), XML reques
 3. Different GUID re-bind → 400 "already bound to a different company" ✓
 4. Sync with correct GUID → 200 ✓
 5. Sync with wrong GUID → 400 "GUID mismatch. Refusing to write…" ✓
-6. Sync with no GUID from legacy agent (after bind) → 400 "update to v9.11.0" ✓
+6. Sync with no GUID from legacy agent (after bind) → 400 "update to v9.8.32" ✓
 7. Settings GET → full binding record ✓
 8. Settings DELETE → unbind, then GET returns bound:false ✓
 
@@ -60,8 +61,11 @@ On PCs with multiple Tally companies loaded concurrently (port 9000), XML reques
 - `/app/backend/routes/tally_binding.py` (new)
 - `/app/backend/routes/sync.py` (validator call + lock release on block)
 - `/app/backend/server.py` (route registration)
-- `/app/desktop-agent/build-kit-2/tally_sync_agent_v9.py` (GUID fetch, binding call, payload)
-- `/app/desktop-agent/build-kit-2/flowra_gui.py` (version bump + lambda scope fix)
+- `/app/desktop-agent/build-kit/tally_sync_agent_v9.py` (GUID fetch, binding call, payload)
+- `/app/desktop-agent/build-kit/flowra_gui.py` (version bump + lambda scope fix)
+- `/app/desktop-agent/build-kit/version_info.txt` (Windows Properties → 9.8.32.0)
+- `/app/desktop-agent/build-kit/v9.8.32_BUILD_NOTES.md` (new)
+- `/app/backend/agent_release.json` (manifest bump 9.8.30 → 9.8.32)
 - `/app/frontend/src/pages/ProfileModal.js` (TallyBindingCard)
 - `/app/frontend/public/whats_new.json` (release-notes entry)
 - `/app/backend/tests/test_iteration168_multi_company_binding.py` (new)

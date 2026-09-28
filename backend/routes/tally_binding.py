@@ -129,7 +129,7 @@ async def validate_sync_binding(
     if not incoming:
         return False, (
             "Your Tally Agent is not sending the company GUID. Please "
-            "update to Tally Agent v9.11.0 or newer so multi-company "
+            "update to Tally Agent v9.8.32 or newer so multi-company "
             "safety can validate the sync."
         )
     if incoming != bound_guid:
