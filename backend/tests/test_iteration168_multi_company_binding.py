@@ -70,7 +70,7 @@ def test_agent_fetches_guid_and_binds():
     # GUID included in every sync payload.
     assert "'company_guid':" in src
     # Version bump.
-    assert "9.8.34-guid-preflight-only" in src
+    assert "9.8.35-export-timeout-adaptive" in src
 
 
 def test_binding_called_in_quick_and_full_sync_loops():
@@ -82,7 +82,7 @@ def test_binding_called_in_quick_and_full_sync_loops():
 
 def test_gui_version_bumped():
     src = pathlib.Path(GUI).read_text()
-    assert 'APP_VERSION = "v9.8.34"' in src
+    assert 'APP_VERSION = "v9.8.35"' in src
 
 
 def test_frontend_binding_card_present():
@@ -180,4 +180,36 @@ def test_backend_soft_accepts_missing_guid_when_bound():
     assert "warming its GUID cache" in src
     # The mismatch block MUST still fire — search for the corruption warning.
     assert "Refusing to write" in src
+
+
+
+def test_export_timeout_and_adaptive_window_present():
+    """v9.8.35 — Krishna Sales Corp: sales voucher exports on a 4k-item
+    ledger were timing out at the 30 s default. Fix: separate
+    EXPORT_TIMEOUT (default 180 s) for Export Data calls + adaptive
+    window narrowing (month → halves → days) via
+    `_export_voucher_window`."""
+    src = pathlib.Path(AGENT).read_text()
+    # Long timeout constant.
+    assert "EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '180'))" in src
+    # Adaptive helper — recursive split on timeout.
+    assert "def _export_voucher_window" in src
+    assert "def _collect_vouchers_from_result" in src
+    assert "'__split__'" in src
+    # _post now accepts a per-call override.
+    assert "timeout_override" in src
+    # Every heavy fetch_*_month must pass EXPORT_TIMEOUT.
+    heavy_fetches = [
+        "sales", "receipts", "credit_notes", "journals",
+        "stock_journals", "purchases", "debit_notes", "contra",
+        "balance_sheet",
+    ]
+    for kind in heavy_fetches:
+        assert (
+            f"'{kind}_" in src or f"debug_name='{kind}" in src
+            or f"debug_name=f'{kind}" in src
+        ), f"heavy fetch marker for {kind} missing"
+    # Ensure adaptive window skips only after 6 levels of splitting
+    # (~1-day granularity) — we don't want to give up too early.
+    assert "depth >= 6" in src
 

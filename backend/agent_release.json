@@ -1,9 +1,9 @@
 {
-  "version": "9.8.34",
+  "version": "9.8.35",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.34 (guid-preflight-only) — SECOND-LEVEL FIX after v9.8.33 still crashed Tally on Krishna Sales Corp's PC even with only 1 company loaded. New model: (1) the dedicated GUID Collection XML is REMOVED — GUID is now fetched as a SIDE-EFFECT of the existing v9.8.31 `list_of_companies` request (byte-identical shape, one extra `<FETCH>GUID</FETCH>` line the customer's Tally has already been tolerating for weeks); (2) `fetch_company_guid()` is now pure dict-lookup on the `_guid_cache` warmed by preflight — zero Tally XML calls from the sync loops; (3) a `disable_guid_lookup` per-tenant kill-switch (settable via new super-admin route `PUT /super-admin/admins/{u}/toggle-guid-lookup` or directly in Mongo) makes the agent behave exactly like v9.8.31 (no GUID XML at all). Ships with the backend serving the flag through `/api/auth/me`, so support can unblock any tenant WITHOUT touching the .exe. Also: version_info.txt bumped to 9.8.34.0.",
-  "released_at": "2026-09-28T00:15:00+05:30",
+  "release_notes": "v9.8.35 (export-timeout-adaptive) — TALLY WASN'T CRASHING, IT WAS OVERWHELMED. Krishna Sales Corp's v9.8.34 log showed the agent booting fine, loading 4244 stock items cleanly, then repeatedly hitting `Tally request timed out (30s)` on Sales voucher exports for April 2025 (this is a large ledger with 3 sales voucher types × 12 months). The 30 s timeout inherited from ping-style calls was simply too tight for a monthly EXPLODEFLAG=Yes Voucher-Register export on a busy ledger. Fix: (1) new EXPORT_TIMEOUT (default 180 s, override via env var) used only for heavy Export Data calls — voucher/receipt/purchase/credit-note/debit-note/journal/stock-journal/contra/balance-sheet; (2) new `_export_voucher_window` helper that, on timeout, ADAPTIVELY narrows the request to halves and continues splitting down to single-day granularity (6 levels) — a single slow week no longer stalls the whole month; (3) timeout error message now names the debug slug so support can pinpoint the offending voucher-type + window. GUID / multi-company / kill-switch code is unchanged and still active — Krishna's PC will now finish the sales sync it kept aborting. Rebuild via `build-kit\\build.bat` and push the new .exe.",
+  "released_at": "2026-09-29T20:45:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }
