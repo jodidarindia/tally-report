@@ -1,9 +1,9 @@
 {
   "version": "1.7.0",
-  "download_url": "/FlowraBusyAgent.exe",
+  "download_url": "/FlowraBusyAgent_v1.7.0.exe",
   "min_supported_version": "1.5.1",
   "release_notes": "v1.7.0 (binding + triple-name + station) — Three customer-driven features in one release. (1) ONE-EMAIL-ONE-COMPANY BINDING: Flowra now locks each Busy admin account to exactly one Busy company (keyed on `Cmpny.BDEPName`). On startup the agent calls `/api/agent/busy-binding/check` BEFORE opening Busy — if the folder points at a different company than the one already bound, the agent refuses to enter the sync loop and shows a dialog telling the admin which company is currently locked. Server-side TOFU validator also hard-blocks `/api/agent/sync` payloads whose `busy_company_name` doesn't match. Useradmin can unbind from Flowra → Settings → Integrations → Busy Company Lock (existing synced data is kept). (2) TRIPLE-NAME FIELD MAPPING: agent now emits all three Busy name variants per stock item — `ItemName`, `AliasName`, `PrintName`. Useradmin picks which of the three becomes Flowra's canonical `name` and `part_number` via Settings → Integrations → Busy Field Mapping. Backend reapplies the mapping on every sync so changes take effect without a re-install. (3) STATION-DRIVEN CITY-WISE REPEAT ORDER: agent already extracts Busy `Master1.Station` for every customer; new Salesman → New Order → Repeat · City sub-tab queries `/api/salesman-orders/city-suggestions` to surface items that are selling in the SELECTED CUSTOMER's city (last 90 days) that the customer has NOT bought (last 180 days). Shows city-buyer count + top-3 peer customers for context. Also includes v1.6.2's corrupt-memo resilience. Rebuild via `build-kit-busy\\build.bat`.",
   "released_at": "2026-10-01T22:00:00+05:30",
-  "sha256": "",
-  "size_bytes": 0
+  "sha256": "7ff92fa0083ced1ea31960c90184bb24e3c73432a6ba01e0c93da035dafd48e8",
+  "size_bytes": 28245643
 }
