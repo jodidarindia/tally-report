@@ -94,15 +94,15 @@ EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
-# v9.8.35 — separate, larger timeout for heavy Export Data calls
-# (voucher / receipt / purchase months). Krishna Sales Corp reported
-# 30 s was too tight for a large-ledger April 2025 sales export; the
-# agent then reported "Tally request timed out" every 30 s and Tally
-# looked (from the outside) as if it had hung. Bumping to 180 s +
-# adaptive window narrowing (see fetch_sales_month) unblocks large
-# tenants without changing anything for small tenants — Tally responds
-# in a few seconds either way when the data is light.
-EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '180'))
+# v9.8.36 — EXPORT_TIMEOUT is now OPT-IN. Default 0 means "use the same
+# REQUEST_TIMEOUT (30s) as every other call" — byte-identical to v9.8.31
+# behaviour, which never caused the Krishna-Sales-Corp hang. Admins with
+# extremely heavy ledgers can set EXPORT_TIMEOUT=180 (or more) in a
+# `.env` next to the .exe to extend only the Export Data calls. The
+# previous v9.8.35 default of 180s combined with adaptive splitting
+# caused the agent to spend ~90 min hammering Tally on every monthly
+# sales request that was slow, never reaching May.
+EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '0'))
 SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '0.5'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
@@ -1330,26 +1330,37 @@ class TallyCollectionClient:
 
     # ---- SALES VOUCHERS (Export Data with enhanced sanitization) ----
 
-    def _export_voucher_window(
-        self,
-        vt_name: str,
-        from_date: date,
-        to_date: date,
-        debug_slug: str,
-        *,
-        depth: int = 0,
-    ) -> Optional[dict]:
-        """v9.8.35 — Fetch one voucher-type's data for a date window
-        using a LONG timeout (`EXPORT_TIMEOUT` = 180 s default). On
-        timeout, adaptively narrow the window: month → halves → quarters
-        → single days. Returns the parsed dict on success, None on
-        outright failure. When narrowing occurs, callers still see one
-        successful dict per sub-window via the recursive splitting.
+    def fetch_sales_month(self, from_date: date, to_date: date) -> List[Dict]:
+        """Fetch sales vouchers for one month using Export Data + Voucher Register.
+
+        Iterates over EVERY display name whose parent is "Sales" — handles
+        custom voucher types like "Sales General", "Material Out", etc.
+
+        v9.8.36 — Reverted to v9.8.31 semantics after v9.8.35's adaptive
+        splitting hung the agent for ~90 min per month on Krishna Sales
+        Corp's heavy ledger (every monthly voucher-type request timed
+        out → split into halves → each half timed out → split again →
+        30 single-day requests before giving up). v9.8.31 behaviour:
+        single request per month per voucher-type, if it times out
+        return empty and keep marching. Users with heavy ledgers can
+        opt-in to a longer timeout via `EXPORT_TIMEOUT` env var — but
+        the DEFAULT is now the same self.timeout (30s) that v9.8.31
+        used so nobody re-enters the doom-loop. The `_export_voucher_
+        window` adaptive splitter is still present on the class but is
+        no longer called from here.
         """
         fd_disp = from_date.strftime("%d-%b-%Y")
         td_disp = to_date.strftime("%d-%b-%Y")
+        logger.info(f"  Requesting sales: {fd_disp} to {td_disp}")
         company_tag = self._company_tag()
-        xml = f"""<ENVELOPE>
+        all_vchs: List[Dict] = []
+        seen_ids = set()
+        # Only pass timeout_override if the user explicitly set
+        # EXPORT_TIMEOUT above the default 30s AND != REQUEST_TIMEOUT.
+        # Otherwise behave byte-identically to v9.8.31.
+        _to = EXPORT_TIMEOUT if EXPORT_TIMEOUT and EXPORT_TIMEOUT > REQUEST_TIMEOUT else None
+        for vt_name in self._names_for_parent("Sales"):
+            xml = f"""<ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
 <BODY><EXPORTDATA><REQUESTDESC>
 <REPORTNAME>Voucher Register</REPORTNAME>
@@ -1362,61 +1373,18 @@ class TallyCollectionClient:
 <VOUCHERTYPENAME>{vt_name}</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-        debug_name = f'{debug_slug}_{from_date.strftime("%Y%m%d")}_{to_date.strftime("%Y%m%d")}'
-        data = self._post(xml, debug_name=debug_name, timeout_override=EXPORT_TIMEOUT)
-        if data is not None:
-            return data
-        # Timed out or errored. Split the window unless we're already at
-        # a single day — that's as fine-grained as we can safely go.
-        window_days = (to_date - from_date).days + 1
-        if window_days <= 1 or depth >= 6:
-            logger.warning(
-                f"  [export] {vt_name} {fd_disp}→{td_disp} timed out even "
-                f"at {window_days}-day window; skipping this slice."
-            )
-            return None
-        mid = from_date + timedelta(days=window_days // 2 - 1)
-        logger.info(
-            f"  [export] {vt_name} {fd_disp}→{td_disp} slow; splitting "
-            f"into {fd_disp}→{mid.strftime('%d-%b')} + "
-            f"{(mid + timedelta(days=1)).strftime('%d-%b')}→{td_disp}"
-        )
-        return {'__split__': [
-            self._export_voucher_window(vt_name, from_date, mid, debug_slug, depth=depth + 1),
-            self._export_voucher_window(vt_name, mid + timedelta(days=1), to_date, debug_slug, depth=depth + 1),
-        ]}
-
-    def _collect_vouchers_from_result(self, data: Optional[dict], kind: str) -> List[Dict]:
-        """Flatten any __split__ recursion returned by _export_voucher_window
-        and hand each leaf dict to _parse_vouchers."""
-        if data is None:
-            return []
-        if isinstance(data, dict) and '__split__' in data:
-            out: List[Dict] = []
-            for chunk in data['__split__']:
-                out.extend(self._collect_vouchers_from_result(chunk, kind))
-            return out
-        return list(self._parse_vouchers(data, kind))
-
-    def fetch_sales_month(self, from_date: date, to_date: date) -> List[Dict]:
-        """Fetch sales vouchers for one month using Export Data + Voucher Register.
-
-        Iterates over EVERY display name whose parent is "Sales" — handles
-        custom voucher types like "Sales General", "Material Out", etc.
-
-        v9.8.35 — each voucher-type + month uses EXPORT_TIMEOUT (180 s)
-        instead of the ping-tuned 30 s, and adaptively narrows the window
-        on timeout instead of returning empty and marching on.
-        """
-        fd_disp = from_date.strftime("%d-%b-%Y")
-        td_disp = to_date.strftime("%d-%b-%Y")
-        logger.info(f"  Requesting sales: {fd_disp} to {td_disp}")
-        all_vchs: List[Dict] = []
-        seen_ids = set()
-        for vt_name in self._names_for_parent("Sales"):
-            slug = 'sales_' + re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
-            data = self._export_voucher_window(vt_name, from_date, to_date, slug)
-            for v in self._collect_vouchers_from_result(data, 'sales'):
+            slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
+            data = self._post(xml,
+                              debug_name=f'sales_{slug}_{from_date.strftime("%Y%m")}',
+                              timeout_override=_to)
+            if not data:
+                # v9.8.36 — on timeout we return empty and MOVE ON to
+                # the next voucher-type / next month. No recursive
+                # retry. This matches v9.8.31 behaviour and prevents
+                # the agent from spending 90 min hammering Tally with
+                # 30 single-day sub-requests.
+                continue
+            for v in self._parse_vouchers(data, 'sales'):
                 vid = v.get('voucher_id') or v.get('voucher_number')
                 if vid and vid in seen_ids:
                     continue
@@ -1454,7 +1422,7 @@ class TallyCollectionClient:
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
                 slug = re.sub(r'[^a-z0-9]+', '_', vtype_name.lower()).strip('_')
-                data = self._post(xml, debug_name=f'{parent.lower()}s_{slug}_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+                data = self._post(xml, debug_name=f'{parent.lower()}s_{slug}_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
                 if data:
                     for v in self._parse_vouchers(data, 'receipt'):
                         vid = v.get('voucher_id') or v.get('voucher_number')
@@ -1493,7 +1461,7 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
             slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
-            data = self._post(xml, debug_name=f'credit_notes_{slug}_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+            data = self._post(xml, debug_name=f'credit_notes_{slug}_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
             if not data:
                 continue
             for v in self._parse_vouchers(data, 'sales'):
@@ -1533,7 +1501,7 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
             slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
-            data = self._post(xml, debug_name=f'journals_{slug}_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+            data = self._post(xml, debug_name=f'journals_{slug}_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
             if not data:
                 continue
             for j in self._parse_vouchers(data, 'journal'):
@@ -1571,7 +1539,7 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
 
-        data = self._post(xml, debug_name=f'stock_journals_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+        data = self._post(xml, debug_name=f'stock_journals_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
         if not data:
             return []
         return self._parse_vouchers(data, 'sales')  # Parse items like sales
@@ -1602,7 +1570,7 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
             slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
-            data = self._post(xml, debug_name=f'purchases_{slug}_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+            data = self._post(xml, debug_name=f'purchases_{slug}_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
             if not data:
                 continue
             for v in self._parse_vouchers(data, 'purchase'):
@@ -1641,7 +1609,7 @@ class TallyCollectionClient:
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
             slug = re.sub(r'[^a-z0-9]+', '_', vt_name.lower()).strip('_')
-            data = self._post(xml, debug_name=f'debit_notes_{slug}_{from_date.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+            data = self._post(xml, debug_name=f'debit_notes_{slug}_{from_date.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
             if not data:
                 continue
             for v in self._parse_vouchers(data, 'purchase'):
@@ -2674,7 +2642,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
 <VOUCHERTYPENAME>Contra</VOUCHERTYPENAME>
 </STATICVARIABLES>
 </REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>"""
-        data = self._post(xml, debug_name=f'contra_{month_start.strftime("%Y%m")}', timeout_override=EXPORT_TIMEOUT)
+        data = self._post(xml, debug_name=f'contra_{month_start.strftime("%Y%m")}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
         if not data:
             return []
         return self._parse_vouchers(data, 'contra')
@@ -2856,7 +2824,7 @@ $Parent = "Sundry Creditors" OR $$GroupIdx:$PARENT = $$GroupIdx:"Sundry Creditor
             'raw_ledger_count': 0,
         }
         try:
-            data = self._post(xml, debug_name=f'balance_sheet_{out["fy"]}', timeout_override=EXPORT_TIMEOUT)
+            data = self._post(xml, debug_name=f'balance_sheet_{out["fy"]}', timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None))
             if not data:
                 logger.warning(f"  Balance Sheet fetch returned no data for {out['fy']}")
                 return out
@@ -3540,7 +3508,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.35-export-timeout-adaptive")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.36-restore-v931-fetch-behaviour")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -4012,7 +3980,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.35-export-timeout-adaptive',
+                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -4051,7 +4019,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.35-export-timeout-adaptive',
+                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
                 'company_name': company,
                 'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
@@ -4112,7 +4080,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.35-export-timeout-adaptive',
+                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4316,7 +4284,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.35-export-timeout-adaptive',
+                                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -5103,7 +5071,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.35-export-timeout-adaptive")
+        print("FLOWRA Tally Sync Agent v9.8.36-restore-v931-fetch-behaviour")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag

@@ -70,7 +70,7 @@ def test_agent_fetches_guid_and_binds():
     # GUID included in every sync payload.
     assert "'company_guid':" in src
     # Version bump.
-    assert "9.8.35-export-timeout-adaptive" in src
+    assert "9.8.36-restore-v931-fetch-behaviour" in src
 
 
 def test_binding_called_in_quick_and_full_sync_loops():
@@ -82,7 +82,7 @@ def test_binding_called_in_quick_and_full_sync_loops():
 
 def test_gui_version_bumped():
     src = pathlib.Path(GUI).read_text()
-    assert 'APP_VERSION = "v9.8.35"' in src
+    assert 'APP_VERSION = "v9.8.36"' in src
 
 
 def test_frontend_binding_card_present():
@@ -183,33 +183,31 @@ def test_backend_soft_accepts_missing_guid_when_bound():
 
 
 
-def test_export_timeout_and_adaptive_window_present():
-    """v9.8.35 — Krishna Sales Corp: sales voucher exports on a 4k-item
-    ledger were timing out at the 30 s default. Fix: separate
-    EXPORT_TIMEOUT (default 180 s) for Export Data calls + adaptive
-    window narrowing (month → halves → days) via
-    `_export_voucher_window`."""
+def test_export_timeout_is_opt_in_default_matches_v931():
+    """v9.8.36 — v9.8.35's adaptive splitter + default 180 s timeout
+    turned a quick empty-and-move-on (v9.8.31) into a 90-min recursive
+    hammer-session that NEVER reached May on Krishna Sales Corp's
+    heavy ledger. v9.8.36 reverts to v9.8.31 fetch semantics by default
+    and keeps EXPORT_TIMEOUT as an opt-in env var only.
+    """
     src = pathlib.Path(AGENT).read_text()
-    # Long timeout constant.
-    assert "EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '180'))" in src
-    # Adaptive helper — recursive split on timeout.
-    assert "def _export_voucher_window" in src
-    assert "def _collect_vouchers_from_result" in src
-    assert "'__split__'" in src
-    # _post now accepts a per-call override.
-    assert "timeout_override" in src
-    # Every heavy fetch_*_month must pass EXPORT_TIMEOUT.
-    heavy_fetches = [
-        "sales", "receipts", "credit_notes", "journals",
-        "stock_journals", "purchases", "debit_notes", "contra",
-        "balance_sheet",
-    ]
-    for kind in heavy_fetches:
-        assert (
-            f"'{kind}_" in src or f"debug_name='{kind}" in src
-            or f"debug_name=f'{kind}" in src
-        ), f"heavy fetch marker for {kind} missing"
-    # Ensure adaptive window skips only after 6 levels of splitting
-    # (~1-day granularity) — we don't want to give up too early.
-    assert "depth >= 6" in src
+    # Default MUST be 0 so the behaviour is identical to v9.8.31 out of
+    # the box. Admins can set `EXPORT_TIMEOUT=180` in .env to opt in.
+    assert "EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '0'))" in src
+    # Adaptive splitter must NOT be called from fetch_sales_month.
+    m = re.search(
+        r"def fetch_sales_month\(.*?\n(.*?)(?=\n    def |\nclass )",
+        src, re.S,
+    )
+    assert m, "fetch_sales_month not found"
+    body = m.group(1)
+    assert "_export_voucher_window" not in body, \
+        "adaptive splitter must not be called from fetch_sales_month"
+    assert "_collect_vouchers_from_result" not in body
+    # It MUST send the request once per voucher-type/month and continue
+    # on empty — exactly like v9.8.31.
+    assert "if not data:" in body
+    assert "continue" in body
+    # Heavy fetches now only override timeout when EXPORT_TIMEOUT > REQUEST_TIMEOUT.
+    assert "timeout_override=(EXPORT_TIMEOUT if EXPORT_TIMEOUT > REQUEST_TIMEOUT else None)" in src
 

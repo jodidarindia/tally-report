@@ -1,9 +1,9 @@
 {
-  "version": "9.8.35",
+  "version": "9.8.36",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.35 (export-timeout-adaptive) — TALLY WASN'T CRASHING, IT WAS OVERWHELMED. Krishna Sales Corp's v9.8.34 log showed the agent booting fine, loading 4244 stock items cleanly, then repeatedly hitting `Tally request timed out (30s)` on Sales voucher exports for April 2025 (this is a large ledger with 3 sales voucher types × 12 months). The 30 s timeout inherited from ping-style calls was simply too tight for a monthly EXPLODEFLAG=Yes Voucher-Register export on a busy ledger. Fix: (1) new EXPORT_TIMEOUT (default 180 s, override via env var) used only for heavy Export Data calls — voucher/receipt/purchase/credit-note/debit-note/journal/stock-journal/contra/balance-sheet; (2) new `_export_voucher_window` helper that, on timeout, ADAPTIVELY narrows the request to halves and continues splitting down to single-day granularity (6 levels) — a single slow week no longer stalls the whole month; (3) timeout error message now names the debug slug so support can pinpoint the offending voucher-type + window. GUID / multi-company / kill-switch code is unchanged and still active — Krishna's PC will now finish the sales sync it kept aborting. Rebuild via `build-kit\\build.bat` and push the new .exe.",
-  "released_at": "2026-09-29T20:45:00+05:30",
+  "release_notes": "v9.8.36 (restore-v931-fetch-behaviour) — CRITICAL hotfix after v9.8.35 hung Krishna Sales Corp. v9.8.35's adaptive splitter + 180s default EXPORT_TIMEOUT combined into an unintended doom-loop: a slow monthly sales request → 180s timeout → split into halves → each half 180s → eventually 30 single-day requests × 180s = ~90 minutes HAMMERING Tally on April 2025 alone, never reaching May. From the user's log the agent spun on April and never progressed. v9.8.36 reverts the fetch path to v9.8.31 semantics: single request per voucher-type per month, timeout = return empty + MOVE ON. EXPORT_TIMEOUT is now opt-in only (default 0 = use REQUEST_TIMEOUT). Admins with heavy ledgers can still set EXPORT_TIMEOUT=180 in a `.env` next to the .exe for extended waits WITHOUT the recursive-splitting doom-loop. Multi-company GUID binding, kill-switch, Busy integration — all preserved. If a tenant's data loss on empty-timeout months becomes a problem, we'll address with proper incremental sync (not adaptive splitting). Rebuild via `build-kit\\build.bat`.",
+  "released_at": "2026-10-02T11:30:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }
