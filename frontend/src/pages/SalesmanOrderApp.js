@@ -37,6 +37,7 @@ function SalesmanView({ companyId, selectedFY }) {
   const [stats, setStats] = useState(null);
   const [selCustomer, setSelCustomer] = useState(null);
   const [custSearch, setCustSearch] = useState('');
+  const [orderSearch, setOrderSearch] = useState('');
   const [viewOrder, setViewOrder] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -61,22 +62,47 @@ function SalesmanView({ companyId, selectedFY }) {
 
   if(loading) return <Loader/>;
 
+  // iter-173 — Sticky header strip: title + tab bar + (in New Order) the
+  // customer search box, so they stay frozen under the global navbar
+  // (h-14 = 56px → top-14) while the body list below scrolls.
+  const showCustSearch = tab==='new' && !selCustomer && customers.length > 0;
   return (
     <div className="px-1" data-testid="salesman-view">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-lg sm:text-xl font-bold text-slate-900">Sales Orders</h1>
+      <div className="sticky top-14 z-30 bg-slate-50 -mx-1 px-1 pt-2 pb-2" data-testid="salesman-sticky-header">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-lg sm:text-xl font-bold text-slate-900">Sales Orders</h1>
+        </div>
+        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+          {[
+            {id:'dashboard',label:'Dashboard'},
+            {id:'beat-run',label:'Beat Run Today'},
+            {id:'history',label:'Beat History'},
+            {id:'new',label:'New Order'},
+            {id:'orders',label:`My Orders (${orders.length})`},
+            {id:'beats',label:'Beat Plan'},
+          ].map(t=>
+            <button key={t.id} onClick={()=>setTab(t.id)} className={`px-3 sm:px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition ${tab===t.id?'border-blue-600 text-blue-600':'border-transparent text-slate-500 hover:text-slate-700'}`} data-testid={`tab-${t.id}`}>{t.label}</button>)}
+        </div>
+        {showCustSearch && (
+          <div className="relative mt-3">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={custSearch} onChange={e=>setCustSearch(e.target.value)}
+              placeholder="Search customer by name…"
+              className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              data-testid="customer-search"/>
+          </div>
+        )}
+        {tab==='orders' && orders.length>0 && (
+          <div className="relative mt-3">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={orderSearch} onChange={e=>setOrderSearch(e.target.value)}
+              placeholder="Search order / customer…"
+              className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              data-testid="my-orders-search"/>
+          </div>
+        )}
       </div>
-      <div className="flex gap-1 mb-4 border-b border-slate-200 overflow-x-auto">
-        {[
-          {id:'dashboard',label:'Dashboard'},
-          {id:'beat-run',label:'Beat Run Today'},
-          {id:'history',label:'Beat History'},
-          {id:'new',label:'New Order'},
-          {id:'orders',label:`My Orders (${orders.length})`},
-          {id:'beats',label:'Beat Plan'},
-        ].map(t=>
-          <button key={t.id} onClick={()=>setTab(t.id)} className={`px-3 sm:px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition ${tab===t.id?'border-blue-600 text-blue-600':'border-transparent text-slate-500 hover:text-slate-700'}`} data-testid={`tab-${t.id}`}>{t.label}</button>)}
-      </div>
+      <div className="mt-3">
 
       {tab==='dashboard' && <SalesmanDashboard stats={stats} fy={selectedFY}/>}
       {tab==='beat-run' && <BeatRunView companyId={companyId} hdr={hdr} canCheckIn={true}/>}
@@ -86,15 +112,6 @@ function SalesmanView({ companyId, selectedFY }) {
         <div data-testid="customer-list">
           <p className="text-xs text-slate-500 mb-2">Select a customer to place order:</p>
           {customers.length===0 && <p className="text-center text-sm text-slate-400 py-10">No customers mapped. Contact admin.</p>}
-          {customers.length > 0 && (
-            <div className="relative mb-3">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-              <input value={custSearch} onChange={e=>setCustSearch(e.target.value)}
-                placeholder="Search customer by name…"
-                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
-                data-testid="customer-search"/>
-            </div>
-          )}
           <div className="space-y-2">
           {[...customers]
             .filter(c => !custSearch || (c.customer_name||'').toLowerCase().includes(custSearch.toLowerCase()))
@@ -116,7 +133,9 @@ function SalesmanView({ companyId, selectedFY }) {
       {tab==='orders' && (
         <div className="space-y-2" data-testid="my-orders">
           {orders.length===0 && <p className="text-center text-sm text-slate-400 py-10">No orders yet</p>}
-          {orders.map(o=>(
+          {orders
+            .filter(o => !orderSearch || (o.customer_name||'').toLowerCase().includes(orderSearch.toLowerCase()) || (o.order_id||'').toLowerCase().includes(orderSearch.toLowerCase()))
+            .map(o=>(
             <div key={o.order_id} className="bg-white rounded-xl border border-slate-200 p-3 hover:border-slate-300" data-testid={`order-${o.order_id}`}>
               <div className="flex items-center justify-between gap-2 cursor-pointer" onClick={()=>setViewOrder(o)}>
                 <div className="min-w-0">
@@ -160,6 +179,7 @@ function SalesmanView({ companyId, selectedFY }) {
           onClose={()=>setEditOrder(null)}
           onSaved={()=>{ setEditOrder(null); fetchData(); }}/>
       )}
+      </div>
     </div>
   );
 }
