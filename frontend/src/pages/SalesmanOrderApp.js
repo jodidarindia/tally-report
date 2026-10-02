@@ -315,9 +315,33 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   };
 
   // ── Section pill tabs ───────────────────────────────────────────────
+  // iter-170 — Repeat Order · City (Busy Station-based cross-sell).
+  const [citySuggestions, setCitySuggestions] = useState([]);
+  const [citySuggMeta, setCitySuggMeta] = useState({});
+  const [loadingCity, setLoadingCity] = useState(false);
+  useEffect(() => {
+    if (!customer) return;
+    setLoadingCity(true);
+    const enc = encodeURIComponent(customer);
+    const cq = companyId ? `&company_id=${companyId}` : '';
+    axios.get(`${API}/api/salesman-orders/city-suggestions?customer_name=${enc}&limit=200${cq}`, {headers:hdr()})
+      .then(r => {
+        if (r.data?.success) {
+          setCitySuggestions(r.data.data?.suggestions || []);
+          setCitySuggMeta(r.data.data || {});
+        } else {
+          setCitySuggestions([]); setCitySuggMeta({});
+        }
+      })
+      .catch(() => { setCitySuggestions([]); setCitySuggMeta({}); })
+      .finally(() => setLoadingCity(false));
+  }, [customer, companyId, hdr]);
+
   const sections = [
     { id: 'repeat',  label: 'Repeat Order',  count: history.length,
       icon: <Clock size={13}/>, hint: '10-month buy history' },
+    { id: 'city',    label: 'Repeat · City', count: citySuggestions.length,
+      icon: <Package size={13}/>, hint: 'Selling in this city, not to this customer' },
     { id: 'suggest', label: 'Suggestions',   count: suggestions.length,
       icon: <Sparkles size={13}/>, hint: 'Cross-sell + fast movers' },
     { id: 'browse',  label: 'Browse',        count: catalog.length,
@@ -387,6 +411,46 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
                     inCart={inCart(it.item_name)}
                     onAdd={(q) => addToCart(it, q)}
                     testid={`hist-${i}`}/>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── REPEAT ORDER · CITY (iter-170) ──────────────────────────── */}
+        {section === 'city' && (
+          <div data-testid="city-section">
+            {loadingCity ? (
+              <SectionEmpty icon={<Package size={22}/>} title="Scanning city sales…" />
+            ) : citySuggMeta.reason === 'no_station' ? (
+              <SectionEmpty icon={<Package size={22}/>}
+                title="No city set for this customer"
+                hint="Set the Station/City in Busy for this party and re-sync to unlock city-wise suggestions." />
+            ) : citySuggestions.length === 0 ? (
+              <SectionEmpty icon={<Package size={22}/>}
+                title={citySuggMeta.station ? `No gaps in ${citySuggMeta.station}` : 'No city sales found'}
+                hint="Either every item selling in this city is already being bought by this customer, or no peer customer has bought anything in the last 90 days." />
+            ) : (
+              <div className="space-y-1.5">
+                <div className="text-xs text-slate-500 pb-1">
+                  Items selling in <b>{citySuggMeta.station}</b>
+                  {citySuggMeta.peers_count > 0 && (
+                    <> · from {citySuggMeta.peers_count} other customer{citySuggMeta.peers_count === 1 ? '' : 's'} nearby</>
+                  )}
+                  {citySuggMeta.window && (
+                    <> · last {citySuggMeta.window.city_days} days</>
+                  )}
+                </div>
+                {citySuggestions.map((it, i) => (
+                  <SuggestRow key={i} item={{
+                    ...it,
+                    reason: `${it.city_buyers} buyer${it.city_buyers === 1 ? '' : 's'} in ${citySuggMeta.station}`
+                            + (it.top_city_customers?.length ? ` · ${it.top_city_customers.slice(0,2).join(', ')}${it.top_city_customers.length > 2 ? '…' : ''}` : '')
+                            + (it.customer_lapsed ? ' · ⚠ lapsed buyer' : ''),
+                  }}
+                    inCart={inCart(it.item_name)}
+                    onAdd={() => addToCart(it, 1)}
+                    testid={`city-${i}`}/>
                 ))}
               </div>
             )}

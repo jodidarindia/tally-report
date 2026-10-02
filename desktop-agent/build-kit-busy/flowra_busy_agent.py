@@ -53,8 +53,8 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-VERSION = "1.6.1"
-AGENT_TAG = "busy-1.6.2-corrupt-memo-resilient"
+VERSION = "1.7.0"
+AGENT_TAG = "busy-1.7.0-binding-triplename-station"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -1289,6 +1289,16 @@ class BusyDataExtractor:
                     "unit": "",     # unit code resolves via CM master later
                     "stock_group": self._resolve_name(row.get("ParentGrp", "")),
 
+                    # iter-170 (v1.7.0) — ALL THREE Busy name variants.
+                    # Backend's /api/settings/busy-name-mapping lets the
+                    # useradmin pick which of these three becomes the
+                    # canonical `item_name` and `part_number` in Flowra.
+                    # We ship the raw triplet so the backend can resolve
+                    # at write-time (and re-resolve on mapping changes
+                    # without a full re-sync).
+                    "item_alias":      alias,
+                    "item_print_name": (row.get("PrintName") or "").strip(),
+
                     # v1.5.2 — enriched fields
                     "sku_code": sku_code,
                     "alias": alias,
@@ -1869,6 +1879,12 @@ class FlowraAPIClient:
             "tenant_id": self.tenant_id,
             "company_id": company_id,
             "sync_token": self.sync_token,
+            # iter-170 (v1.7.0) — tell the backend this payload is from
+            # the Busy agent. Enables (a) /settings/busy-name-mapping
+            # application on inventory batches, (b) the Busy-side
+            # binding guard in /agent/sync.
+            "source": "busy",
+            "busy_company_name": company_name,
         }
 
     def _post_chunk(self, data_type: str, chunk: list, company_id: str,
@@ -2814,6 +2830,70 @@ def run_daemon() -> int:
     logger.info(
         f"[daemon] Company identifier — folder='{company}' display='{company_display}'"
     )
+
+    # iter-170 (v1.7.0) — Busy COMPANY BINDING guard.
+    # Call /api/agent/busy-binding/check BEFORE opening Busy. If this
+    # tenant is already locked to a different company name, we must NOT
+    # start the sync loop — any data pushed would be rejected by the
+    # server anyway and we'd just spin at 20-min intervals writing
+    # errors. Abort cleanly, show a dialog via status_callback (the
+    # GUI subscribes to that), and let the user unbind from the Flowra
+    # Settings page.
+    try:
+        import requests as _rq
+        from services_auth_tokens import _sync_token  # type: ignore
+    except Exception:
+        _sync_token = None
+    try:
+        _tenant = agent.config.get("tenant_id") or getattr(agent, "tenant_id", "")
+        _tok = agent.config.get("sync_token") or getattr(agent, "sync_token", "")
+        if _tenant and _tok and company_display:
+            _r = _rq.post(
+                f"{backend}/api/agent/busy-binding/check",
+                json={
+                    "tenant_id": _tenant,
+                    "sync_token": _tok,
+                    "busy_company_name": company_display,
+                },
+                timeout=15,
+            )
+            if _r.status_code == 200:
+                _b = (_r.json() or {}).get("data") or {}
+                if _b.get("bound") and _b.get("matches") is False:
+                    _msg = (
+                        f"This Flowra account is already locked to Busy "
+                        f"company '{_b.get('existing_name')}'. The current "
+                        f"agent is pointing at '{company_display}'. "
+                        f"Sync will NOT start — unbind the existing "
+                        f"company from Flowra → Settings → Integrations "
+                        f"→ Busy Company Lock first, then restart the "
+                        f"agent."
+                    )
+                    logger.error(f"[daemon] BUSY-BIND MISMATCH: {_msg}")
+                    try:
+                        agent.set_status(_msg)
+                    except Exception:
+                        pass
+                    try:
+                        agent.report_progress(
+                            "busy_binding_mismatch",
+                            existing_company=_b.get("existing_name"),
+                            attempted_company=company_display,
+                            message=_msg,
+                        )
+                    except Exception:
+                        pass
+                    # Stay alive so the GUI can show the dialog + the
+                    # Unbind-first instruction, but DO NOT enter the
+                    # sync loop. Admin kills the process from tray.
+                    import time as _t
+                    while True:
+                        _t.sleep(60)
+    except Exception as _e:
+        # Binding check must never block the sync — if the endpoint is
+        # unreachable, the server-side TOFU validator will still protect
+        # us on first write.
+        logger.warning(f"[daemon] busy-binding check skipped: {_e}")
 
     quick_every_min = 5   # sales delta
     tick = 0

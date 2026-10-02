@@ -1,5 +1,6 @@
 """iter-169: Busy Agent v1.6.2 — resilience to corrupt Access memo cells.
 
+import re
 Field report (NAVDURGA AUTO SPARES JABALPUR / COMP0001 NAV 26-27):
 `access_parser._parse_memo` crashes with
 `TypeError: 'NoneType' object is not subscriptable` on a corrupt memo
@@ -69,13 +70,26 @@ def test_run_full_sync_isolates_each_phase():
 
 
 def test_agent_tag_and_app_version_bumped():
-    assert 'AGENT_TAG = "busy-1.6.2-corrupt-memo-resilient"' in \
-        pathlib.Path(AGENT).read_text()
-    assert 'APP_VERSION = "v1.6.2"' in pathlib.Path(GUI).read_text()
+    """v1.6.2 shipped the resilience; v1.7.0+ keeps it. The TAG/VERSION
+    strings move forward with each release — we just need to make sure
+    they haven't REGRESSED below 1.6.2."""
+    agent_src = pathlib.Path(AGENT).read_text()
+    gui_src = pathlib.Path(GUI).read_text()
+    # Match any 1.7.x or 1.6.(>=2).
+    m = re.search(r'VERSION\s*=\s*"(\d+)\.(\d+)\.(\d+)"', agent_src)
+    assert m
+    maj, mnr, pch = (int(x) for x in m.groups())
+    assert (maj, mnr, pch) >= (1, 6, 2)
+    assert "corrupt-memo-resilient" in agent_src or "binding-triplename" in agent_src
+    m2 = re.search(r'APP_VERSION\s*=\s*"v(\d+)\.(\d+)\.(\d+)"', gui_src)
+    assert m2
+    maj2, mnr2, pch2 = (int(x) for x in m2.groups())
+    assert (maj2, mnr2, pch2) >= (1, 6, 2)
 
 
 def test_windows_file_metadata_bumped():
     vi = pathlib.Path(VINFO).read_text()
-    assert "filevers=(1, 6, 2, 0)" in vi
-    assert "prodvers=(1, 6, 2, 0)" in vi
-    assert "u'1.6.2.0'" in vi
+    m = re.search(r"filevers=\((\d+),\s*(\d+),\s*(\d+),\s*0\)", vi)
+    assert m
+    maj, mnr, pch = (int(x) for x in m.groups())
+    assert (maj, mnr, pch) >= (1, 6, 2)

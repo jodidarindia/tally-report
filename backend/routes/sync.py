@@ -291,6 +291,32 @@ async def receive_agent_sync(request: dict):
             # Binding validator must never crash the sync path.
             logger.error(f"tally_binding validator crashed: {_e}")
 
+        # iter-170 — BUSY COMPANY BINDING (one email → one Busy company).
+        # When the agent payload is sourced from Busy (`source=busy` OR
+        # `busy_company_name` present), we verify it matches the single
+        # BDEPName captured for this tenant. The Busy agent also calls
+        # /agent/busy-binding/check on startup to abort BEFORE touching
+        # Busy if the admin pointed it at a different folder.
+        try:
+            _busy_name = (
+                request.get("busy_company_name")
+                or (company_name_raw if (request.get("source") == "busy") else "")
+            )
+            if request.get("source") == "busy" or request.get("busy_company_name"):
+                from routes.busy_binding import validate_busy_sync
+                _b_ok, _b_err = await validate_busy_sync(req_tenant_id, _busy_name)
+                if not _b_ok:
+                    try:
+                        await db.sync_locks.delete_one(_lock_key)
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"Busy sync BLOCKED tenant={req_tenant_id}: {_b_err}"
+                    )
+                    return APIResponse(success=False, error=_b_err)
+        except Exception as _e:
+            logger.error(f"busy_binding validator crashed: {_e}")
+
         # Add company to admin's company list if new — enforce max_companies limit
         if req_company_id and req_tenant_id:
             admin_user = await db.users.find_one({"tenant_id": req_tenant_id, "role": "admin"}, {"_id": 0, "companies": 1, "max_companies": 1, "plan": 1, "subscription_start": 1, "subscription_months": 1})
@@ -352,6 +378,20 @@ async def receive_agent_sync(request: dict):
                     for e in existing if e.get("abc_category")
                 }
 
+                # iter-170 — Busy triple-name mapping. When source=busy,
+                # the agent sends `item_name` + `item_alias` +
+                # `item_print_name`. We rewrite the canonical
+                # `item_name` and `part_number` on each row based on
+                # the admin's chosen mapping (Settings → Setup → Busy
+                # field mapping). No-op for Tally.
+                if request.get("source") == "busy":
+                    try:
+                        from routes.busy_settings import get_mapping, apply_busy_name_mapping
+                        _bm = await get_mapping(req_tenant_id)
+                        data = apply_busy_name_mapping(data, _bm)
+                    except Exception as _e:
+                        logger.error(f"busy name-mapping apply failed: {_e}")
+
                 operations = []
                 for item in data:
                     item_id = str(item.get('item_id') or '').strip()
@@ -369,6 +409,13 @@ async def receive_agent_sync(request: dict):
                     doc['last_updated'] = doc['last_updated'].isoformat()
                     doc['tenant_id'] = req_tenant_id
                     doc['company_id'] = req_company_id
+                    # iter-170 — carry the three Busy name variants so
+                    # the Setup page can preview the mapping without
+                    # a re-sync. Harmless for Tally (fields will be '').
+                    if item.get('item_alias') is not None:
+                        doc['item_alias'] = str(item.get('item_alias') or '').strip()
+                    if item.get('item_print_name') is not None:
+                        doc['item_print_name'] = str(item.get('item_print_name') or '').strip()
                     # v1.5.7 — carry FY through the pydantic wall so
                     # CA-Corner opening-stock widgets can filter per FY.
                     if item.get('fy') or financial_year:

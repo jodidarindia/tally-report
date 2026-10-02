@@ -2459,3 +2459,220 @@ async def daily_order_digest_webhook(request: Request):
     asyncio.create_task(_fan_out())
     return JSONResponse({"accepted": True, "date": today_ist})
 
+
+
+# ═══════════════════════════════════════════════════════
+# iter-170 — REPEAT ORDER · CITY  (Busy "Station"-driven cross-sell)
+# ═══════════════════════════════════════════════════════
+
+@router.get("/salesman-orders/city-suggestions")
+async def city_wise_suggestions(
+    request: Request,
+    customer_name: str,
+    company_id: Optional[str] = None,
+    city_days: int = 90,
+    customer_days: int = 180,
+    min_city_buyers: int = 1,
+    limit: int = 100,
+):
+    """Items that are selling in the SELECTED CUSTOMER's city (from
+    Busy `Master1.Station`) that this customer has NOT bought in a
+    while. Powers the Salesman → New Order → "Repeat Order · City"
+    tab.
+
+    Lookback (defaults, overridable via query):
+      - city popularity   : last `city_days`     (default 90)
+      - customer-not-bought: last `customer_days` (default 180)
+      - min_city_buyers    : how many DISTINCT customers in that city
+                             must have bought the item (default 1).
+
+    Response shape:
+      {
+        customer: {name, station, …},
+        city_item_count: N,
+        suggestions: [
+          {item_name, item_id, unit, stock_qty, price, part_number,
+           city_buyers, city_vouchers, city_qty, last_city_sale_date,
+           top_city_customers: [names, …]},
+          …
+        ]
+      }
+
+    If the customer has no Station in Busy, we return `{suggestions: []}`
+    with `reason: 'no_station'` so the frontend can show a prompt
+    ("Set this customer's city in Busy to enable city-wise
+    suggestions").
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        ctx = await get_tenant_context(request)
+        q = _q(ctx, company_id)
+        if not q.get("tenant_id"):
+            return APIResponse(success=False, error="Tenant context required")
+
+        cust_norm = (customer_name or "").strip().lower()
+        if not cust_norm:
+            return APIResponse(success=False, error="customer_name required")
+
+        cust = await db.customers.find_one(
+            {**q, "$or": [
+                {"customer_name": {"$regex": f"^{customer_name}$", "$options": "i"}},
+                {"party_name":    {"$regex": f"^{customer_name}$", "$options": "i"}},
+            ]},
+            {"_id": 0, "customer_name": 1, "party_name": 1, "station": 1,
+             "city": 1, "state": 1, "phone": 1},
+        )
+        if not cust:
+            return APIResponse(success=False, error=f"Customer '{customer_name}' not found")
+
+        # Station is the primary signal from Busy. Fall back to `city`
+        # for Tally-sourced customers who have a city field.
+        station = (cust.get("station") or cust.get("city") or "").strip()
+        station_norm = station.lower()
+        if not station_norm:
+            return APIResponse(success=True, data={
+                "customer": cust,
+                "reason": "no_station",
+                "message": "This customer has no Station/city in Busy. "
+                           "Set it in Busy and re-sync to enable city-wise "
+                           "suggestions.",
+                "suggestions": [],
+            })
+
+        now = datetime.now(timezone.utc)
+        city_cutoff_iso = (now - timedelta(days=max(1, int(city_days)))).isoformat()
+        cust_cutoff_iso = (now - timedelta(days=max(1, int(customer_days)))).isoformat()
+
+        # ── 1) Find peer customers in the same city.
+        peer_cursor = db.customers.find(
+            {**q, "$or": [
+                {"station": {"$regex": f"^{station}$", "$options": "i"}},
+                {"city":    {"$regex": f"^{station}$", "$options": "i"}},
+            ]},
+            {"_id": 0, "customer_name": 1, "party_name": 1},
+        )
+        peers = [c async for c in peer_cursor]
+        peer_names = set()
+        for p in peers:
+            nm = (p.get("customer_name") or p.get("party_name") or "").strip().lower()
+            if nm:
+                peer_names.add(nm)
+        if not peer_names:
+            return APIResponse(success=True, data={
+                "customer": cust, "station": station,
+                "reason": "no_peers", "suggestions": [],
+            })
+
+        # ── 2) Sales vouchers in last `city_days` whose party is a peer.
+        sales_q = {
+            **q,
+            "voucher_type": "sales",
+            "voucher_date": {"$gte": city_cutoff_iso},
+        }
+        # We iterate; items[] is nested so aggregation beats a client
+        # loop only for huge tenants. Simple loop is clearer here.
+        city_items: dict[str, dict] = {}
+        self_items_recent: set[str] = set()
+        async for v in db.vouchers.find(sales_q, {
+            "_id": 0, "party_name": 1, "voucher_date": 1, "items": 1,
+        }):
+            party = _voucher_party_norm(v)
+            if not party:
+                continue
+            if party == cust_norm:
+                # Also tracks what THIS customer bought during city_days
+                # window — needed only to count peer-but-not-self below.
+                for it in (v.get("items") or []):
+                    nm = (it.get("item_name") or "").strip().lower()
+                    if nm:
+                        self_items_recent.add(nm)
+                continue
+            if party not in peer_names:
+                continue
+            vdate = v.get("voucher_date") or ""
+            for it in (v.get("items") or []):
+                nm = (it.get("item_name") or "").strip()
+                if not nm:
+                    continue
+                key = nm.lower()
+                row = city_items.setdefault(key, {
+                    "item_name": nm,
+                    "city_buyers": set(),
+                    "city_vouchers": 0,
+                    "city_qty": 0.0,
+                    "last_city_sale_date": "",
+                })
+                row["city_buyers"].add(party)
+                row["city_vouchers"] += 1
+                row["city_qty"] += safe_num(it.get("quantity", 0))
+                if vdate > row["last_city_sale_date"]:
+                    row["last_city_sale_date"] = vdate
+
+        if not city_items:
+            return APIResponse(success=True, data={
+                "customer": cust, "station": station,
+                "reason": "no_city_sales", "suggestions": [],
+            })
+
+        # ── 3) What has THIS customer bought in last `customer_days`?
+        self_items_long: set[str] = set()
+        async for v in db.vouchers.find({
+            **q, "voucher_type": "sales",
+            "party_name": {"$regex": f"^{customer_name}$", "$options": "i"},
+            "voucher_date": {"$gte": cust_cutoff_iso},
+        }, {"_id": 0, "items": 1}):
+            for it in (v.get("items") or []):
+                nm = (it.get("item_name") or "").strip().lower()
+                if nm:
+                    self_items_long.add(nm)
+
+        # ── 4) Join with inventory, filter, score.
+        inv_lookup = await _build_inventory_lookup(q)
+
+        suggestions = []
+        for key, row in city_items.items():
+            if key in self_items_long:
+                continue  # customer already bought this recently
+            if len(row["city_buyers"]) < max(1, int(min_city_buyers)):
+                continue
+            inv = inv_lookup.get(key) or {}
+            # Top-3 peer customers who bought this (for the "see who"
+            # tooltip in the UI).
+            top = sorted(row["city_buyers"])[:3]
+            suggestions.append({
+                "item_name":            inv.get("item_name") or row["item_name"],
+                "item_id":              inv.get("item_id", ""),
+                "unit":                 inv.get("unit", ""),
+                "stock_qty":            inv.get("stock_qty", 0),
+                "price":                inv.get("price", 0),
+                "part_number":          inv.get("part_number", ""),
+                "stock_group":          inv.get("stock_group", ""),
+                "abc_category":         inv.get("abc_category", ""),
+                "city_buyers":          len(row["city_buyers"]),
+                "city_vouchers":        row["city_vouchers"],
+                "city_qty":             round(row["city_qty"], 2),
+                "last_city_sale_date":  row["last_city_sale_date"],
+                "top_city_customers":   [c.title() for c in top],
+                # True-ish signal when the customer was never a buyer in
+                # the long window (new product fit vs lapsed).
+                "customer_lapsed":      key in self_items_recent,
+            })
+        suggestions.sort(key=lambda s: (
+            -s["city_buyers"], -s["city_vouchers"], -s["city_qty"],
+        ))
+        suggestions = suggestions[:max(1, int(limit))]
+        return APIResponse(success=True, data={
+            "customer": cust,
+            "station": station,
+            "peers_count": len(peer_names) - 1,
+            "city_item_count": len(city_items),
+            "suggestions": suggestions,
+            "window": {
+                "city_days": int(city_days),
+                "customer_days": int(customer_days),
+                "min_city_buyers": int(min_city_buyers),
+            },
+        })
+    except Exception as e:
+        logger.exception("city_wise_suggestions failed")
+        return APIResponse(success=False, error=str(e))

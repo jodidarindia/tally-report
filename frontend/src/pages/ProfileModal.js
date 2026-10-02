@@ -709,6 +709,8 @@ const IntegrationsSection = ({ token }) => {
       )}
 
       <TallyBindingCard token={token} />
+      <BusyBindingCard token={token} />
+      <BusyNameMappingCard token={token} />
     </div>
   );
 };
@@ -838,3 +840,211 @@ const TallyBindingCard = ({ token }) => {
     </div>
   );
 };
+
+// ── Busy Company Lock (same TOFU pattern as Tally) ────────────────────
+const BusyBindingCard = ({ token }) => {
+  const [binding, setBinding] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/settings/busy-binding`, { headers });
+      if (r.data?.success) setBinding(r.data.data);
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, []);
+
+  const unbind = async () => {
+    if (!window.confirm(
+      'Unbind this Busy company from FLOWRA?\n\nThe next successful sync '
+      + 'from the Busy Agent will re-capture whichever Busy company it '
+      + 'is pointing at and lock it back in. Existing synced data is '
+      + 'kept — nothing is deleted. Only do this if you have moved the '
+      + 'agent to a different Busy company.'
+    )) return;
+    setBusy(true);
+    try {
+      const r = await axios.delete(`${API}/settings/busy-binding`, { headers });
+      if (r.data?.success) {
+        toast.success('Busy company binding cleared. Next sync will re-bind.');
+        setBinding({ bound: false });
+      } else {
+        toast.error(r.data?.error || 'Could not unbind');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Could not unbind');
+    } finally { setBusy(false); }
+  };
+
+  if (loading) return null;
+  const bound = binding?.bound;
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Shield size={18} className="text-slate-500" />
+        <h3 className="font-semibold text-slate-900">Busy Company Lock</h3>
+      </div>
+      <div className={`border rounded-xl p-5 ${bound
+                ? 'border-emerald-200 bg-emerald-50/60'
+                : 'border-amber-200 bg-amber-50/40'}`}
+           data-testid="busy-binding-card">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-white shadow-sm
+                              flex items-center justify-center">
+              <Shield size={22} className={bound ? 'text-emerald-600' : 'text-amber-500'} />
+            </div>
+            <div>
+              <div className="font-semibold text-slate-900 flex items-center gap-2">
+                {bound ? 'Locked to Busy Company' : 'Not locked yet'}
+                {bound && (
+                  <span className="text-xs bg-emerald-100 text-emerald-700
+                          border border-emerald-200 px-2 py-0.5 rounded-full
+                          flex items-center gap-1">
+                    <CheckCircle2 size={12}/> Bound
+                  </span>
+                )}
+              </div>
+              {bound ? (
+                <>
+                  <div className="text-sm text-slate-700 mt-1">
+                    <b data-testid="busy-binding-name">{binding.busy_company_name}</b>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Bound {binding.bound_at ? formatIST(binding.bound_at) : '—'}
+                    {binding.last_seen_at && (
+                      <> · Last sync {formatIST(binding.last_seen_at)}</>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-2 max-w-xl">
+                    FLOWRA will refuse any Busy Agent sync that reports a
+                    different company name. If the agent is accidentally
+                    pointed at a sister concern's folder, it won't even
+                    enter its sync loop — your reports stay clean.
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-slate-600 max-w-xl mt-1">
+                  As soon as the Busy Agent completes its first sync,
+                  FLOWRA will capture the Busy company name and lock
+                  this workspace to it. Only one Busy company per
+                  Flowra admin account.
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            {bound && (
+              <button onClick={unbind} disabled={busy}
+                       data-testid="btn-busy-unbind"
+                       className="px-4 py-2 border border-red-300 text-red-700
+                          hover:bg-red-50 text-sm rounded-lg font-medium
+                          disabled:opacity-60 whitespace-nowrap">
+                {busy ? 'Unbinding…' : 'Unbind'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ── Busy Field Mapping — ItemName / AliasName / PrintName ─────────────
+const BusyNameMappingCard = ({ token }) => {
+  const [mapping, setMapping] = useState({ flowra_name: 'ItemName', flowra_part_number: 'AliasName' });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const SOURCES = ['ItemName', 'AliasName', 'PrintName'];
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/settings/busy-name-mapping`, { headers });
+        if (r.data?.success) setMapping(r.data.data.mapping);
+      } catch { /* silent */ }
+      finally { setLoaded(true); }
+    })(); // eslint-disable-next-line
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await axios.put(`${API}/settings/busy-name-mapping`,
+        { mapping }, { headers });
+      if (r.data?.success) {
+        toast.success('Mapping saved. New names will apply on the next Busy sync.');
+      } else {
+        toast.error(r.data?.error || 'Save failed');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    } finally { setSaving(false); }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Shield size={18} className="text-slate-500" />
+        <h3 className="font-semibold text-slate-900">Busy Field Mapping</h3>
+      </div>
+      <div className="border border-slate-200 rounded-xl p-5 bg-white"
+           data-testid="busy-name-mapping-card">
+        <div className="text-sm text-slate-600 max-w-2xl mb-4">
+          Busy stores three names per item — <b>Item Name</b>, <b>Alias</b>
+          and <b>Print Name</b>. Choose which one Flowra should treat as
+          the canonical item name and which should power the Part Number
+          field. Changes apply on the next Busy sync; no re-install needed.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Flowra <b>Name</b> comes from
+            </label>
+            <select
+              value={mapping.flowra_name || 'ItemName'}
+              onChange={e => setMapping(m => ({ ...m, flowra_name: e.target.value }))}
+              data-testid="busy-map-name-select"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Flowra <b>Part Number</b> comes from
+            </label>
+            <select
+              value={mapping.flowra_part_number || ''}
+              onChange={e => setMapping(m => ({
+                ...m,
+                flowra_part_number: e.target.value || null,
+              }))}
+              data-testid="busy-map-partno-select"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+              <option value="">(none — leave blank)</option>
+              {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button onClick={save} disabled={saving}
+                   data-testid="btn-busy-map-save"
+                   className="px-4 py-2 bg-slate-900 text-white hover:bg-slate-800
+                      text-sm rounded-lg font-medium disabled:opacity-60">
+            {saving ? 'Saving…' : 'Save mapping'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+

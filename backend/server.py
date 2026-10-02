@@ -91,6 +91,11 @@ api_router.include_router(remarks_router)
 # iter-168: Tally multi-company safety — GUID-bound TOFU sync
 from routes.tally_binding import router as tally_binding_router
 api_router.include_router(tally_binding_router)
+# iter-170: Busy multi-company safety + name-mapping + city-wise suggestions
+from routes.busy_binding import router as busy_binding_router
+from routes.busy_settings import router as busy_settings_router
+api_router.include_router(busy_binding_router)
+api_router.include_router(busy_settings_router)
 
 
 # ── Health endpoint (k8s / Atlas liveness probe + uptime monitor) ──────
