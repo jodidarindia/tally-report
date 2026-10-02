@@ -1,9 +1,9 @@
 {
-  "version": "1.5.7",
+  "version": "1.6.2",
   "download_url": "/FlowraBusyAgent.exe",
   "min_supported_version": "1.5.1",
-  "release_notes": "v1.5.7 — Sales-voucher line-item amount is now qty×rate (fixes the '~7x low avg sale price' regression that dogged Busy tenants); reference_number reads Tran1.RefNo/RefNoAlpha separately from the printed VchNo; every voucher/inventory/customer/creditor row now carries an `fy` tag so CA-Corner per-FY selectors work; customer opening_balance sourced from Master1.D1 and outstanding_amount emitted for the CRM Outstanding tab; creditors get the same treatment. v1.5.6: chunked inventory upsert (was delete_many-per-chunk wiping ~24 K items to 182); P&L + all_ledgers keyed by FY; net_profit_loss emitted correctly; opening qty/rate/value from Folio1; sale/cost fallback ladder. v1.5.5: BusyDBReader object pool cuts ~14x file-open overhead per sync tick. v1.5.4: real company name from Cmpny.BDEPName + folder-keyed mapping + 3-tier retry backoff.",
-  "released_at": "2026-02-16T18:00:00+05:30",
+  "release_notes": "v1.6.2 (corrupt-memo-resilient) — Field report from NAVDURGA AUTO SPARES JABALPUR (COMP0001 NAV 26-27): the agent aborted at Phase 1/15 (customers) with `TypeError: 'NoneType' object is not subscriptable` deep inside `access_parser._parse_memo`. One row in that company's `Master1` table has a memo field with a null overflow pointer and the library crashed trying to dereference the missing overflow page. Fix: THREE layers of defence — (1) monkey-patch `access_parser.AccessTable._parse_memo` at import time to swallow TypeError/IndexError/AttributeError/KeyError/ValueError and return \"\" instead; (2) wrap `self._ap.parse_table()` in try/except — a crash on one table degrades to empty rows for that cycle, remaining phases keep running; (3) wrap each of the 15 sync phases in `run_full_sync` in its own try/except so one failing extractor can no longer abort the other 14. Expected outcome on NAVDURGA's PC: Phase 1 customers either completes cleanly (if the one corrupt row's memo is just empty) or logs `[access_parser.patch] skipped corrupt memo cell` and continues — Phases 2-15 (creditors, inventory, sales, receipts, payments, credit/debit notes, journals, purchases, P&L, ledgers) will run regardless. Also includes v1.6.1 (StockGroup name fix + customer group-hierarchy traversal). Rebuild via `build-kit-busy\\build.bat`.",
+  "released_at": "2026-10-01T15:30:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }

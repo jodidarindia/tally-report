@@ -54,7 +54,7 @@ from collections import defaultdict
 # Constants
 # ---------------------------------------------------------------------------
 VERSION = "1.6.1"
-AGENT_TAG = "busy-1.6.1-stockgroup-name-fix"
+AGENT_TAG = "busy-1.6.2-corrupt-memo-resilient"
 APP_NAME = "FLOWRA Busy Sync Agent"
 IST = timezone(timedelta(hours=5, minutes=30))
 CONFIG_FILE = "flowra_busy_config.json"
@@ -228,11 +228,48 @@ class BusyDBReader:
             return self._ap
         try:
             from access_parser import AccessParser  # pip: access-parser
+            import access_parser.access_parser as _ap_mod  # noqa: SLF001
         except ImportError:
             logger.info("  access_parser unavailable — rebuild the EXE "
                         "with the updated requirements.txt to enable "
                         "the pure-Python JET4 reader")
             return None
+        # v1.6.2 — Patch access_parser's memo reader so a corrupt /
+        # null-overflow memo field (seen on COMP0001 NAV 26-27 Master1
+        # table: "Could not find overflow record data page overflow
+        # pointer: 0" → crash in `_parse_memo` with
+        # `'NoneType' object is not subscriptable`) degrades to an
+        # empty string instead of killing the whole table parse. The
+        # patch is installed exactly once per process.
+        if not getattr(_ap_mod, "_flowra_memo_patch_installed", False):
+            try:
+                _original_parse_memo = _ap_mod.AccessTable._parse_memo
+
+                def _safe_parse_memo(self, *args, **kwargs):
+                    try:
+                        return _original_parse_memo(self, *args, **kwargs)
+                    except (TypeError, IndexError, AttributeError,
+                            KeyError, ValueError) as e:
+                        # Specific case the field has reported:
+                        #   TypeError: 'NoneType' object is not subscriptable
+                        # Logged at DEBUG so a sync of 50k rows with
+                        # one corrupt memo doesn't flood the log.
+                        logger.debug(
+                            f"  [access_parser.patch] skipped corrupt "
+                            f"memo cell: {type(e).__name__}: {e}"
+                        )
+                        return ""
+
+                _ap_mod.AccessTable._parse_memo = _safe_parse_memo
+                _ap_mod._flowra_memo_patch_installed = True
+                logger.info("  access_parser._parse_memo wrapped "
+                            "(safe-skip corrupt memo cells)")
+            except Exception as e:
+                # Non-fatal — the library's internal API may differ in
+                # future versions. Fallback: the parse_table try/except
+                # in `_load_table_via_ap` still catches the crash and
+                # degrades to empty rows.
+                logger.debug(f"  access_parser memo-patch failed: {e}")
         try:
             self._ap = AccessParser(self.bds_path)
             self._connection_method = "AccessParser"
@@ -257,7 +294,23 @@ class BusyDBReader:
         underlying driver."""
         if table in self._ap_row_cache:
             return self._ap_row_cache[table]
-        col_data = self._ap.parse_table(table)
+        # v1.6.2 — second line of defence over the _parse_memo monkey-patch.
+        # If access_parser crashes on a different internal path for a
+        # specific customer's DB (overflow page, LVAL inline chunk,
+        # unexpected column type), we log loudly, cache an empty row
+        # list for the table, and let the caller fall through to the
+        # ODBC path OR skip the phase gracefully. The sync must NEVER
+        # abort an entire company because one table has a bad row.
+        try:
+            col_data = self._ap.parse_table(table)
+        except Exception as e:
+            logger.error(
+                f"  access_parser crashed parsing table '{table}': "
+                f"{type(e).__name__}: {e} — treating as empty table "
+                "for this cycle; next sync will retry."
+            )
+            self._ap_row_cache[table] = []
+            return []
         if not col_data:
             self._ap_row_cache[table] = []
             return []
@@ -2174,9 +2227,30 @@ class FlowraBusySyncAgent:
                                      company_id=company_id, company_name=company_name,
                                      financial_year=fy,
                                      phase_index=i, total_phases=total_phases)
-                ok, count, manifest = self.api.sync_generator(
-                    company_id, company_name, fy, dtype, extractor_fn(fy), id_key
-                )
+                # v1.6.2 — isolate each phase. A customer's DB occasionally
+                # has one unreadable table (corrupt memo overflow, orphan
+                # row, etc) that crashes deep inside access_parser. We
+                # must NOT abort the whole company sync for one bad phase:
+                # the remaining phases contain the data admins actually
+                # care about for reports (vouchers, ledgers, inventory).
+                try:
+                    ok, count, manifest = self.api.sync_generator(
+                        company_id, company_name, fy, dtype, extractor_fn(fy), id_key
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"  phase '{dtype}' crashed: {type(e).__name__}: {e} — "
+                        "skipping this phase, continuing with the next."
+                    )
+                    self.report_progress(
+                        "phase_failed", phase=dtype, error=str(e),
+                        company_id=company_id, company_name=company_name,
+                        financial_year=fy,
+                        phase_index=i, total_phases=total_phases,
+                    )
+                    sync_failed = True
+                    gc.collect()
+                    continue
                 if ok and manifest:
                     self.api.reconcile(company_id, company_name, fy, dtype, manifest, id_key)
                 self.set_status(f"  {dtype}: {count} records synced")
