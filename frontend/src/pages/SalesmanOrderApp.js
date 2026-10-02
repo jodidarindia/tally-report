@@ -65,43 +65,51 @@ function SalesmanView({ companyId, selectedFY }) {
   // iter-173 — Sticky header strip: title + tab bar + (in New Order) the
   // customer search box, so they stay frozen under the global navbar
   // (h-14 = 56px → top-14) while the body list below scrolls.
+  // iter-174 — Suppress this strip while the salesman is INSIDE OrderForm
+  // (new order with a customer picked). OrderForm has its own, taller
+  // sticky block (back/customer/section pills/item search) that must sit
+  // directly under the global navbar — stacking two sticky headers wastes
+  // valuable mobile real-estate.
+  const inOrderForm = tab==='new' && !!selCustomer;
   const showCustSearch = tab==='new' && !selCustomer && customers.length > 0;
   return (
     <div className="px-1" data-testid="salesman-view">
-      <div className="sticky top-14 z-30 bg-slate-50 -mx-1 px-1 pt-2 pb-2" data-testid="salesman-sticky-header">
-        <div className="flex items-center justify-between mb-3">
-          <h1 className="text-lg sm:text-xl font-bold text-slate-900">Sales Orders</h1>
-        </div>
-        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
-          {[
-            {id:'dashboard',label:'Dashboard'},
-            {id:'beat-run',label:'Beat Run Today'},
-            {id:'history',label:'Beat History'},
-            {id:'new',label:'New Order'},
-            {id:'orders',label:`My Orders (${orders.length})`},
-            {id:'beats',label:'Beat Plan'},
-          ].map(t=>
-            <button key={t.id} onClick={()=>setTab(t.id)} className={`px-3 sm:px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition ${tab===t.id?'border-blue-600 text-blue-600':'border-transparent text-slate-500 hover:text-slate-700'}`} data-testid={`tab-${t.id}`}>{t.label}</button>)}
-        </div>
-        {showCustSearch && (
-          <div className="relative mt-3">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input value={custSearch} onChange={e=>setCustSearch(e.target.value)}
-              placeholder="Search customer by name…"
-              className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
-              data-testid="customer-search"/>
+      {!inOrderForm && (
+        <div className="sticky top-14 z-30 bg-slate-50 -mx-1 px-1 pt-2 pb-2" data-testid="salesman-sticky-header">
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900">Sales Orders</h1>
           </div>
-        )}
-        {tab==='orders' && orders.length>0 && (
-          <div className="relative mt-3">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input value={orderSearch} onChange={e=>setOrderSearch(e.target.value)}
-              placeholder="Search order / customer…"
-              className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
-              data-testid="my-orders-search"/>
+          <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+            {[
+              {id:'dashboard',label:'Dashboard'},
+              {id:'beat-run',label:'Beat Run Today'},
+              {id:'history',label:'Beat History'},
+              {id:'new',label:'New Order'},
+              {id:'orders',label:`My Orders (${orders.length})`},
+              {id:'beats',label:'Beat Plan'},
+            ].map(t=>
+              <button key={t.id} onClick={()=>setTab(t.id)} className={`px-3 sm:px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition ${tab===t.id?'border-blue-600 text-blue-600':'border-transparent text-slate-500 hover:text-slate-700'}`} data-testid={`tab-${t.id}`}>{t.label}</button>)}
           </div>
-        )}
-      </div>
+          {showCustSearch && (
+            <div className="relative mt-3">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={custSearch} onChange={e=>setCustSearch(e.target.value)}
+                placeholder="Search customer by name…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                data-testid="customer-search"/>
+            </div>
+          )}
+          {tab==='orders' && orders.length>0 && (
+            <div className="relative mt-3">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={orderSearch} onChange={e=>setOrderSearch(e.target.value)}
+                placeholder="Search order / customer…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                data-testid="my-orders-search"/>
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-3">
 
       {tab==='dashboard' && <SalesmanDashboard stats={stats} fy={selectedFY}/>}
@@ -175,7 +183,7 @@ function SalesmanView({ companyId, selectedFY }) {
 
       {viewOrder && <OrderDetailModal order={viewOrder} onClose={()=>{setViewOrder(null);fetchData();}} isAdmin={false} hdr={hdr}/>}
       {editOrder && (
-        <EditOrderModal order={editOrder} hdr={hdr}
+        <EditOrderModal order={editOrder} hdr={hdr} companyId={companyId}
           onClose={()=>setEditOrder(null)}
           onSaved={()=>{ setEditOrder(null); fetchData(); }}/>
       )}
@@ -302,15 +310,45 @@ function AdminOrderView({ companyId, selectedFY }) {
    to what's actionable: tweak qty, price, remark, notes, or drop a
    line. If the salesman wants to add a new SKU, they can submit a
    new order instead. */
-function EditOrderModal({ order, hdr, onClose, onSaved }) {
+function EditOrderModal({ order, hdr, companyId, onClose, onSaved }) {
   const [items, setItems] = useState(() => (order.items || []).map(it => ({ ...it })));
   const [notes, setNotes] = useState(order.notes || '');
   const [saving, setSaving] = useState(false);
+  // iter-174 — Add-new-item flow: fetch catalog on open so the salesman
+  // can grow the pending order with SKUs that weren't in the original.
+  const [catalog, setCatalog] = useState([]);
+  const [addSearch, setAddSearch] = useState('');
+  useEffect(() => {
+    axios.get(`${API}/api/salesman-orders/catalog?company_id=${companyId||''}`, {headers: hdr()})
+      .then(r => { if (r.data?.success) setCatalog(r.data.data?.items || []); })
+      .catch(() => {});
+  }, [companyId, hdr]);
   const total = items.reduce((s, c) => s + Number(c.quantity||0) * Number(c.price||0), 0);
   const upd = (idx, field, val) => {
     const next = [...items]; next[idx] = { ...next[idx], [field]: val }; setItems(next);
   };
   const remove = (idx) => setItems(items.filter((_, i) => i !== idx));
+  const addItem = (it) => {
+    if (items.some(x => (x.item_name||'').toLowerCase() === (it.item_name||'').toLowerCase())) {
+      toast.error('Already in this order'); return;
+    }
+    setItems([...items, {
+      item_name: it.item_name,
+      part_number: it.part_number || '',
+      price: Number(it.price || it.standard_price || it.last_price || 0),
+      stock_qty: Number(it.stock_qty || 0),
+      unit: it.unit || '',
+      quantity: 1,
+      remark: '',
+    }]);
+    setAddSearch('');
+    toast.success(`${it.item_name.slice(0, 24)} added`);
+  };
+  const addMatches = addSearch
+    ? catalog
+        .filter(c => fuzzyMatchAny(addSearch, [c.item_name, c.part_number, c.aliases]))
+        .slice(0, 8)
+    : [];
 
   const save = async () => {
     const cleaned = items.filter(it => Number(it.quantity||0) > 0);
@@ -340,6 +378,34 @@ function EditOrderModal({ order, hdr, onClose, onSaved }) {
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={16}/></button>
         </div>
         <div className="p-4 space-y-2">
+          {/* iter-174 — Add new item (search + pick) */}
+          <div className="relative mb-1" data-testid="edit-add-item-wrap">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={addSearch} onChange={e=>setAddSearch(e.target.value)}
+              placeholder="Add new item — search by name or part number…"
+              className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+              data-testid="edit-add-item-search"/>
+            {addMatches.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 max-h-56 overflow-y-auto" data-testid="edit-add-item-results">
+                {addMatches.map((it, i) => (
+                  <button key={it.item_name||i} onClick={()=>addItem(it)}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2"
+                    data-testid={`edit-add-item-${i}`}>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-800 truncate">{it.item_name}</div>
+                      {it.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {it.part_number}</div>}
+                    </div>
+                    <div className="flex-shrink-0 text-[10px] text-blue-600 font-semibold">+ Add</div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {addSearch && addMatches.length === 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-md z-20 px-3 py-2 text-[11px] text-slate-400">
+                No matching catalog items
+              </div>
+            )}
+          </div>
           {items.length === 0 && <p className="text-center text-xs text-slate-400 py-6">All lines removed. Add qty back or close.</p>}
           {items.map((it, i) => (
             <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-2.5" data-testid={`edit-line-${i}`}>
@@ -591,6 +657,11 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
       )}
       {/* ── Main column ─────────────────────────────────────────────── */}
       <div>
+        {/* iter-174 — Sticky top block covering back/customer header,
+            section pills, and the current section's item-search box.
+            Pinned under the global navbar (h-14 = 56px) so the salesman
+            can scroll items endlessly without losing search context. */}
+        <div className="sticky top-14 z-30 bg-slate-50 -mx-1 px-1 pt-2 pb-2" data-testid="order-form-sticky">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 min-w-0">
             <button onClick={onBack} className="text-xs text-slate-500 hover:text-slate-700 flex-shrink-0">
@@ -634,18 +705,31 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
           })}
         </div>
 
+        {/* Unified section-aware item search (sticky — iter-174) */}
+        {(() => {
+          const map = {
+            repeat:  { val: histSearch, set: setHistSearch, show: history.length > 0, tid: 'hist-search' },
+            city:    { val: citySearch, set: setCitySearch, show: citySuggestions.length > 0, tid: 'city-search' },
+            suggest: { val: suggSearch, set: setSuggSearch, show: suggestions.length > 0, tid: 'sugg-search' },
+            browse:  { val: catSearch,  set: setCatSearch,  show: true, tid: 'cat-search' },
+          };
+          const s = map[section];
+          if (!s || !s.show) return null;
+          return (
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={s.val} onChange={e=>s.set(e.target.value)}
+                placeholder="Search by name or part number…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                data-testid={s.tid}/>
+            </div>
+          );
+        })()}
+        </div>
+
         {/* ── REPEAT ORDER ─────────────────────────────────────────── */}
         {section === 'repeat' && (
           <div data-testid="repeat-section">
-            {history.length > 0 && (
-              <div className="relative mb-3">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={histSearch} onChange={e=>setHistSearch(e.target.value)}
-                  placeholder="Search by name or part number…"
-                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
-                  data-testid="hist-search"/>
-              </div>
-            )}
             {loadingHist ? (
               <SectionEmpty icon={<Clock size={22}/>} title="Loading history…" />
             ) : history.length === 0 ? (
@@ -670,15 +754,6 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── REPEAT ORDER · CITY (iter-170) ──────────────────────────── */}
         {section === 'city' && (
           <div data-testid="city-section">
-            {citySuggestions.length > 0 && (
-              <div className="relative mb-3">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={citySearch} onChange={e=>setCitySearch(e.target.value)}
-                  placeholder="Search by name or part number…"
-                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
-                  data-testid="city-search"/>
-              </div>
-            )}
             {loadingCity ? (
               <SectionEmpty icon={<Package size={22}/>} title="Scanning city sales…" />
             ) : citySuggMeta.reason === 'no_station' ? (
@@ -724,15 +799,6 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── CROSS-SELL SUGGESTIONS ───────────────────────────────── */}
         {section === 'suggest' && (
           <div data-testid="suggest-section">
-            {suggestions.length > 0 && (
-              <div className="relative mb-3">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={suggSearch} onChange={e=>setSuggSearch(e.target.value)}
-                  placeholder="Search by name or part number…"
-                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
-                  data-testid="sugg-search"/>
-              </div>
-            )}
             {loadingSugg ? (
               <SectionEmpty icon={<Sparkles size={22}/>} title="Building suggestions…" />
             ) : suggestions.length === 0 ? (
@@ -757,13 +823,6 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── BROWSE CATALOG ──────────────────────────────────────── */}
         {section === 'browse' && (
           <div data-testid="browse-section">
-            <div className="relative mb-3">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-              <input value={catSearch} onChange={e=>setCatSearch(e.target.value)}
-                placeholder="Search by name or part number…"
-                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
-                data-testid="cat-search"/>
-            </div>
             <div className="space-y-1.5" data-testid="catalog">
               {filtered.slice(0, 200).map((item, i) => (
                 <CatalogRow key={item.item_name||i} item={item}

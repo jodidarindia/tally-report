@@ -160,8 +160,12 @@ def test_abcd_sort_helper_present(front):
 
 
 def test_search_box_per_section(front):
+    # iter-174: the per-section search is now unified inside the sticky
+    # top block of OrderForm, driven by the current `section` key. The
+    # data-testid is passed dynamically (`tid: 'hist-search'`), so we
+    # assert the test-id string appears for each section.
     for tid in ("hist-search", "city-search", "sugg-search", "cat-search"):
-        assert f'data-testid="{tid}"' in front, f"missing search input {tid}"
+        assert f"'{tid}'" in front, f"missing search input {tid}"
 
 
 # ─── 11 — Submit auto-skips zero-qty rows (iter-172b) ──────────────────
