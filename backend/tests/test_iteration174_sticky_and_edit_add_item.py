@@ -128,3 +128,18 @@ def test_cart_auto_scrolls_to_newest(src: str):
     assert "el.scrollTop = el.scrollHeight" in src
     assert "}, [cart.length])" in src
     assert "useRef" in src.split("from 'react'")[0]  # import present
+
+
+# ─── D — Cart panel sticks on desktop (iter-175b) ──────────────────────
+def test_cart_panel_sticks_with_window_scroll(src: str):
+    """Prior CSS used `lg:items-start` on the grid wrapper, which shrank
+    the cart's grid cell to the cart's own height — leaving zero room
+    for `position: sticky` to actually stick. Removing items-start lets
+    the cell stretch to the left column's height, and bumping the sticky
+    top from top-3 (12px) to top-14 (56px) clears the global navbar."""
+    # No `lg:items-start` on the OrderForm grid wrapper.
+    assert 'data-testid="order-form"' in src
+    assert "lg:grid-cols-[1fr_360px] lg:gap-4\"" in src
+    assert "lg:items-start" not in src
+    # Cart's sticky top aligns with the global navbar height (h-14).
+    assert "lg:sticky lg:top-14" in src

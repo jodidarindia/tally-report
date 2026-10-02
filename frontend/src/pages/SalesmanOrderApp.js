@@ -635,7 +635,7 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   ];
 
   return (
-    <div data-testid="order-form" className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-4 lg:items-start">
+    <div data-testid="order-form" className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-4">
       {/* iter-172 — point 9: outstanding popup, auto-closes after 2.5s */}
       {outstandingPopup && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="outstanding-popup">
@@ -1022,7 +1022,7 @@ function CartPanel({ cart, total, notes, setNotes, updateCart, removeFromCart,
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   }, [cart.length]);
   const Body = (
-    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 lg:sticky lg:top-3" data-testid="cart">
+    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 lg:sticky lg:top-14" data-testid="cart">
       <div className="flex items-center justify-between mb-2">
         <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wider">
           Cart · {cart.length} items

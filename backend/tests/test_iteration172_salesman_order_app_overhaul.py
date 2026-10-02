@@ -54,10 +54,10 @@ def back_master(): return _read(BACK_MASTER)
 
 # ─── 1 & 2 — Cart freeze + alignment ────────────────────────────────────
 def test_cart_panel_is_sticky_on_desktop(front):
-    assert "lg:sticky lg:top-3" in front
-    # Grid parent must align children to top so cart lines up with the
-    # section-pills row, not the viewport middle.
-    assert "lg:items-start" in front
+    # iter-175b: bumped from top-3 → top-14 (clears global navbar) and
+    # dropped lg:items-start (shrunk grid cell killed sticky).
+    assert "lg:sticky lg:top-14" in front
+    assert "lg:items-start" not in front
 
 
 # ─── 3 — Customer list: alphabetical + search ───────────────────────────
