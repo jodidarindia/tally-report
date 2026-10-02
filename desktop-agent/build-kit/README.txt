@@ -1,4 +1,4 @@
-FLOWRA Tally Sync Agent — Build Kit (v9.8.9)
+FLOWRA Tally Sync Agent — Build Kit (v9.8.35)
 =============================================
 
 This folder produces a single Windows .exe that bundles the FLOWRA Tally
@@ -36,7 +36,7 @@ HOW TO BUILD
   3. Wait 2–4 minutes for the first build (subsequent builds are ~30 s).
   4. When you see "BUILD SUCCESSFUL", look in this folder:
 
-         FlowraTallyAgent_v9.8.9.exe        ← single-file, ready to ship
+         FlowraTallyAgent_v9.8.35.exe        ← single-file, ready to ship
 
 That's it. Distribute the .exe directly, or upload it to your FLOWRA
 Setup page so customers can download it.
