@@ -106,7 +106,14 @@ def _build_order_pdf_bytes(order: dict, tenant_name: str = "FLOWRA") -> bytes:
 
 async def _send_order_pdf_to_admin(order: dict, tenant_id: str) -> None:
     """iter-166: fire-and-forget instant email to the tenant's useradmin
-    when a new salesman order lands. PDF attached."""
+    when a new salesman order lands. PDF attached.
+
+    iter-172: ALSO deliver to the salesman-master `order_notify_email`
+    (per-salesman inbox for the operations lead who actually processes
+    these orders — the useradmin / business owner usually doesn't want
+    every order mail hitting their personal inbox). The useradmin email
+    stays the primary recipient so the business owner retains the audit
+    trail; the ops lead goes on CC."""
     try:
         admin = await db.users.find_one(
             {"tenant_id": tenant_id, "role": "admin"},
@@ -120,6 +127,25 @@ async def _send_order_pdf_to_admin(order: dict, tenant_id: str) -> None:
         tenant = await db.tenants.find_one({"tenant_id": tenant_id}, {"_id": 0, "company_name": 1})
         tenant_name = (tenant or {}).get("company_name") or "FLOWRA"
         pdf_bytes = _build_order_pdf_bytes(order, tenant_name)
+
+        # iter-172 — look up the per-salesman notify inbox.
+        cc_list: list = []
+        try:
+            sm_name = (order.get("salesman") or "").strip()
+            if sm_name:
+                # Case-insensitive match on salesman_name within the same tenant.
+                import re as _re_mod
+                master = await db.salesman_master.find_one(
+                    {"tenant_id": tenant_id,
+                     "salesman_name": {"$regex": f"^{_re_mod.escape(sm_name)}$", "$options": "i"}},
+                    {"_id": 0, "order_notify_email": 1},
+                )
+                notify = (master or {}).get("order_notify_email") or ""
+                for addr in [a.strip() for a in notify.replace(";", ",").split(",") if a.strip()]:
+                    if "@" in addr and addr.lower() != (recipient or "").lower():
+                        cc_list.append(addr)
+        except Exception as _cc_err:
+            logger.warning(f"salesman notify_email lookup failed: {_cc_err}")
 
         from services.email_service import send_email
         subject = f"New Order · {order.get('customer_name', '')} · Rs.{order.get('total_amount', 0):,.0f}"
@@ -151,6 +177,8 @@ async def _send_order_pdf_to_admin(order: dict, tenant_id: str) -> None:
                 "content": list(pdf_bytes),
             }],
         }
+        if cc_list:
+            params["cc"] = cc_list
         import asyncio
         resend.api_key = os.environ.get("RESEND_API_KEY", "")
         if resend.api_key:
@@ -1021,6 +1049,79 @@ async def update_order(order_id: str, request: Request):
 # ═══════════════════════════════════════════════════════
 # ADMIN: APPROVE / REJECT / HOLD / BILL
 # ═══════════════════════════════════════════════════════
+
+@router.patch("/salesman-orders/orders/{order_id}")
+async def salesman_edit_pending_order(order_id: str, request: Request):
+    """iter-172: Salesman edits items / notes on their OWN order while it
+    is still pending admin approval. Blocks any edit once the admin has
+    moved the order out of 'pending' (approved / hold / rejected / billed).
+    Admin status changes still go through PATCH /orders/{id}/status —
+    this endpoint is deliberately NOT a status setter."""
+    try:
+        user = await get_current_user(request, db)
+        ctx = await get_tenant_context(request)
+        q = _q(ctx)
+        order = await db.salesman_orders.find_one({**q, "order_id": order_id}, {"_id": 0})
+        if not order:
+            return APIResponse(success=False, error="Order not found")
+
+        # Only the submitting salesman may edit — and only while pending.
+        if user.get("role") == "salesman":
+            if (order.get("salesman_username") or "") != (user.get("username") or ""):
+                return APIResponse(success=False, error="Not your order")
+        if (order.get("status") or "").lower() != "pending":
+            return APIResponse(
+                success=False,
+                error="Order already reviewed by admin — edit no longer allowed",
+            )
+
+        body = await request.json()
+        items = body.get("items")
+        notes = body.get("notes")
+
+        update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        if isinstance(items, list):
+            if not items:
+                return APIResponse(success=False, error="At least one item required")
+            cleaned = []
+            total = 0.0
+            for it in items:
+                qty = safe_num(it.get("quantity", 0))
+                price = safe_num(it.get("price", 0))
+                amt = round(qty * price, 2)
+                total += amt
+                cleaned.append({
+                    "item_name": it.get("item_name", ""),
+                    "part_number": it.get("part_number", "") or "",
+                    "quantity": qty,
+                    "price": price,
+                    "amount": amt,
+                    "unit": it.get("unit", ""),
+                    "remark": (it.get("remark") or "").strip(),
+                })
+            update_fields["items"] = cleaned
+            update_fields["total_amount"] = round(total, 2)
+        if isinstance(notes, str):
+            update_fields["notes"] = notes.strip()
+
+        entry = {
+            "status": "pending",
+            "at": update_fields["updated_at"],
+            "by": user.get("username", ""),
+            "action": "edited",
+        }
+        await db.salesman_orders.update_one(
+            {**q, "order_id": order_id},
+            {"$set": update_fields, "$push": {"status_history": entry}},
+        )
+        updated = await db.salesman_orders.find_one(
+            {**q, "order_id": order_id}, {"_id": 0}
+        )
+        return APIResponse(success=True, data=updated, message="Order updated")
+    except Exception as e:
+        logger.error(f"salesman edit order error: {e}")
+        return APIResponse(success=False, error=str(e))
+
 
 @router.patch("/salesman-orders/orders/{order_id}/status")
 async def update_order_status(order_id: str, request: Request):

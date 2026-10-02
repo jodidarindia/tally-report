@@ -161,6 +161,7 @@ async def get_salesman_master(request: Request, fy: Optional[str] = None, compan
                 "salesman_name": m.get("salesman_name", ""),
                 "phone": m.get("phone", ""),
                 "email": m.get("email", ""),
+                "order_notify_email": m.get("order_notify_email", ""),
                 "monthly_target": safe_num(targets.get("monthly_target")),
                 "quarterly_target": safe_num(targets.get("quarterly_target")),
                 "customers": customers,
@@ -201,6 +202,9 @@ async def create_salesman(request: Request):
         quarterly_target = body.get("quarterly_target", 0)
         phone = body.get("phone", "")
         email = body.get("email", "")
+        # iter-172: per-salesman notify inbox — the ops lead who should
+        # receive each order email (not the business owner / useradmin).
+        order_notify_email = (body.get("order_notify_email") or "").strip()
 
         tq = _build_query(ctx)
 
@@ -263,6 +267,7 @@ async def create_salesman(request: Request):
                 "fy_customers": fy_customers,
                 "phone": phone,
                 "email": email,
+                "order_notify_email": order_notify_email,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             # NOTE: Do NOT overwrite legacy 'customers' or 'monthly_target' fields
@@ -278,6 +283,7 @@ async def create_salesman(request: Request):
                 "salesman_name": salesman_name,
                 "phone": phone,
                 "email": email,
+                "order_notify_email": order_notify_email,
                 "monthly_target": monthly_target,
                 "quarterly_target": quarterly_target,
                 "customers": customers,

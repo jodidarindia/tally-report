@@ -55,6 +55,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
     salesman_name: '',
     phone: '',
     email: '',
+    order_notify_email: '',
     monthly_target: '',
     quarterly_target: '',
     customers: [],
@@ -102,6 +103,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
         salesman_name: formData.salesman_name,
         phone: formData.phone,
         email: formData.email,
+        order_notify_email: formData.order_notify_email,
         monthly_target: parseFloat(formData.monthly_target) || 0,
         quarterly_target: parseFloat(formData.quarterly_target) || 0,
         customers: formData.customers,
@@ -144,6 +146,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
       salesman_name: person.salesman_name,
       phone: person.phone || master?.phone || '',
       email: person.email || master?.email || '',
+      order_notify_email: person.order_notify_email || master?.order_notify_email || '',
       monthly_target: (master?.monthly_target || person.monthly_target || ''),
       quarterly_target: (master?.quarterly_target || person.quarterly_target || ''),
       customers: master?.customers || person.mapped_customers || [],
@@ -177,7 +180,7 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
   };
 
   const resetForm = () => {
-    setFormData({ salesman_name: '', phone: '', email: '', monthly_target: '', quarterly_target: '', customers: [], isEdit: false });
+    setFormData({ salesman_name: '', phone: '', email: '', order_notify_email: '', monthly_target: '', quarterly_target: '', customers: [], isEdit: false });
   };
 
   const openCopyModal = (toSalesman) => {
@@ -715,6 +718,27 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                   <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
                   <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]" placeholder="Email" data-testid="salesman-email-input" />
                 </div>
+              </div>
+
+              {/* iter-172 — point 7: per-salesman order-notification inbox.
+                  Each salesman order triggers an email; the business
+                  owner (useradmin) can't personally field them, so route
+                  the actionable copy to the ops lead instead. Multiple
+                  comma-separated addresses allowed. */}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Order Notification Email
+                  <span className="text-slate-400 font-normal"> — receives each order submitted by this salesman</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.order_notify_email}
+                  onChange={(e) => setFormData({ ...formData, order_notify_email: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                  placeholder="ops@yourcompany.com, dispatch@yourcompany.com"
+                  data-testid="salesman-notify-email-input"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Leave blank to send order mails only to the business owner. Multiple addresses allowed, separated by comma.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

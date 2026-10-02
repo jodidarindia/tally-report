@@ -36,7 +36,9 @@ function SalesmanView({ companyId, selectedFY }) {
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState(null);
   const [selCustomer, setSelCustomer] = useState(null);
+  const [custSearch, setCustSearch] = useState('');
   const [viewOrder, setViewOrder] = useState(null);
+  const [editOrder, setEditOrder] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const hdr = useCallback(() => ({ Authorization:`Bearer ${localStorage.getItem('flowra_token')}`, 'X-Company-Id':companyId||'' }), [companyId]);
@@ -81,15 +83,29 @@ function SalesmanView({ companyId, selectedFY }) {
       {tab==='history' && <BeatHistoryView companyId={companyId} hdr={hdr} salesman={null} canCheckIn={true}/>}
 
       {tab==='new' && !selCustomer && (
-        <div className="space-y-2" data-testid="customer-list">
+        <div data-testid="customer-list">
           <p className="text-xs text-slate-500 mb-2">Select a customer to place order:</p>
           {customers.length===0 && <p className="text-center text-sm text-slate-400 py-10">No customers mapped. Contact admin.</p>}
-          {customers.map((c,i)=>(
-            <button key={i} onClick={()=>setSelCustomer(c.customer_name)} className="w-full text-left bg-white rounded-xl border border-slate-200 p-3 hover:border-blue-300 transition" data-testid={`cust-${i}`}>
+          {customers.length > 0 && (
+            <div className="relative mb-3">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={custSearch} onChange={e=>setCustSearch(e.target.value)}
+                placeholder="Search customer by name…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+                data-testid="customer-search"/>
+            </div>
+          )}
+          <div className="space-y-2">
+          {[...customers]
+            .filter(c => !custSearch || (c.customer_name||'').toLowerCase().includes(custSearch.toLowerCase()))
+            .sort((a,b) => (a.customer_name||'').localeCompare(b.customer_name||'', undefined, {sensitivity:'base'}))
+            .map((c,i)=>(
+            <button key={c.customer_name||i} onClick={()=>setSelCustomer(c.customer_name)} className="w-full text-left bg-white rounded-xl border border-slate-200 p-3 hover:border-blue-300 transition" data-testid={`cust-${i}`}>
               <div className="text-sm font-semibold text-slate-900">{c.customer_name}</div>
               {c.phone && <div className="text-[10px] text-slate-500">{c.phone} {c.state && `| ${c.state}`}</div>}
             </button>
           ))}
+          </div>
         </div>
       )}
 
@@ -119,6 +135,17 @@ function SalesmanView({ companyId, selectedFY }) {
               {o.invoice_number && <div className="text-[10px] text-green-600 mt-0.5">Invoice: {o.invoice_number}</div>}
               <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-100">
                 <WhatsAppShareButton order={o} hdr={hdr} testid={`share-${o.order_id}`}/>
+                {/* iter-172 — point 6: Edit allowed ONLY while admin hasn't
+                    acted (status === 'pending'). Any other status locks the
+                    order so the admin's review stays authoritative. */}
+                {(o.status||'').toLowerCase() === 'pending' && (
+                  <button
+                    onClick={(e)=>{ e.stopPropagation(); setEditOrder(o); }}
+                    className="text-[10px] px-2.5 py-1 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 font-semibold"
+                    data-testid={`edit-${o.order_id}`}>
+                    Edit
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -128,6 +155,11 @@ function SalesmanView({ companyId, selectedFY }) {
       {tab==='beats' && <BeatView companyId={companyId} hdr={hdr} isSalesman={true}/>}
 
       {viewOrder && <OrderDetailModal order={viewOrder} onClose={()=>{setViewOrder(null);fetchData();}} isAdmin={false} hdr={hdr}/>}
+      {editOrder && (
+        <EditOrderModal order={editOrder} hdr={hdr}
+          onClose={()=>setEditOrder(null)}
+          onSaved={()=>{ setEditOrder(null); fetchData(); }}/>
+      )}
     </div>
   );
 }
@@ -242,6 +274,105 @@ function AdminOrderView({ companyId, selectedFY }) {
      • Browse Catalog — full inventory search
    Sticky cart, mobile-first, large touch targets.
    ═══════════════════════════════════════════════════════ */
+/* iter-172 — point 6: Edit a pending order from "My Orders".
+   Backend enforces status==='pending' and ownership; the frontend only
+   needs to collect new quantities / price / remark / notes and PATCH.
+   Items can be adjusted or removed; adding brand-new items here would
+   duplicate the full OrderForm catalog UX, so keep edit scope narrow
+   to what's actionable: tweak qty, price, remark, notes, or drop a
+   line. If the salesman wants to add a new SKU, they can submit a
+   new order instead. */
+function EditOrderModal({ order, hdr, onClose, onSaved }) {
+  const [items, setItems] = useState(() => (order.items || []).map(it => ({ ...it })));
+  const [notes, setNotes] = useState(order.notes || '');
+  const [saving, setSaving] = useState(false);
+  const total = items.reduce((s, c) => s + Number(c.quantity||0) * Number(c.price||0), 0);
+  const upd = (idx, field, val) => {
+    const next = [...items]; next[idx] = { ...next[idx], [field]: val }; setItems(next);
+  };
+  const remove = (idx) => setItems(items.filter((_, i) => i !== idx));
+
+  const save = async () => {
+    const cleaned = items.filter(it => Number(it.quantity||0) > 0);
+    if (!cleaned.length) { toast.error('At least one line with qty > 0 required'); return; }
+    setSaving(true);
+    try {
+      const r = await axios.patch(
+        `${API}/api/salesman-orders/orders/${order.order_id}`,
+        { items: cleaned, notes },
+        { headers: hdr() }
+      );
+      if (r.data?.success) { toast.success('Order updated'); onSaved(); }
+      else toast.error(r.data?.error || 'Could not update');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Could not update');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="edit-order-modal">
+      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+          <div>
+            <div className="text-xs text-slate-500">Editing pending order</div>
+            <div className="text-sm font-semibold text-slate-900">{order.order_id} · {order.customer_name}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={16}/></button>
+        </div>
+        <div className="p-4 space-y-2">
+          {items.length === 0 && <p className="text-center text-xs text-slate-400 py-6">All lines removed. Add qty back or close.</p>}
+          {items.map((it, i) => (
+            <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-2.5" data-testid={`edit-line-${i}`}>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-slate-800 truncate">{it.item_name}</div>
+                  {it.part_number && <div className="text-[9px] text-slate-400 font-mono">P/N: {it.part_number}</div>}
+                </div>
+                <button onClick={() => remove(i)} className="p-0.5 hover:bg-red-50 rounded" aria-label="Remove">
+                  <X size={12} className="text-red-400"/>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 mt-2">
+                <button onClick={() => upd(i, 'quantity', Math.max(0, Number(it.quantity||0) - 1))}
+                  className="w-7 h-7 bg-white border border-slate-200 rounded flex items-center justify-center"><Minus size={11}/></button>
+                <input type="number" value={it.quantity}
+                  onChange={e => upd(i, 'quantity', Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-14 text-center text-xs border border-slate-200 rounded py-1" data-testid={`edit-qty-${i}`}/>
+                <button onClick={() => upd(i, 'quantity', Number(it.quantity||0) + 1)}
+                  className="w-7 h-7 bg-white border border-slate-200 rounded flex items-center justify-center"><Plus size={11}/></button>
+                <span className="text-[10px] text-slate-400 ml-1">× Rs.</span>
+                <input type="number" value={it.price}
+                  onChange={e => upd(i, 'price', Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="w-20 text-xs border border-slate-200 rounded py-1 px-1.5" data-testid={`edit-price-${i}`}/>
+                <input value={it.remark||''} onChange={e => upd(i, 'remark', e.target.value)}
+                  placeholder="Remark" className="flex-1 ml-1 px-2 py-1 text-[10px] border border-slate-200 rounded"/>
+              </div>
+            </div>
+          ))}
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Order notes (optional)" rows={2}
+            className="w-full px-2 py-1.5 text-[11px] border border-slate-200 rounded mt-2"
+            data-testid="edit-notes"/>
+        </div>
+        <div className="sticky bottom-0 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-between gap-2">
+          <div className="text-sm font-bold text-slate-900">Rs.{fmt(total)}</div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-3 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+            <button onClick={save} disabled={saving || items.length === 0}
+              className="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg disabled:opacity-50"
+              data-testid="edit-save">
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   ORDER FORM — Place a new order with product search
+   ═══════════════════════════════════════════════════════ */
 function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   const [section, setSection] = useState('repeat');     // 'repeat' | 'suggest' | 'browse'
   const [catalog, setCatalog] = useState([]);
@@ -253,7 +384,13 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [catSearch, setCatSearch] = useState('');
+  // iter-172 — one search box per section (asked by user, point 10).
+  const [histSearch, setHistSearch] = useState('');
+  const [citySearch, setCitySearch] = useState('');
+  const [suggSearch, setSuggSearch] = useState('');
   const [showCart, setShowCart] = useState(false);      // mobile bottom-sheet toggle
+  // iter-172 — outstanding popup shown for 2-3s after submit (point 9).
+  const [outstandingPopup, setOutstandingPopup] = useState(null);  // {amount, loading}
 
   // Fetch catalog (browse) once
   useEffect(() => {
@@ -278,32 +415,82 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   }, [customer, companyId, hdr]);
 
   const inCart = (name) => cart.some(c => c.item_name === name);
-  const addToCart = (item, qty = 1) => {
+  // iter-172 — point 4: qty defaults to 0 when adding from a + button.
+  // Salesman then types / clicks the inline +/− to set the real quantity.
+  // Existing callers pass qty=1 or lastQty; respect it only when > 0.
+  const addToCart = (item, qty = 0) => {
     if (inCart(item.item_name)) { toast.error('Already in cart'); return; }
-    // Build a uniform cart row regardless of source (catalog/history/suggestions)
     setCart([...cart, {
       item_name: item.item_name,
       part_number: item.part_number || '',
       price: Number(item.price || item.standard_price || item.last_price || 0),
       stock_qty: Number(item.stock_qty || 0),
       unit: item.unit || '',
-      quantity: Math.max(1, Math.round(qty || 1)),
+      quantity: Math.max(0, Math.round(qty || 0)),
       remark: '',
     }]);
     toast.success(`${item.item_name.slice(0, 28)} added`);
   };
+  // iter-172 — point 5: inline qty +/- on each item row syncs with the
+  // cart. If the item is not in cart, +1 adds it with qty=1.
+  const bumpItem = (item, delta) => {
+    const idx = cart.findIndex(c => c.item_name === item.item_name);
+    if (idx === -1) {
+      if (delta > 0) addToCart(item, 1);
+      return;
+    }
+    const next = [...cart];
+    const q = Math.max(0, (next[idx].quantity || 0) + delta);
+    if (q === 0) {
+      next.splice(idx, 1);
+    } else {
+      next[idx] = { ...next[idx], quantity: q };
+    }
+    setCart(next);
+  };
+  const cartQtyFor = (name) => (cart.find(c => c.item_name === name)?.quantity ?? 0);
   const updateCart = (idx, field, value) => {
     const c = [...cart]; c[idx] = {...c[idx], [field]: value}; setCart(c);
   };
   const removeFromCart = (idx) => { setCart(cart.filter((_,i)=>i!==idx)); };
 
   const total = cart.reduce((s,c)=>s+(c.quantity*c.price), 0);
-  const filtered = catSearch ? catalog.filter(c =>
-    fuzzyMatchAny(catSearch, [c.item_name, c.part_number, c.aliases])
-  ) : catalog;
+  // iter-172 — point 10: ABCD sort (A→D, blanks last) applied to every
+  // suggestion-style section. ABC pills are already surfaced on each row
+  // by _build_inventory_lookup → so this is a frontend-only sort.
+  const abcRank = (v) => ({A:0, B:1, C:2, D:3}[(v||'').toUpperCase()] ?? 4);
+  const sortByAbc = (arr) => [...arr].sort((a,b) => abcRank(a.abc_category) - abcRank(b.abc_category));
+  const histItems = sortByAbc(histSearch
+    ? history.filter(it => fuzzyMatchAny(histSearch, [it.item_name, it.part_number]))
+    : history);
+  const suggItems = sortByAbc(suggSearch
+    ? suggestions.filter(it => fuzzyMatchAny(suggSearch, [it.item_name, it.part_number]))
+    : suggestions);
+  const filtered = sortByAbc(catSearch
+    ? catalog.filter(c => fuzzyMatchAny(catSearch, [c.item_name, c.part_number, c.aliases]))
+    : catalog);
 
   const submit = async () => {
     if(cart.length===0) return toast.error('Add items to cart');
+    // iter-172 — point 9: show outstanding popup for 2.5s, THEN submit.
+    setOutstandingPopup({ amount: null, loading: true });
+    try {
+      const enc = encodeURIComponent(customer);
+      const cq = companyId ? `&company_id=${companyId}` : '';
+      const r = await axios.get(`${API}/api/customers/outstanding?search=${enc}${cq}`, { headers: hdr() });
+      let os = 0;
+      if (r.data?.success) {
+        // Prefer the matched row's outstanding; fall back to top-level sum.
+        const rows = r.data.data?.customers || [];
+        const match = rows.find(c => (c.customer_name||'').toLowerCase() === (customer||'').toLowerCase());
+        os = Number(match?.outstanding_amount ?? r.data.data?.total_outstanding ?? 0);
+      }
+      setOutstandingPopup({ amount: os, loading: false });
+    } catch {
+      setOutstandingPopup({ amount: 0, loading: false });
+    }
+    await new Promise(r => setTimeout(r, 2500));
+    setOutstandingPopup(null);
     setSubmitting(true);
     try {
       const r = await axios.post(`${API}/api/salesman-orders/orders`, {
@@ -349,7 +536,26 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
   ];
 
   return (
-    <div data-testid="order-form" className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-4">
+    <div data-testid="order-form" className="lg:grid lg:grid-cols-[1fr_360px] lg:gap-4 lg:items-start">
+      {/* iter-172 — point 9: outstanding popup, auto-closes after 2.5s */}
+      {outstandingPopup && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="outstanding-popup">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-xs w-full text-center">
+            <div className="text-xs text-slate-500 mb-1">Outstanding for</div>
+            <div className="text-sm font-semibold text-slate-900 mb-3 truncate">{customer}</div>
+            {outstandingPopup.loading ? (
+              <div className="text-xs text-slate-400 py-6">Checking latest ledger…</div>
+            ) : (
+              <>
+                <div className={`text-3xl font-bold ${Number(outstandingPopup.amount||0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  Rs. {Number(outstandingPopup.amount||0).toLocaleString('en-IN', {maximumFractionDigits: 0})}
+                </div>
+                <div className="text-[10px] text-slate-400 mt-2">Submitting order for approval…</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       {/* ── Main column ─────────────────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -398,6 +604,15 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── REPEAT ORDER ─────────────────────────────────────────── */}
         {section === 'repeat' && (
           <div data-testid="repeat-section">
+            {history.length > 0 && (
+              <div className="relative mb-3">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={histSearch} onChange={e=>setHistSearch(e.target.value)}
+                  placeholder="Search by name or part number…"
+                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+                  data-testid="hist-search"/>
+              </div>
+            )}
             {loadingHist ? (
               <SectionEmpty icon={<Clock size={22}/>} title="Loading history…" />
             ) : history.length === 0 ? (
@@ -406,9 +621,11 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
                 hint="This customer hasn't bought anything in the last 10 months. Try Suggestions or Browse." />
             ) : (
               <div className="space-y-1.5">
-                {history.map((it, i) => (
-                  <RepeatRow key={i} item={it}
+                {histItems.map((it, i) => (
+                  <RepeatRow key={it.item_name||i} item={it}
                     inCart={inCart(it.item_name)}
+                    cartQty={cartQtyFor(it.item_name)}
+                    onBump={(d)=>bumpItem(it, d)}
                     onAdd={(q) => addToCart(it, q)}
                     testid={`hist-${i}`}/>
                 ))}
@@ -420,6 +637,15 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── REPEAT ORDER · CITY (iter-170) ──────────────────────────── */}
         {section === 'city' && (
           <div data-testid="city-section">
+            {citySuggestions.length > 0 && (
+              <div className="relative mb-3">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={citySearch} onChange={e=>setCitySearch(e.target.value)}
+                  placeholder="Search by name or part number…"
+                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+                  data-testid="city-search"/>
+              </div>
+            )}
             {loadingCity ? (
               <SectionEmpty icon={<Package size={22}/>} title="Scanning city sales…" />
             ) : citySuggMeta.reason === 'no_station' ? (
@@ -441,15 +667,20 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
                     <> · last {citySuggMeta.window.city_days} days</>
                   )}
                 </div>
-                {citySuggestions.map((it, i) => (
-                  <SuggestRow key={i} item={{
+                {sortByAbc(citySearch
+                  ? citySuggestions.filter(it => fuzzyMatchAny(citySearch, [it.item_name, it.part_number]))
+                  : citySuggestions
+                ).map((it, i) => (
+                  <SuggestRow key={it.item_name||i} item={{
                     ...it,
                     reason: `${it.city_buyers} buyer${it.city_buyers === 1 ? '' : 's'} in ${citySuggMeta.station}`
                             + (it.top_city_customers?.length ? ` · ${it.top_city_customers.slice(0,2).join(', ')}${it.top_city_customers.length > 2 ? '…' : ''}` : '')
                             + (it.customer_lapsed ? ' · ⚠ lapsed buyer' : ''),
                   }}
                     inCart={inCart(it.item_name)}
-                    onAdd={() => addToCart(it, 1)}
+                    cartQty={cartQtyFor(it.item_name)}
+                    onBump={(d)=>bumpItem(it, d)}
+                    onAdd={() => addToCart(it, 0)}
                     testid={`city-${i}`}/>
                 ))}
               </div>
@@ -460,6 +691,15 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
         {/* ── CROSS-SELL SUGGESTIONS ───────────────────────────────── */}
         {section === 'suggest' && (
           <div data-testid="suggest-section">
+            {suggestions.length > 0 && (
+              <div className="relative mb-3">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={suggSearch} onChange={e=>setSuggSearch(e.target.value)}
+                  placeholder="Search by name or part number…"
+                  className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+                  data-testid="sugg-search"/>
+              </div>
+            )}
             {loadingSugg ? (
               <SectionEmpty icon={<Sparkles size={22}/>} title="Building suggestions…" />
             ) : suggestions.length === 0 ? (
@@ -468,10 +708,12 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
                 hint="Suggestions appear once the customer has prior purchases or once you bill more orders." />
             ) : (
               <div className="space-y-1.5">
-                {suggestions.map((it, i) => (
-                  <SuggestRow key={i} item={it}
+                {suggItems.map((it, i) => (
+                  <SuggestRow key={it.item_name||i} item={it}
                     inCart={inCart(it.item_name)}
-                    onAdd={() => addToCart(it, 1)}
+                    cartQty={cartQtyFor(it.item_name)}
+                    onBump={(d)=>bumpItem(it, d)}
+                    onAdd={() => addToCart(it, 0)}
                     testid={`sugg-${i}`}/>
                 ))}
               </div>
@@ -491,9 +733,11 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
             </div>
             <div className="space-y-1.5" data-testid="catalog">
               {filtered.slice(0, 200).map((item, i) => (
-                <CatalogRow key={i} item={item}
+                <CatalogRow key={item.item_name||i} item={item}
                   inCart={inCart(item.item_name)}
-                  onAdd={() => addToCart(item, 1)}
+                  cartQty={cartQtyFor(item.item_name)}
+                  onBump={(d)=>bumpItem(item, d)}
+                  onAdd={() => addToCart(item, 0)}
                   testid={`cat-${i}`}/>
               ))}
               {filtered.length === 0 && (
@@ -564,7 +808,27 @@ function CategoryAbcChips({ item }) {
   );
 }
 
-function RepeatRow({ item, inCart, onAdd, testid }) {
+/* iter-172 — reusable qty +/- stepper that stays in sync with cart.
+   When qty === 0 the item is NOT in cart; clicking + adds it with qty=1. */
+function QtyStepper({ qty, onBump, testid }) {
+  return (
+    <div className="flex items-center gap-1 flex-shrink-0" data-testid={testid}>
+      <button onClick={() => onBump(-1)} disabled={qty <= 0}
+        className="w-7 h-7 flex items-center justify-center bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded disabled:opacity-30"
+        aria-label="Decrease" data-testid={`${testid}-minus`}>
+        <Minus size={12}/>
+      </button>
+      <div className={`w-9 text-center text-xs font-bold ${qty>0?'text-blue-600':'text-slate-400'}`} data-testid={`${testid}-value`}>{qty}</div>
+      <button onClick={() => onBump(1)}
+        className="w-7 h-7 flex items-center justify-center bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded text-blue-600"
+        aria-label="Increase" data-testid={`${testid}-plus`}>
+        <Plus size={12}/>
+      </button>
+    </div>
+  );
+}
+
+function RepeatRow({ item, inCart, cartQty, onBump, onAdd, testid }) {
   const lastQty = Math.round(item.last_qty || item.avg_qty_per_order || 1);
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-2.5 hover:border-blue-200 transition" data-testid={testid}>
@@ -585,16 +849,15 @@ function RepeatRow({ item, inCart, onAdd, testid }) {
             <span className="text-slate-400">{item.order_count} orders · avg {item.avg_qty_per_order}</span>
           </div>
         </div>
-        <div className="flex flex-col gap-1 flex-shrink-0">
-          <button onClick={() => onAdd(lastQty)} disabled={inCart}
-            className="px-2.5 py-1.5 text-[10px] font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-30 flex items-center gap-1 whitespace-nowrap"
-            data-testid={`${testid}-addlast`}>
-            <Plus size={11}/> {lastQty}
-          </button>
-          <button onClick={() => onAdd(1)} disabled={inCart}
-            className="px-2.5 py-1 text-[10px] bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-30">
-            +1
-          </button>
+        <div className="flex flex-col gap-1 flex-shrink-0 items-end">
+          <QtyStepper qty={cartQty||0} onBump={onBump} testid={`${testid}-stepper`}/>
+          {!inCart && (
+            <button onClick={() => onAdd(lastQty)}
+              className="px-2 py-1 text-[10px] font-semibold bg-slate-50 text-slate-600 rounded hover:bg-slate-100"
+              data-testid={`${testid}-addlast`}>
+              + last ({lastQty})
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -607,7 +870,7 @@ const SIGNAL_META = {
   fast_moving: { label: 'Fast mover',           color: 'bg-amber-50  text-amber-700' },
   both:        { label: 'Hot pick',             color: 'bg-emerald-50 text-emerald-700' },
 };
-function SuggestRow({ item, inCart, onAdd, testid }) {
+function SuggestRow({ item, inCart, cartQty, onBump, onAdd, testid }) {
   const meta = SIGNAL_META[item.signal] || SIGNAL_META.fast_moving;
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-2.5 hover:border-blue-200 transition" data-testid={testid}>
@@ -628,18 +891,14 @@ function SuggestRow({ item, inCart, onAdd, testid }) {
             <CategoryAbcChips item={item} />
           </div>
         </div>
-        <button onClick={onAdd} disabled={inCart}
-          className="px-2.5 py-1.5 text-[10px] font-bold bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-30 flex items-center gap-1 flex-shrink-0"
-          data-testid={`${testid}-add`}>
-          <Plus size={11}/> Add
-        </button>
+        <QtyStepper qty={cartQty||0} onBump={onBump} testid={`${testid}-stepper`}/>
       </div>
     </div>
   );
 }
 
 /* Plain catalog row (Browse tab) */
-function CatalogRow({ item, inCart, onAdd, testid }) {
+function CatalogRow({ item, inCart, cartQty, onBump, onAdd, testid }) {
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-2.5 flex items-center justify-between hover:border-blue-200 transition" data-testid={testid}>
       <div className="min-w-0 flex-1">
@@ -651,10 +910,7 @@ function CatalogRow({ item, inCart, onAdd, testid }) {
           <CategoryAbcChips item={item} />
         </div>
       </div>
-      <button onClick={onAdd} disabled={inCart}
-        className="px-2.5 py-1.5 text-[10px] bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-30 flex-shrink-0 flex items-center gap-1">
-        <Plus size={12}/>
-      </button>
+      <QtyStepper qty={cartQty||0} onBump={onBump} testid={`${testid}-stepper`}/>
     </div>
   );
 }

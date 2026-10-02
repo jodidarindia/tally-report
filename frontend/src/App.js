@@ -98,11 +98,19 @@ function App() {
   // Logout handler — reset page FIRST so we never render a feature-locked
   // screen for the logged-out user (which previously caused the "feature not
   // activated" flash for dispatch/salesman roles on logout).
+  //
+  // iter-172 — point 8: on logout, show a brief ~1.6s splash informing the
+  // user that in-app features are no longer available before dropping them
+  // on the landing page. Business owner asked for this explicit transition
+  // for salesmen so they can't continue clicking around a stale UI.
+  const [showLogoutFlash, setShowLogoutFlash] = useState(false);
   const handleLogout = useCallback(() => {
     setCurrentPage('dashboard');
     setPublicView('landing');
+    setShowLogoutFlash(true);
     company.resetCompany();
     logout();
+    setTimeout(() => setShowLogoutFlash(false), 1600);
   }, [logout, company.resetCompany]);
 
   // WebSocket for sync status
@@ -195,7 +203,24 @@ function App() {
 
   // ── Unauthenticated ──
   if (!isAuthenticated) {
-    return <PublicRouter view={publicView} onNavigate={setPublicView} onLogin={handleLogin} loginLoading={loginLoading} />;
+    return (
+      <>
+        <PublicRouter view={publicView} onNavigate={setPublicView} onLogin={handleLogin} loginLoading={loginLoading} />
+        {showLogoutFlash && (
+          <div className="fixed inset-0 z-[60] bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-6" data-testid="logout-flash">
+            <div className="max-w-sm w-full text-center">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-500/15 text-amber-400 mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </div>
+              <div className="text-white text-base font-semibold mb-1">Signed out</div>
+              <div className="text-slate-300 text-xs max-w-xs mx-auto leading-relaxed">
+                FLOWRA features are no longer available on this device. Sign in again to resume orders, sync and reports.
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
   }
 
   // iter-167: force the admin to pick a new password when they've just
