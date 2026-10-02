@@ -87,7 +87,7 @@ COMPANY_NAME = os.getenv('TALLY_COMPANY', '')  # Leave empty for current company
 BACKEND_URL = os.getenv('BACKEND_URL', '')  # Will be set during login if not provided
 FINANCIAL_YEAR = os.getenv('FINANCIAL_YEAR', '2025-26')
 SYNC_ALL_FY = os.getenv('SYNC_ALL_FY', 'true').lower() == 'true'
-SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '20'))
+SYNC_INTERVAL = int(os.getenv('SYNC_INTERVAL_MINUTES', '60'))
 SALES_SYNC_INTERVAL = int(os.getenv('SALES_SYNC_INTERVAL_MINUTES', '5'))
 INCREMENTAL_SYNC = os.getenv('INCREMENTAL_SYNC', 'true').lower() == 'true'
 EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__), 'export_cache'))
@@ -3508,7 +3508,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.36-restore-v931-fetch-behaviour")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.37-alterid-gated-full-sync")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3980,7 +3980,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
+                'agent_version': '9.8.37-alterid-gated-full-sync',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -4019,7 +4019,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
+                'agent_version': '9.8.37-alterid-gated-full-sync',
                 'company_name': company,
                 'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
@@ -4080,7 +4080,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
+                'agent_version': '9.8.37-alterid-gated-full-sync',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4164,6 +4164,12 @@ class FlowraSyncAgent:
                     if 'companies' in state and cmd_company_name in state['companies']:
                         state['companies'][cmd_company_name]['hashes'] = {}
                         state['companies'][cmd_company_name]['full_sync_done'] = False
+                        save_sync_state(state)
+                    # v9.8.37 — also drop the full-sync AlterID baseline so
+                    # the gate does not short-circuit this resync cycle.
+                    _alter_key = f"alter_id_full::{cmd_company_name}"
+                    if _alter_key in state:
+                        del state[_alter_key]
                         save_sync_state(state)
                     # Clear per-company FY selection — agent will ask user again
                     fy_key = f"selected_start_fy__{cmd_company_name.replace(' ', '_')}"
@@ -4284,7 +4290,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.36-restore-v931-fetch-behaviour',
+                                'agent_version': '9.8.37-alterid-gated-full-sync',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4560,6 +4566,70 @@ class FlowraSyncAgent:
             #      (see _tally_export_safe below).
             if not self._preflight_or_skip(company_name):
                 return
+
+            # ── v9.8.37 — AlterID gate for FULL SYNC ───────────────────────────
+            # Mirror the v9.8.23 quick-sync AlterID short-circuit for the
+            # full sync too. On Krishna Sales Corp (6754 sales + 9789
+            # receipts + 2802 purchases across 2 FYs) a full sync takes
+            # ~17 min — pointlessly re-fetched every 20 min even when
+            # nothing changed in Tally. With this gate: if Tally's
+            # $$LastAlterIdMaster + $$LastAlterIdVouchers is identical
+            # to the value we saved after our last successful full sync,
+            # we skip the ENTIRE sync (not just vouchers) because the
+            # AlterID counter covers masters (stock items, ledgers,
+            # groups, customers, creditors) AND vouchers.
+            #
+            # Safety guards (anything False → run full sync):
+            #   - A first-ever full sync for this company must still run
+            #     (full_sync_done != True → no baseline yet).
+            #   - A user-triggered Resync command sets full_sync_done=False
+            #     at line 4166, forcing a fresh fetch.
+            #   - If AlterID detection fails (returns None), we fall
+            #     through to the normal full sync — safer than skipping.
+            try:
+                _state = load_sync_state()
+                _co_state = (_state.get('companies') or {}).get(company_name) or {}
+                _full_done = bool(_co_state.get('full_sync_done'))
+                _prev_alter_id = _state.get(f"alter_id_full::{company_name}")
+                _cur_alter_id = self.tally.fetch_last_alter_id() if _full_done else None
+                if (
+                    _full_done
+                    and _cur_alter_id is not None
+                    and _prev_alter_id is not None
+                    and str(_prev_alter_id) == str(_cur_alter_id)
+                ):
+                    logger.info(
+                        f"[FULL] {company_name}: $$LastAlterId unchanged "
+                        f"({_cur_alter_id}). Nothing modified since last full "
+                        f"sync — skipping entire Tally fetch cycle."
+                    )
+                    # Heartbeat so the cloud "Last Sync" tile stays fresh.
+                    try:
+                        import requests as _r
+                        _r.post(
+                            f"{self.backend_url}/api/agent/sync-progress",
+                            json={
+                                'type': 'heartbeat',
+                                'tenant_id': self.tenant_id,
+                                'sync_token': self.sync_token,
+                                'company_id': company_name,
+                                'company_name': company_name,
+                                'alter_id': _cur_alter_id,
+                                'agent_version': '9.8.37-alterid-gated-full-sync',
+                            },
+                            headers={'Authorization': f'Bearer {self.auth_token}'},
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
+                    return
+            except Exception as _gate_err:
+                # Never let the gate itself abort the sync.
+                logger.warning(
+                    f"[FULL] AlterID gate check failed: {_gate_err} — "
+                    f"proceeding with full sync."
+                )
+            # ───────────────────────────────────────────────────────────────────
 
             # If company_name is placeholder, use empty string for display but still sync
             is_placeholder = company_name == '_active_'
@@ -4948,6 +5018,26 @@ class FlowraSyncAgent:
                     state['companies'][company_name] = {'hashes': {}, 'last_sync': {}}
                 state['companies'][company_name]['full_sync_done'] = True
                 state['companies'][company_name]['full_sync_at'] = datetime.now().isoformat()
+                # v9.8.37 — capture AlterID baseline so the NEXT scheduled
+                # full-sync cycle can short-circuit if Tally is unchanged.
+                # Only save when the just-completed sync had NO failed
+                # phases — otherwise a partial sync would set the gate
+                # and silently cause future cycles to skip a recovery
+                # attempt. Also tolerate AlterID detection failures.
+                try:
+                    if not getattr(self, '_failed_phases', None):
+                        _end_alter_id = self.tally.fetch_last_alter_id()
+                        if _end_alter_id is not None:
+                            state[f"alter_id_full::{company_name}"] = _end_alter_id
+                            logger.info(
+                                f"  [FULL] AlterID baseline saved "
+                                f"({_end_alter_id}) — next full-sync cycle will "
+                                f"skip Tally if unchanged."
+                            )
+                except Exception as _save_err:
+                    logger.warning(
+                        f"  [FULL] Could not capture AlterID baseline: {_save_err}"
+                    )
                 save_sync_state(state)
 
             # Summary
@@ -5071,7 +5161,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.36-restore-v931-fetch-behaviour")
+        print("FLOWRA Tally Sync Agent v9.8.37-alterid-gated-full-sync")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag

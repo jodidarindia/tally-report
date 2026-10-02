@@ -1,9 +1,9 @@
 {
-  "version": "9.8.36",
+  "version": "9.8.37",
   "download_url": "/FlowraTallyAgent.exe",
   "min_supported_version": "9.8.0",
-  "release_notes": "v9.8.36 (restore-v931-fetch-behaviour) — CRITICAL hotfix after v9.8.35 hung Krishna Sales Corp. v9.8.35's adaptive splitter + 180s default EXPORT_TIMEOUT combined into an unintended doom-loop: a slow monthly sales request → 180s timeout → split into halves → each half 180s → eventually 30 single-day requests × 180s = ~90 minutes HAMMERING Tally on April 2025 alone, never reaching May. From the user's log the agent spun on April and never progressed. v9.8.36 reverts the fetch path to v9.8.31 semantics: single request per voucher-type per month, timeout = return empty + MOVE ON. EXPORT_TIMEOUT is now opt-in only (default 0 = use REQUEST_TIMEOUT). Admins with heavy ledgers can still set EXPORT_TIMEOUT=180 in a `.env` next to the .exe for extended waits WITHOUT the recursive-splitting doom-loop. Multi-company GUID binding, kill-switch, Busy integration — all preserved. If a tenant's data loss on empty-timeout months becomes a problem, we'll address with proper incremental sync (not adaptive splitting). Rebuild via `build-kit\\build.bat`.",
-  "released_at": "2026-10-02T11:30:00+05:30",
+  "release_notes": "v9.8.37 (alterid-gated-full-sync) — Performance release. Full-sync now honours Tally's $$LastAlterId counter the same way the 5-min quick-sync has since v9.8.23. If nothing changed in Tally since the last successful full sync, the ENTIRE cycle is skipped (not just vouchers) — AlterID covers masters AND vouchers so this is safe. Default full-sync interval raised 20 → 60 min (quick 5-min sync is the fine-grained safety net). Safety guards: first-ever sync still runs; user-triggered Resync still runs AND drops the AlterID baseline so it can't be short-circuited; AlterID detection failure falls through to a normal full sync; partial syncs (any failed phase) do NOT save the baseline so recovery is attempted next cycle. Krishna Sales Corp impact: ~72 full-syncs/day → ~24 scheduled checks/day, most instant. First sync still ~17 min for 20k+ vouchers across 2 FYs. Voucher fetch path and multi-company safety preflight are byte-identical to v9.8.36 — zero risk of re-introducing the v9.8.35 doom-loop. Rebuild via `build-kit\\build.bat`.",
+  "released_at": "2026-10-02T14:50:00+05:30",
   "sha256": "",
   "size_bytes": 0
 }

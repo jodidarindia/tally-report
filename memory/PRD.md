@@ -7,7 +7,31 @@ FLOWRA is a React + FastAPI + MongoDB Atlas SaaS synced with Tally / Busy for bu
 - **Hosting target**: DigitalOcean (Droplet 2GB) + MongoDB Atlas (Mumbai)
 - **Atlas DBs**: `Flowra-Insights` (prod) / `Flowra-Insights-Dev` (Emergent sandbox)
 - **Backend**: FastAPI behind nginx, /api/health probe live
-- **Desktop agent**: v9.8.28-company-raw-parens, .exe published at `/FlowraTallyAgent.exe`
+- **Desktop agent**: v9.8.37-alterid-gated-full-sync, .exe published at `/FlowraTallyAgent.exe`
+
+
+## Shipped — Oct 02 2026 (iter-171) — Tally v9.8.37 AlterID-Gated Full Sync
+
+**Problem**
+Krishna Sales Corp reported "41 minutes still syncing FY 25-26" on v9.8.36. Investigation: the sync wasn't stuck — first full sync completed in 17 min, then the 20-min scheduler re-triggered a SECOND full sync. On idle Tally the agent kept re-fetching ~20k vouchers + ~2500 ledgers every 20 min pointlessly.
+
+**Fix**
+- Full sync now honours Tally's `$$LastAlterIdMaster + $$LastAlterIdVouchers` the same way the 5-min quick-sync has since v9.8.23. If unchanged → entire sync is skipped.
+- Default `SYNC_INTERVAL_MINUTES` raised 20 → 60 (quick 5-min sync is the fine-grained safety net).
+- `RESYNC` command handler drops the AlterID baseline so forced resyncs still re-fetch.
+- Guardrails: first-ever sync still runs; AlterID detection failure falls through to full sync; partial syncs (any `_failed_phases`) do NOT save the baseline.
+
+**Impact (Krishna Sales Corp)**
+~72 full-syncs/day → ~24 scheduled checks/day, most instant AlterID short-circuits (~2 sec vs ~17 min).
+
+**Regression**: `/app/backend/tests/test_iteration171_tally_v9837_alterid_full_gate.py` — 10 tests, all pass.
+
+**Files**
+- `/app/desktop-agent/build-kit/tally_sync_agent_v9.py` — gate + baseline save + resync teardown
+- `/app/desktop-agent/build-kit/flowra_gui.py` — APP_VERSION bump
+- `/app/desktop-agent/build-kit/version_info.txt` — Windows metadata
+- `/app/backend/agent_release.json` — release manifest for auto-update banner
+- `/app/desktop-agent/build-kit/v9.8.37_RELEASE_NOTES.md`
 
 
 ## Shipped — Sep 27 2026 (iter-168) — Tally Multi-Company GUID-Bound Safety (Krishna Sales Corp)
