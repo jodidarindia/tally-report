@@ -472,6 +472,19 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
 
   const submit = async () => {
     if(cart.length===0) return toast.error('Add items to cart');
+    // iter-172b — point 11: auto-skip zero-qty rows. Because the + button
+    // now adds items with qty=0 (user may have tapped to add then not
+    // bothered to type a quantity), silently dropping those rows beats
+    // either rejecting the whole submit or shipping an empty line to
+    // admin. Keep the user informed via toast if we dropped anything.
+    const cartForSubmit = cart.filter(c => Number(c.quantity || 0) > 0);
+    const dropped = cart.length - cartForSubmit.length;
+    if (cartForSubmit.length === 0) {
+      return toast.error('Set a quantity on at least one item before submitting');
+    }
+    if (dropped > 0) {
+      toast(`Skipped ${dropped} item${dropped === 1 ? '' : 's'} with zero quantity`, { icon: '⚠️' });
+    }
     // iter-172 — point 9: show outstanding popup for 2.5s, THEN submit.
     setOutstandingPopup({ amount: null, loading: true });
     try {
@@ -494,7 +507,7 @@ function OrderForm({ customer, companyId, hdr, onBack, onDone }) {
     setSubmitting(true);
     try {
       const r = await axios.post(`${API}/api/salesman-orders/orders`, {
-        customer_name: customer, items: cart, notes,
+        customer_name: customer, items: cartForSubmit, notes,
       }, {headers:hdr()});
       if(r.data.success) { toast.success('Order submitted!'); onDone(); } else toast.error(r.data.error);
     } catch(e) { toast.error(e.response?.data?.error||'Failed'); }

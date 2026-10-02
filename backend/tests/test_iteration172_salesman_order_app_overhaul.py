@@ -162,3 +162,21 @@ def test_abcd_sort_helper_present(front):
 def test_search_box_per_section(front):
     for tid in ("hist-search", "city-search", "sugg-search", "cat-search"):
         assert f'data-testid="{tid}"' in front, f"missing search input {tid}"
+
+
+# ─── 11 — Submit auto-skips zero-qty rows (iter-172b) ──────────────────
+def test_submit_skips_zero_qty_rows(front):
+    """The qty-default-to-zero behaviour from point 4 means it's easy to
+    accidentally leave a row at 0. Submit must drop those rows silently
+    and warn via toast — never ship a zero-qty line to admin, never
+    reject the whole order either."""
+    # The filter must happen BEFORE the outstanding popup, so a cart of
+    # all-zero rows errors out immediately instead of making the user
+    # wait 2.5s for nothing.
+    assert "cartForSubmit = cart.filter(c => Number(c.quantity || 0) > 0)" in front
+    assert "Set a quantity on at least one item before submitting" in front
+    # Dropped-count toast fires when some (not all) rows were zero.
+    assert "const dropped = cart.length - cartForSubmit.length" in front
+    assert "Skipped ${dropped} item" in front
+    # The filtered list — not the raw cart — must be what's POSTed.
+    assert "items: cartForSubmit, notes" in front
