@@ -112,3 +112,19 @@ def test_edit_modal_passed_company_id(src: str):
     fetch is scoped to the right tenant/company."""
     # The modal invocation must now include companyId={companyId}.
     assert "<EditOrderModal order={editOrder} hdr={hdr} companyId={companyId}" in src
+
+
+# ─── C — Cart auto-scroll on add (iter-175) ────────────────────────────
+def test_cart_auto_scrolls_to_newest(src: str):
+    """When a salesman keeps tapping + on new SKUs, the latest line sits
+    outside the max-h-72 cart viewport. Prior behavior left the scroll
+    pinned to the top, so added-but-invisible rows looked lost. The
+    panel must now scroll to the bottom whenever cart.length grows."""
+    assert "const listRef = useRef(null)" in src
+    # The ref is wired to the scrollable cart container.
+    assert 'ref={listRef} className="space-y-1.5 max-h-72 overflow-y-auto' in src
+    # Effect scrolls to bottom; keyed on cart.length so merely bumping
+    # qty on an existing line doesn't yank the scroll.
+    assert "el.scrollTop = el.scrollHeight" in src
+    assert "}, [cart.length])" in src
+    assert "useRef" in src.split("from 'react'")[0]  # import present

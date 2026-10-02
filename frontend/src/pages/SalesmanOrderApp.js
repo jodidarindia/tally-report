@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -1010,6 +1010,17 @@ function CatalogRow({ item, inCart, cartQty, onBump, onAdd, testid }) {
 /* Sticky cart panel — desktop right column, mobile bottom-sheet */
 function CartPanel({ cart, total, notes, setNotes, updateCart, removeFromCart,
                      submit, submitting, showMobile, onCloseMobile }) {
+  // iter-175 — auto-scroll the cart list to the newest line whenever an
+  // item is added (or qty bumped on an existing line pushes it out of
+  // view). Watching cart.length catches "+" clicks on a fresh SKU; the
+  // ref is attached to the scrollable `<div>` below.
+  const listRef = useRef(null);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    // Defer to next frame so the DOM has painted the new row.
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  }, [cart.length]);
   const Body = (
     <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 lg:sticky lg:top-3" data-testid="cart">
       <div className="flex items-center justify-between mb-2">
@@ -1026,7 +1037,7 @@ function CartPanel({ cart, total, notes, setNotes, updateCart, removeFromCart,
         </div>
       ) : (
         <>
-          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+          <div ref={listRef} className="space-y-1.5 max-h-72 overflow-y-auto pr-1" data-testid="cart-items-scroll">
             {cart.map((c,i) => (
               <div key={i} className="bg-white rounded-lg p-2 border border-blue-100">
                 <div className="flex items-start gap-1.5">
