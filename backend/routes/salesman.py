@@ -543,8 +543,19 @@ async def get_salesman_performance(request: Request, fy: Optional[str] = None, c
         q = _build_query(ctx, company_id)
         target_fy = fy or get_current_fy()
 
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
-        vouchers = filter_vouchers_by_fy(all_vouchers, target_fy)
+        # iter-177 — Push FY filter into Mongo via `voucher_date` range
+        # (backed by `tcid_vdate`). Project only the fields we actually
+        # use so we don't ship items[] blobs over the wire when the
+        # headline view doesn't need them.
+        match: dict = dict(q)
+        fy_start, fy_end = fy_to_date_range(target_fy)
+        if fy_start:
+            match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+        vouchers = await db.sales_vouchers.find(
+            match,
+            {"_id": 0, "party_name": 1, "total_amount": 1,
+             "voucher_date": 1, "salesman": 1},
+        ).to_list(50000)
         master_list = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}
 
@@ -621,8 +632,14 @@ async def get_salesman_performance_detailed(
         q = _build_query(ctx, company_id)
         target_fy = fy or get_current_fy()
 
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
-        vouchers = filter_vouchers_by_fy(all_vouchers, target_fy)
+        # iter-177 — Push FY filter into Mongo via `voucher_date` range
+        # (backed by `tcid_vdate`). We still need items[] here for the
+        # item-wise sub-report, but at least we skip docs outside the FY.
+        match: dict = dict(q)
+        fy_start, fy_end = fy_to_date_range(target_fy)
+        if fy_start:
+            match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+        vouchers = await db.sales_vouchers.find(match, {"_id": 0}).to_list(50000)
         master_list = await db.salesman_master.find(q, {"_id": 0}).to_list(100)
         master_map = {m["salesman_name"]: m for m in master_list if m.get("salesman_name")}
 

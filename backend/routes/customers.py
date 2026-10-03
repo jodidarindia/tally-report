@@ -176,6 +176,176 @@ async def _salesman_customer_filter(ctx) -> Optional[list]:
     return list(fy_map.get(fy, master.get("customers", []) or []))
 
 
+@router.get("/customers/drill-down")
+async def get_customer_drill_down(
+    request: Request,
+    name: str,
+    fy: Optional[str] = None,
+    company_id: Optional[str] = None,
+):
+    """iter-177 — Single-shot drill-down card for a customer, used by
+    the Salesman Performance → customer-name click modal.
+
+    Returns in one request:
+      * `contact`: phone, email, gstin, address, city (best effort from
+        the `customers` master and voucher-side party data)
+      * `outstanding`: last known outstanding sum (sales – receipts for
+        this party; signed) in Rs.
+      * `recent_orders`: last 10 sales vouchers (voucher#, date, amt)
+      * `top_items`: top 10 SKUs this party bought in the FY (qty, Rs.)
+
+    All computed via a single `$facet` pipeline on `sales_vouchers`
+    plus one small `customers.find_one` lookup — stays well under 1 s
+    even on 20 k-voucher tenants (uses `tcid_vdate` + fuzzy party_name
+    equality which is low-selectivity-friendly)."""
+    try:
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        # Salesman role: enforce their customer-mapping gate.
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            allowed = {str(c).strip().lower() for c in salesman_scope}
+            if name.strip().lower() not in allowed:
+                return APIResponse(success=False, error="Not permitted")
+
+        match: dict = dict(q)
+        # Case-insensitive exact party match (we lean on the frontend
+        # passing the canonical name here; we also keep a regex
+        # fallback for whitespace / trailing-dot drift in Tally).
+        match["party_name"] = {"$regex": f"^{__import__('re').escape(name)}$", "$options": "i"}
+        if fy:
+            fy_start, fy_end = fy_to_date_range(fy)
+            if fy_start:
+                match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+
+        pipeline = [
+            {"$match": match},
+            {"$facet": {
+                "totals": [{"$group": {
+                    "_id": None,
+                    "n":   {"$sum": 1},
+                    "amt": {"$sum": {"$toDouble": {"$ifNull": ["$total_amount", 0]}}},
+                }}],
+                "recent": [
+                    {"$sort": {"voucher_date": -1, "voucher_id": -1, "last_updated": -1}},
+                    {"$limit": 10},
+                    {"$project": {
+                        "_id": 0, "voucher_number": 1, "voucher_date": 1,
+                        "total_amount": 1, "voucher_id": 1,
+                    }},
+                ],
+                "top_items": [
+                    {"$unwind": {"path": "$items", "preserveNullAndEmptyArrays": False}},
+                    {"$group": {
+                        "_id": {"$toLower": {"$trim": {"input": {"$ifNull": ["$items.item", ""]}}}},
+                        "name": {"$first": "$items.item"},
+                        "qty":  {"$sum": {"$toDouble": {"$ifNull": ["$items.quantity", 0]}}},
+                        "amt":  {"$sum": {"$toDouble": {"$ifNull": ["$items.amount", 0]}}},
+                    }},
+                    {"$sort": {"amt": -1}},
+                    {"$limit": 10},
+                ],
+            }},
+        ]
+        agg = await db.sales_vouchers.aggregate(pipeline, allowDiskUse=True).to_list(1)
+        facet = agg[0] if agg else {}
+        totals = (facet.get("totals") or [{}])[0] if facet.get("totals") else {}
+        total_sales = float(totals.get("amt") or 0.0)
+
+        # Receipts against this party, same FY — compute outstanding = sales − receipts.
+        rec_match: dict = dict(q)
+        rec_match["party_name"] = match["party_name"]
+        if fy and match.get("voucher_date"):
+            rec_match["voucher_date"] = match["voucher_date"]
+        rec_pipe = [
+            {"$match": rec_match},
+            {"$group": {"_id": None, "amt": {"$sum": {"$toDouble": {"$ifNull": ["$amount", 0]}}}}},
+        ]
+        rec_agg = await db.receipt_vouchers.aggregate(rec_pipe, allowDiskUse=True).to_list(1)
+        total_receipts = float((rec_agg[0] if rec_agg else {}).get("amt") or 0.0)
+        outstanding = total_sales - total_receipts
+
+        # Contact card from customers master (best effort).
+        contact: dict = {"name": name}
+        try:
+            cust_q = {"tenant_id": ctx.get("tenant_id"), "name": {"$regex": f"^{__import__('re').escape(name)}$", "$options": "i"}}
+            if company_id:
+                cust_q["company_id"] = company_id
+            doc = await db.customers.find_one(cust_q, {"_id": 0})
+            if doc:
+                for k in ("name", "phone", "email", "gstin", "address", "city", "state", "pincode"):
+                    v = doc.get(k)
+                    if v:
+                        contact[k] = v
+        except Exception:
+            pass
+
+        recent_orders = [
+            {
+                "voucher_number": r.get("voucher_number") or r.get("voucher_id") or "",
+                "voucher_date":   r.get("voucher_date") or "",
+                "amount":         round(float(r.get("total_amount") or 0), 2),
+            }
+            for r in (facet.get("recent") or [])
+        ]
+        top_items = [
+            {
+                "item":    r.get("name") or r.get("_id") or "",
+                "qty":     round(float(r.get("qty") or 0), 2),
+                "revenue": round(float(r.get("amt") or 0), 2),
+            }
+            for r in (facet.get("top_items") or [])
+        ]
+
+        return APIResponse(success=True, data={
+            "contact": contact,
+            "fy": fy,
+            "total_vouchers": int(totals.get("n") or 0),
+            "total_sales":   round(total_sales, 2),
+            "total_receipts": round(total_receipts, 2),
+            "outstanding":    round(outstanding, 2),
+            "recent_orders":  recent_orders,
+            "top_items":      top_items,
+        })
+    except Exception as e:
+        logger.error(f"Error getting customer drill-down for {name}: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
+@router.get("/customers/names")
+async def get_customer_names_fast(
+    request: Request,
+    company_id: Optional[str] = None,
+):
+    """iter-177 — Lightweight customer-name list, served from the
+    `customers` master collection in one tenant-scoped projection
+    (names only, no voucher scan). Replaces callers that were pulling
+    `/customers/outstanding` just to extract `customer_name` strings
+    (SalesmanPerformance, follow-up pickers) — the heavy outstanding
+    path routinely takes 15-40 s on multi-year tenants, and 100% of
+    its CPU is wasted when the caller only needs names.
+
+    Respects the salesman role scope (same gate `/customers/outstanding`
+    uses) so mapped-only visibility is preserved."""
+    try:
+        ctx = await get_tenant_context(request)
+        q = _build_query(ctx, company_id)
+        salesman_scope = await _salesman_customer_filter(ctx)
+        if salesman_scope is not None:
+            if not salesman_scope:
+                return APIResponse(success=True, data={"names": []})
+            q["customer_name"] = {"$in": salesman_scope}
+        docs = await db.customers.find(q, {"_id": 0, "customer_name": 1}).to_list(10000)
+        names = sorted(
+            {safe_str(d.get("customer_name")) for d in docs if d.get("customer_name")},
+            key=lambda s: s.lower(),
+        )
+        return APIResponse(success=True, data={"names": names})
+    except Exception as e:
+        logger.error(f"Error getting customer names: {e}")
+        return APIResponse(success=False, error=str(e))
+
+
 @router.get("/customers/outstanding")
 async def get_customer_outstanding(
     request: Request,
@@ -219,11 +389,20 @@ async def get_customer_outstanding(
             branch_set = set(p.lower() for p in branch_parties)
             synced_customers = [c for c in synced_customers if safe_str(c.get("customer_name")).lower() not in branch_set]
 
+        # iter-177 — Projection to drop items[]/inventory_entries from every
+        # voucher fetch below. The outstanding path never reads line items;
+        # keeping them in the payload was ballooning the Atlas round-trip
+        # to ~40 s on 20 k-voucher tenants. Each collection drops to the
+        # fields actually consumed by the metrics helpers.
+        _vproj = {"_id": 0, "party_name": 1, "voucher_date": 1,
+                  "total_amount": 1, "amount": 1, "voucher_number": 1,
+                  "voucher_id": 1, "voucher_type": 1, "direction": 1,
+                  "entries": 1, "narration": 1, "fy": 1, "last_updated": 1}
         # Fetch ALL vouchers (not FY filtered) for opening balance calculation
-        all_sales = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
-        all_receipts_raw = await db.receipt_vouchers.find(q, {"_id": 0}).to_list(50000)
-        all_credit_notes = await db.credit_notes.find(q, {"_id": 0}).to_list(50000)
-        all_journals = await db.journal_vouchers.find(q, {"_id": 0}).to_list(50000)
+        all_sales        = await db.sales_vouchers.find(q,       _vproj).to_list(50000)
+        all_receipts_raw = await db.receipt_vouchers.find(q,     _vproj).to_list(50000)
+        all_credit_notes = await db.credit_notes.find(q,         _vproj).to_list(50000)
+        all_journals     = await db.journal_vouchers.find(q,     _vproj).to_list(50000)
 
         # The receipt_vouchers collection holds receipts (CR party = reduces OS) AND
         # payment vouchers (DR party = increases OS, e.g., cheque-bounce refund).

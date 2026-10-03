@@ -4,7 +4,7 @@ import logging
 
 from db import db
 from models import SalesVoucher, APIResponse
-from utils import safe_num, filter_vouchers_by_fy
+from utils import safe_num, filter_vouchers_by_fy, fy_to_date_range
 from services.tenant_context import get_tenant_context
 from routes.branch_ledgers import get_branch_parties
 
@@ -162,45 +162,61 @@ async def get_sales_summary(request: Request, fy: Optional[str] = None, company_
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         q = await _apply_branch_filter(q, ctx, request)
-        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
-        if fy:
-            vouchers = filter_vouchers_by_fy(vouchers, fy)
 
-        if not vouchers:
+        # iter-177 — Pure server-side aggregation. The prior path pulled
+        # up to 50 k full voucher docs (including heavy `items[]`
+        # arrays) just to count, sum, group-by-party and pick the 10
+        # latest — the single biggest contributor to a 17 s dashboard.
+        # We now compute totals, top-customers and recent-vouchers in
+        # one `$facet` pipeline that Mongo answers using the
+        # `tcid_vdate` compound index.
+        match: dict = dict(q)
+        if fy:
+            fy_start, fy_end = fy_to_date_range(fy)
+            if fy_start:
+                match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+
+        pipeline = [
+            {"$match": match},
+            {"$facet": {
+                "totals": [{"$group": {
+                    "_id": None,
+                    "n":   {"$sum": 1},
+                    "amt": {"$sum": {"$toDouble": {"$ifNull": ["$total_amount", 0]}}},
+                }}],
+                "top_customers": [
+                    {"$group": {
+                        "_id":   {"$ifNull": ["$party_name", "Unknown"]},
+                        "total": {"$sum": {"$toDouble": {"$ifNull": ["$total_amount", 0]}}},
+                    }},
+                    {"$sort": {"total": -1}},
+                    {"$limit": 10},
+                ],
+                "recent": [
+                    {"$sort": {"voucher_date": -1, "voucher_id": -1, "last_updated": -1}},
+                    {"$limit": 10},
+                    # Drop `items[]` + `_id` to keep the payload small.
+                    {"$project": {"_id": 0, "items": 0}},
+                ],
+            }},
+        ]
+        result = await db.sales_vouchers.aggregate(pipeline, allowDiskUse=True).to_list(1)
+        facet = result[0] if result else {}
+        totals = (facet.get("totals") or [{}])[0] if facet.get("totals") else {}
+        total_vouchers = int(totals.get("n") or 0)
+        total_sales = float(totals.get("amt") or 0.0)
+
+        if total_vouchers == 0:
             return APIResponse(
                 success=True,
                 data={"total_vouchers": 0, "total_sales": 0, "top_customers": [], "recent_vouchers": []}
             )
 
-        total_vouchers = len(vouchers)
-        total_sales = sum(safe_num(v.get("total_amount")) for v in vouchers)
-
-        customer_sales = {}
-        for v in vouchers:
-            party = v.get("party_name", "Unknown")
-            customer_sales[party] = customer_sales.get(party, 0) + safe_num(v.get("total_amount"))
-
-        top_customers = sorted(
-            [{"name": k, "total": round(v, 2)} for k, v in customer_sales.items()],
-            key=lambda x: x["total"],
-            reverse=True
-        )[:10]
-
-        recent_vouchers = sorted(
-            vouchers,
-            # Primary: latest voucher_date first.
-            # Tie-break: latest voucher_id (Tally's per-day running serial,
-            # e.g. "VCG0005/2526" — string compare works because Tally
-            # zero-pads its serial within a series).
-            # Final fallback: sync timestamp, to deal with very old rows
-            # that may be missing voucher_id.
-            key=lambda x: (
-                x.get("voucher_date", ""),
-                x.get("voucher_id", ""),
-                x.get("last_updated", ""),
-            ),
-            reverse=True
-        )[:10]
+        top_customers = [
+            {"name": r.get("_id") or "Unknown", "total": round(float(r.get("total") or 0), 2)}
+            for r in (facet.get("top_customers") or [])
+        ]
+        recent_vouchers = facet.get("recent") or []
 
         return APIResponse(
             success=True,

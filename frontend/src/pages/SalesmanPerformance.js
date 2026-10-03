@@ -48,6 +48,9 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
   const [copyBeats, setCopyBeats] = useState(true);
   const [copyReleaseSource, setCopyReleaseSource] = useState(true);
   const [copyBusy, setCopyBusy] = useState(false);
+  // iter-177 — Customer drill-down modal state. Opens when a user
+  // clicks a customer name inside any salesman's expanded row.
+  const [drill, setDrill] = useState(null); // {name, data?, loading, error?}
   // ownership[customer_lower] = owner_salesman_name (FY-scoped)
   const [ownership, setOwnership] = useState({});
 
@@ -68,7 +71,13 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
       const fyParam = selectedFY ? `fy=${selectedFY}` : '';
       const [perfRes, custRes, masterRes, ownRes] = await Promise.all([
         axios.get(`${API}/salesman/performance-detailed?${fyParam}&duration=${duration}`),
-        axios.get(`${API}/customers/outstanding?${fyParam}`),
+        // iter-177 — Switched from `/customers/outstanding` (15-40 s on
+        // multi-year tenants, computes aging + opening + 5 voucher
+        // scans just to let us read `.customer_name`) to the dedicated
+        // light names endpoint. The Salesman page only needed the
+        // list of names for the drill-down autocomplete and copy
+        // picker — no outstanding math required.
+        axios.get(`${API}/customers/names?${fyParam}`),
         axios.get(`${API}/salesman/master?${fyParam}`),
         axios.get(`${API}/salesman/customer-ownership?${fyParam}`),
       ]);
@@ -76,8 +85,8 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
       setPeriods(perfRes.data?.data?.periods || { months: [], month_labels: {}, quarters: [] });
       setCurrentFy(perfRes.data?.data?.current_fy || '');
 
-      const custList = custRes.data?.data?.customers || [];
-      setCustomers(custList.map(c => c.customer_name).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })));
+      const names = custRes.data?.data?.names || [];
+      setCustomers(names);
 
       const mData = masterRes.data?.data || {};
       setMasterList(mData.salesmen || []);
@@ -189,6 +198,25 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
     setCopyBeats(true);
     setCopyReleaseSource(true);
     setCopyModal({ to_salesman: toSalesman });
+  };
+
+  // iter-177 — Open customer drill-down modal + lazy-fetch its data.
+  const openDrill = async (customerName) => {
+    if (!customerName) return;
+    setDrill({ name: customerName, loading: true });
+    try {
+      const params = new URLSearchParams({ name: customerName });
+      if (companyId) params.set('company_id', companyId);
+      if (selectedFY) params.set('fy', selectedFY);
+      const res = await axios.get(`${API}/customers/drill-down?${params.toString()}`);
+      if (res.data?.success) {
+        setDrill({ name: customerName, loading: false, data: res.data.data });
+      } else {
+        setDrill({ name: customerName, loading: false, error: res.data?.error || 'Failed to load' });
+      }
+    } catch (e) {
+      setDrill({ name: customerName, loading: false, error: e?.response?.data?.error || e.message });
+    }
   };
 
   const handleCopySalesmanData = async () => {
@@ -403,7 +431,12 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                                   <>
                                     {person.customers.map((c, ci) => (
                                       <tr key={ci} className="border-t border-slate-50 hover:bg-slate-25">
-                                        <td className="px-3 py-2 font-medium text-slate-800 sticky left-0 bg-white z-10 max-w-[180px] truncate">{c.customer_name}</td>
+                                        <td
+                                          className="px-3 py-2 font-medium text-blue-700 sticky left-0 bg-white z-10 max-w-[180px] truncate cursor-pointer hover:underline"
+                                          onClick={() => openDrill(c.customer_name)}
+                                          data-testid={`cust-drill-${ci}`}
+                                          title="Click for customer details"
+                                        >{c.customer_name}</td>
                                         {duration === 'monthly' && periods.months.map(m => {
                                           const val = c.monthly?.[m]?.amount || 0;
                                           return (
@@ -794,6 +827,140 @@ const SalesmanPerformance = ({ selectedFY, companyId }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* iter-177 — Customer drill-down modal */}
+      {drill && (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto"
+          onClick={() => setDrill(null)}
+          data-testid="cust-drill-modal"
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 p-5 border-b border-slate-100">
+              <div className="min-w-0">
+                <div className="text-xs text-slate-400 mb-0.5">Customer details</div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 truncate" data-testid="drill-name">{drill.name}</h3>
+                {drill.data?.contact?.city && (
+                  <div className="text-xs text-slate-500">{drill.data.contact.city}{drill.data.contact.state ? `, ${drill.data.contact.state}` : ''}</div>
+                )}
+              </div>
+              <button
+                onClick={() => setDrill(null)}
+                className="text-slate-400 hover:text-slate-700 flex-shrink-0 text-xl leading-none"
+                data-testid="drill-close"
+              >×</button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {drill.loading && (
+                <div className="text-center text-sm text-slate-400 py-10">Loading…</div>
+              )}
+              {drill.error && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{drill.error}</div>
+              )}
+              {drill.data && !drill.loading && !drill.error && (
+                <>
+                  {/* Headline tiles */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                      <div className="text-[10px] text-blue-500 uppercase tracking-wide">Sales ({drill.data.fy || 'All'})</div>
+                      <div className="text-sm font-bold text-blue-900">Rs. {fmt(drill.data.total_sales)}</div>
+                      <div className="text-[10px] text-blue-400">{drill.data.total_vouchers} vouchers</div>
+                    </div>
+                    <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+                      <div className="text-[10px] text-green-600 uppercase tracking-wide">Receipts</div>
+                      <div className="text-sm font-bold text-green-900">Rs. {fmt(drill.data.total_receipts)}</div>
+                    </div>
+                    <div className={`${drill.data.outstanding > 0 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'} border rounded-lg p-3`}>
+                      <div className={`text-[10px] uppercase tracking-wide ${drill.data.outstanding > 0 ? 'text-amber-600' : 'text-slate-500'}`}>Outstanding</div>
+                      <div className={`text-sm font-bold ${drill.data.outstanding > 0 ? 'text-amber-900' : 'text-slate-700'}`}>Rs. {fmt(drill.data.outstanding)}</div>
+                    </div>
+                    <div className="bg-purple-50 border border-purple-100 rounded-lg p-3">
+                      <div className="text-[10px] text-purple-600 uppercase tracking-wide">Top SKUs</div>
+                      <div className="text-sm font-bold text-purple-900">{drill.data.top_items?.length || 0}</div>
+                    </div>
+                  </div>
+
+                  {/* Contact */}
+                  {(drill.data.contact?.phone || drill.data.contact?.email || drill.data.contact?.gstin || drill.data.contact?.address) && (
+                    <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs">
+                      <div className="font-semibold text-slate-700 mb-1.5">Contact</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-slate-600">
+                        {drill.data.contact.phone   && <div><span className="text-slate-400">Phone: </span>{drill.data.contact.phone}</div>}
+                        {drill.data.contact.email   && <div><span className="text-slate-400">Email: </span>{drill.data.contact.email}</div>}
+                        {drill.data.contact.gstin   && <div><span className="text-slate-400">GSTIN: </span><span className="font-mono">{drill.data.contact.gstin}</span></div>}
+                        {drill.data.contact.pincode && <div><span className="text-slate-400">PIN: </span>{drill.data.contact.pincode}</div>}
+                        {drill.data.contact.address && <div className="sm:col-span-2"><span className="text-slate-400">Address: </span>{drill.data.contact.address}</div>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent orders */}
+                  <div>
+                    <div className="font-semibold text-slate-700 text-sm mb-2">Recent orders ({drill.data.recent_orders?.length || 0})</div>
+                    {(drill.data.recent_orders || []).length === 0 ? (
+                      <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-6 text-center">No orders in this FY.</div>
+                    ) : (
+                      <div className="border border-slate-100 rounded-lg overflow-hidden">
+                        <table className="w-full text-xs" data-testid="drill-orders">
+                          <thead className="bg-slate-50 text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">Voucher#</th>
+                              <th className="px-3 py-2 text-left font-medium">Date</th>
+                              <th className="px-3 py-2 text-right font-medium">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {drill.data.recent_orders.map((o, i) => (
+                              <tr key={i} className="border-t border-slate-50">
+                                <td className="px-3 py-1.5 font-mono text-slate-700">{o.voucher_number}</td>
+                                <td className="px-3 py-1.5 text-slate-600">{o.voucher_date}</td>
+                                <td className="px-3 py-1.5 text-right font-semibold text-slate-800">Rs. {fmt(o.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Top items */}
+                  <div>
+                    <div className="font-semibold text-slate-700 text-sm mb-2">Top SKUs purchased</div>
+                    {(drill.data.top_items || []).length === 0 ? (
+                      <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-6 text-center">No SKUs in this FY.</div>
+                    ) : (
+                      <div className="border border-slate-100 rounded-lg overflow-hidden">
+                        <table className="w-full text-xs" data-testid="drill-items">
+                          <thead className="bg-slate-50 text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">Item</th>
+                              <th className="px-3 py-2 text-right font-medium">Qty</th>
+                              <th className="px-3 py-2 text-right font-medium">Revenue</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {drill.data.top_items.map((it, i) => (
+                              <tr key={i} className="border-t border-slate-50">
+                                <td className="px-3 py-1.5 text-slate-700 truncate max-w-xs" title={it.item}>{it.item}</td>
+                                <td className="px-3 py-1.5 text-right text-slate-600">{fmt(it.qty)}</td>
+                                <td className="px-3 py-1.5 text-right font-semibold text-slate-800">Rs. {fmt(it.revenue)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
