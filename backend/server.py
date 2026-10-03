@@ -334,6 +334,27 @@ async def ensure_indexes(db):
         for coll in ('sales_vouchers', 'purchase_vouchers'):
             await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('fy', 1)],
                                           name='tcid_fy', background=True)
+        # iter-178 — Compound upsert index for the agent sync write-path.
+        # Each `bulk_write(UpdateOne, upsert=True)` in /api/agent/sync
+        # filters on `(voucher_id, tenant_id, company_id)` for voucher
+        # collections and `(customer_name, tenant_id, company_id)` for
+        # customers. Without a matching index Mongo does a full COLLSCAN
+        # per row — the dominant cause of the 120 s HTTP read-timeouts
+        # we saw in the 3-Oct Krishna Sales Corp log. These are
+        # background-built so prod rollout is safe.
+        for coll in ('sales_vouchers', 'purchase_vouchers', 'receipt_vouchers',
+                     'payment_vouchers', 'credit_notes', 'debit_notes',
+                     'journal_vouchers', 'stock_journals', 'contra_vouchers'):
+            await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('voucher_id', 1)],
+                                          name='tcid_vid', unique=True, background=True)
+        # Customers: non-unique (legacy data may contain duplicate
+        # customer_name rows across companies — a unique constraint
+        # would break those upserts). Mongo still uses the index to
+        # accelerate the upsert filter lookup.
+        await db.customers.create_index(
+            [('tenant_id', 1), ('company_id', 1), ('customer_name', 1)],
+            name='tcid_cname', background=True,
+        )
         # v1.5.6 — Migrate legacy `tcid_iname` UNIQUE index (on
         # tenant+company+item_name) to `tcid_iid` UNIQUE (on
         # tenant+company+item_id). Busy legitimately ships multiple SKUs

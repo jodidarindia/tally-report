@@ -473,33 +473,45 @@ async def receive_agent_sync(request: dict):
                     except Exception:
                         pass
 
-                # Auto-create dispatch cards if enabled for this tenant/company
+                # Auto-create dispatch cards if enabled for this tenant/company.
+                # iter-178 — Fire-and-forget: this used to run inline on
+                # every sales sync, adding 5-20 s to the 120 s HTTP budget
+                # of the agent. On 20 k-voucher tenants that pushed
+                # sales/receipts batches past the agent's read timeout
+                # (see "Tally Agent Log 3-Oct" root-cause). The scan is
+                # tolerant to lag — a few extra seconds before cards
+                # appear on the Dispatch board is acceptable; a broken
+                # agent sync is not.
                 try:
                     settings = await db.dispatch_settings.find_one(
                         {"tenant_id": req_tenant_id, "company_id": req_company_id},
-                        {"_id": 0}
+                        {"_id": 0, "auto_create_enabled": 1, "start_date": 1}
                     )
                     if settings and settings.get("auto_create_enabled") and settings.get("start_date"):
-                        from routes.dispatch import _auto_create_cards_helper, _detect_invoice_changes
-                        created_n = await _auto_create_cards_helper(
-                            req_tenant_id, req_company_id, settings.get("start_date", "")
-                        )
-                        if created_n:
-                            logger.info(f"Auto-created {created_n} dispatch cards from sync")
-                        # Option B — flag-only invoice change detection. Runs
-                        # after every sales sync. Cards are NOT mutated; only
-                        # `invoice_changed_flag` / `invoice_missing_flag` /
-                        # `post_dispatch_invoice_changed` are set so the UI
-                        # can surface a badge for manual reconciliation.
-                        flags = await _detect_invoice_changes(req_tenant_id, req_company_id)
-                        if flags.get("flagged_changed") or flags.get("flagged_missing") or flags.get("post_dispatch_changed"):
-                            logger.info(
-                                f"Dispatch change-detection: changed={flags['flagged_changed']} "
-                                f"missing={flags['flagged_missing']} post_dispatch={flags['post_dispatch_changed']} "
-                                f"cleared={flags['cleared']}"
-                            )
+                        import asyncio as _asyncio
+                        _t_id   = req_tenant_id
+                        _c_id   = req_company_id
+                        _s_date = settings.get("start_date", "")
+
+                        async def _bg_auto_dispatch():
+                            try:
+                                from routes.dispatch import _auto_create_cards_helper, _detect_invoice_changes
+                                created_n = await _auto_create_cards_helper(_t_id, _c_id, _s_date)
+                                if created_n:
+                                    logger.info(f"[bg] Auto-created {created_n} dispatch cards for tenant={_t_id}")
+                                flags = await _detect_invoice_changes(_t_id, _c_id)
+                                if flags.get("flagged_changed") or flags.get("flagged_missing") or flags.get("post_dispatch_changed"):
+                                    logger.info(
+                                        f"[bg] Dispatch change-detection: changed={flags['flagged_changed']} "
+                                        f"missing={flags['flagged_missing']} post_dispatch={flags['post_dispatch_changed']} "
+                                        f"cleared={flags['cleared']}"
+                                    )
+                            except Exception as _bg_err:
+                                logger.warning(f"[bg] Dispatch auto-create failed: {_bg_err}")
+
+                        _asyncio.create_task(_bg_auto_dispatch())
                 except Exception as auto_err:
-                    logger.warning(f"Dispatch auto-create skipped: {auto_err}")
+                    logger.warning(f"Dispatch auto-create dispatch skipped: {auto_err}")
             logger.info(f"Synced {len(data)} sales vouchers")
 
         elif data_type == 'customers':
@@ -1128,21 +1140,31 @@ async def receive_agent_sync(request: dict):
                 'company_id': req_company_id
             })
 
-        # Recompute overdue digest after sync of relevant data types
+        # Recompute overdue digest after sync of relevant data types.
+        # iter-178 — Fire-and-forget: this was inline in the agent's
+        # HTTP response window, blocking the ack and contributing to
+        # the 120 s read-timeout cascade we saw in the 3-Oct log.
         if data_type in ('sales', 'receipts', 'customers', 'credit_notes', 'journal_vouchers'):
-            try:
-                digest = await compute_overdue_digest(db, req_tenant_id, req_company_id)
-                logger.info(f"Overdue digest recomputed: {digest['total_overdue_invoices']} overdue invoices")
-                await ws_manager.broadcast({
-                    'event': 'overdue_digest_updated',
-                    'data': {
-                        'total_overdue_invoices': digest['total_overdue_invoices'],
-                        'total_overdue_amount': digest['total_overdue_amount'],
-                    },
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }, tenant_id=req_tenant_id)
-            except Exception as digest_err:
-                logger.error(f"Error recomputing overdue digest: {digest_err}")
+            import asyncio as _asyncio
+            _t_id = req_tenant_id
+            _c_id = req_company_id
+
+            async def _bg_overdue_digest():
+                try:
+                    digest = await compute_overdue_digest(db, _t_id, _c_id)
+                    logger.info(f"[bg] Overdue digest recomputed: {digest['total_overdue_invoices']} overdue invoices")
+                    await ws_manager.broadcast({
+                        'event': 'overdue_digest_updated',
+                        'data': {
+                            'total_overdue_invoices': digest['total_overdue_invoices'],
+                            'total_overdue_amount': digest['total_overdue_amount'],
+                        },
+                        'timestamp': datetime.now(timezone.utc).isoformat()
+                    }, tenant_id=_t_id)
+                except Exception as digest_err:
+                    logger.error(f"[bg] Overdue digest recompute failed: {digest_err}")
+
+            _asyncio.create_task(_bg_overdue_digest())
 
         # iter-126: release the (tenant, company) sync lock on the way
         # out. Wrapped in try/except so a stale lock never blocks the
@@ -1599,17 +1621,27 @@ async def websocket_sync_status(websocket: WebSocket):
                 elif action == 'get_status':
                     t_id = msg.get('tenant_id', '')
                     c_id = msg.get('company_id', '')
+                    # iter-178 — Refuse to answer without a tenant_id.
+                    # Prior code did `q = {'type':'agent_sync'}` unscoped
+                    # when tenant was empty — the find_one then returned
+                    # whichever doc Mongo picked first, cross-leaking
+                    # sync status (e.g. Krishna Sales Corp's "in
+                    # progress" flag) into unrelated tenants' dashboards.
+                    if not t_id:
+                        await websocket.send_json({
+                            'event': 'status_response',
+                            'data': {'sync_status': None, 'last_progress': None},
+                            'error': 'tenant_id required',
+                        })
+                        continue
                     # Re-bind subscription if the client passes tenant on each call
-                    if t_id:
-                        ws_manager.set_tenant(websocket, t_id)
-                    q = {'type': 'agent_sync'}
-                    if t_id:
-                        q['tenant_id'] = t_id
+                    ws_manager.set_tenant(websocket, t_id)
+                    q = {'type': 'agent_sync', 'tenant_id': t_id}
                     if c_id:
                         q['company_id'] = c_id
                     sync_status = await db.sync_status.find_one(q, {'_id': 0})
                     progress = await db.sync_status.find_one(
-                        {'type': 'sync_progress', **({} if not t_id else {'tenant_id': t_id})},
+                        {'type': 'sync_progress', 'tenant_id': t_id},
                         {'_id': 0}
                     )
                     await websocket.send_json({
@@ -1648,6 +1680,12 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
         # company selector (or losing flowra_company after a logout)
         # caused the Setup page to show "Last Sync: Never" even though a
         # full sync had just completed.
+        # iter-178 — HARD-SCRUB `is_syncing` from the fallback payload.
+        # The fallback is for last-sync continuity only; propagating a
+        # cross-company `is_syncing=True` flag was the cause of the
+        # "all tenants show sync-in-progress while only Krishna
+        # Sales Corp was syncing" bug (a 2-month-old empty-company
+        # ghost doc flipped every sibling company into "in progress").
         if not sync_status and ctx and ctx.get("tenant_id"):
             sync_status = await db.sync_status.find_one(
                 {"type": "agent_sync", "tenant_id": ctx["tenant_id"]},
@@ -1656,6 +1694,10 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
             )
             if sync_status:
                 sync_status["_fallback_company_mismatch"] = True
+                # Fallback NEVER declares an active sync — only the
+                # exact-match path above can show the live flag.
+                sync_status["is_syncing"] = False
+                sync_status.pop("sync_started_at", None)
 
         if not sync_status:
             return APIResponse(
@@ -1699,7 +1741,17 @@ async def get_sync_status(request: Request, company_id: Optional[str] = None):
                             pass
 
                     # Both must be stale: started >10 min ago AND no progress in last 5 min
-                    if age > _td(minutes=10) and last_progress_age > _td(minutes=5):
+                    # iter-178 — plus an absolute 60 min cap. The
+                    # previous "both" rule needed BOTH signals to go
+                    # stale, so an agent that posted a single progress
+                    # event then died silently kept `is_syncing=True`
+                    # indefinitely (the "stale ghost doc" bug). The
+                    # absolute cap catches these without punishing
+                    # genuinely long first-time 20 k-voucher syncs
+                    # (they stay under 60 min even on slow Atlas).
+                    stale_both = age > _td(minutes=10) and last_progress_age > _td(minutes=5)
+                    stale_absolute = age > _td(minutes=60)
+                    if stale_both or stale_absolute:
                         await db.sync_status.update_one(
                             {'type': 'agent_sync', **{k: v for k, v in q.items() if k != 'type'}},
                             {'$set': {'is_syncing': False, 'stale_at': _dt.now(_tz.utc).isoformat()}},
