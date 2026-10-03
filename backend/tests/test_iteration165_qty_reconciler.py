@@ -30,9 +30,51 @@ def _patch_db(monkeypatch, sales, purchases):
         def __init__(self, rows): self._rows = rows
         async def to_list(self, _): return list(self._rows)
 
+    def _run_pipeline(rows, pipeline):
+        """Minimal re-implementation of the `$match` + `$unwind` +
+        `$group{_id: tolower(trim($items.item)), qty: $sum($items.quantity)}`
+        pipeline used by `_get_voucher_movement_maps`. The stub only
+        honors date-range matches (for FY scoping) — tenant/company
+        equality filters are ignored because the test fixtures intentionally
+        omit those keys to keep each scenario minimal."""
+        match = next((s["$match"] for s in pipeline if "$match" in s), {})
+        def _ok(doc):
+            for k, v in match.items():
+                if isinstance(v, dict) and ("$gte" in v or "$lte" in v):
+                    val = doc.get(k, "")
+                    if "$gte" in v and val < v["$gte"]:
+                        return False
+                    if "$lte" in v and val > v["$lte"]:
+                        return False
+                # Equality (tenant_id, company_id) — skip in stub.
+            return True
+        totals: dict = {}
+        for doc in rows:
+            if not _ok(doc):
+                continue
+            for line in (doc.get("items") or []):
+                key = (line.get("item") or "").strip().lower()
+                if not key:
+                    continue
+                try:
+                    totals[key] = totals.get(key, 0.0) + float(line.get("quantity") or 0)
+                except (TypeError, ValueError):
+                    pass
+        return [{"_id": k, "qty": v} for k, v in totals.items()]
+
+    class _AggCursor:
+        def __init__(self, rows): self._rows = rows
+        def __aiter__(self):
+            async def _gen():
+                for r in self._rows:
+                    yield r
+            return _gen()
+
     class _Coll:
         def __init__(self, rows): self._rows = rows
         def find(self, *a, **k): return _AsyncCursor(self._rows)
+        def aggregate(self, pipeline, **_kwargs):
+            return _AggCursor(_run_pipeline(self._rows, pipeline))
 
     class _StubDb:
         def __init__(self):

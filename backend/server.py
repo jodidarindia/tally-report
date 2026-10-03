@@ -326,6 +326,14 @@ async def ensure_indexes(db):
                                           name='tcid_vdate', background=True)
             await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('voucher_number', 1)],
                                           name='tcid_vnum', background=True)
+        # iter-176 — Direct `fy` lookup for the reconcile aggregation
+        # and the many analytics routes that filter by the stored
+        # `fy` string. `voucher_date` range (indexed via `tcid_vdate`)
+        # is still the preferred key — this is a secondary covering
+        # index for legacy call sites that match on `fy` literally.
+        for coll in ('sales_vouchers', 'purchase_vouchers'):
+            await db[coll].create_index([('tenant_id', 1), ('company_id', 1), ('fy', 1)],
+                                          name='tcid_fy', background=True)
         # v1.5.6 — Migrate legacy `tcid_iname` UNIQUE index (on
         # tenant+company+item_name) to `tcid_iid` UNIQUE (on
         # tenant+company+item_id). Busy legitimately ships multiple SKUs

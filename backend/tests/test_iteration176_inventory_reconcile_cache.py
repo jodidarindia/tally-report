@@ -26,15 +26,53 @@ class _AsyncCursor:
     async def to_list(self, _): return list(self._rows)
 
 
+class _AggCursor:
+    def __init__(self, rows): self._rows = rows
+    def __aiter__(self):
+        async def _gen():
+            for r in self._rows:
+                yield r
+        return _gen()
+
+
+def _run_pipeline(rows, pipeline):
+    """Mimic Mongo's $match + $unwind + $group($sum) locally. Equality
+    filters (tenant_id, company_id) are ignored — tests intentionally
+    omit those keys from the fixture rows."""
+    match = next((s["$match"] for s in pipeline if "$match" in s), {})
+    def _ok(doc):
+        for k, v in match.items():
+            if isinstance(v, dict) and ("$gte" in v or "$lte" in v):
+                val = doc.get(k, "")
+                if "$gte" in v and val < v["$gte"]: return False
+                if "$lte" in v and val > v["$lte"]: return False
+            # Equality filters (tenant_id, company_id) — skip in stub.
+        return True
+    totals: dict = {}
+    for doc in rows:
+        if not _ok(doc): continue
+        for line in (doc.get("items") or []):
+            key = (line.get("item") or "").strip().lower()
+            if not key: continue
+            try:
+                totals[key] = totals.get(key, 0.0) + float(line.get("quantity") or 0)
+            except (TypeError, ValueError):
+                pass
+    return [{"_id": k, "qty": v} for k, v in totals.items()]
+
+
 class _Coll:
-    """Counts how many times `find()` was called so tests can assert
-    the cache is actually taking the second hit."""
+    """Counts how many times `aggregate()` was called so tests can
+    assert the cache is actually taking the second hit."""
     def __init__(self, rows):
         self._rows = rows
         self.calls = 0
     def find(self, *a, **k):
         self.calls += 1
         return _AsyncCursor(self._rows)
+    def aggregate(self, pipeline, **_kwargs):
+        self.calls += 1
+        return _AggCursor(_run_pipeline(self._rows, pipeline))
 
 
 def _stub(monkeypatch, sales, purchases):
@@ -149,3 +187,91 @@ def test_sync_endpoint_imports_invalidator():
     src = open("/app/backend/routes/sync.py", encoding="utf-8").read()
     # Called once after each of the two bulk_writes (sales + purchases).
     assert src.count("invalidate_reconcile_cache(req_tenant_id") >= 2
+
+
+# ─── iter-176b — Server-side aggregation ──────────────────────────────
+def test_aggregation_uses_mongo_pipeline_not_full_fetch(monkeypatch):
+    """The movement maps must come from `.aggregate()` with a
+    `$unwind` + `$group` pipeline — NOT a `.find() + .to_list(50000)`
+    pull. If someone refactors to a Python loop again this test
+    catches the regression."""
+    import routes.inventory as inv
+    from routes.inventory import _get_voucher_movement_maps
+
+    captured = {"pipelines": []}
+
+    class _AggCursor2:
+        def __init__(self, rows): self._rows = rows
+        def __aiter__(self):
+            async def _gen():
+                for r in self._rows:
+                    yield r
+            return _gen()
+
+    class _Coll2:
+        def find(self, *a, **k):
+            raise AssertionError("`find()` must NOT be called — aggregation path required")
+        def aggregate(self, pipeline, **_kwargs):
+            captured["pipelines"].append(pipeline)
+            return _AggCursor2([{"_id": "widget", "qty": 42.0}])
+
+    class _StubDb:
+        def __init__(self):
+            self.sales_vouchers = _Coll2()
+            self.purchase_vouchers = _Coll2()
+    monkeypatch.setattr(inv, "db", _StubDb())
+    inv._RECONCILE_CACHE.clear()
+
+    in_qty, out_qty = _run(_get_voucher_movement_maps("t1", "c1", "2026-27"))
+    assert in_qty == {"widget": 42.0} and out_qty == {"widget": 42.0}
+    # Both collections hit, with pipelines that include $unwind + $group.
+    assert len(captured["pipelines"]) == 2
+    for pipe in captured["pipelines"]:
+        kinds = [list(stage.keys())[0] for stage in pipe]
+        assert "$match" in kinds
+        assert "$unwind" in kinds
+        assert "$group" in kinds
+
+
+def test_aggregation_scopes_match_by_voucher_date_range(monkeypatch):
+    """FY filter is pushed into Mongo as a `voucher_date` range match
+    so it can ride the `tcid_vdate` compound index. We assert the
+    pipeline's `$match` stage carries the right date bounds."""
+    import routes.inventory as inv
+    from routes.inventory import _get_voucher_movement_maps
+    captured = {"match": None}
+
+    class _AggCursor3:
+        def __aiter__(self):
+            async def _gen():
+                if False: yield None  # empty async generator
+            return _gen()
+
+    class _Coll3:
+        def find(self, *a, **k): raise AssertionError("find not expected")
+        def aggregate(self, pipeline, **_kwargs):
+            captured["match"] = next(s["$match"] for s in pipeline if "$match" in s)
+            return _AggCursor3()
+
+    class _StubDb:
+        def __init__(self):
+            self.sales_vouchers = _Coll3()
+            self.purchase_vouchers = _Coll3()
+    monkeypatch.setattr(inv, "db", _StubDb())
+    inv._RECONCILE_CACHE.clear()
+
+    _run(_get_voucher_movement_maps("tX", "cY", "2026-27"))
+    m = captured["match"]
+    assert m["tenant_id"] == "tX"
+    assert m["company_id"] == "cY"
+    assert m["voucher_date"] == {"$gte": "2026-04-01", "$lte": "2027-03-31"}
+
+
+def test_startup_creates_tcid_fy_index():
+    """Guard against someone removing the `tcid_fy` compound index
+    the audit introduced. It covers `fy`-literal filters that the
+    aggregation path doesn't use directly but many analytics
+    routes still do."""
+    src = open("/app/backend/server.py", encoding="utf-8").read()
+    assert "name='tcid_fy'" in src
+    assert "('tenant_id', 1), ('company_id', 1), ('fy', 1)" in src

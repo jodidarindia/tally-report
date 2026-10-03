@@ -106,46 +106,53 @@ async def _get_voucher_movement_maps(
 ) -> tuple:
     """Return (in_qty, out_qty) keyed by lowercased item name, aggregated
     from sales / purchase vouchers for this tenant/company/fy. Served
-    from a 60 s in-process cache — see iter-176."""
+    from a 60 s in-process cache — see iter-176.
+
+    iter-176b — Server-side aggregation. The prior implementation
+    pulled `items[]` arrays for up to 50 k docs per collection into
+    Python memory and looped them row-by-row. For 20 k-voucher tenants
+    this was gigabytes over the wire and 10-30 s of CPU per call. We
+    now push `$unwind` + `$group` into Mongo so the DB does the sum
+    using its native indexes (`tcid_vdate` or `tcid_fy`) and ships
+    back a few hundred rows (one per SKU) instead of the raw vouchers.
+    """
     key = (tenant_id or "", company_id or "", fy or "")
     now = _rec_time.monotonic()
     cached = _RECONCILE_CACHE.get(key)
     if cached and cached[0] > now:
         return cached[1], cached[2]
 
-    q: dict = {"tenant_id": tenant_id}
+    match: dict = {"tenant_id": tenant_id}
     if company_id:
-        q["company_id"] = company_id
-    sales_docs = await db.sales_vouchers.find(
-        q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1},
-    ).to_list(50000)
-    purchase_docs = await db.purchase_vouchers.find(
-        q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1},
-    ).to_list(50000)
+        match["company_id"] = company_id
     if fy:
-        sales_docs = filter_vouchers_by_fy(sales_docs, fy)
-        purchase_docs = filter_vouchers_by_fy(purchase_docs, fy)
+        fy_start, fy_end = fy_to_date_range(fy)
+        if fy_start:
+            # `voucher_date` range covers both the current docs (which
+            # also carry an `fy` field) AND legacy docs that only
+            # carry the date. The `tcid_vdate` compound index backs
+            # this exactly.
+            match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+
+    pipeline = [
+        {"$match": match},
+        {"$unwind": {"path": "$items", "preserveNullAndEmptyArrays": False}},
+        {"$group": {
+            "_id": {"$toLower": {"$trim": {"input": {"$ifNull": ["$items.item", ""]}}}},
+            "qty": {"$sum": {"$toDouble": {"$ifNull": ["$items.quantity", 0]}}},
+        }},
+    ]
 
     out_qty: dict = {}
     in_qty: dict = {}
-    for v in sales_docs:
-        for line in (v.get("items") or []):
-            name = (line.get("item") or "").strip().lower()
-            if not name:
-                continue
-            try:
-                out_qty[name] = out_qty.get(name, 0.0) + float(line.get("quantity") or 0)
-            except (TypeError, ValueError):
-                pass
-    for v in purchase_docs:
-        for line in (v.get("items") or []):
-            name = (line.get("item") or "").strip().lower()
-            if not name:
-                continue
-            try:
-                in_qty[name] = in_qty.get(name, 0.0) + float(line.get("quantity") or 0)
-            except (TypeError, ValueError):
-                pass
+    async for row in db.sales_vouchers.aggregate(pipeline, allowDiskUse=True):
+        name = row.get("_id") or ""
+        if name:
+            out_qty[name] = float(row.get("qty") or 0)
+    async for row in db.purchase_vouchers.aggregate(pipeline, allowDiskUse=True):
+        name = row.get("_id") or ""
+        if name:
+            in_qty[name] = float(row.get("qty") or 0)
 
     _RECONCILE_CACHE[key] = (now + _RECONCILE_TTL_SEC, in_qty, out_qty)
     # Opportunistic sweep so the dict doesn't grow unbounded.
