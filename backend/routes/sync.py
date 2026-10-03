@@ -465,6 +465,13 @@ async def receive_agent_sync(request: dict):
                     )
                 if operations:
                     await db.sales_vouchers.bulk_write(operations)
+                    # iter-176 — drop stale reconcile cache so next
+                    # inventory poll sees the fresh batch.
+                    try:
+                        from routes.inventory import invalidate_reconcile_cache
+                        invalidate_reconcile_cache(req_tenant_id, req_company_id or "")
+                    except Exception:
+                        pass
 
                 # Auto-create dispatch cards if enabled for this tenant/company
                 try:
@@ -807,6 +814,13 @@ async def receive_agent_sync(request: dict):
                     )
                 if operations:
                     await db.purchase_vouchers.bulk_write(operations)
+                    # iter-176 — drop stale reconcile cache so next
+                    # inventory poll sees the fresh batch.
+                    try:
+                        from routes.inventory import invalidate_reconcile_cache
+                        invalidate_reconcile_cache(req_tenant_id, req_company_id or "")
+                    except Exception:
+                        pass
             logger.info(f"Synced {len(data)} purchase vouchers")
 
         elif data_type == 'debit_notes':

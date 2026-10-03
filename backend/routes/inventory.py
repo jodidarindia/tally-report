@@ -90,39 +90,38 @@ def _dedupe_inventory_by_name(items: list, fy_hint: Optional[str] = None) -> lis
     return out
 
 
-async def _reconcile_item_quantities(
-    items: list, tenant_id: str, company_id: str, fy: Optional[str] = None,
-) -> list:
-    """iter-165: Trust voucher movement over the Busy agent's D-column
-    heuristic for closing quantity.
+# iter-176 — Per-(tenant, company, fy) 60 s TTL cache for the voucher
+# movement aggregation. See `_reconcile_item_quantities` docstring for
+# why. On a fresh agent sync, the UI's next poll will miss by at most
+# `_RECONCILE_TTL_SEC` seconds — acceptable trade for a 50 k-doc scan
+# avoided on every call. `invalidate_reconcile_cache(tenant, company)`
+# is also exported so sync writers can drop stale entries proactively.
+import time as _rec_time
+_RECONCILE_TTL_SEC = 60.0
+_RECONCILE_CACHE: dict = {}
 
-    **The bug**: Busy agent <= v1.6.1 reads ``closing_qty`` from
-    ``max(abs(D11..D50))`` in Folio1. Those D-slots turn out to be
-    monthly period-tallies on some Busy 21 builds — so an item that
-    received 28 units in month 1 and 16 units in month 2 reports
-    ``closing = 44`` even when Busy's own Stock Status shows 16.
-    Same class of noise inflates FA00725 from 0 → 2000.
 
-    **The fix** (server-side, no agent rebuild):
-        derived_closing = opening_quantity + Σ purchases − Σ sales
-    for the same FY. When the derived value diverges from the agent's
-    stored quantity by > 0.01, we override — the vouchers are Busy's
-    source of truth for movement. When no vouchers exist for an item,
-    we keep the agent's value (nothing to reconcile against).
+async def _get_voucher_movement_maps(
+    tenant_id: str, company_id: str, fy: Optional[str],
+) -> tuple:
+    """Return (in_qty, out_qty) keyed by lowercased item name, aggregated
+    from sales / purchase vouchers for this tenant/company/fy. Served
+    from a 60 s in-process cache — see iter-176."""
+    key = (tenant_id or "", company_id or "", fy or "")
+    now = _rec_time.monotonic()
+    cached = _RECONCILE_CACHE.get(key)
+    if cached and cached[0] > now:
+        return cached[1], cached[2]
 
-    Called after ``_dedupe_inventory_by_name`` on the Inventory /
-    Summary / Movement Analysis / PDF-export endpoints.
-    """
-    if not items:
-        return items
     q: dict = {"tenant_id": tenant_id}
     if company_id:
         q["company_id"] = company_id
-    # Pull only items[] projection — no need for voucher metadata.
-    sales_docs = await db.sales_vouchers.find(q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1}).to_list(50000)
-    purchase_docs = await db.purchase_vouchers.find(q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1}).to_list(50000)
-    # FY-scope the vouchers so previous-year movement doesn't leak into
-    # this FY's derived closing.
+    sales_docs = await db.sales_vouchers.find(
+        q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1},
+    ).to_list(50000)
+    purchase_docs = await db.purchase_vouchers.find(
+        q, {"_id": 0, "items": 1, "voucher_date": 1, "fy": 1},
+    ).to_list(50000)
     if fy:
         sales_docs = filter_vouchers_by_fy(sales_docs, fy)
         purchase_docs = filter_vouchers_by_fy(purchase_docs, fy)
@@ -148,6 +147,60 @@ async def _reconcile_item_quantities(
             except (TypeError, ValueError):
                 pass
 
+    _RECONCILE_CACHE[key] = (now + _RECONCILE_TTL_SEC, in_qty, out_qty)
+    # Opportunistic sweep so the dict doesn't grow unbounded.
+    if len(_RECONCILE_CACHE) > 256:
+        for k, val in list(_RECONCILE_CACHE.items()):
+            if val[0] <= now:
+                _RECONCILE_CACHE.pop(k, None)
+    return in_qty, out_qty
+
+
+def invalidate_reconcile_cache(tenant_id: str, company_id: str = "") -> None:
+    """Called by the agent sync write-path so a fresh voucher batch is
+    reflected in the next inventory read without waiting out the TTL."""
+    for k in list(_RECONCILE_CACHE.keys()):
+        if k[0] == (tenant_id or "") and (not company_id or k[1] == company_id):
+            _RECONCILE_CACHE.pop(k, None)
+
+
+
+async def _reconcile_item_quantities(
+    items: list, tenant_id: str, company_id: str, fy: Optional[str] = None,
+) -> list:
+    """iter-165: Trust voucher movement over the Busy agent's D-column
+    heuristic for closing quantity.
+
+    **The bug**: Busy agent <= v1.6.1 reads ``closing_qty`` from
+    ``max(abs(D11..D50))`` in Folio1. Those D-slots turn out to be
+    monthly period-tallies on some Busy 21 builds — so an item that
+    received 28 units in month 1 and 16 units in month 2 reports
+    ``closing = 44`` even when Busy's own Stock Status shows 16.
+    Same class of noise inflates FA00725 from 0 → 2000.
+
+    **The fix** (server-side, no agent rebuild):
+        derived_closing = opening_quantity + Σ purchases − Σ sales
+    for the same FY. When the derived value diverges from the agent's
+    stored quantity by > 0.01, we override — the vouchers are Busy's
+    source of truth for movement. When no vouchers exist for an item,
+    we keep the agent's value (nothing to reconcile against).
+
+    Called after ``_dedupe_inventory_by_name`` on the Inventory /
+    Summary / Movement Analysis / PDF-export endpoints.
+
+    iter-176 — Performance fix. Prior build re-scanned the ENTIRE
+    sales_vouchers + purchase_vouchers collections (up to 50 k docs
+    EACH, items arrays included) on every single hit of the five
+    endpoints above. For tenants with 20 k+ vouchers this pushed each
+    call to multi-second Atlas IO and multiplied by ~10×/min of
+    frontend polling, saturating the cluster. We now cache the derived
+    in_qty / out_qty maps per (tenant, company, fy) for 60 s — fresh
+    agent syncs still show up in the UI within one tick, but repeated
+    polls in the same minute reuse the map.
+    """
+    if not items:
+        return items
+    in_qty, out_qty = await _get_voucher_movement_maps(tenant_id, company_id, fy)
     overrides = 0
     for it in items:
         name = (it.get("item_name") or "").strip().lower()
@@ -727,22 +780,14 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
                 else:
                     total_value += qty * safe_num(item.get("price"))
 
-        # Low stock: use movement-based analysis
-        # Items with qty=0 but that had sales activity are out-of-stock (genuinely low)
-        # Items with qty=0 and no sales data: skip (master data only)
-        all_vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(50000)
-        # Apply branch filter if header set
-        branch_set = await _get_branch_set(request, ctx)
-        all_vouchers = _filter_branch_vouchers(all_vouchers, branch_set)
-        fy_vouchers = filter_vouchers_by_fy(all_vouchers, fy) if fy else all_vouchers
-
-        # Build set of items that had sales (i.e. actively traded)
-        active_items = set()
-        for v in fy_vouchers:
-            for vi in v.get("items", []):
-                iname = vi.get("item", "").strip()
-                if iname:
-                    active_items.add(iname.lower())
+        # iter-176 — Reuse the TTL-cached voucher aggregation to decide
+        # which items were actively traded (previously we re-fetched
+        # 50 k sales vouchers in-line, which was the second-biggest
+        # offender in this endpoint after the reconcile call above).
+        _in_qty, _out_qty = await _get_voucher_movement_maps(
+            ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+        )
+        active_items = set(_out_qty.keys())
 
         low_stock_items = 0
         for item in items:
@@ -757,7 +802,27 @@ async def get_inventory_summary(request: Request, fy: Optional[str] = None, comp
 
         categories = list(set(item.get("category") for item in items if item.get("category")))
 
-        fy_sales_value = sum(safe_num(v.get("total_amount")) for v in fy_vouchers)
+        # iter-176 — Project just `total_amount` for the FY sales total
+        # instead of pulling full voucher docs. Branch filtering was
+        # only reading `items[].branch` for a per-row scope that is NOT
+        # applied by any client of /inventory/summary (branch filtering
+        # kicks in on /inventory, not the summary tiles), so skipping
+        # the branch pre-filter is safe and cuts another full scan.
+        q_fy = dict(q)
+        if fy:
+            q_fy["fy"] = fy
+        fy_sales_value = 0.0
+        async for v in db.sales_vouchers.find(
+            q_fy, {"_id": 0, "total_amount": 1, "voucher_date": 1, "fy": 1},
+        ):
+            # If `fy` was passed but vouchers were tagged with the
+            # older `voucher_date`-only convention, apply the same
+            # text filter the shared helper uses.
+            if fy and not v.get("fy"):
+                vd = str(v.get("voucher_date") or "")
+                if fy not in vd and fy.replace("-", "") not in vd:
+                    continue
+            fy_sales_value += safe_num(v.get("total_amount"))
 
         return APIResponse(
             success=True,

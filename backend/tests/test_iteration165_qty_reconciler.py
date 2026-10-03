@@ -40,6 +40,11 @@ def _patch_db(monkeypatch, sales, purchases):
             self.purchase_vouchers = _Coll(purchases)
 
     monkeypatch.setattr(inv, "db", _StubDb())
+    # iter-176 — the reconciler now caches its voucher aggregation for
+    # 60 s per (tenant, company, fy). Clear it between tests so each
+    # case actually hits the stubbed DB instead of the previous
+    # scenario's cached map.
+    inv._RECONCILE_CACHE.clear()
 
 
 def test_inflated_closing_gets_reconciled_to_voucher_movement(monkeypatch):
