@@ -11,6 +11,16 @@ from routes.branch_ledgers import get_branch_parties
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# iter-181b — Response cache for /sales/summary. Dashboard polls this
+# every 60 s + remounts on every nav; caching the facet payload for
+# 30 s makes re-visits instant. Sync writers invalidate via
+# `_SALES_SUMMARY_CACHE.clear()` (hooked from routes.sync).
+_SALES_SUMMARY_CACHE: dict = {}
+_SALES_SUMMARY_TTL = 30.0
+
+_SALES_VOUCHERS_CACHE: dict = {}
+_SALES_ANALYTICS_CACHE: dict = {}
+
 
 def _build_query(ctx, company_id=None, extra=None):
     q = {}
@@ -40,8 +50,9 @@ async def _apply_branch_filter(q, ctx, request: Request):
 
 
 @router.get("/sales/vouchers")
-async def get_sales_vouchers(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None):
+async def get_sales_vouchers(request: Request, start_date: Optional[str] = None, end_date: Optional[str] = None, party_name: Optional[str] = None, fy: Optional[str] = None, month: Optional[str] = None, company_id: Optional[str] = None, limit: int = 0, skip: int = 0):
     try:
+        import asyncio
         ctx = await get_tenant_context(request)
         extra = {}
         if party_name:
@@ -49,10 +60,54 @@ async def get_sales_vouchers(request: Request, start_date: Optional[str] = None,
 
         query = _build_query(ctx, company_id, extra)
         query = await _apply_branch_filter(query, ctx, request)
-        vouchers = await db.sales_vouchers.find(query, {"_id": 0}).to_list(10000)
 
+        # iter-181b — Push FY + date-range filters to Mongo instead of
+        # fetching 10 k full docs. Prior code pulled the entire sales
+        # collection into Python just to filter, taking 17-19 s on
+        # tenants with only 1300 vouchers (Atlas RTT × payload size).
         if fy:
-            vouchers = filter_vouchers_by_fy(vouchers, fy)
+            fy_start, fy_end = fy_to_date_range(fy)
+            if fy_start:
+                query["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+        if start_date or end_date:
+            vd = query.get("voucher_date") or {}
+            if not isinstance(vd, dict):
+                vd = {}
+            if start_date:
+                vd["$gte"] = max(vd.get("$gte", ""), start_date) if vd.get("$gte") else start_date
+            if end_date:
+                vd["$lte"] = min(vd.get("$lte", ""), end_date) if vd.get("$lte") else end_date
+            query["voucher_date"] = vd
+        if month:
+            # month="MM" or "YYYY-MM"; keep as post-filter since it's
+            # a prefix / substring match that doesn't ride an index.
+            pass
+
+        # iter-181b — Short TTL response cache. The Sales page re-mounts
+        # on every nav and this endpoint is heavy enough to warrant it.
+        import time as _st
+        _sv_key = (
+            str(query.get("tenant_id") or ""),
+            str(query.get("company_id") or (company_id or "")),
+            fy or "", (month or ""), (start_date or ""), (end_date or ""),
+            (party_name or ""), int(limit or 0), int(skip or 0),
+            request.headers.get("X-Exclude-Branches", "").lower() == "true",
+        )
+        _now = _st.monotonic()
+        _cached = _SALES_VOUCHERS_CACHE.get(_sv_key)
+        if _cached and _cached[0] > _now:
+            return APIResponse(success=True, data=_cached[1])
+
+        # iter-181b — Project out heavy fields and honour `limit`/`skip`.
+        _proj = {"_id": 0}
+        cursor = db.sales_vouchers.find(query, _proj).sort("voucher_date", -1)
+        if skip and skip > 0:
+            cursor = cursor.skip(skip)
+        if limit and limit > 0:
+            cursor = cursor.limit(limit)
+            vouchers = await cursor.to_list(limit)
+        else:
+            vouchers = await cursor.to_list(10000)
 
         if month:
             if len(month) <= 2:
@@ -60,34 +115,55 @@ async def get_sales_vouchers(request: Request, start_date: Optional[str] = None,
             else:
                 vouchers = [v for v in vouchers if v.get("voucher_date", "").startswith(month)]
 
-        if vouchers and (start_date or end_date):
-            filtered = []
-            for v in vouchers:
-                v_date = v.get("voucher_date", "")
-                if start_date and v_date < start_date:
-                    continue
-                if end_date and v_date > end_date:
-                    continue
-                filtered.append(v)
-            vouchers = filtered
-
+        # iter-181b — Compute unique parties + months via `distinct()`
+        # on the base query (ignores filters so the UI dropdowns stay
+        # populated with the full set). Native distinct is far cheaper
+        # than pulling every doc just to collect two string fields.
         base_q = _build_query(ctx, company_id)
-        all_vouchers_for_meta = await db.sales_vouchers.find(base_q, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(10000)
+        base_match = dict(base_q)
         if fy:
-            all_vouchers_for_meta = filter_vouchers_by_fy(all_vouchers_for_meta, fy)
+            fy_start2, fy_end2 = fy_to_date_range(fy)
+            if fy_start2:
+                base_match["voucher_date"] = {"$gte": fy_start2, "$lte": fy_end2}
 
-        unique_parties = sorted(list(set(v.get("party_name", "") for v in all_vouchers_for_meta if v.get("party_name"))))
-        unique_months = sorted(list(set(v.get("voucher_date", "")[:7] for v in all_vouchers_for_meta if v.get("voucher_date", "")[:7])))
+        async def _parties():
+            return await db.sales_vouchers.distinct("party_name", base_match)
 
-        return APIResponse(
-            success=True,
-            data={
-                "vouchers": vouchers,
-                "count": len(vouchers),
-                "unique_parties": unique_parties,
-                "unique_months": unique_months
-            }
+        async def _months():
+            # Months via native aggregation on substring of voucher_date.
+            pipe = [
+                {"$match": base_match},
+                {"$group": {"_id": {"$substrCP": [{"$ifNull": ["$voucher_date", ""]}, 0, 7]}}},
+            ]
+            out = []
+            async for r in db.sales_vouchers.aggregate(pipe):
+                v = (r.get("_id") or "")
+                if v:
+                    out.append(v)
+            return sorted(out)
+
+        async def _count():
+            return await db.sales_vouchers.count_documents(query)
+
+        parties_raw, months_raw, total_count = await asyncio.gather(
+            _parties(), _months(), _count(),
         )
+        unique_parties = sorted(p for p in parties_raw if p)
+        unique_months = months_raw
+
+        data = {
+            "vouchers": vouchers,
+            "count": len(vouchers),
+            "total": total_count,
+            "unique_parties": unique_parties,
+            "unique_months": unique_months,
+        }
+        _SALES_VOUCHERS_CACHE[_sv_key] = (_now + _SALES_SUMMARY_TTL, data)
+        if len(_SALES_VOUCHERS_CACHE) > 256:
+            for k, v in list(_SALES_VOUCHERS_CACHE.items()):
+                if v[0] <= _now:
+                    _SALES_VOUCHERS_CACHE.pop(k, None)
+        return APIResponse(success=True, data=data)
     except Exception as e:
         logger.error(f"Error fetching sales vouchers: {e}")
         return APIResponse(success=False, error=str(e))
@@ -163,6 +239,22 @@ async def get_sales_summary(request: Request, fy: Optional[str] = None, company_
         q = _build_query(ctx, company_id)
         q = await _apply_branch_filter(q, ctx, request)
 
+        # iter-181b — Short TTL response cache. Dashboard polls this every
+        # 60 s + every mount; caching the facet payload for 30 s keeps
+        # the dashboard snappy on re-visit without masking real syncs
+        # (sync writers invalidate via _SALES_SUMMARY_CACHE.clear()).
+        import time as _st
+        _ss_key = (
+            str(q.get("tenant_id") or ""),
+            str(q.get("company_id") or (company_id or "")),
+            fy or "",
+            request.headers.get("X-Exclude-Branches", "").lower() == "true",
+        )
+        _now = _st.monotonic()
+        _cached = _SALES_SUMMARY_CACHE.get(_ss_key)
+        if _cached and _cached[0] > _now:
+            return APIResponse(success=True, data=_cached[1])
+
         # iter-177 — Pure server-side aggregation. The prior path pulled
         # up to 50 k full voucher docs (including heavy `items[]`
         # arrays) just to count, sum, group-by-party and pick the 10
@@ -207,10 +299,9 @@ async def get_sales_summary(request: Request, fy: Optional[str] = None, company_
         total_sales = float(totals.get("amt") or 0.0)
 
         if total_vouchers == 0:
-            return APIResponse(
-                success=True,
-                data={"total_vouchers": 0, "total_sales": 0, "top_customers": [], "recent_vouchers": []}
-            )
+            _data = {"total_vouchers": 0, "total_sales": 0, "top_customers": [], "recent_vouchers": []}
+            _SALES_SUMMARY_CACHE[_ss_key] = (_now + _SALES_SUMMARY_TTL, _data)
+            return APIResponse(success=True, data=_data)
 
         top_customers = [
             {"name": r.get("_id") or "Unknown", "total": round(float(r.get("total") or 0), 2)}
@@ -218,15 +309,18 @@ async def get_sales_summary(request: Request, fy: Optional[str] = None, company_
         ]
         recent_vouchers = facet.get("recent") or []
 
-        return APIResponse(
-            success=True,
-            data={
-                "total_vouchers": total_vouchers,
-                "total_sales": round(total_sales, 2),
-                "top_customers": top_customers,
-                "recent_vouchers": recent_vouchers
-            }
-        )
+        _data = {
+            "total_vouchers": total_vouchers,
+            "total_sales": round(total_sales, 2),
+            "top_customers": top_customers,
+            "recent_vouchers": recent_vouchers,
+        }
+        _SALES_SUMMARY_CACHE[_ss_key] = (_now + _SALES_SUMMARY_TTL, _data)
+        if len(_SALES_SUMMARY_CACHE) > 256:
+            for k, v in list(_SALES_SUMMARY_CACHE.items()):
+                if v[0] <= _now:
+                    _SALES_SUMMARY_CACHE.pop(k, None)
+        return APIResponse(success=True, data=_data)
     except Exception as e:
         logger.error(f"Error getting sales summary: {e}")
         return APIResponse(success=False, error=str(e))
@@ -241,29 +335,56 @@ async def get_sales_analytics(request: Request, fy: Optional[str] = None, party_
             extra["party_name"] = {"$regex": party_name, "$options": "i"}
         q = _build_query(ctx, company_id, extra)
         q = await _apply_branch_filter(q, ctx, request)
-        vouchers = await db.sales_vouchers.find(q, {"_id": 0}).to_list(10000)
-        vouchers = filter_vouchers_by_fy(vouchers, fy)
 
-        if month:
-            if len(month) <= 2:
-                vouchers = [v for v in vouchers if v.get("voucher_date", "")[5:7] == month.zfill(2)]
-            else:
-                vouchers = [v for v in vouchers if v.get("voucher_date", "").startswith(month)]
-
-        if not vouchers:
-            return APIResponse(success=True, data={"daily_sales": [], "category_sales": []})
-
-        daily_sales = {}
-        for v in vouchers:
-            date = v.get("voucher_date", "Unknown")
-            daily_sales[date] = daily_sales.get(date, 0) + safe_num(v.get("total_amount"))
-
-        daily_sales_data = sorted(
-            [{"date": k, "amount": v} for k, v in daily_sales.items()],
-            key=lambda x: x["date"]
+        # iter-181b — Response cache + push aggregation to Mongo.
+        # The prior code pulled 10 k full voucher docs just to sum
+        # `total_amount` per day. Native aggregation on the
+        # `tcid_vdate` index returns ~400 rows in ms.
+        import time as _st
+        _sa_key = (
+            str(q.get("tenant_id") or ""),
+            str(q.get("company_id") or (company_id or "")),
+            fy or "", (month or ""), (party_name or ""),
+            request.headers.get("X-Exclude-Branches", "").lower() == "true",
         )
+        _now = _st.monotonic()
+        _cached = _SALES_ANALYTICS_CACHE.get(_sa_key)
+        if _cached and _cached[0] > _now:
+            return APIResponse(success=True, data=_cached[1])
 
-        return APIResponse(success=True, data={"daily_sales": daily_sales_data})
+        match = dict(q)
+        if fy:
+            fy_start, fy_end = fy_to_date_range(fy)
+            if fy_start:
+                match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+
+        pipeline = [
+            {"$match": match},
+            {"$group": {
+                "_id": {"$ifNull": ["$voucher_date", "Unknown"]},
+                "amount": {"$sum": {"$toDouble": {"$ifNull": ["$total_amount", 0]}}},
+            }},
+            {"$sort": {"_id": 1}},
+        ]
+        daily_sales_data = []
+        async for r in db.sales_vouchers.aggregate(pipeline, allowDiskUse=True):
+            date = r.get("_id") or "Unknown"
+            if month:
+                if len(month) <= 2:
+                    if str(date)[5:7] != month.zfill(2):
+                        continue
+                else:
+                    if not str(date).startswith(month):
+                        continue
+            daily_sales_data.append({"date": date, "amount": float(r.get("amount") or 0)})
+
+        data = {"daily_sales": daily_sales_data}
+        _SALES_ANALYTICS_CACHE[_sa_key] = (_now + _SALES_SUMMARY_TTL, data)
+        if len(_SALES_ANALYTICS_CACHE) > 256:
+            for k, v in list(_SALES_ANALYTICS_CACHE.items()):
+                if v[0] <= _now:
+                    _SALES_ANALYTICS_CACHE.pop(k, None)
+        return APIResponse(success=True, data=data)
     except Exception as e:
         logger.error(f"Error getting sales analytics: {e}")
         return APIResponse(success=False, error=str(e))
@@ -277,11 +398,31 @@ async def get_customer_names(request: Request, fy: Optional[str] = None, company
         ctx = await get_tenant_context(request)
         q = _build_query(ctx, company_id)
         q = await _apply_branch_filter(q, ctx, request)
-        vouchers = await db.sales_vouchers.find(q, {"_id": 0, "party_name": 1, "voucher_date": 1}).to_list(50000)
+
+        # iter-181b — Push to native `distinct()` on the DB. The prior
+        # path pulled every voucher just to collect `party_name` strings.
+        match = dict(q)
         if fy:
-            vouchers = filter_vouchers_by_fy(vouchers, fy)
-        names = sorted(set(v.get("party_name", "") for v in vouchers if v.get("party_name")))
-        return APIResponse(success=True, data={"customers": names, "total": len(names)})
+            fy_start, fy_end = fy_to_date_range(fy)
+            if fy_start:
+                match["voucher_date"] = {"$gte": fy_start, "$lte": fy_end}
+        import time as _st
+        _cn_key = (
+            str(q.get("tenant_id") or ""),
+            str(q.get("company_id") or (company_id or "")),
+            fy or "",
+            request.headers.get("X-Exclude-Branches", "").lower() == "true",
+        )
+        _now = _st.monotonic()
+        _cached = _SALES_ANALYTICS_CACHE.get(("names", _cn_key))
+        if _cached and _cached[0] > _now:
+            return APIResponse(success=True, data=_cached[1])
+
+        parties = await db.sales_vouchers.distinct("party_name", match)
+        names = sorted(p for p in parties if p)
+        data = {"customers": names, "total": len(names)}
+        _SALES_ANALYTICS_CACHE[("names", _cn_key)] = (_now + _SALES_SUMMARY_TTL, data)
+        return APIResponse(success=True, data=data)
     except Exception as e:
         logger.error(f"Error fetching customer names: {e}")
         return APIResponse(success=False, error=str(e))

@@ -104,6 +104,13 @@ _RECONCILE_CACHE: dict = {}
 # `get_inventory_items` for rationale.
 _INV_LIST_CACHE: dict = {}
 
+# iter-181b — Final-response cache for /inventory/items. Even on an
+# _INV_LIST_CACHE hit, the endpoint still runs two `distinct()` calls
+# + last-sale-price enrichment + JSON serialisation. Caching the
+# fully-assembled response makes re-navigation to the same company
+# truly instant.
+_INV_RESP_CACHE: dict = {}
+
 # iter-181 — Per-request /inventory/summary result cache (30 s TTL).
 # Dashboard polls this every 60 s per mount; caching the final numbers
 # avoids re-doing a 5 s aggregation when the UI merely re-renders.
@@ -291,6 +298,7 @@ def invalidate_reconcile_cache(tenant_id: str, company_id: str = "") -> None:
     # sweep is the simplest correct thing (processed-list payloads are
     # small anyway — rebuilding them on demand is cheap).
     _INV_LIST_CACHE.clear()
+    _INV_RESP_CACHE.clear()
     # And the last-sale-price map for this tenant/company.
     for k in list(_LSP_CACHE.keys()):
         if k[0] == (tenant_id or "") and (not company_id or k[1] == company_id):
@@ -511,6 +519,7 @@ async def set_abc_category(request: Request, item_id: str):
         # iter-181 — drop the processed inventory-list cache so the UI
         # sees the new ABC tag on its next poll.
         _INV_LIST_CACHE.clear()
+        _INV_RESP_CACHE.clear()
         return APIResponse(success=True, data={"matched": result.matched_count, "modified": result.modified_count})
     except Exception as e:
         return APIResponse(success=False, error=str(e))
@@ -598,6 +607,7 @@ async def auto_assign_abc(request: Request):
         # iter-181 — drop the processed inventory-list cache so the UI's
         # next /inventory/items poll surfaces the fresh A/B/C/D tags.
         _INV_LIST_CACHE.clear()
+        _INV_RESP_CACHE.clear()
 
         return APIResponse(success=True, data={
             "counts": counts,
@@ -802,6 +812,22 @@ async def get_inventory_items(
         }, sort_keys=True).encode()).hexdigest()
         _INV_CACHE_TTL = 60.0
         now = _it.monotonic()
+
+        # iter-181b — Full response cache keyed by (processed-list key +
+        # pagination). The processed-list cache above skipped the
+        # expensive dedupe+reconcile, but every re-navigation still
+        # paid two `distinct()` round-trips + a 100 KB JSON transfer
+        # for the paged slice (~1 s on Atlas, scales to 5 s+ on Krishna
+        # with 4200 items). Caching the final payload makes repeat
+        # mounts truly instant.
+        _resp_key = _ih.md5(_ij.dumps({
+            "k": _it_key, "p": page, "ps": page_size,
+            "br": request.headers.get("X-Exclude-Branches", "").lower() == "true",
+        }, sort_keys=True).encode()).hexdigest()
+        resp_cached = _INV_RESP_CACHE.get(_resp_key)
+        if resp_cached and resp_cached[0] > now:
+            return APIResponse(success=True, data=resp_cached[1])
+
         cached = _INV_LIST_CACHE.get(_it_key)
         if cached and cached[0] > now:
             all_items = cached[1]
@@ -937,18 +963,21 @@ async def get_inventory_items(
                 item["effective_sale_price"] = 0
                 item["sale_price_source"] = "unset"
 
-        return APIResponse(
-            success=True,
-            data={
-                "items": items,
-                "count": len(items),
-                "total": total if total is not None else len(items),
-                "page": page if page_size else 1,
-                "page_size": page_size if page_size else len(items),
-                "stock_groups": stock_groups,
-                "root_stock_groups": root_stock_groups,
-            }
-        )
+        resp_data = {
+            "items": items,
+            "count": len(items),
+            "total": total if total is not None else len(items),
+            "page": page if page_size else 1,
+            "page_size": page_size if page_size else len(items),
+            "stock_groups": stock_groups,
+            "root_stock_groups": root_stock_groups,
+        }
+        _INV_RESP_CACHE[_resp_key] = (now + _INV_CACHE_TTL, resp_data)
+        if len(_INV_RESP_CACHE) > 512:
+            for k, v in list(_INV_RESP_CACHE.items()):
+                if v[0] <= now:
+                    _INV_RESP_CACHE.pop(k, None)
+        return APIResponse(success=True, data=resp_data)
     except Exception as e:
         logger.error(f"Error fetching inventory: {e}")
         return APIResponse(success=False, error=str(e))

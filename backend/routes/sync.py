@@ -472,6 +472,15 @@ async def receive_agent_sync(request: dict):
                         invalidate_reconcile_cache(req_tenant_id, req_company_id or "")
                     except Exception:
                         pass
+                    # iter-181b — also clear the sales/summary cache so
+                    # the dashboard tiles reflect the just-synced vouchers.
+                    try:
+                        from routes.sales import _SALES_SUMMARY_CACHE, _SALES_VOUCHERS_CACHE, _SALES_ANALYTICS_CACHE
+                        _SALES_SUMMARY_CACHE.clear()
+                        _SALES_VOUCHERS_CACHE.clear()
+                        _SALES_ANALYTICS_CACHE.clear()
+                    except Exception:
+                        pass
 
                 # Auto-create dispatch cards if enabled for this tenant/company.
                 # iter-178 — Fire-and-forget: this used to run inline on
@@ -831,6 +840,15 @@ async def receive_agent_sync(request: dict):
                     try:
                         from routes.inventory import invalidate_reconcile_cache
                         invalidate_reconcile_cache(req_tenant_id, req_company_id or "")
+                    except Exception:
+                        pass
+                    # iter-181b — also clear the sales/summary cache so
+                    # the dashboard tiles reflect the just-synced vouchers.
+                    try:
+                        from routes.sales import _SALES_SUMMARY_CACHE, _SALES_VOUCHERS_CACHE, _SALES_ANALYTICS_CACHE
+                        _SALES_SUMMARY_CACHE.clear()
+                        _SALES_VOUCHERS_CACHE.clear()
+                        _SALES_ANALYTICS_CACHE.clear()
                     except Exception:
                         pass
             logger.info(f"Synced {len(data)} purchase vouchers")

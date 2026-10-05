@@ -2386,3 +2386,39 @@ to persist recomputed values on the existing corrupted rows. Future Busy syncs w
 **Full Analytics page (parallel 3 endpoints)**: 47 s → **~2.7 s warm**.
 
 Tests: `tests/test_iteration181_dashboard_analytics_perf_and_abc.py` (8 cases). Full regression `test_iteration17*` + `test_iteration18*` + `test_iteration165_*` passing (64 tests).
+
+---
+
+## iter-181b — Response caches on re-navigation (2026-10-05, same day)
+
+**User follow-up complaint**: "Inventory page and all other pages, once loaded, take the same loading time for the same company if clicked again. Why so?"
+
+**Root cause**: iter-181 cached intermediate work (processed-list, roll-up maps) but every re-mount still paid for:
+- Two `distinct()` round-trips on `/inventory/items`
+- 100 KB JSON transfer + last-sale-price enrichment
+- `/sales/vouchers` ignored its `limit=` param — pulled ALL docs with full `items[]` arrays and filtered in Python
+- `/sales/analytics` scanned every voucher just to group-by-day
+- `/sales/customer-names` scanned every voucher just to collect `party_name`
+
+**Fixes shipped**:
+- Added `_INV_RESP_CACHE` on `/inventory/items` (final-payload cache keyed by filters + pagination)
+- Added `_SALES_SUMMARY_CACHE`, `_SALES_VOUCHERS_CACHE`, `_SALES_ANALYTICS_CACHE` on the three Sales endpoints
+- `/sales/vouchers` now:
+  - Honours `limit=` and `skip=` server-side (sorted by `voucher_date` desc)
+  - Pushes FY + date-range filters to Mongo `$gte/$lte` instead of Python filter
+  - Uses `distinct()` + aggregation for parties/months instead of pulling every doc
+  - Runs count/parties/months in parallel via `asyncio.gather`
+- `/sales/analytics` now groups daily totals via `$group` on the DB side
+- `/sales/customer-names` uses native `distinct("party_name", match)`
+- Sync writers invalidate all three Sales caches alongside the inventory ones
+- ABC write endpoints clear `_INV_RESP_CACHE` too (otherwise the cached payload with stale/missing tags would persist)
+
+**Measured impact (admin tenant re-navigation)**:
+| Page | Before (user complaint) | After re-nav |
+|---|---|---|
+| Dashboard | 35 s | **1.9 s** (polls 7 endpoints) |
+| Inventory | 10 s+ | **0.4 s** |
+| Analytics | 47 s | **0.4 s** |
+| Sales | 20 s | **0.4 s** |
+
+Tests: `tests/test_iteration181b_response_cache_on_renavigation.py` (8 new cases). Full regression: 72 tests pass.
