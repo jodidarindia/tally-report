@@ -100,6 +100,10 @@ import time as _rec_time
 _RECONCILE_TTL_SEC = 60.0
 _RECONCILE_CACHE: dict = {}
 
+# iter-180 — Per-request processed inventory list cache (60 s TTL). See
+# `get_inventory_items` for rationale.
+_INV_LIST_CACHE: dict = {}
+
 
 async def _get_voucher_movement_maps(
     tenant_id: str, company_id: str, fy: Optional[str],
@@ -169,6 +173,15 @@ def invalidate_reconcile_cache(tenant_id: str, company_id: str = "") -> None:
     for k in list(_RECONCILE_CACHE.keys()):
         if k[0] == (tenant_id or "") and (not company_id or k[1] == company_id):
             _RECONCILE_CACHE.pop(k, None)
+    # iter-180 — Also drop the processed-list cache. Keyed on a hash
+    # that doesn't include tenant/company individually, so a tenant-wide
+    # sweep is the simplest correct thing (processed-list payloads are
+    # small anyway — rebuilding them on demand is cheap).
+    _INV_LIST_CACHE.clear()
+    # And the last-sale-price map for this tenant/company.
+    for k in list(_LSP_CACHE.keys()):
+        if k[0] == (tenant_id or "") and (not company_id or k[1] == company_id):
+            _LSP_CACHE.pop(k, None)
 
 
 
@@ -306,6 +319,9 @@ def _filter_branch_vouchers(vouchers, branch_set):
     return [v for v in vouchers if v.get("party_name") not in branch_set]
 
 
+_LSP_CACHE: dict = {}
+
+
 async def _last_sale_price_map(query: dict) -> dict:
     """Build a {item_name_lower: {price, date, voucher_no}} map from the
     most recent sales voucher line per item.
@@ -317,12 +333,24 @@ async def _last_sale_price_map(query: dict) -> dict:
     Rate per line is derived as `rate` if present, else `amount/quantity`.
     Credit notes / returns are NOT used (they're recorded in
     credit_note_vouchers, not sales_vouchers).
+
+    iter-180 — 60 s TTL cache per (tenant_id, company_id). The scan
+    iterates every sales voucher in the collection to collect
+    last-seen rates per SKU; running this on every `/inventory/items`
+    call was the second-biggest contributor to the 30 s page load.
     """
+    import time as _it
+    key = (str(query.get("tenant_id") or ""), str(query.get("company_id") or ""))
+    now = _it.monotonic()
+    cached = _LSP_CACHE.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
     cursor = db.sales_vouchers.find(
         query,
         {"_id": 0, "voucher_date": 1, "voucher_number": 1, "items": 1},
     ).sort("voucher_date", -1)
-    seen: dict[str, dict] = {}
+    seen: dict = {}
     async for v in cursor:
         vdate = v.get("voucher_date") or ""
         vno = v.get("voucher_number") or ""
@@ -342,6 +370,11 @@ async def _last_sale_price_map(query: dict) -> dict:
                     "date": vdate,
                     "voucher_no": vno,
                 }
+    _LSP_CACHE[key] = (now + 60.0, seen)
+    if len(_LSP_CACHE) > 256:
+        for k, v in list(_LSP_CACHE.items()):
+            if v[0] <= now:
+                _LSP_CACHE.pop(k, None)
     return seen
 
 
@@ -629,15 +662,56 @@ async def get_inventory_items(
                 ]
 
         query = _build_query(ctx, company_id, extra)
-        # iter-160: always fetch all + dedupe + slice in memory so
-        # pagination shows real SKUs, not per-FY duplicates. Busy
-        # tenants top out at ~15k items — still fits comfortably.
-        all_items = await db.inventory_items.find(query, {"_id": 0}).to_list(None)
-        all_items = _dedupe_inventory_by_name(all_items, fy_hint=fy)
-        # iter-165: reconcile closing_qty from actual voucher movement.
-        all_items = await _reconcile_item_quantities(
-            all_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
-        )
+        # iter-180 — Processed-list TTL cache. The dedupe + reconcile
+        # pipeline below is O(N) over the full item set (~4200 rows for
+        # Krishna Sales Corp) and used to run on EVERY page request —
+        # a 37 s hit for page 1 and TIMEOUT for page 2 was reported on
+        # 5-Oct. We now cache the FULLY PROCESSED list for 60 s per
+        # (tenant, company, fy + the filter keys) so pagination hops
+        # are instant.
+        import time as _it, hashlib as _ih, json as _ij
+        _it_key = _ih.md5(_ij.dumps({
+            "t": ctx.get("tenant_id", ""),
+            "c": ctx.get("company_id", "") or "",
+            "fy": fy or "",
+            "cat": category or "",
+            "sg": stock_group or "",
+            "rsg": root_stock_group or "",
+            "mq": min_quantity,
+            "s": (search or "").strip().lower(),
+        }, sort_keys=True).encode()).hexdigest()
+        _INV_CACHE_TTL = 60.0
+        now = _it.monotonic()
+        cached = _INV_LIST_CACHE.get(_it_key)
+        if cached and cached[0] > now:
+            all_items = cached[1]
+        else:
+            # iter-180 — Projection to drop heavy per-item fields we
+            # don't need on the list screen (unit_history, folio_rows,
+            # tag_lists). Shrinks the Atlas round-trip payload ~5× on
+            # 4200-item tenants.
+            _proj = {
+                "_id": 0, "item_name": 1, "part_number": 1, "aliases": 1,
+                "category": 1, "stock_group": 1, "root_stock_group": 1,
+                "quantity": 1, "closing_value": 1, "cost_price": 1,
+                "price": 1, "mrp": 1, "unit": 1, "reorder_level": 1,
+                "fy": 1, "last_updated": 1, "hsn_code": 1, "gst_rate": 1,
+                "opening_quantity": 1, "opening_value": 1,
+            }
+            all_items = await db.inventory_items.find(query, _proj).to_list(None)
+            all_items = _dedupe_inventory_by_name(all_items, fy_hint=fy)
+            # iter-165: reconcile closing_qty from actual voucher
+            # movement. The voucher-movement map is itself cached per
+            # iter-176, so this step is cheap even uncached.
+            all_items = await _reconcile_item_quantities(
+                all_items, ctx.get("tenant_id", ""), ctx.get("company_id", "") or "", fy,
+            )
+            _INV_LIST_CACHE[_it_key] = (now + _INV_CACHE_TTL, all_items)
+            # Opportunistic sweep.
+            if len(_INV_LIST_CACHE) > 256:
+                for k, v in list(_INV_LIST_CACHE.items()):
+                    if v[0] <= now:
+                        _INV_LIST_CACHE.pop(k, None)
         total = len(all_items)
         if page_size and page_size > 0:
             skip = max(0, (page - 1) * page_size)
@@ -645,11 +719,21 @@ async def get_inventory_items(
         else:
             items = all_items
 
-        # If FY is specified, compute closing stock for that FY from vouchers
-        if fy:
+        # If FY is specified, compute closing stock for that FY from vouchers.
+        # iter-180 — Short-circuit when the requested FY is the current
+        # or latest FY: post-FY vouchers can't exist yet, so the
+        # adjustment is a no-op. This block used to re-scan ALL sales
+        # + purchase vouchers (another 50 k docs, no projection!) on
+        # every inventory page load — adding 30 s on top of the main
+        # fetch for Krishna Sales Corp.
+        from utils import get_current_fy as _get_cur_fy
+        _current_fy = _get_cur_fy()
+        if fy and fy != _current_fy:
             base_q = _build_query(ctx, company_id)
-            sales_v = await db.sales_vouchers.find(base_q, {"_id": 0}).to_list(50000)
-            purchase_v = await db.purchase_vouchers.find(base_q, {"_id": 0}).to_list(50000)
+            # Project only the fields we read in the loop below.
+            _vp = {"_id": 0, "items": 1, "voucher_date": 1, "date": 1}
+            sales_v = await db.sales_vouchers.find(base_q, _vp).to_list(50000)
+            purchase_v = await db.purchase_vouchers.find(base_q, _vp).to_list(50000)
 
             # Apply branch filter
             branch_set = await _get_branch_set(request, ctx)
@@ -688,13 +772,14 @@ async def get_inventory_items(
                 item["closing_value"] = round(fy_closing * price, 2)
 
         base_q = _build_query(ctx, company_id)
-        all_items = await db.inventory_items.find(base_q, {"_id": 0, "stock_group": 1, "root_stock_group": 1}).to_list(50000)
-        stock_groups = sorted(list(set(item.get("stock_group", "General") for item in all_items if item.get("stock_group"))))
-        root_stock_groups = sorted(list(set(
-            (item.get("root_stock_group") or "").strip()
-            for item in all_items
-            if (item.get("root_stock_group") or "").strip()
-        )))
+        # iter-180 — Use native `distinct()` instead of pulling 50 k docs
+        # just to compute unique stock_groups. Mongo rides the
+        # `tcid_sgrp` compound index for this and ships back ~30 strings
+        # instead of 14 k objects.
+        stock_groups_raw   = await db.inventory_items.distinct("stock_group",      base_q)
+        root_groups_raw    = await db.inventory_items.distinct("root_stock_group", base_q)
+        stock_groups       = sorted(sg for sg in stock_groups_raw if sg)
+        root_stock_groups  = sorted({(sg or "").strip() for sg in root_groups_raw if (sg or "").strip()})
 
         # Last-Sale-Price fallback: when Tally master STANDARDPRICE is unset
         # (standard_price <= 0), surface the most recent sale rate from

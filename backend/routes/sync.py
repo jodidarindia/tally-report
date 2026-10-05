@@ -2142,11 +2142,31 @@ async def ack_agent_command(request: dict):
 
 # ─── All collections that store per-company data ───
 _COMPANY_DATA_COLLECTIONS = [
+    # Core voucher collections synced by the Tally / Busy agent
     "inventory_items", "sales_vouchers", "receipt_vouchers", "credit_notes",
     "journal_vouchers", "stock_journals", "purchase_vouchers", "debit_notes",
     "contra_vouchers", "customers", "sundry_creditors", "bank_cash_ledgers",
     "profit_loss", "all_ledgers", "sync_history", "overdue_digest", "ai_queries",
     "branch_ledgers", "purchase_orders", "customer_targets", "customer_followups",
+    # iter-180 — Collections previously missed by the delete-company
+    # purge (user reported "data left behind in DB after deleting
+    # company from Setup page"). Each stores (tenant_id, company_id)
+    # scoped records that must go when the company goes.
+    "payment_vouchers",            # agent-synced bank/cash payments
+    "sundry_journals",             # journal split carved out from Busy
+    "salesman_master",             # salesman definitions
+    "salesman_orders",             # orders placed by salesmen (iter-172)
+    "salesman_beats",              # salesman beat plans
+    "beat_runs",                   # per-day beat check-ins
+    "dispatch_cards",              # dispatch board cards
+    "dispatch_settings",           # per-company dispatch config
+    "dispatch_porters",            # dispatch porter master
+    "dispatch_transporters",       # dispatch transporter master
+    "dispatch_porter_payments",    # dispatch porter payments
+    "dispatch_transporter_payments",
+    "agent_commands",              # pending agent commands queue
+    "customer_target_removals",    # paused-target audit trail
+    "ca_report_generations",       # CA PDF generation history
 ]
 _COMPANY_ALL_COLLECTIONS = _COMPANY_DATA_COLLECTIONS + ["sync_status", "company_mappings"]
 
