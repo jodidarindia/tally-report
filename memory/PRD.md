@@ -2351,3 +2351,38 @@ cd /opt/flowra/current/backend
 python tools/backfill_inventory_values.py --commit
 ```
 to persist recomputed values on the existing corrupted rows. Future Busy syncs will land clean.
+
+---
+
+## iter-181 — Dashboard/Analytics performance + ABC-tag visibility (2026-10-05)
+
+**User-reported symptoms**:
+- Dashboard loading > 35 s
+- Analytics page > 47 s
+- "Inventory ABC performed but tag not showing"
+
+**Root causes identified**:
+1. `/inventory/movement-analysis` and `/inventory/below-cost-sales` were pulling ALL sales + purchase vouchers with full `items[]` arrays into Python (17s + 10s on Atlas for just 1,315 sales + 518 purchase vouchers on admin tenant; multi-minute on Krishna Sales Corp's 20k+ voucher dataset).
+2. `/inventory/summary` had no response cache — every dashboard mount re-ran the full item fetch + reconcile + fy_sales cursor (5+ s cold, same cost on every re-mount).
+3. `/inventory/items` projection block **omitted `abc_category` and `item_id`** → UI never saw the chip even after `/abc/auto-assign` wrote to DB successfully.
+4. The ABC endpoints didn't clear `_INV_LIST_CACHE` → even if projection had worked, the cached pre-processed page was stale.
+
+**Fixes shipped** (`/app/backend/routes/inventory.py`):
+- Added `_get_voucher_rollup_maps(tenant, company, fy)` — new `$unwind` + `$group` aggregation returning per-item qty/revenue/txns/first-date/last-date via Mongo pipeline. 60 s TTL cache + sync-time invalidation.
+- Rewrote `/inventory/movement-analysis` to consume the roll-up maps (parallel `asyncio.gather`) instead of Python loops over full voucher docs.
+- Rewrote `/inventory/below-cost-sales` similarly.
+- Added response caches: `_SUMMARY_CACHE` (30 s), `_MOVEMENT_CACHE` (60 s), `_BELOW_COST_CACHE` (60 s). All invalidated by `invalidate_reconcile_cache(tenant, company)` which sync writers already call.
+- Projected `abc_category` + `item_id` on `/inventory/items`.
+- `set_abc_category` + `auto_assign_abc` now call `_INV_LIST_CACHE.clear()` after writes.
+
+**Measured impact (admin tenant, 1,315 sales + 202 items)**:
+| Endpoint | Before | Cold | Warm |
+|---|---|---|---|
+| `/inventory/summary` | 5.1 s | 3.5 s | **0.37 s** |
+| `/inventory/movement-analysis` | 32.3 s | 8.7 s | **0.4 s** |
+| `/inventory/below-cost-sales` | 30.4 s | 2.8 s | **0.36 s** |
+
+**Full Dashboard page (parallel 7 endpoints)**: 35 s → **~2 s warm**.
+**Full Analytics page (parallel 3 endpoints)**: 47 s → **~2.7 s warm**.
+
+Tests: `tests/test_iteration181_dashboard_analytics_perf_and_abc.py` (8 cases). Full regression `test_iteration17*` + `test_iteration18*` + `test_iteration165_*` passing (64 tests).
