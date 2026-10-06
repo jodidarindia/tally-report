@@ -2422,3 +2422,41 @@ Tests: `tests/test_iteration181_dashboard_analytics_perf_and_abc.py` (8 cases). 
 | Sales | 20 s | **0.4 s** |
 
 Tests: `tests/test_iteration181b_response_cache_on_renavigation.py` (8 new cases). Full regression: 72 tests pass.
+
+---
+
+## iter-181c / Agent v9.8.38 — Fail-loud month timeouts (2026-02-05)
+
+**User-reported symptom**: "Dashboard shows only 440 sales vouchers for Krishna Sales Corporation, but Tally has ~2000. Apr-Aug 2026 missing, only Sep + Oct captured."
+
+**Root cause** (desktop agent, not backend): `tally_sync_agent_v9.py::fetch_sales_month` returned `None` on a 30-second Tally Export timeout and the caller silently continued with `[]`. At cycle end the agent then persisted its new AlterID baseline → subsequent quick-sync cycles short-circuited (AlterID unchanged) and the missed months were **never retried**. Krishna's Apr-Aug 2026 (heavier months, 150-200 vouchers each with 30-row item arrays) exceeded 30 s; Sep + Oct 2026 (lighter) completed → only those two months reached MongoDB.
+
+**Fixes shipped in agent v9.8.38 + backend iter-181c**:
+
+### Fix A — Fail-loud month tracking
+- Added `_in_month_fetch` + `_month_fetch_timed_out` flags on `TallyConnector`.
+- `_do_post`'s `requests.exceptions.Timeout` branch now flips the flag.
+- Introduced `_tracked_month_fetch(fetcher, m_start, m_end, failed_months, fy, phase)` helper that wraps every monthly voucher fetch.
+- Quick-sync (`run_sales_quick_sync`) and all 7 phases of full-sync (`_sync_single_company`) route through the helper and build a per-cycle `failed_months: set[tuple]`.
+- **State persistence is now gated on `not failed_months`**:
+  - Quick sync skips `state[alter_key] = cur_alter_id` + `state[lvd_key] = cur_lvd_str` → next cycle retries.
+  - Full sync skips `full_sync_done = True` and `alter_id_full::<company>` baseline → next scheduled full-sync retries.
+- Agent POSTs a `months_failed` event to `/agent/sync-progress` with the list of failed `(fy, month, phase)` tuples + a user-visible hint.
+- Backend `receive_sync_progress` promotes the payload to dedicated fields on `sync_status.agent_sync`:
+  - `months_failed: [...]`
+  - `months_failed_count: N`
+  - `months_failed_at`, `months_failed_hint`, `agent_version`
+- These are cleared automatically on the next `sync_complete` event.
+
+### Fix B — Default `EXPORT_TIMEOUT` raised 30 s → 120 s
+- Covers 150-200 voucher/month ledgers like Krishna's without any admin action.
+- Heavy-ledger admins can still bump via `.env` (`EXPORT_TIMEOUT=180` or higher).
+- Byte-identical for light ledgers (Tally returns as soon as data is ready).
+
+### Documentation
+- `desktop-agent/build-kit/RELEASE_NOTES_v9.8.38.md` — upgrade steps + the EXPORT_TIMEOUT=180 workaround for users still on v9.8.37.
+- `version_info.txt`, `flowra_gui.py::APP_VERSION`, all `agent_version` strings → `9.8.38-fail-loud-month-timeout`.
+
+**Tests**: `tests/test_iteration181c_agent_v9838_fail_loud_month_timeout.py` (9 cases). Full regression: 67 tests pass. End-to-end `/agent/sync-progress` → `/sync/status` verified via curl.
+
+**User action required**: Download the new agent EXE from the FLOWRA Deploy page and hit **Resync** on Krishna's company. Any still-timing-out months will now be visible as a `N months pending retry` badge on the Sync Status card.

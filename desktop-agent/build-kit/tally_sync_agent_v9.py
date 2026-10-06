@@ -94,15 +94,19 @@ EXPORT_DIR = os.getenv('TALLY_EXPORT_DIR', os.path.join(os.path.dirname(__file__
 ENABLE_WS = os.getenv('ENABLE_WEBSOCKET', 'true').lower() == 'true'
 WS_PORT = int(os.getenv('WEBSOCKET_PORT', '8765'))
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
-# v9.8.36 — EXPORT_TIMEOUT is now OPT-IN. Default 0 means "use the same
-# REQUEST_TIMEOUT (30s) as every other call" — byte-identical to v9.8.31
-# behaviour, which never caused the Krishna-Sales-Corp hang. Admins with
-# extremely heavy ledgers can set EXPORT_TIMEOUT=180 (or more) in a
-# `.env` next to the .exe to extend only the Export Data calls. The
-# previous v9.8.35 default of 180s combined with adaptive splitting
-# caused the agent to spend ~90 min hammering Tally on every monthly
-# sales request that was slow, never reaching May.
-EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '0'))
+# v9.8.38 — EXPORT_TIMEOUT default raised 30 → 120. Field report from
+# Krishna Sales Corporation (5-Feb-26) showed that FY 2026-27 April-
+# August months silently dropped because single-month Sales exports
+# exceeded the 30-s cap and `_post` returned None. v9.8.37's quick-
+# sync `fetch_sales_month` swallowed that and marched on, and the
+# cycle then persisted its AlterID baseline — so future quick cycles
+# never re-tried the missed months and the dashboard showed 440 /
+# 2000 vouchers. 120 s is comfortable for the heaviest monthly
+# ledger we've seen (Krishna's August 2026 — 193 vouchers × 30-row
+# items[] arrays). Heavy ledgers can still bump via `EXPORT_TIMEOUT=180+`
+# in the agent `.env`. Byte-identical for light ledgers because
+# `_post` returns as soon as Tally does.
+EXPORT_TIMEOUT = int(os.getenv('EXPORT_TIMEOUT', '120'))
 SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', '0.5'))
 SYNC_ALL_COMPANIES = os.getenv('SYNC_ALL_COMPANIES', 'false').lower() == 'true'
 
@@ -303,6 +307,16 @@ class TallyCollectionClient:
         # instance lock — even if some bug fires two queries in parallel
         # (e.g. heartbeat + quick-sync), they queue rather than racing.
         self._request_lock = threading.Lock()
+        # v9.8.38 — fail-loud timeout tracker. Set to True inside
+        # `_do_post` when a request times out AND the caller marked
+        # itself as a monthly voucher fetch via `_in_month_fetch`.
+        # Monthly fetchers reset this flag at entry and callers inspect
+        # it after each call to decide whether to add the month to a
+        # `failed_months` set (which in turn blocks AlterID / LVD state
+        # persistence so the next cycle automatically retries). Fixes
+        # the Krishna-Sales-Corp Apr-Aug 2026 "silent drop" bug.
+        self._in_month_fetch: bool = False
+        self._month_fetch_timed_out: bool = False
 
     def _sanitize(self, xml_text):
         """Clean XML to handle Tally's encoding quirks."""
@@ -413,6 +427,10 @@ class TallyCollectionClient:
                 return None
         except requests.exceptions.Timeout:
             logger.error(f"Tally request timed out ({effective_timeout}s){' — ' + debug_name if debug_name else ''}")
+            # v9.8.38 — surface timeouts to monthly fetchers so they can
+            # mark the month as failed and block state persistence.
+            if self._in_month_fetch:
+                self._month_fetch_timed_out = True
             return None
         except requests.exceptions.ConnectionError:
             logger.error("Cannot connect to Tally — is it running?")
@@ -3508,7 +3526,7 @@ class FlowraSyncAgent:
         os.makedirs(self.export_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.37-alterid-gated-full-sync")
+        logger.info("  FLOWRA TALLY SYNC AGENT v9.8.38-fail-loud-month-timeout")
         logger.info("  AlterID Prime 7.0 + Company-Name Escape + Cycle Summary")
         logger.info("=" * 60)
 
@@ -3980,7 +3998,7 @@ class FlowraSyncAgent:
                 'company_name': company_name,
                 'financial_year': financial_year,
                 'sync_mode': sync_mode,
-                'agent_version': '9.8.37-alterid-gated-full-sync',
+                'agent_version': '9.8.38-fail-loud-month-timeout',
                 'started_at': getattr(self, '_cycle_started_at', ''),
                 'ended_at': datetime.now(timezone.utc).isoformat(),
                 'failed_phases': list(getattr(self, '_failed_phases', [])),
@@ -4019,7 +4037,7 @@ class FlowraSyncAgent:
                 'data_type': data_type,
                 'data': data,
                 'sync_time': datetime.now(timezone.utc).isoformat(),
-                'agent_version': '9.8.37-alterid-gated-full-sync',
+                'agent_version': '9.8.38-fail-loud-month-timeout',
                 'company_name': company,
                 'company_guid': getattr(self, '_active_company_guid', '') or '',
                 'financial_year': self.financial_year,
@@ -4080,7 +4098,7 @@ class FlowraSyncAgent:
                 'company_name': company,
                 'financial_year': self.financial_year,
                 'sync_token': self.sync_token,
-                'agent_version': '9.8.37-alterid-gated-full-sync',
+                'agent_version': '9.8.38-fail-loud-month-timeout',
             }
             resp = requests.post(
                 f"{self.backend_url}/api/agent/reconcile",
@@ -4290,7 +4308,7 @@ class FlowraSyncAgent:
                                 'company_id': company,
                                 'company_name': company,
                                 'alter_id': cur_alter_id,
-                                'agent_version': '9.8.37-alterid-gated-full-sync',
+                                'agent_version': '9.8.38-fail-loud-month-timeout',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4379,6 +4397,14 @@ class FlowraSyncAgent:
                         )
 
                 all_quick_sales = []
+                # v9.8.38 — track monthly timeouts so we can SKIP state
+                # persistence if any month failed. This prevents the
+                # "Krishna Sales Corp" silent-drop regression where
+                # `fetch_sales_month` returned [] on a 30-s timeout,
+                # the agent then saved its AlterID baseline, and all
+                # future cycles short-circuited — permanently losing
+                # April-August 2026 data from the dashboard.
+                failed_months: set = set()
                 for fy in fys:
                     self.financial_year = fy
                     fy_start, fy_end = fy_to_dates(fy)
@@ -4405,7 +4431,20 @@ class FlowraSyncAgent:
                             # that ended BEFORE the last seen LVD.
                             if prev_lvd and m_end < prev_lvd:
                                 continue
-                        fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
+                        # v9.8.38 — fail-loud wrapper around the fetch.
+                        self.tally._in_month_fetch = True
+                        self.tally._month_fetch_timed_out = False
+                        try:
+                            fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
+                        finally:
+                            if self.tally._month_fetch_timed_out:
+                                failed_months.add((fy, m_start.year, m_start.month))
+                                logger.error(
+                                    f"  [QUICK] FY {fy} {m_start.strftime('%b-%Y')} — "
+                                    f"Tally timed out; month marked for retry on next cycle"
+                                )
+                            self.tally._in_month_fetch = False
+                            self.tally._month_fetch_timed_out = False
                         time.sleep(SLEEP_BETWEEN_REQUESTS)
                     if fy_sales:
                         self.sync_to_backend('sales', fy_sales)
@@ -4414,6 +4453,42 @@ class FlowraSyncAgent:
 
                 # Reconcile AFTER all FYs
                 self.reconcile_with_backend('sales', [v.get('voucher_id', '') for v in all_quick_sales if v.get('voucher_id')])
+
+                # v9.8.38 — surface failed months to the backend so the
+                # dashboard can show a "⚠ N months pending retry" badge.
+                if failed_months:
+                    try:
+                        import requests as _r
+                        _r.post(
+                            f"{self.backend_url}/api/agent/sync-progress",
+                            json={
+                                'type': 'sync_progress',
+                                'tenant_id': self.tenant_id,
+                                'sync_token': self.sync_token,
+                                'company_id': company,
+                                'event': 'months_failed',
+                                'details': {
+                                    'agent_version': '9.8.38-fail-loud-month-timeout',
+                                    'failed_months': sorted([
+                                        f"{fy} {date(y, m, 1).strftime('%b %Y')}"
+                                        for (fy, y, m) in failed_months
+                                    ]),
+                                    'count': len(failed_months),
+                                    'hint': "Set EXPORT_TIMEOUT=180 in agent .env or trigger a full Resync.",
+                                },
+                            },
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"[QUICK] {company}: {len(failed_months)} month(s) failed "
+                        f"to sync. Skipping AlterID / LVD state persistence so the "
+                        f"next cycle will AUTOMATICALLY retry. "
+                        f"Set EXPORT_TIMEOUT=180 in the agent's .env to extend "
+                        f"the per-month export window if timeouts keep happening."
+                    )
+                    continue  # NB: skip the save_sync_state block below
 
                 # Persist BOTH alter_id and LVD so the next cycle can
                 # short-circuit even faster.
@@ -4426,6 +4501,64 @@ class FlowraSyncAgent:
             logger.debug(f"Quick sales sync error: {e}")
         finally:
             self.sync_running = False
+
+    def _tracked_month_fetch(self, fetcher, m_start, m_end, failed_months: set, fy: str, phase: str) -> list:
+        """v9.8.38 helper — wrap any ``fetch_*_month`` call so Tally
+        timeouts are DETECTED and recorded in ``failed_months``. Used by
+        both quick-sync and full-sync; a single-month timeout stops
+        being a silent data loss (which was the Krishna-Sales-Corp
+        Apr-Aug 2026 regression)."""
+        self.tally._in_month_fetch = True
+        self.tally._month_fetch_timed_out = False
+        try:
+            return fetcher(m_start, m_end) or []
+        finally:
+            if self.tally._month_fetch_timed_out:
+                failed_months.add((fy, m_start.year, m_start.month, phase))
+                logger.error(
+                    f"  [v9.8.38] FY {fy} {m_start.strftime('%b-%Y')} {phase} — "
+                    f"Tally timed out; month marked for retry on next cycle"
+                )
+            self.tally._in_month_fetch = False
+            self.tally._month_fetch_timed_out = False
+
+    def _report_failed_months(self, company: str, failed_months: set):
+        """v9.8.38 — surface failed months to the backend so the UI can
+        display a 'retry pending' badge, and so admins see WHICH months
+        need `EXPORT_TIMEOUT` bumped."""
+        if not failed_months:
+            return
+        try:
+            import requests as _r
+            _r.post(
+                f"{self.backend_url}/api/agent/sync-progress",
+                json={
+                    'type': 'sync_progress',
+                    'tenant_id': self.tenant_id,
+                    'sync_token': self.sync_token,
+                    'company_id': company,
+                    'event': 'months_failed',
+                    'details': {
+                        'agent_version': '9.8.38-fail-loud-month-timeout',
+                        'failed_months': sorted([
+                            f"{fy} {date(y, m, 1).strftime('%b %Y')} / {phase}"
+                            for (fy, y, m, phase) in failed_months
+                        ]),
+                        'count': len(failed_months),
+                        'hint': "Set EXPORT_TIMEOUT=180 in agent .env or trigger a full Resync.",
+                    },
+                },
+                timeout=5,
+            )
+        except Exception:
+            pass
+        logger.warning(
+            f"[v9.8.38] {company}: {len(failed_months)} month-phase(s) failed. "
+            f"State persistence skipped so the next cycle will AUTOMATICALLY "
+            f"retry. Set EXPORT_TIMEOUT=180 in the agent's .env to extend "
+            f"the per-month export window if timeouts keep happening."
+        )
+
 
     def save_cache(self, data_type, data):
         """Save fetched data to local JSON file for caching.
@@ -4615,7 +4748,7 @@ class FlowraSyncAgent:
                                 'company_id': company_name,
                                 'company_name': company_name,
                                 'alter_id': _cur_alter_id,
-                                'agent_version': '9.8.37-alterid-gated-full-sync',
+                                'agent_version': '9.8.38-fail-loud-month-timeout',
                             },
                             headers={'Authorization': f'Bearer {self.auth_token}'},
                             timeout=5,
@@ -4751,6 +4884,10 @@ class FlowraSyncAgent:
             all_stock_journals_combined = []
             all_purchases_combined = []
             all_debit_notes_combined = []
+            # v9.8.38 — collect every (fy, year, month, phase) tuple that
+            # timed out so we can (a) report to backend, and (b) skip
+            # the full_sync_done=True state write at the end.
+            failed_months: set = set()
 
             for fy in fys_to_sync:
                 self.financial_year = fy
@@ -4764,7 +4901,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='sales')
                 fy_sales = []
                 for m_start, m_end in months:
-                    fy_sales.extend(self.tally.fetch_sales_month(m_start, m_end))
+                    fy_sales.extend(self._tracked_month_fetch(
+                        self.tally.fetch_sales_month, m_start, m_end,
+                        failed_months, fy, 'sales',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_sales:
                     self.save_cache(f'sales_{fy}', fy_sales)
@@ -4778,7 +4918,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='receipts')
                 fy_receipts = []
                 for m_start, m_end in months:
-                    fy_receipts.extend(self.tally.fetch_receipts_month(m_start, m_end))
+                    fy_receipts.extend(self._tracked_month_fetch(
+                        self.tally.fetch_receipts_month, m_start, m_end,
+                        failed_months, fy, 'receipts',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_receipts:
                     self.save_cache(f'receipts_{fy}', fy_receipts)
@@ -4792,7 +4935,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='credit_notes')
                 fy_cn = []
                 for m_start, m_end in months:
-                    fy_cn.extend(self.tally.fetch_credit_notes_month(m_start, m_end))
+                    fy_cn.extend(self._tracked_month_fetch(
+                        self.tally.fetch_credit_notes_month, m_start, m_end,
+                        failed_months, fy, 'credit_notes',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_cn:
                     self.save_cache(f'credit_notes_{fy}', fy_cn)
@@ -4806,7 +4952,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='journals')
                 fy_jv = []
                 for m_start, m_end in months:
-                    fy_jv.extend(self.tally.fetch_journals_month(m_start, m_end))
+                    fy_jv.extend(self._tracked_month_fetch(
+                        self.tally.fetch_journals_month, m_start, m_end,
+                        failed_months, fy, 'journals',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_jv:
                     self.save_cache(f'journals_{fy}', fy_jv)
@@ -4820,7 +4969,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='stock_journals')
                 fy_sj = []
                 for m_start, m_end in months:
-                    fy_sj.extend(self.tally.fetch_stock_journals_month(m_start, m_end))
+                    fy_sj.extend(self._tracked_month_fetch(
+                        self.tally.fetch_stock_journals_month, m_start, m_end,
+                        failed_months, fy, 'stock_journals',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_sj:
                     self.save_cache(f'stock_journals_{fy}', fy_sj)
@@ -4834,8 +4986,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='purchases')
                 fy_purchases = []
                 for m_start, m_end in months:
-                    pvs = self.tally.fetch_purchases_month(m_start, m_end)
-                    fy_purchases.extend(pvs)
+                    fy_purchases.extend(self._tracked_month_fetch(
+                        self.tally.fetch_purchases_month, m_start, m_end,
+                        failed_months, fy, 'purchases',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_purchases:
                     self.save_cache(f'purchase_vouchers_{fy}', fy_purchases)
@@ -4849,8 +5003,10 @@ class FlowraSyncAgent:
                 self.report_progress('phase_start', phase='debit_notes')
                 fy_dn = []
                 for m_start, m_end in months:
-                    dns = self.tally.fetch_debit_notes_month(m_start, m_end)
-                    fy_dn.extend(dns)
+                    fy_dn.extend(self._tracked_month_fetch(
+                        self.tally.fetch_debit_notes_month, m_start, m_end,
+                        failed_months, fy, 'debit_notes',
+                    ))
                     time.sleep(SLEEP_BETWEEN_REQUESTS)
                 if fy_dn:
                     self.save_cache(f'debit_notes_{fy}', fy_dn)
@@ -5009,8 +5165,12 @@ class FlowraSyncAgent:
             # Free memory
             gc.collect()
 
+            # v9.8.38 — Surface any month-level timeouts to the backend
+            # BEFORE deciding whether to persist state.
+            self._report_failed_months(company_name, failed_months)
+
             # Mark first full sync as done for this company (persisted to disk)
-            if sync_mode == 'full':
+            if sync_mode == 'full' and not failed_months:
                 state = load_sync_state()
                 if 'companies' not in state:
                     state['companies'] = {}
@@ -5020,25 +5180,29 @@ class FlowraSyncAgent:
                 state['companies'][company_name]['full_sync_at'] = datetime.now().isoformat()
                 # v9.8.37 — capture AlterID baseline so the NEXT scheduled
                 # full-sync cycle can short-circuit if Tally is unchanged.
-                # Only save when the just-completed sync had NO failed
-                # phases — otherwise a partial sync would set the gate
-                # and silently cause future cycles to skip a recovery
-                # attempt. Also tolerate AlterID detection failures.
+                # v9.8.38 — ALSO guarded by `failed_months` so a partial
+                # sync never sets the gate and silently blocks the next
+                # cycle's recovery pass.
                 try:
-                    if not getattr(self, '_failed_phases', None):
-                        _end_alter_id = self.tally.fetch_last_alter_id()
-                        if _end_alter_id is not None:
-                            state[f"alter_id_full::{company_name}"] = _end_alter_id
-                            logger.info(
-                                f"  [FULL] AlterID baseline saved "
-                                f"({_end_alter_id}) — next full-sync cycle will "
-                                f"skip Tally if unchanged."
-                            )
+                    _end_alter_id = self.tally.fetch_last_alter_id()
+                    if _end_alter_id is not None:
+                        state[f"alter_id_full::{company_name}"] = _end_alter_id
+                        logger.info(
+                            f"  [FULL] AlterID baseline saved "
+                            f"({_end_alter_id}) — next full-sync cycle will "
+                            f"skip Tally if unchanged."
+                        )
                 except Exception as _save_err:
                     logger.warning(
                         f"  [FULL] Could not capture AlterID baseline: {_save_err}"
                     )
                 save_sync_state(state)
+            elif sync_mode == 'full' and failed_months:
+                logger.warning(
+                    f"  [FULL] {company_name}: full_sync_done NOT set and AlterID "
+                    f"baseline NOT saved because {len(failed_months)} month-phase(s) "
+                    f"timed out. Next cycle will retry automatically."
+                )
 
             # Summary
             total_sales = len(all_sales_combined)
@@ -5161,7 +5325,7 @@ class FlowraSyncAgent:
 if __name__ == "__main__":
     # Quick version check — `python flowra-desktop-agent.py --version`
     if '--version' in sys.argv or '-V' in sys.argv:
-        print("FLOWRA Tally Sync Agent v9.8.37-alterid-gated-full-sync")
+        print("FLOWRA Tally Sync Agent v9.8.38-fail-loud-month-timeout")
         print("Features: AlterID Prime 7.0 (Path-3 iteration) + Company-Name Escape + Cycle Summary")
         sys.exit(0)
     # Handle --logout flag

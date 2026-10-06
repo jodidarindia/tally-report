@@ -1513,6 +1513,40 @@ async def receive_sync_progress(request: dict):
             upsert=True
         )
 
+        # iter-181c (agent v9.8.38) — Promote `months_failed` events to a
+        # dedicated field on sync_status so the dashboard can show a
+        # "N months pending retry" badge without having to read nested
+        # details JSON on every poll.
+        details_event = (request.get("event") or "")
+        if details_event == "months_failed":
+            det = request.get("details") or {}
+            try:
+                await db.sync_status.update_one(
+                    {"type": "agent_sync", "tenant_id": req_tenant_id, "company_id": req_company_id},
+                    {"$set": {
+                        "months_failed": det.get("failed_months", []),
+                        "months_failed_count": int(det.get("count") or 0),
+                        "months_failed_at": datetime.now(timezone.utc).isoformat(),
+                        "months_failed_hint": det.get("hint", ""),
+                        "agent_version": det.get("agent_version", ""),
+                    }},
+                    upsert=True,
+                )
+            except Exception as _e:
+                logger.debug(f"months_failed persist error: {_e}")
+        elif event_type == "sync_complete":
+            # Clear the badge once a clean cycle finishes.
+            try:
+                await db.sync_status.update_one(
+                    {"type": "agent_sync", "tenant_id": req_tenant_id, "company_id": req_company_id},
+                    {"$set": {
+                        "months_failed": [],
+                        "months_failed_count": 0,
+                    }},
+                )
+            except Exception:
+                pass
+
         await ws_manager.broadcast({
             'event': event_type,
             'data': request,
